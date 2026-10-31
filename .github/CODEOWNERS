@@ -1,6 +1,6 @@
-# These paths can reach production, sign-in, or the agents of whoever reviews a change, so someone
-# listed here who didn't write the change has to approve it. Anything else needs no approval, just
-# a person to merge it once CI has passed.
+# These paths can reach production, sign-in, or the agents of whoever reviews a change, so GitHub
+# asks the people listed here to look at a change to them. Their approval isn't required: like
+# anything else, it needs a person to merge it once CI has passed.
 /.claude/        @CakeRepository @morganparadis
 /.devcontainer/  @CakeRepository @morganparadis
 /.github/        @CakeRepository @morganparadis
