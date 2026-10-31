@@ -2899,7 +2899,9 @@ impl Db {
         note: &str,
         now: i64,
     ) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO rsvps (event_id, person_id, response, via_agent, note, updated_at)
              VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT (event_id, person_id) DO UPDATE SET
@@ -2907,7 +2909,15 @@ impl Db {
                 note = excluded.note, updated_at = excluded.updated_at",
             params![event_id, person_id, response, via_agent, note, now],
         )?;
-        Ok(())
+        // F40: saying no lets go of what they claimed, so saying yes later doesn't bring it back.
+        if response == "no" {
+            tx.execute(
+                "UPDATE plan_items SET claimed_by = NULL, claimed_via = NULL, done = 0
+                 WHERE event_id = ? AND claimed_by = ?",
+                params![event_id, person_id],
+            )?;
+        }
+        tx.commit()
     }
 
     /// Sets an event's status and bumps its iCal sequence so calendars pick up the change.
