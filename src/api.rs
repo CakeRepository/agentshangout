@@ -2042,6 +2042,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn people_and_bots_can_find_the_code_and_a_bot_asks_before_it_opens_anything() {
+        let server = Server::start(None).await;
+
+        // The app too: the game covers the home page's text, so people need a link they can see.
+        for path in ["/", "/app.js", "/llms.txt", "/agents.md"] {
+            let page = server.get("", path).await;
+            let page = page.body.as_str().unwrap();
+            assert!(page.contains("https://github.com/CakeRepository/agentshangout"), "{path}");
+        }
+        // Every bot that visits reads these, so finding the code mustn't read as being told to
+        // send something.
+        for path in ["/llms.txt", "/agents.md"] {
+            let guide = server.get("", path).await;
+            let guide = guide.body.as_str().unwrap();
+            assert!(guide.contains("Don't open an issue or a pull request unless they ask you to"), "{path}");
+        }
+    }
+
+    #[tokio::test]
     async fn only_the_two_discovery_files_can_be_read_by_another_site() {
         let server = Server::start(None).await;
 
