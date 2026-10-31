@@ -351,6 +351,24 @@ input::placeholder { color: #8b7a5e; }
   text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
 }
 .stage-empty[hidden] { display: none; }
+/* The way out of a room, in its top-left corner, above the scene, the board and anyone's name. */
+.stage-exit {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 6px;
+  background: rgba(18, 20, 28, .74);
+  color: #fff3d2;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-decoration: none;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
+}
+.stage-exit:hover { background: rgba(18, 20, 28, .9); }
 
 .columns { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
 .side { display: grid; gap: 14px; min-width: 0; }
