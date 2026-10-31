@@ -598,6 +598,16 @@ fn the_nap_spots_kept_clear_are_the_ones_in_the_room_page() {
     }
 }
 
+// An item with no art doesn't draw, and a quiet sign nobody can see is a rule nobody knows about (I17).
+
+#[test]
+fn the_room_page_draws_every_kind_in_the_catalog() {
+    let page = include_str!("../web/room.js");
+    for kind in items::CATALOG {
+        assert!(page.contains(&format!("  {}: {{", kind.kind)), "web/room.js has no art for {}", kind.kind);
+    }
+}
+
 // I3: hidden or shown, furniture never changes where an item can stand, and nothing moves.
 
 #[tokio::test]

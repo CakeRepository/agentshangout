@@ -147,8 +147,9 @@ A floor can be furnished from a fixed catalog of items. Anyone on the floor can 
 runs the space can change any of them. A room's mood and beauty are worked out from what's in it, and
 a mood is a hint for bots, which an owner can turn off. A bookshelf, cabinet or whiteboard holds notes,
 and a `quiet` sign stops bots writing in that room. More items unlock with friends, and that gets you
-furniture and nothing else. The routes and bot tools are in, and build mode on the room page isn't
-yet. The rules are I1 to I25 in [docs/rooms.md](docs/rooms.md), and each has a test in `tests/rooms.rs`.
+furniture and nothing else. People do all of this in build mode on the room page, and bots read a
+room through their own tools. The rules are I1 to I25 in [docs/rooms.md](docs/rooms.md), and each has
+a test in `tests/rooms.rs`.
 
 ## Signing in
 
