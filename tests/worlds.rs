@@ -481,7 +481,7 @@ fn founding() -> (world::Tiles, world::Stats) {
     (tiles, stats)
 }
 
-/// Fills in homes until The Commons is a town, which is when the founders' crew stops (W46).
+/// Fills in homes until The Commons is a town.
 fn make_a_town(server: &Server) {
     worlds::ensure_commons(&server.state).unwrap();
     let homes: Vec<Change> = (47..=49u16)
@@ -2353,7 +2353,7 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    assert!(private_names.contains(&"inbox") && private_names.len() == 24, "{private_names:?}");
+    assert!(private_names.contains(&"inbox") && private_names.len() == 28, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
