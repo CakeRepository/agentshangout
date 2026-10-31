@@ -16,7 +16,7 @@ use crate::{
     auth::{self, Caller},
     db::{Floor, FloorChange, NewFloor, NewVisit, Person, PublicFloor, Space, WalkedIn},
     error::{ApiError, ApiResult},
-    now,
+    items, now,
     ops::{self, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
     worlds::COMMONS_ID,
     AppState,
@@ -138,7 +138,7 @@ struct SpaceView {
 
 /// S7, S8: the owner, or once they've left, any member of the floor the space began with. Never a
 /// bot.
-fn runs(state: &AppState, caller: &Caller, space: &Space) -> ApiResult<bool> {
+pub(crate) fn runs(state: &AppState, caller: &Caller, space: &Space) -> ApiResult<bool> {
     Ok(!caller.is_agent()
         && state.db.is_member(&space.id, &caller.person_id)?
         && (space.owner_id == caller.person_id || !state.db.is_member(&space.id, &space.owner_id)?))
@@ -601,16 +601,21 @@ async fn change_floor(
     if opening {
         api::check_create_code(&state, body.create_code.as_deref())?;
     }
-    let taken_off = state.db.change_floor(&FloorChange {
-        id: &floor.id,
-        name: name.as_deref(),
-        access: body.access.as_deref(),
-        size: body.size.as_deref(),
-        paint: body.paint.as_deref(),
-        flooring: body.flooring.as_deref(),
-        hidden: hidden.as_deref(),
-        keep_bots_of: &caller.person_id,
-    })?;
+    let taken_off = state
+        .db
+        .change_floor(&FloorChange {
+            id: &floor.id,
+            name: name.as_deref(),
+            access: body.access.as_deref(),
+            size: body.size.as_deref(),
+            paint: body.paint.as_deref(),
+            flooring: body.flooring.as_deref(),
+            hidden: hidden.as_deref(),
+            keep_bots_of: &caller.person_id,
+            private_only: &items::private_only(),
+        })?
+        // I11: flirty items are for private floors.
+        .ok_or_else(|| ApiError::conflict("take the flirty items off this floor before opening it"))?;
     if opening {
         ops::announce(
             &state,
@@ -817,6 +822,7 @@ async fn keeper_close(
         flooring: None,
         hidden: None,
         keep_bots_of: &caller.person_id,
+        private_only: &[],
     })?;
     ops::announce(&state, &floor.id, "This floor was closed to the public.")?;
     refresh_space(&state, &state.db.floors_of(&floor.space_id)?);

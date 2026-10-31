@@ -506,6 +506,29 @@ CREATE TABLE IF NOT EXISTS bot_marks (
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (person_id, agent_id)
 );
+CREATE TABLE IF NOT EXISTS floor_items (
+    id          TEXT PRIMARY KEY,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    facing      INTEGER NOT NULL DEFAULT 0,
+    placed_by   TEXT NOT NULL REFERENCES people(id),
+    placed_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS floor_items_by_floor ON floor_items (hangout_id);
+CREATE TABLE IF NOT EXISTS item_notes (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL REFERENCES floor_items(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL,
+    person_id   TEXT NOT NULL REFERENCES people(id),
+    via_agent   TEXT,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS item_notes_by_item ON item_notes (item_id, created_at);
+CREATE TABLE IF NOT EXISTS bots_without_moods (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -646,6 +669,55 @@ pub struct FloorChange<'a> {
     pub hidden: Option<&'a str>,
     /// Whose bots stay when this opens the floor to the public.
     pub keep_bots_of: &'a str,
+    /// Kinds of item that keep this floor from opening to the public (I11).
+    pub private_only: &'a [&'a str],
+}
+
+/// An item standing on a floor (I1). `kind` is a word from the catalog in `items`.
+#[derive(Clone, Debug, Serialize)]
+pub struct FloorItem {
+    pub id: String,
+    pub hangout_id: String,
+    pub kind: String,
+    pub x: i64,
+    pub y: i64,
+    pub facing: i64,
+    pub placed_by: String,
+    pub placed_by_name: String,
+    pub placed_at: i64,
+}
+
+pub struct NewFloorItem<'a> {
+    pub id: &'a str,
+    pub hangout_id: &'a str,
+    pub kind: &'a str,
+    pub x: i64,
+    pub y: i64,
+    pub facing: i64,
+    pub placed_by: &'a str,
+    pub now: i64,
+}
+
+/// A note on an item (I14). `person_id` is who wrote it, and `via_agent` the name of the bot that
+/// wrote it for them, so that a bot's words are never mistaken for its owner's.
+#[derive(Clone, Debug, Serialize)]
+pub struct ItemNote {
+    pub id: String,
+    pub item_id: String,
+    pub body: String,
+    pub person_id: String,
+    pub writer: String,
+    pub via_agent: Option<String>,
+    pub created_at: i64,
+}
+
+pub struct NewItemNote<'a> {
+    pub id: &'a str,
+    pub item_id: &'a str,
+    pub body: &'a str,
+    pub person_id: &'a str,
+    pub via_agent: Option<&'a str>,
+    pub now: i64,
 }
 
 /// A public floor as the list shows it: nothing about who is there or what was said.
@@ -3402,14 +3474,21 @@ impl Db {
 
     /// Changes a floor and returns the names of any bots this took off it. In one step, so no bot
     /// is on a public floor for a moment on its way out (S25), and so walk-ins end with the floor
-    /// going private (S26) and don't come back if it opens again.
-    pub fn change_floor(&self, change: &FloorChange) -> rusqlite::Result<Vec<String>> {
+    /// going private (S26) and don't come back if it opens again. `None`, and nothing changes, if
+    /// this would open a floor holding a kind that stays private (I11): that's checked here and not
+    /// by the caller, so an item can't be placed between the check and the floor opening.
+    pub fn change_floor(&self, change: &FloorChange) -> rusqlite::Result<Option<Vec<String>>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let access: String =
             tx.query_row("SELECT access FROM floors WHERE hangout_id = ?", [change.id], |row| row.get(0))?;
         let mut taken_off = Vec::new();
         if change.access == Some("public") && access != "public" {
+            for kind in change.private_only {
+                if exists(&tx, "SELECT 1 FROM floor_items WHERE hangout_id = ? AND kind = ?", params![change.id, kind])? {
+                    return Ok(None);
+                }
+            }
             let others = "SELECT a.id FROM agents a JOIN room_agents r ON r.agent_id = a.id
                           WHERE r.hangout_id = ?1 AND a.owner_id != ?2";
             {
@@ -3438,7 +3517,7 @@ impl Db {
             tx.execute("UPDATE hangouts SET name = ?2 WHERE id = ?1", params![change.id, name])?;
         }
         tx.commit()?;
-        Ok(taken_off)
+        Ok(Some(taken_off))
     }
 
     /// Swaps a floor with the one above or below it. At the end of the stack this does nothing.
@@ -5861,6 +5940,48 @@ const FRIENDS_OF: &str = "(
     UNION SELECT i.person_id FROM members a JOIN events e ON e.hangout_id = a.hangout_id
       JOIN plan_invitees i ON i.event_id = e.id WHERE a.person_id = ?1)";
 
+/// What `item_from_row` reads, and where from.
+const ITEM_COLS: &str = "i.id, i.hangout_id, i.kind, i.x, i.y, i.facing, i.placed_by, p.name, i.placed_at";
+const ITEMS: &str = "FROM floor_items i JOIN people p ON p.id = i.placed_by";
+
+fn item_from_row(row: &Row) -> rusqlite::Result<FloorItem> {
+    Ok(FloorItem {
+        id: row.get(0)?,
+        hangout_id: row.get(1)?,
+        kind: row.get(2)?,
+        x: row.get(3)?,
+        y: row.get(4)?,
+        facing: row.get(5)?,
+        placed_by: row.get(6)?,
+        placed_by_name: row.get(7)?,
+        placed_at: row.get(8)?,
+    })
+}
+
+fn items_on(conn: &Connection, hangout_id: &str) -> rusqlite::Result<Vec<FloorItem>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {ITEM_COLS} {ITEMS} WHERE i.hangout_id = ? ORDER BY i.placed_at, i.rowid"
+    ))?;
+    let rows = stmt.query_map([hangout_id], item_from_row)?;
+    rows.collect()
+}
+
+/// What `item_note_from_row` reads, and where from.
+const ITEM_NOTE_COLS: &str = "n.id, n.item_id, n.body, n.person_id, p.name, n.via_agent, n.created_at";
+const ITEM_NOTES: &str = "FROM item_notes n JOIN people p ON p.id = n.person_id";
+
+fn item_note_from_row(row: &Row) -> rusqlite::Result<ItemNote> {
+    Ok(ItemNote {
+        id: row.get(0)?,
+        item_id: row.get(1)?,
+        body: row.get(2)?,
+        person_id: row.get(3)?,
+        writer: row.get(4)?,
+        via_agent: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
 /// What `world_player_from_row` reads. A person's own player has a person and no token or bot.
 const WORLD_PLAYER_COLS: &str = "p.id, p.name_seed, w.x, w.y, w.emote,
     p.person_id IS NOT NULL AND p.agent_id IS NULL AND p.token_hash IS NULL";
@@ -6230,6 +6351,171 @@ impl Db {
             &format!("SELECT 1 FROM people WHERE id = ?2 AND id != ?1 AND id IN {FRIENDS_OF}"),
             params![person_id, other_id],
         )
+    }
+
+    /// I19: how many friends a person has right now. Nothing keeps this, so it can't go stale.
+    pub fn friend_count(&self, person_id: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            &format!("SELECT COUNT(*) FROM people WHERE id != ?1 AND id IN {FRIENDS_OF}"),
+            [person_id],
+            |row| row.get(0),
+        )
+    }
+
+    // Items on a floor (docs/rooms.md)
+
+    /// What stands on a floor, oldest first. A room that isn't a floor has none.
+    pub fn floor_items(&self, hangout_id: &str) -> rusqlite::Result<Vec<FloorItem>> {
+        items_on(&self.conn(), hangout_id)
+    }
+
+    pub fn floor_item(&self, id: &str) -> rusqlite::Result<Option<FloorItem>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {ITEM_COLS} {ITEMS} WHERE i.id = ?"),
+                [id],
+                item_from_row,
+            )
+            .optional()
+    }
+
+    /// Stores an item if `check` allows it, given the floor's access and what's on the floor. In one
+    /// step, so two people can't both take the last place or the same spot (I3, I4), and a flirty
+    /// item can't land on a floor that's opening (I11).
+    pub fn place_item<E>(
+        &self,
+        item: &NewFloorItem,
+        check: impl FnOnce(&str, &[FloorItem]) -> Result<(), E>,
+    ) -> rusqlite::Result<Result<(), E>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let access: String =
+            tx.query_row("SELECT access FROM floors WHERE hangout_id = ?", [item.hangout_id], |row| row.get(0))?;
+        if let Err(refused) = check(&access, &items_on(&tx, item.hangout_id)?) {
+            return Ok(Err(refused));
+        }
+        tx.execute(
+            "INSERT INTO floor_items (id, hangout_id, kind, x, y, facing, placed_by, placed_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            params![item.id, item.hangout_id, item.kind, item.x, item.y, item.facing, item.placed_by, item.now],
+        )?;
+        tx.commit()?;
+        Ok(Ok(()))
+    }
+
+    /// Moves or turns an item if `check` allows it, given everything else on the floor. In one step
+    /// for the same reason as `place_item`. False if the item has gone in the meantime.
+    pub fn change_item<E>(
+        &self,
+        item: &FloorItem,
+        (x, y, facing): (i64, i64, i64),
+        check: impl FnOnce(&[FloorItem]) -> Result<(), E>,
+    ) -> rusqlite::Result<Result<bool, E>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut others = items_on(&tx, &item.hangout_id)?;
+        others.retain(|other| other.id != item.id);
+        if let Err(refused) = check(&others) {
+            return Ok(Err(refused));
+        }
+        let changed = tx.execute(
+            "UPDATE floor_items SET x = ?, y = ?, facing = ? WHERE id = ?",
+            params![x, y, facing, item.id],
+        )?;
+        tx.commit()?;
+        Ok(Ok(changed > 0))
+    }
+
+    /// Takes an item away, and its notes with it (I15). False if it had already gone.
+    pub fn remove_item(&self, id: &str) -> rusqlite::Result<bool> {
+        Ok(self.conn().execute("DELETE FROM floor_items WHERE id = ?", [id])? > 0)
+    }
+
+    /// Whether a floor has an item of this kind, which is how a sign works (I17).
+    pub fn floor_has_kind(&self, hangout_id: &str, kind: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM floor_items WHERE hangout_id = ? AND kind = ?",
+            params![hangout_id, kind],
+        )
+    }
+
+    /// Adds a note. False, and nothing changes, if the item already holds `max` (I12).
+    pub fn insert_item_note(&self, note: &NewItemNote, max: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "INSERT INTO item_notes (id, item_id, body, person_id, via_agent, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6
+             WHERE (SELECT COUNT(*) FROM item_notes WHERE item_id = ?2) < ?7",
+            params![note.id, note.item_id, note.body, note.person_id, note.via_agent, note.now, max],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// An item's notes written after `since`, oldest first. Times are whole seconds, so a guest's
+    /// second of arrival is left out, as in `messages_since`.
+    pub fn item_notes(&self, item_id: &str, since: i64) -> rusqlite::Result<Vec<ItemNote>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {ITEM_NOTE_COLS} {ITEM_NOTES} WHERE n.item_id = ? AND n.created_at > ?
+             ORDER BY n.created_at, n.rowid"
+        ))?;
+        let rows = stmt.query_map(params![item_id, since], item_note_from_row)?;
+        rows.collect()
+    }
+
+    pub fn item_note(&self, id: &str) -> rusqlite::Result<Option<ItemNote>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {ITEM_NOTE_COLS} {ITEM_NOTES} WHERE n.id = ?"),
+                [id],
+                item_note_from_row,
+            )
+            .optional()
+    }
+
+    pub fn remove_item_note(&self, id: &str) -> rusqlite::Result<bool> {
+        Ok(self.conn().execute("DELETE FROM item_notes WHERE id = ?", [id])? > 0)
+    }
+
+    /// How many notes each item on a floor holds, counting those written after `since`.
+    pub fn item_note_counts(
+        &self,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<std::collections::HashMap<String, i64>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT n.item_id, COUNT(*) FROM item_notes n JOIN floor_items i ON i.id = n.item_id
+             WHERE i.hangout_id = ? AND n.created_at > ? GROUP BY n.item_id",
+        )?;
+        let rows = stmt.query_map(params![hangout_id, since], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// I10: turns moods on or off for a bot.
+    pub fn set_bot_moods(&self, agent_id: &str, on: bool) -> rusqlite::Result<()> {
+        let sql = if on {
+            "DELETE FROM bots_without_moods WHERE agent_id = ?"
+        } else {
+            "INSERT OR IGNORE INTO bots_without_moods (agent_id) VALUES (?)"
+        };
+        self.conn().execute(sql, [agent_id])?;
+        Ok(())
+    }
+
+    pub fn bot_has_moods(&self, agent_id: &str) -> rusqlite::Result<bool> {
+        Ok(!exists(&self.conn(), "SELECT 1 FROM bots_without_moods WHERE agent_id = ?", [agent_id])?)
+    }
+
+    /// Which of this person's bots have moods turned off, for their own page.
+    pub fn bots_without_moods(&self, person_id: &str) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT m.agent_id FROM bots_without_moods m JOIN agents a ON a.id = m.agent_id
+             WHERE a.owner_id = ?",
+        )?;
+        let rows = stmt.query_map([person_id], |row| row.get(0))?;
+        rows.collect()
     }
 
     /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as

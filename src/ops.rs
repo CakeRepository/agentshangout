@@ -12,7 +12,7 @@ use crate::{
         NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip, Visit,
     },
     error::{ApiError, ApiResult},
-    ical, notify, now, spaces, AppState, HubEvent,
+    ical, items, notify, now, spaces, AppState, HubEvent,
 };
 
 pub const MAX_AGENT_WRITES_PER_MINUTE: u32 = 30;
@@ -245,6 +245,7 @@ pub fn post_message(
     body: &str,
 ) -> ApiResult<Message> {
     require_room(state, caller, hangout_id)?;
+    items::no_quiet(state, caller, hangout_id)?;
     let body = clean(body, "message", MAX_MESSAGE_CHARS)?;
     note_agent_write(state, caller)?;
     spaces::note_walk_in_write(state, caller, hangout_id)?;
@@ -326,6 +327,8 @@ pub fn propose_event(
     input: &EventInput,
 ) -> ApiResult<Event> {
     no_guests(state, caller, hangout_id, "propose a plan")?;
+    // I17: its title goes in the room's chat.
+    items::no_quiet(state, caller, hangout_id)?;
     let title = clean(&input.title, "title", MAX_TITLE_CHARS)?;
     let location = clean_optional(input.location.as_deref(), "location", MAX_LOCATION_CHARS)?;
     let notes = clean_optional(input.notes.as_deref(), "notes", MAX_NOTE_CHARS)?;
@@ -408,6 +411,10 @@ pub fn rsvp(
         return Err(ApiError::bad_request("response must be yes, maybe or no"));
     }
     let note = clean_optional(note, "note", MAX_NOTE_CHARS)?;
+    // I17: an answer is the record and still counts, but its note is words for the room.
+    if !note.is_empty() {
+        items::no_quiet(state, caller, &event.hangout_id)?;
+    }
     if event.status == "cancelled" {
         return Err(ApiError::conflict("that hangout was cancelled"));
     }
@@ -506,6 +513,8 @@ pub fn create_check_in(
 ) -> ApiResult<CheckIn> {
     require_room(state, caller, hangout_id)?;
     spaces::no_walk_ins(state, caller, hangout_id, "ask a check-in")?;
+    // I17: what it's about goes in the room's chat.
+    items::no_quiet(state, caller, hangout_id)?;
     let about = clean(&input.about, "about", MAX_ABOUT_CHARS)?;
     let minutes = input.expires_minutes.unwrap_or(DEFAULT_CHECK_IN_MINUTES);
     if !(1..=MAX_CHECK_IN_MINUTES).contains(&minutes) {
@@ -577,6 +586,10 @@ pub fn answer_check_in(
         return Err(ApiError::bad_request("response must be go or hold"));
     }
     let note = clean_optional(note, "note", MAX_NOTE_CHARS)?;
+    // I17: as for a plan, the answer counts and its note is words for the room.
+    if !note.is_empty() {
+        items::no_quiet(state, caller, &check_in.hangout_id)?;
+    }
     if check_in.asked_by == caller.person_id {
         return Err(ApiError::forbidden("a side can't approve its own check-in"));
     }
@@ -884,6 +897,12 @@ pub struct Snapshot {
     pub house_id: Option<String>,
     /// Which floor of which space this is. Null for a Town Square, Living Room or Porch.
     pub floor: Option<spaces::Place>,
+    /// The floor's items, and the mood and beauty they add up to (I8, I24).
+    #[serde(flatten)]
+    pub furnishing: items::Furnishing,
+    /// Which of this person's bots have moods turned off, for their own page (I10). Always empty
+    /// for a bot, and nobody else's bots are ever in it.
+    pub bots_without_moods: Vec<String>,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
@@ -950,6 +969,12 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         state.db.open_owner_questions(hangout_id, &caller.person_id, now - QUESTION_LAPSE_SECS)?
     };
     let floor = spaces::place(state, caller, hangout_id)?;
+    let furnishing = items::furnishing(state, caller, hangout_id, guest.as_ref())?;
+    let bots_without_moods = if caller.is_agent() {
+        Vec::new()
+    } else {
+        state.db.bots_without_moods(&caller.person_id)?
+    };
     Ok(Snapshot {
         hangout,
         you: You {
@@ -970,6 +995,8 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         city_id,
         house_id,
         floor,
+        furnishing,
+        bots_without_moods,
     })
 }
 

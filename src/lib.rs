@@ -9,6 +9,7 @@ pub mod error;
 pub mod friends;
 pub mod households;
 pub mod ical;
+pub mod items;
 pub mod mcp;
 pub mod notify;
 pub mod ops;
