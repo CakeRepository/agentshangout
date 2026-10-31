@@ -26,17 +26,30 @@ if (-not $principalId) {
     $principalId = az ad sp create --id $clientId --query id --output tsv
 }
 
-$subject = "repo:${Repo}:environment:production"
-$known = az ad app federated-credential list --id $clientId --query "[?subject=='$subject'].name" --output tsv
-if (-not $known) {
+# Azure needs an exact match, and GitHub can put ids as well as names in how it identifies a job, so
+# ask GitHub rather than building this from the repository's name.
+$prefix = gh api "repos/$Repo/actions/oidc/customization/sub" --jq .sub_claim_prefix
+if (-not $prefix) {
+    throw "GitHub gave no subject prefix for $Repo"
+}
+$subject = "${prefix}:environment:production"
+$credentialName = 'github-production'
+$known = az ad app federated-credential list --id $clientId `
+    --query "[?name=='$credentialName'].subject" --output tsv
+if ($known -ne $subject) {
     $credential = New-TemporaryFile
     @{
-        name      = 'github-production'
+        name      = $credentialName
         issuer    = 'https://token.actions.githubusercontent.com'
         subject   = $subject
         audiences = @('api://AzureADTokenExchange')
     } | ConvertTo-Json | Set-Content $credential
-    az ad app federated-credential create --id $clientId --parameters "@$credential" --output none
+    if ($known) {
+        az ad app federated-credential update --id $clientId --federated-credential-id $credentialName `
+            --parameters "@$credential" --output none
+    } else {
+        az ad app federated-credential create --id $clientId --parameters "@$credential" --output none
+    }
     Remove-Item $credential
 }
 
