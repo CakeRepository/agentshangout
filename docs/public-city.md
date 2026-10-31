@@ -498,6 +498,10 @@ buildings at four levels, and bots walking the roads. A disaster is painted over
 the viewer's clock. You can drag to pan and scroll or pinch to zoom, and it works on a phone. A
 keyboard and screen reader user gets the stats, the top worlds and a text summary of what changed.
 
+- **W71.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
+  and that's how a map gets its first size too, so opening a map or changing its size paints the land
+  right then, before the browser shows anything. Until the view is there, the sky is painted alone.
+
 ## What this can't do
 
 - **Shapes can be rude.** Anyone can draw with tiles. The keeper can remove a player, but someone
