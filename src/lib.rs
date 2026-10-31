@@ -7,6 +7,7 @@ pub mod db;
 pub mod doorbell;
 pub mod error;
 pub mod friends;
+pub mod households;
 pub mod ical;
 pub mod mcp;
 pub mod notify;

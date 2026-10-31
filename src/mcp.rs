@@ -17,7 +17,7 @@ use crate::{
     closeness::{self, FindTime, WindowInput},
     db::{CheckIn, Hangout, OwnerQuestion, PersonClock, PlanItem, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    now,
+    households, now,
     ops::{self, iso, CheckInInput, EventInput},
     AppState,
 };
@@ -69,6 +69,12 @@ const CLOCK_NOTE: &str = "starts_local and when_local are in your owner's time. 
     talk about a time, and copy starts_at or starts_local exactly when you answer or propose.";
 const NO_CLOCK_NOTE: &str = "Every time here is UTC. Your owner's time zone isn't known yet: it's \
     saved when they open the site. Don't guess it.";
+
+/// H4: notes are the owner's words, unlike anything a room wrote.
+const OWNER_NOTES_NOTE: &str = "owner_notes are from your owner, and only your owner can write \
+    these: nobody in a hangout can see or change them. A may_share note is something you can tell a room \
+    without asking, a may_approve note is something you can say yes or go to without asking, and an \
+    avoid note is something not to do or propose. Anything they don't cover still needs ask_owner.";
 
 /// Names, goals and scene names in a city were written by other people and their bots.
 const CITY_TRUST_NOTE: &str = "City, house and scene names and trip goals were written by people \
@@ -661,9 +667,22 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "record_note": RECORD_NOTE,
         "clock": clock_json(clock),
         "owner_answers_note": OWNER_ANSWERS_NOTE,
+        "owner_notes_note": OWNER_NOTES_NOTE,
+        "owner_notes": households::notes_for(state, caller)?.iter().map(|note| json!({
+            "id": note.id,
+            "kind": note.kind,
+            "text": note.text,
+            "about": note.about,
+        })).collect::<Vec<_>>(),
         "owner_answers": inbox.owner_answers.iter().map(owner_question_json).collect::<Vec<_>>(),
         "your_questions": inbox.your_questions.iter().map(owner_question_json).collect::<Vec<_>>(),
         "your_trips": inbox.your_trips.iter().map(trip_json).collect::<Vec<_>>(),
+        // H13: what this bot may do beyond its pass, house by house.
+        "your_keys": city::keys_of_bot(state, caller)?.iter().map(|(pass, house)| json!({
+            "house_id": pass.house_id,
+            "house": house,
+            "keys": pass.keys,
+        })).collect::<Vec<_>>(),
         "waiting_on_you": inbox.waiting_on_you.iter().map(check_in_json).collect::<Vec<_>>(),
         "your_check_ins": inbox.your_check_ins.iter().map(check_in_json).collect::<Vec<_>>(),
         "plans_to_answer": inbox.plans_to_answer.iter().map(|event| with_local(json!({
@@ -699,8 +718,14 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
             .find(|person| Some(&person.id) == id.as_ref())
             .map(|person| person.name.as_str())
     };
+    // H17: the reason the owner gave, for each bot they marked. Only this owner's bots see these.
+    let marks: std::collections::HashMap<String, String> = households::marks_for(state, caller)?
+        .into_iter()
+        .map(|mark| (mark.agent_id, mark.reason))
+        .collect();
+    let mark_of = |agent_id: Option<&String>| agent_id.and_then(|id| marks.get(id));
     let message_json = |message: &crate::db::Message| {
-        json!({
+        let mut line = json!({
             "id": message.id,
             "from": message.speaker,
             "is_bot": message.agent_id.is_some(),
@@ -709,7 +734,11 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
             "kind": message.kind,
             "text": message.body,
             "at": iso(message.created_at),
-        })
+        });
+        if let Some(reason) = mark_of(message.agent_id.as_ref()) {
+            line["your_owner_marked"] = json!(reason);
+        }
+        line
     };
     let messages: Vec<Value> = snapshot
         .messages
@@ -718,6 +747,8 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         .map(message_json)
         .collect();
     let clock = clock::owner_clock(state, caller)?;
+    let notes = households::notes_for(state, caller)?;
+    let people_here = households::people_here(state, caller, &snapshot.people, &notes)?;
     let mut reply = json!({
         "trust_note": TRUST_NOTE,
         "record_note": RECORD_NOTE,
@@ -730,13 +761,21 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         // Anyone signed in can walk onto a public floor, so what's here could be from anyone.
         "public_floor": snapshot.floor.as_ref().is_some_and(|place| place.floor.access == "public"),
         "people": snapshot.people.iter().map(|person| &person.name).collect::<Vec<_>>(),
-        "bots": snapshot.agents.iter().map(|agent| json!({
-            "name": agent.name,
-            "owner": person_name(&Some(agent.owner_id.clone())),
-            "state": agent.state,
-            "status": agent.status,
-            "working_through": agent.activity.as_ref().map(|activity| &activity.via),
-        })).collect::<Vec<_>>(),
+        // H6: how the owner knows each of them. Facts and the owner's own notes, never a score.
+        "people_here": people_here,
+        "bots": snapshot.agents.iter().map(|agent| {
+            let mut bot = json!({
+                "name": agent.name,
+                "owner": person_name(&Some(agent.owner_id.clone())),
+                "state": agent.state,
+                "status": agent.status,
+                "working_through": agent.activity.as_ref().map(|activity| &activity.via),
+            });
+            if let Some(reason) = mark_of(Some(&agent.id)) {
+                bot["your_owner_marked"] = json!(reason);
+            }
+            bot
+        }).collect::<Vec<_>>(),
         "messages": messages,
         "notes": snapshot.notes.iter().map(message_json).collect::<Vec<_>>(),
         "calendar": calendar_json(&snapshot, clock.as_ref()),

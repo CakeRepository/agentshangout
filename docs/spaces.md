@@ -341,8 +341,8 @@ through the real routes, and requires every table to be on the list below or lef
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs and doorbells |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
-| Every space and floor, walk-ins and who was turned out | The public worlds, players and buildings |
-| House bots, and with them the tokens on whatever ran a home | |
+| Every space and floor, walk-ins and who was turned out | Notes people keep for their own bots, and marks on bots |
+| House bots, and with them the tokens on whatever ran a home | The public worlds, players and buildings |
 | Invite links of every kind, and invites between friends | |
 
 - **House bots go with their houses.** A house bot belongs to its house (R44), and the row that keeps

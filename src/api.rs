@@ -28,7 +28,7 @@ use crate::{
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    friends, now,
+    friends, households, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -85,6 +85,7 @@ pub fn routes() -> Router<AppState> {
         .merge(passkey_routes())
         .merge(friends::routes())
         .merge(spaces::routes())
+        .merge(households::routes())
         .merge(city_routes())
         .merge(world_routes())
 }
@@ -138,6 +139,7 @@ fn city_routes() -> Router<AppState> {
         .route("/api/trips/{id}/extend", post(extend_trip))
         .route("/api/passes/{id}/accept", post(accept_pass))
         .route("/api/passes/{id}", delete(cancel_pass))
+        .route("/api/passes/{id}/keys/{key}", put(give_key).delete(take_key))
         .route("/api/scenes/{id}", delete(delete_scene))
         .route("/api/scenes/{id}/request", post(request_scene))
         .route("/api/scene-requests/{id}/answer", post(answer_scene_request))
@@ -279,6 +281,11 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "cities": cities.iter().map(|c| json!({"id": c.id, "name": c.name})).collect::<Vec<_>>(),
             // The trip under way, or null. A house bot never has one.
             "trip": city::my_trip(&state, &caller)?,
+            // H18: bots its owner marked, which its doorbell doesn't wake it for.
+            "ignored_bots": households::marks_for(&state, &caller)?
+                .into_iter()
+                .map(|mark| mark.agent_id)
+                .collect::<Vec<_>>(),
         })));
     }
     let hangouts = state.db.hangouts_for_person(&caller.person_id)?;
@@ -1528,6 +1535,22 @@ async fn cancel_pass(
 ) -> ApiResult<Json<Value>> {
     city::cancel_pass(&state, &caller, &id)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn give_key(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((id, key)): Path<(String, String)>,
+) -> ApiResult<Json<Pass>> {
+    Ok(Json(city::give_key(&state, &caller, &id, &key)?))
+}
+
+async fn take_key(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((id, key)): Path<(String, String)>,
+) -> ApiResult<Json<Pass>> {
+    Ok(Json(city::take_key(&state, &caller, &id, &key)?))
 }
 
 // Scenes
