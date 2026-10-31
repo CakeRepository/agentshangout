@@ -509,6 +509,18 @@ CREATE TABLE IF NOT EXISTS bot_marks (
 CREATE TABLE IF NOT EXISTS friend_invite_ends (
     invite_id    TEXT PRIMARY KEY REFERENCES friend_invites(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS place_clocks (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    since      INTEGER NOT NULL,
+    PRIMARY KEY (world_id, player_id)
+);
+CREATE TABLE IF NOT EXISTS world_ends (
+    world_id    TEXT PRIMARY KEY REFERENCES worlds(id) ON DELETE CASCADE,
+    clock_step  INTEGER NOT NULL,
+    omen_step   INTEGER,
+    ended_step  INTEGER
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -5728,6 +5740,15 @@ pub struct Snapshot {
     pub active: i64,
 }
 
+/// W64: how far the end of the old city has got. A world has a row from its clock starting, and a
+/// world with none has nothing coming.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorldEnd {
+    pub clock_step: u64,
+    pub omen_step: Option<u64>,
+    pub ended_step: Option<u64>,
+}
+
 /// How `Db::claim_player` came out.
 #[derive(Debug)]
 pub enum Claimed {
@@ -5918,6 +5939,30 @@ fn q_write_changes(
         }
     }
     Ok(())
+}
+
+fn q_world_end(conn: &Connection, world_id: &str) -> rusqlite::Result<Option<WorldEnd>> {
+    conn.query_row(
+        "SELECT clock_step, omen_step, ended_step FROM world_ends WHERE world_id = ?",
+        [world_id],
+        |row| {
+            Ok(WorldEnd {
+                clock_step: row.get::<_, i64>(0)? as u64,
+                omen_step: row.get::<_, Option<i64>>(1)?.map(|step| step as u64),
+                ended_step: row.get::<_, Option<i64>>(2)?.map(|step| step as u64),
+            })
+        },
+    )
+    .optional()
+}
+
+fn q_place_clock(conn: &Connection, world_id: &str, player_id: i64) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT since FROM place_clocks WHERE world_id = ?1 AND player_id = ?2",
+        params![world_id, player_id],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 fn q_world_player(
@@ -6132,6 +6177,64 @@ impl WorldTx<'_> {
         Ok(())
     }
 
+    /// W61: when this player's first house went up.
+    pub fn place_clock(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Option<i64>> {
+        q_place_clock(&self.tx, world_id, player_id)
+    }
+
+    /// W61: starts a player's clock, and leaves one that has already started alone.
+    pub fn start_place_clock(&self, world_id: &str, player_id: i64, now: i64) -> rusqlite::Result<()> {
+        self.tx.execute(
+            "INSERT INTO place_clocks (world_id, player_id, since) VALUES (?1, ?2, ?3)
+             ON CONFLICT (world_id, player_id) DO NOTHING",
+            params![world_id, player_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn world_end(&self, world_id: &str) -> rusqlite::Result<Option<WorldEnd>> {
+        q_world_end(&self.tx, world_id)
+    }
+
+    /// W64: whether a tile of the old city is on this world.
+    pub fn has_old_city(&self, world_id: &str) -> rusqlite::Result<bool> {
+        self.tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM world_tiles
+                            WHERE world_id = ?1 AND kind IN ('homes', 'shops', 'workshops', 'park'))",
+            [world_id],
+            |row| row.get(0),
+        )
+    }
+
+    /// W64: the clock starts, once.
+    pub fn start_end_clock(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
+        self.tx.execute(
+            "INSERT INTO world_ends (world_id, clock_step) VALUES (?1, ?2)
+             ON CONFLICT (world_id) DO NOTHING",
+            params![world_id, step as i64],
+        )?;
+        Ok(())
+    }
+
+    /// W66: the omens start.
+    pub fn start_omens(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
+        self.tx.execute(
+            "UPDATE world_ends SET omen_step = ?2 WHERE world_id = ?1",
+            params![world_id, step as i64],
+        )?;
+        Ok(())
+    }
+
+    /// W68, W69: it's over, and everyone's wait starts again.
+    pub fn finish_end(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
+        self.tx.execute(
+            "UPDATE world_ends SET ended_step = ?2 WHERE world_id = ?1",
+            params![world_id, step as i64],
+        )?;
+        self.tx.execute("DELETE FROM place_clocks WHERE world_id = ?", [world_id])?;
+        Ok(())
+    }
+
     /// `None` if the player has no standing with the world, otherwise whether they are banned from it.
     pub fn member_state(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Option<bool>> {
         self.tx
@@ -6143,17 +6246,6 @@ impl WorldTx<'_> {
             .optional()
     }
 
-    /// Lets a player build in a world, unless they were banned from it. Returns false if they were.
-    pub fn add_member(&self, world_id: &str, player_id: i64) -> rusqlite::Result<bool> {
-        if self.member_state(world_id, player_id)? == Some(true) {
-            return Ok(false);
-        }
-        self.tx.execute(
-            "INSERT OR IGNORE INTO world_members (world_id, player_id, banned) VALUES (?, ?, 0)",
-            params![world_id, player_id],
-        )?;
-        Ok(true)
-    }
 }
 
 impl Db {
@@ -6220,20 +6312,6 @@ impl Db {
         Ok(WorldAdded::Added)
     }
 
-    /// Whether a world could be added for this owner right now: `Added` if so, and otherwise why
-    /// not. It only looks, so it is for turning a caller away before any land is made.
-    pub fn room_for_world(&self, owner_id: &str, max_own: i64) -> rusqlite::Result<WorldAdded> {
-        room_for_own_world(&self.conn(), Some(owner_id), max_own)
-    }
-
-    /// Worlds that someone has moved in since `since`, so they are worth stepping.
-    pub fn worlds_awake(&self, since: i64) -> rusqlite::Result<Vec<String>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare("SELECT id FROM worlds WHERE active_at >= ? ORDER BY id")?;
-        let rows = stmt.query_map([since], |row| row.get(0))?;
-        rows.collect()
-    }
-
     /// The busiest worlds first: most players moving here lately, then the most recent move.
     /// With how many players have moved in each since `since`.
     pub fn busiest_worlds(&self, since: i64, limit: i64) -> rusqlite::Result<Vec<(WorldRow, i64)>> {
@@ -6282,6 +6360,15 @@ impl Db {
 
     pub fn world_tiles(&self, world_id: &str) -> rusqlite::Result<Tiles> {
         q_tiles(&self.conn(), world_id, None)
+    }
+
+    pub fn world_end(&self, world_id: &str) -> rusqlite::Result<Option<WorldEnd>> {
+        q_world_end(&self.conn(), world_id)
+    }
+
+    /// W61: when this player's first house went up.
+    pub fn place_clock(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Option<i64>> {
+        q_place_clock(&self.conn(), world_id, player_id)
     }
 
     /// The tiles inside a box, corners included.
@@ -6472,7 +6559,9 @@ impl Db {
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
-            "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1 AND player_id = ?2",
+            "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
+             UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings
+                       WHERE world_id = ?1 AND player_id = ?2",
         )?;
         let mut rows = stmt.query(params![world_id, player_id])?;
         let mut tiles = Tiles::new();
@@ -7991,11 +8080,9 @@ mod tests {
     }
 
     #[test]
-    fn room_for_a_world_looks_without_adding_one() {
+    fn a_world_is_only_added_where_there_is_room_for_it() {
         let db = Db::open(":memory:").unwrap();
         db.create_person("p1", "Ann", "key", "feed", 0).unwrap();
-        assert_eq!(db.room_for_world("p1", 1).unwrap(), WorldAdded::Added);
-        assert_eq!(db.room_for_world("p1", 1).unwrap(), WorldAdded::Added, "looking added nothing");
         let new = |id, owner| NewWorld {
             id,
             name: "Quiet Harbour",
@@ -8009,11 +8096,10 @@ mod tests {
             now: 1,
         };
         assert_eq!(db.insert_world(&new("w1", Some("p1")), 1).unwrap(), WorldAdded::Added);
-        assert_eq!(db.room_for_world("p1", 1).unwrap(), WorldAdded::OwnerHasOne);
+        assert_eq!(db.insert_world(&new("w2", Some("p1")), 2).unwrap(), WorldAdded::OwnerHasOne);
         db.create_person("p2", "Bo", "key2", "feed2", 0).unwrap();
-        assert_eq!(db.room_for_world("p2", 1).unwrap(), WorldAdded::Full);
         assert_eq!(db.insert_world(&new("w2", Some("p2")), 1).unwrap(), WorldAdded::Full);
-        assert_eq!(db.room_for_world("p2", 2).unwrap(), WorldAdded::Added);
+        assert_eq!(db.insert_world(&new("w2", Some("p2")), 2).unwrap(), WorldAdded::Added);
     }
 
     #[test]

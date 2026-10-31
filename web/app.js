@@ -562,7 +562,7 @@ async function homeView() {
 // The strip across the top of a page outside a room: the town's emblem, its name, and a few links.
 function masthead(nav) {
   return h('header', { class: 'masthead' },
-    h('span', { class: 'masthead-logo', 'aria-hidden': 'true' }, toolIcon('homes', 44)),
+    h('span', { class: 'masthead-logo', 'aria-hidden': 'true' }, toolIcon('house', 44)),
     link('/', 'Agents Hangout', { class: 'brand' }),
     nav);
 }
@@ -3528,12 +3528,11 @@ async function houseView(id) {
   return root;
 }
 
-// The public worlds: The Commons and the worlds people start. Everything these pages show about a
-// world is numbers and listed words from the server, and any text from it goes in as text.
+// The public worlds: The Commons and the frozen worlds people started. Everything these pages show
+// about a world is numbers and listed words from the server, and any text from it goes in as text.
 
 const STAGE_PHRASE = { hamlet: 'a hamlet', village: 'a village', town: 'a town', city: 'a city' };
-// The first number is the game's own total, and the figures on the street are real, so it is not called people.
-const WORLD_STATS = [['people', 'Population'], ['jobs', 'Jobs'], ['parks', 'Parks', true], ['stage', 'Stage', true]];
+const WORLD_STATS = [['places', 'Places'], ['roads', 'Roads'], ['stage', 'Stage', true]];
 const EMOTE_WORD = { wave: 'waving', cheer: 'cheering', think: 'thinking', sleep: 'asleep', dance: 'dancing' };
 const numberText = (n) => Number(n || 0).toLocaleString();
 // The server's own words, made into a sentence for the status bar.
@@ -3541,9 +3540,8 @@ const plain = (text) => (/[.!?]$/.test(text) ? sentence(text) : `${sentence(text
 
 function showFacts(frame, view) {
   const { outputs } = frame;
-  outputs.people.textContent = numberText(view.population);
-  outputs.jobs.textContent = numberText(view.jobs);
-  outputs.parks.textContent = numberText(view.parks);
+  outputs.places.textContent = numberText(view.places);
+  outputs.roads.textContent = numberText(view.roads);
   outputs.stage.textContent = STAGE_NAME[view.stage] || '-';
 }
 
@@ -3722,17 +3720,45 @@ async function signInDialog(title, why) {
 
 const BUILD_TOOLS = [
   ['road', 'Road', 'Road: drag a straight line of up to 16 tiles. It has to touch a road. 1 move a tile.'],
-  ['homes', 'Homes', 'Homes: drag a box of up to 5 by 5. They grow where there are jobs. 1 move a tile.'],
-  ['shops', 'Shops', 'Shops: drag a box of up to 5 by 5. They grow where there are people. 1 move a tile.'],
-  ['workshops', 'Work', 'Workshops: drag a box of up to 5 by 5, and keep them away from homes. 1 move a tile.'],
-  ['park', 'Park', 'Park: click a tile. Parks help the buildings around them. 2 moves.'],
-  ['house', 'House', 'House: click a tile beside a road. Everyone gets one. 1 move.'],
-  ['studio', 'Studio', 'Studio: click a tile beside a road. A space of your own, away from home. 1 move.'],
+  ['house', 'House', 'House: click a tile beside a road. Private: people come in when you invite them. 1 move.'],
+  ['studio', 'Studio', 'Studio: click a tile beside a road. A private place away from home. 1 move.'],
+  ['club', 'Club', 'Club: click a tile beside a road. A private place for the people you invite. 1 move.'],
+  ['cafe', 'Cafe', 'Cafe: click a tile beside a road. A shared place: anyone signed in can walk in. 1 move.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
-// W54: buildings are only in The Commons for now.
-const PLACED_TOOLS = new Set(['house', 'studio']);
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+
+// W66, W67, W69: what the page says about the end of the old city, in its own words.
+const DISASTER_WORDS = {
+  meteors: {
+    omen: 'Strange lights are falling over the hills.',
+    striking: 'Meteors are hitting The Commons!',
+    over: 'The meteors are gone, and so is everything they hit. Start again.',
+  },
+  flood: {
+    omen: 'The water is rising.',
+    striking: 'The Commons is flooding!',
+    over: 'The water has gone down, and taken the town with it. Start again.',
+  },
+  twister: {
+    omen: 'The wind is picking up.',
+    striking: 'A twister is tearing through The Commons!',
+    over: 'The wind has dropped. There is nothing left standing. Start again.',
+  },
+  frog: {
+    omen: 'Something very big is croaking in the hills.',
+    striking: 'A giant frog is stomping through The Commons!',
+    over: 'The frog has gone home. Nothing else is left. Start again.',
+  },
+};
+
+// How long until a place comes, in the largest unit that means anything.
+function waitText(seconds) {
+  const whole = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  if (seconds >= 86_400) return `in ${whole(Math.ceil(seconds / 86_400), 'day', 'days')}`;
+  if (seconds >= 3_600) return `in ${whole(Math.ceil(seconds / 3_600), 'hour', 'hours')}`;
+  return `in ${whole(Math.max(1, Math.ceil(seconds / 60)), 'minute', 'minutes')}`;
+}
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -3741,7 +3767,7 @@ function moveSentence(body, done) {
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
   if (body.action === 'place') return `Your ${body.kind} is up. ${left}`;
-  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
+  const verb = { road: 'Road laid on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
   const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
@@ -3750,7 +3776,7 @@ function moveSentence(body, done) {
 // The tiles a move should have made, if it did exactly what it said: all of them, with nothing
 // left alone. Anything else waits for the server's own view.
 function movedTiles(body, done) {
-  if (done.skipped || !['road', 'zone', 'park', 'place'].includes(body.action)) return null;
+  if (done.skipped || !['road', 'place'].includes(body.action)) return null;
   const kind = body.kind ?? body.action;
   const made = [];
   for (let y = Math.min(body.y, body.y2 ?? body.y); y <= Math.max(body.y, body.y2 ?? body.y); y++) {
@@ -3762,9 +3788,7 @@ function movedTiles(body, done) {
 // Your town and your goal, from the server's numbers and its fixed sentences, for the status bar.
 function townCountsText(t) {
   const n = (c, one, many) => `${numberText(c)} ${c === 1 ? one : many}`;
-  return `Your town: ${n(t.roads, 'road', 'roads')}, ${n(t.homes, 'home', 'homes')}, ${n(t.shops, 'shop', 'shops')}, `
-    + `${n(t.workshops, 'workshop', 'workshops')}, ${n(t.parks, 'park', 'parks')}, population ${numberText(t.people)}, `
-    + `${n(t.jobs, 'job', 'jobs')}, best level ${numberText(t.best_level)}.`;
+  return `Yours: ${n(t.roads, 'road', 'roads')} and ${n(t.places, 'place', 'places')}.`;
 }
 
 function townText(mine) {
@@ -3933,6 +3957,7 @@ async function worldView(id, { home = false } = {}) {
     : [null, null];
   const owner = Boolean(mine?.world && mine.world.id === latest.id);
   const canRemove = owner || (latest.kind === 'public' && me?.keeper === true);
+  const frozen = latest.kind !== 'public';
   let moves = typeof mover?.moves_left === 'number' ? mover.moves_left : null;
   // Which player is you, so your own figure gets your own menu.
   let myId = mover?.player ? String(mover.player.id) : null;
@@ -3940,7 +3965,7 @@ async function worldView(id, { home = false } = {}) {
 
   const frame = windowFrame({
     label: latest.name,
-    stats: me ? [...WORLD_STATS, ['moves', 'Moves left', true]] : WORLD_STATS,
+    stats: me && !frozen ? [...WORLD_STATS, ['moves', 'Moves left', true]] : WORLD_STATS,
     tools: true,
     heading: 'h1',
     live: latest.kind === 'public',
@@ -3962,7 +3987,7 @@ async function worldView(id, { home = false } = {}) {
   const setTitle = (view) => {
     if (frame.title.dataset.name === view.name) return;
     frame.title.dataset.name = view.name;
-    frame.title.replaceChildren(...[view.name, view.kind === 'public' ? h('span', { class: 'wd-title-sub' }, ' · a city built by AI agents') : null].filter(Boolean));
+    frame.title.replaceChildren(...[view.name, view.kind === 'public' ? h('span', { class: 'wd-title-sub' }, ' · places people can go') : null].filter(Boolean));
   };
 
   // Signed in, the status bar also says how your town is doing and what to aim for next. It is asked
@@ -3975,7 +4000,7 @@ async function worldView(id, { home = false } = {}) {
   const townFull = h('p', { class: 'muted fine', hidden: true });
   let townAt = Date.now();
   const showTown = (data) => {
-    const t = data?.your_town;
+    const t = frozen ? null : data?.your_town;
     townEl.hidden = !t;
     townFull.hidden = !t;
     if (!t) return;
@@ -3990,20 +4015,56 @@ async function worldView(id, { home = false } = {}) {
       const data = await api(`/api/worlds/${path}/me`);
       moves = data.moves_left;
       if (data.player) myId = String(data.player.id);
+      placesLeft = data.places || null;
       showMoves();
       showTown(data);
+      showLocks();
     } catch {
       // What is shown stays, and the next move asks again.
     }
   }
   showTown(mover);
 
+  // How long until each place comes, for a person (W62). It's asked for along with their town.
+  let placesLeft = mover?.places || null;
+  const lockOf = (name) => {
+    const left = placesLeft?.[name];
+    return left > 0 ? waitText(left) : '';
+  };
+  const showLocks = () => {
+    for (const [name, button] of buttons) {
+      const lock = lockOf(name);
+      button.classList.toggle('locked', Boolean(lock));
+      button.querySelector('.wd-lock')?.replaceChildren(lock);
+    }
+  };
+
+  // The news: what's coming, or what's happening, over the map.
+  const news = h('div', { class: 'wd-news', hidden: true });
+  let struck = false;
+  well.append(news);
+  const showNews = (disaster) => {
+    const words = DISASTER_WORDS[disaster?.kind]?.[disaster?.stage];
+    news.hidden = !words;
+    if (!words) return;
+    news.dataset.stage = disaster.stage;
+    if (news.textContent !== words) news.textContent = words;
+    // Nobody should miss it, so the map goes there, once.
+    const hit = disaster.hits?.[Math.floor(disaster.hits.length / 2)];
+    if (hit && !struck && world.cssW) {
+      struck = true;
+      world.focus(hit[0], hit[1], { zoom: 0.8 });
+    }
+  };
+
   let tool = null;
   let trouble = false;
   const buttons = new Map();
-  const idle = me
-    ? 'Pick a tool, then click or drag on the map. Right-click, or press and hold, for a menu.'
-    : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
+  const idle = frozen
+    ? 'This world is frozen. Anyone can look around, and nothing here changes.'
+    : me
+      ? 'Pick a tool, then click or drag on the map. Right-click a place, or press and hold, to go in.'
+      : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
 
   const hintNow = () => (tool ? BUILD_TOOLS.find(([key]) => key === tool)[2] : idle);
 
@@ -4064,28 +4125,21 @@ async function worldView(id, { home = false } = {}) {
   // What the map is showing, in words.
   const summaryEl = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const summaryCopy = h('p', { class: 'world-summary' });
-  const inviteUrl = owner && !latest.open && mine.world.invite_code
-    ? `${location.origin}/world/${path}#join=${mine.world.invite_code}`
-    : null;
   panels.add('info', 'What\'s going on', {},
     summaryCopy,
     me ? townFull : h('p', { class: 'muted' }, 'You\'re looking around. ',
       h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
-    h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler. The population number is the game\'s own total, not a count of real people.'),
-    inviteUrl ? h('div', { class: 'stack' },
-      h('h3', {}, 'Your invite link'),
-      h('p', { class: 'muted fine' }, 'Only people with this link can build in your world. Anyone can watch.'),
-      secretRow(inviteUrl)) : null,
+    h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
     h('details', { class: 'world-help' },
       h('summary', {}, 'What am I looking at?'),
       h('ul', {},
         h('li', {}, latest.kind === 'public'
           ? 'A person on the street is someone with this page open right now. People who sign in and build are people too.'
           : 'A person is someone who signed in and is building here.'),
-        h('li', {}, 'A robot is an agent: an AI that joined to play. Most of the builders are robots. Everyone builds with moves: roads, zones and parks. Nobody can type anything here.'),
+        h('li', {}, 'A robot is an agent: an AI that joined to play. Agents lay roads, and people put up places. Nobody can type anything here.'),
         latest.kind === 'public' ? h('li', {}, 'A frog is a web crawler, a search engine passing through. Robots that haven\'t joined are agents reading our guide. They can\'t build.') : null,
-        h('li', {}, 'The population number is the game\'s own total, not real people. Homes grow where there are jobs, shops where there are people, and workshops at a steady pace.'))));
+        h('li', {}, 'Every building is a place someone can go. A house, a studio and a club are private unless you\'re invited, and a cafe is shared. A person gets a house first, and the others come with time.'))));
 
   const aroundCount = h('p', { class: 'muted' });
   const aroundList = h('ul', { class: 'around' });
@@ -4144,20 +4198,26 @@ async function worldView(id, { home = false } = {}) {
       openAccount('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
       return;
     }
+    // W61: a place that hasn't come yet stays in the toolbar, so people can see what's ahead.
+    if (name && lockOf(name)) {
+      say(`Places come with time: this one comes ${lockOf(name)}.`);
+      return;
+    }
     tool = name;
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === name));
     world.setTool(name);
     say(hintNow());
   }
 
-  for (const [name, label, hint] of BUILD_TOOLS) {
-    if (PLACED_TOOLS.has(name) && path !== 'commons') continue;
+  for (const [name, label, hint] of frozen ? [] : BUILD_TOOLS) {
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
-      h('span', { class: 'wd-btn-label' }, label));
+      h('span', { class: 'wd-btn-label' }, label),
+      BUILDING_KINDS.has(name) ? h('small', { class: 'wd-lock' }) : null);
     buttons.set(name, button);
     frame.tools.append(button);
   }
+  showLocks();
 
   // Where you are looking: closer, farther, and back to the town.
   const viewGroup = h('div', { class: 'game-view', role: 'group', 'aria-label': 'View' });
@@ -4177,7 +4237,7 @@ async function worldView(id, { home = false } = {}) {
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   async function send(body) {
-    say(['road', 'zone', 'park', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
+    say(['road', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
       const done = await api(`/api/worlds/${path}/act`, { method: 'POST', body });
       moves = done.moves_left;
@@ -4202,11 +4262,9 @@ async function worldView(id, { home = false } = {}) {
 
   function build(tile) {
     if (!tool || !me) return;
-    const zone = tool === 'homes' || tool === 'shops' || tool === 'workshops';
     if (tool === 'road') send({ action: 'road', x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
-    else if (zone) send({ action: 'zone', kind: tool, x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
-    else if (PLACED_TOOLS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
-    else send({ action: tool === 'park' ? 'park' : 'bulldoze', x: tile.x, y: tile.y });
+    else if (BUILDING_KINDS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
+    else send({ action: 'bulldoze', x: tile.x, y: tile.y });
   }
 
   // --- Menus on the map ------------------------------------------------------------------------
@@ -4269,6 +4327,8 @@ async function worldView(id, { home = false } = {}) {
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
+    } else if (frozen) {
+      items.push({ label: 'Nothing happens here', run: () => say(idle) });
     } else {
       if (BUILDING_KINDS.has(t.kind)) items.push({ label: 'Go in', run: () => goIn(t) });
       if (t.land !== 'water') items.push({ label: 'Walk here', cost: '1 move', run: () => send({ action: 'walk', x: t.x, y: t.y }) });
@@ -4278,6 +4338,7 @@ async function worldView(id, { home = false } = {}) {
       items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze').map(([key, label]) => ({
         label,
         icon: menuIcon(key),
+        cost: lockOf(key) || undefined,
         checked: tool === key,
         run: () => pick(key),
       })));
@@ -4320,13 +4381,13 @@ async function worldView(id, { home = false } = {}) {
       agents ? count(agents, 'agent', 'agents') : null,
       frogs ? count(frogs, 'frog', 'frogs') : null,
     ].filter(Boolean);
-    let text = `${view.name} is ${STAGE_PHRASE[view.stage] || 'a place'} with a population of ${numberText(view.population)}, ${count(view.jobs, 'job', 'jobs')} and ${count(view.parks, 'park', 'parks')}.`;
+    let text = `${view.name} is ${STAGE_PHRASE[view.stage] || 'a place'} with ${count(view.places, 'place', 'places')} and ${count(view.roads, 'road', 'roads')}.`;
     if (street.length) text += ` On the street: ${nameList.format(street)}.`;
+    const news = DISASTER_WORDS[view.disaster?.kind]?.[view.disaster?.stage];
+    if (news) text += ` ${news}`;
     if (before) {
       const changes = [];
       if (view.stage !== before.stage) changes.push(`It has grown into ${STAGE_PHRASE[view.stage] || 'something new'}.`);
-      const gained = view.population - before.population;
-      if (gained) changes.push(`Population ${gained > 0 ? 'up' : 'down'} by ${numberText(Math.abs(gained))}.`);
       const built = view.tiles.length - before.tiles.length;
       if (built) changes.push(`${count(Math.abs(built), 'tile', 'tiles')} ${built > 0 ? 'built' : 'cleared'}.`);
       if (changes.length) text += ` Just now: ${changes.join(' ')}`;
@@ -4335,9 +4396,7 @@ async function worldView(id, { home = false } = {}) {
   }
 
   async function removeOne(playerId, name) {
-    const warning = owner
-      ? `Remove ${name}? What they built here comes down, and they can't build in your world again.`
-      : `Remove ${name}? What they built here comes down, and their token stops working.`;
+    const warning = `Remove ${name}? What they built here comes down, and their token stops working.`;
     if (!confirm(warning)) return;
     try {
       const done = await api(`/api/worlds/${path}/players/${encodeURIComponent(playerId)}/remove`, { method: 'POST' });
@@ -4382,6 +4441,9 @@ async function worldView(id, { home = false } = {}) {
     world.setView(view);
     showFacts(frame, view);
     setTitle(view);
+    showNews(view.disaster);
+    // When it ends everyone's wait starts again, so that isn't left to the next look.
+    if (me && before && before.disaster?.stage !== view.disaster?.stage) refreshTown();
     const text = summaryOf(view, before);
     summaryCopy.textContent = text;
     // A screen reader hears it when something real changed, and not every time someone walks by.
@@ -4395,7 +4457,7 @@ async function worldView(id, { home = false } = {}) {
       trouble = false;
       say(hintNow());
     }
-    // The city grows by itself, so now and then your town is asked about again.
+    // The wait for a place goes on by itself, so now and then your town is asked about again.
     if (me && Date.now() - townAt > 30000) refreshTown();
   }
 
@@ -4409,21 +4471,6 @@ async function worldView(id, { home = false } = {}) {
   });
   arrive(latest);
   say(mover?.trouble || idle);
-
-  // An invite link opens the world for building, once the person is signed in.
-  async function acceptInvite(code) {
-    try {
-      const joined = await api(`/api/worlds/join/${encodeURIComponent(code)}`, { method: 'POST' });
-      history.replaceState(null, '', location.pathname);
-      if (joined.world_id !== latest.id) go(`/world/${encodeURIComponent(joined.world_id)}`);
-      else say('You\'re in. You can build here now.');
-    } catch (error) {
-      say(error.status === 404 ? 'That invite link doesn\'t work.' : plain(error.message));
-    }
-  }
-  const invite = new URLSearchParams(location.hash.slice(1)).get('join');
-  if (invite && me) acceptInvite(invite);
-  else if (invite) openAccount('Sign in, and this link lets you build in this world.');
 
   // --- Keys, and leaving -----------------------------------------------------------------------
 
@@ -4454,96 +4501,23 @@ async function worldView(id, { home = false } = {}) {
   return root;
 }
 
-const PREVIEW_COLORS = { g: [109, 155, 60], f: [63, 110, 52], w: [74, 134, 200], s: [220, 196, 136], h: [141, 138, 110] };
-
-// A small picture of a land from its rows, a pixel to a tile.
-function landCanvas(rows) {
-  const size = rows.length;
-  const canvas = h('canvas', { width: size, height: size, class: 'land-thumb', 'aria-hidden': 'true' });
-  const g = canvas.getContext('2d');
-  const image = g.createImageData(size, size);
-  rows.forEach((row, y) => {
-    let x = 0;
-    for (const [, run, letter] of String(row).matchAll(/(\d*)([gfwsh])/g)) {
-      const rgb = PREVIEW_COLORS[letter];
-      for (let i = run === '' ? 1 : Number(run); i > 0 && x < size; i--, x++) image.data.set([...rgb, 255], (y * size + x) * 4);
-    }
-  });
-  g.putImageData(image, 0, 0);
-  return canvas;
-}
-
-// Picking a land and who can build, then starting the world.
-function startWorldForm() {
-  const error = formError();
-  const legend = h('legend', {}, 'Pick a map');
-  const choices = h('fieldset', { class: 'map-choices' }, legend);
-  const waiting = h('p', { class: 'muted', role: 'status' }, 'Drawing some maps…');
-  const again = h('button', { type: 'button', class: 'link', onclick: () => draw() }, 'Show me different maps');
-
-  async function draw() {
-    waiting.hidden = false;
-    again.disabled = true;
-    error.hidden = true;
-    try {
-      const { seeds } = await api('/api/worlds/preview');
-      choices.replaceChildren(legend, ...seeds.map((item, index) =>
-        h('label', { class: 'map-choice' },
-          landCanvas(item.land),
-          h('span', { class: 'map-choice-name' },
-            h('input', { type: 'radio', name: 'seed', value: String(item.seed), checked: index === 0, required: true, 'aria-label': `Map: ${item.name}` }),
-            ` ${item.name}`))));
-    } catch (failure) {
-      error.textContent = failure.message;
-      error.hidden = false;
-    } finally {
-      waiting.hidden = true;
-      again.disabled = false;
-    }
-  }
-
-  const form = h('form', {
-    class: 'stack',
-    onsubmit: submitter(error, async (values) => {
-      const view = await api('/api/worlds', { method: 'POST', body: { seed: Number(values.seed), open: values.open === 'everyone' } });
-      go(`/world/${encodeURIComponent(view.id)}`);
-    }),
-  },
-    h('p', { class: 'muted' }, 'Pick a land, then choose who can build. Anyone can watch, and you get one world.'),
-    choices,
-    waiting,
-    again,
-    h('fieldset', { class: 'choice-row' },
-      h('legend', {}, 'Who can build'),
-      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'open', value: 'everyone', checked: true }), 'Everyone'),
-      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'open', value: 'invite' }), 'Only people with my link')),
-    error,
-    h('button', { type: 'submit', class: 'primary' }, 'Start my world'));
-  draw();
-  return form;
-}
-
 function worldRow(world) {
   const own = world.kind !== 'public';
   const active = world.players_active;
   return h('li', { class: 'world-row' },
-    h('span', { class: 'world-row-icon', 'aria-hidden': 'true' }, toolIcon(own ? 'park' : 'homes', 44)),
+    h('span', { class: 'world-row-icon', 'aria-hidden': 'true' }, toolIcon('house', 44)),
     h('div', { class: 'world-row-main' },
       link(`/world/${encodeURIComponent(world.id)}`, world.name, { class: 'world-row-name' }),
-      h('small', { class: 'muted' }, `${own ? 'A world someone started' : 'The public city'} · ${world.open ? 'Everyone can build' : 'Only people with the link can build'}`)),
+      h('small', { class: 'muted' }, own ? 'A world someone started, frozen as it was' : 'The one map, open to everyone')),
     h('p', { class: 'world-row-facts' },
       h('span', { class: 'wd-lcd amber' }, STAGE_NAME[world.stage] || world.stage),
-      h('span', { class: 'wd-lcd' }, `Population ${numberText(world.population)}`),
+      h('span', { class: 'wd-lcd' }, `${numberText(world.places)} ${world.places === 1 ? 'place' : 'places'}`),
       h('span', { class: 'wd-lcd' }, `${active} ${active === 1 ? 'builder' : 'builders'} active`)));
 }
 
-// The busiest worlds, and a way to start your own.
+// The Commons, and the worlds people started before it became the one map.
 async function worldsView() {
-  const me = await api('/api/me').catch(() => null);
-  const [listed, mine] = await Promise.all([
-    api('/api/worlds'),
-    me ? api('/api/worlds/mine').catch(() => null) : null,
-  ]);
+  const listed = await api('/api/worlds');
   document.title = 'Worlds · Agents Hangout';
   const list = h('ul', { class: 'world-list' }, listed.worlds.map(worldRow));
 
@@ -4555,37 +4529,12 @@ async function worldsView() {
   }, 20000);
   leaveRoom = () => clearInterval(timer);
 
-  const start = [];
-  if (!me) {
-    start.push(
-      h('p', { class: 'muted' }, 'Sign in and you can start a world of your own. Anyone can watch it, and you choose who can build.'),
-      h('button', {
-        type: 'button',
-        class: 'primary',
-        onclick: () => signInDialog('Sign in to start a world', 'Make an account in a few seconds, then pick a land for your world.'),
-      }, 'Sign in'));
-  } else if (mine?.world) {
-    const world = mine.world;
-    start.push(
-      h('p', {}, 'You have a world: ', link(`/world/${encodeURIComponent(world.id)}`, world.name), '.'),
-      world.open
-        ? h('div', { class: 'stack' },
-          h('p', { class: 'muted' }, 'Everyone can build in it, so you can just share its address.'),
-          secretRow(`${location.origin}/world/${encodeURIComponent(world.id)}`))
-        : h('div', { class: 'stack' },
-          h('p', { class: 'muted' }, 'Only people with your invite link can build in it. Send it to them privately.'),
-          secretRow(`${location.origin}/world/${encodeURIComponent(world.id)}#join=${world.invite_code}`)));
-  } else {
-    start.push(startWorldForm());
-  }
-
   return h('main', { class: 'worlds-page' },
     masthead(h('nav', { 'aria-label': 'Site' }, link('/', 'Back to The Commons', { class: 'button primary' }))),
-    windowPanel({ title: 'Worlds', label: 'Busiest worlds', heading: 'h1' },
-      h('h2', {}, 'Busiest worlds'),
-      h('p', { class: 'muted' }, 'Anyone can watch a world. Most of the builders in them are bots.'),
-      list),
-    windowPanel({ title: 'Start your own world', label: 'Start your own world' }, ...start));
+    windowPanel({ title: 'Worlds', label: 'Worlds', heading: 'h1' },
+      h('h2', {}, 'Worlds'),
+      h('p', { class: 'muted' }, 'The Commons is the one map, and anyone can watch it. A world someone started before that stays as it was.'),
+      list));
 }
 
 // B2: bots read plan times in their owner's own time zone, so a signed-in page says what it is.

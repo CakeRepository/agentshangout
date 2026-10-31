@@ -1,7 +1,8 @@
-//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W59) and what
+//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W70) and what
 //! they touch. Round one (`worlds_attack.rs`) found real bugs and they were fixed; this round looks
 //! for what is still wrong, and above all for what the fixes brought in: side streets (W15), the
-//! road-cut check (W17), the founding town (W28, W46), tips (W47), the address limits
+//! road-cut check around places (W17), what a restart leaves alone (W28, W46), places and who may
+//! put them up (W54 to W61), the worlds that froze (W25 to W27), tips (W47), the address limits
 //! (W12), and a database that was made by the code that is live today.
 //!
 //! A comment such as `// W17` above a test names the rule it attacks. A test that fails is a bug in
@@ -21,7 +22,7 @@ use std::{
 
 use agenthangout::{
     app, auth,
-    db::{Db, PlayerRow},
+    db::{Db, PlayerKind, PlayerRow},
     now,
     world::{self, Change, Kind, Span, Tile, Tiles},
     worlds::{self, Move},
@@ -276,19 +277,25 @@ impl Server {
         self.get(&format!("/api/worlds/{world}")).send().await.ok()
     }
 
-    async fn own_world(&self, owner: &Who, open: bool) -> (String, String) {
-        self.own_world_seeded(owner, open, None).await
-    }
-
-    async fn own_world_seeded(&self, owner: &Who, open: bool, seed: Option<u64>) -> (String, String) {
-        let body = match seed {
-            Some(seed) => json!({ "open": open, "seed": seed }),
-            None => json!({ "open": open }),
+    /// A world somebody started before worlds of your own were retired. It exists and it is frozen
+    /// (W25, W27): nothing can be done in it, and it never steps.
+    fn frozen_world(&self, id: &str, owner: Option<&str>, open: bool, seed: u64, at: i64) {
+        let land = world::terrain(seed, world::OWN_SIZE);
+        let highway = world::highway(seed, &land);
+        let code = format!("code-{id}");
+        let new = agenthangout::db::NewWorld {
+            id,
+            name: "Quiet Bay",
+            kind: "own",
+            seed,
+            size: world::OWN_SIZE,
+            owner_id: owner,
+            open,
+            invite_code: Some(&code),
+            highway: &highway,
+            now: at,
         };
-        let reply = self.post("/api/worlds", body).token(&owner.key).send().await;
-        let id = reply.ok()["id"].as_str().unwrap().to_string();
-        let mine = self.get("/api/worlds/mine").token(&owner.key).send().await.ok();
-        (id, mine["world"]["invite_code"].as_str().unwrap().to_string())
+        self.state.db.insert_world(&new, worlds::MAX_OWN_WORLDS).unwrap();
     }
 
     async fn rpc(&self, method: &str, params: Value) -> Reply {
@@ -431,10 +438,6 @@ fn road_move(first: (i64, i64), last: (i64, i64)) -> Value {
     json!({ "action": "road", "x": first.0, "y": first.1, "x2": last.0, "y2": last.1 })
 }
 
-fn zone_move(kind: &str, block: (i64, i64, i64, i64)) -> Value {
-    json!({ "action": "zone", "kind": kind, "x": block.0, "y": block.1, "x2": block.2, "y2": block.3 })
-}
-
 fn headers_with(agent: &str, address: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert("user-agent", HeaderValue::from_str(agent).unwrap());
@@ -462,6 +465,12 @@ fn put_tiles(server: &Server, world: &str, changes: &[Change]) {
 
 fn tile(kind: Kind, level: u8, player: Option<u64>) -> Tile {
     Tile { kind, level, player }
+}
+
+/// A player of the server's own, who can be the builder of a place: a place's row names its
+/// builder, so unlike a tile of the old city it needs one that exists.
+fn make_player(db: &Db) -> u64 {
+    db.create_guest(&auth::hash_secret(&auth::new_id()), &auth::hash_secret(&auth::new_id()), now()).unwrap().id as u64
 }
 
 /// Makes `Server::state`'s own player for a person, the one `act` uses when a person builds.
@@ -494,18 +503,7 @@ fn land_of(server: &Server, world: &str) -> world::Land {
     world::terrain(row.seed, row.size)
 }
 
-/// Fills in homes until The Commons is a town.
-fn make_a_town(server: &Server) {
-    worlds::ensure_commons(&server.state).unwrap();
-    let homes: Vec<Change> = (47..=49u16)
-        .flat_map(|x| (26..=45u16).map(move |y| (x, y)))
-        .map(|pos| Change::Set(pos, tile(Kind::Homes, 3, None)))
-        .collect();
-    put_tiles(server, COMMONS, &homes);
-    assert_eq!(world::stats(&server.tiles(COMMONS)).stage, "town");
-}
-
-/// Grown buildings that a road joined to the highway is within reach of, worked out the long way.
+/// Places that a road joined to the highway is within reach of, worked out the long way.
 fn served_the_long_way(tiles: &Tiles) -> HashSet<(u16, u16)> {
     let mut joined: HashSet<(u16, u16)> =
         tiles.iter().filter(|(_, t)| t.kind == Kind::Road && t.player.is_none()).map(|(pos, _)| *pos).collect();
@@ -519,7 +517,7 @@ fn served_the_long_way(tiles: &Tiles) -> HashSet<(u16, u16)> {
     }
     tiles
         .iter()
-        .filter(|(_, t)| t.kind.is_zone() && t.level > 0)
+        .filter(|(_, t)| t.kind.is_building())
         .filter(|(pos, _)| joined.iter().any(|j| j.0.abs_diff(pos.0) <= 3 && j.1.abs_diff(pos.1) <= 3))
         .map(|(pos, _)| *pos)
         .collect()
@@ -550,7 +548,7 @@ async fn start_early_in_a_minute() {
 // W30, W13: a refused move costs nothing. Does it cost the server nothing too?
 // ----------------------------------------------------------------------------------------------
 
-/// A road that a guest owns beside the highway, and a grown home that only that road serves: a
+/// A road that a guest owns beside the highway, and a place that only that road serves: a
 /// bulldoze of the road is refused (W17), and working out why takes the whole network.
 fn make_a_dependant_road(server: &Server, builder: i64) -> (i64, i64) {
     let land = land_of(server, COMMONS);
@@ -574,13 +572,13 @@ fn make_a_dependant_road(server: &Server, builder: i64) -> (i64, i64) {
                 COMMONS,
                 &[
                     Change::Set((road.0 as u16, road.1 as u16), tile(Kind::Road, 0, Some(builder as u64))),
-                    Change::Set((home.0 as u16, home.1 as u16), tile(Kind::Homes, 2, Some(999_001))),
+                    Change::Set((home.0 as u16, home.1 as u16), tile(Kind::House, 0, Some(make_player(&server.state.db)))),
                 ],
             );
             return road;
         }
     }
-    panic!("nowhere on the highway for a road with a home that depends on it");
+    panic!("nowhere on the highway for a road with a place that depends on it");
 }
 
 fn crowd_the_commons(server: &Server, how_many: usize) {
@@ -629,7 +627,7 @@ async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_
     };
     let off_map = time("a bulldoze off the map (the cheapest refusal)", mv("bulldoze", Some(9_999), Some(9_999)));
     let highway_tile = time("a bulldoze of a highway tile, which nobody can take down", mv("bulldoze", Some(i64::from(hx)), Some(i64::from(hy))));
-    let needed = time("a bulldoze of my own road that a grown home depends on", mv("bulldoze", Some(road.0), Some(road.1)));
+    let needed = time("a bulldoze of my own road that a place depends on", mv("bulldoze", Some(road.0), Some(road.1)));
     println!("COST REPORT: the dependent road costs {:.0} times a cheap refusal", needed / off_map.max(0.0001));
     assert!(highway_tile > 0.0 && needed > 0.0);
 
@@ -656,13 +654,15 @@ async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_
 }
 
 // ----------------------------------------------------------------------------------------------
-// W15, W17: a move loads only the part of a world it needs. Does it decide as the whole map would?
+// W15, W17, W55: a move loads only the part of a world it needs. Does it decide as the whole map would?
 // ----------------------------------------------------------------------------------------------
 
 #[derive(Default, Debug)]
 struct FuzzStats {
     done: HashMap<String, u32>,
     refused: HashMap<String, u32>,
+    /// Places held back by who the player is, what they have or how long they have waited (W54 to W61).
+    held: u32,
     kept: u32,
     needed: u32,
     road_cuts: u32,
@@ -684,16 +684,15 @@ fn the_whole_map_says(
     let gone = |who: u64| server.state.db.player(who as i64).unwrap().is_none_or(|p| at - p.seen_at >= world::GONE_SECS);
     match m.action.as_str() {
         "road" => world::plan_road(land, tiles, builder, span),
-        "zone" => world::plan_zone(land, tiles, builder, Kind::parse(m.kind.as_deref().unwrap()).unwrap(), span),
-        "park" => world::plan_park(land, tiles, builder, x, y),
+        "place" => world::plan_place(land, tiles, builder, Kind::parse(m.kind.as_deref().unwrap()).unwrap(), x, y),
         "bulldoze" => world::plan_bulldoze(land, tiles, builder, x, y, &gone),
         other => panic!("{other}"),
     }
 }
 
-/// A random move, most of them near a road, some at the edges of the map, and a good share of the
-/// bulldozes aimed at roads someone built.
-fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], built_roads: &[(i64, i64)]) -> Move {
+/// A random move, most of them near a road, some at the edges of the map, a good share of the
+/// bulldozes aimed at what someone built, and some places on the tiles kept for side streets.
+fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, i64)], kept: &[(i64, i64)]) -> Move {
     let (mut x, mut y) = match rng.below(100) {
         0..=69 if !roads.is_empty() => {
             let (sx, sy) = roads[rng.below(roads.len() as u64) as usize];
@@ -712,12 +711,21 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], built_roads: &[(i
     x = x.clamp(-2, size + 1);
     y = y.clamp(-2, size + 1);
     match rng.below(100) {
-        0..=34 => {
-            let kind = rng.pick(&["homes", "shops", "workshops"]);
-            let (dx, dy) = (rng.below(7) as i64 - 1, rng.below(7) as i64 - 1);
-            Move { action: "zone".into(), x: Some(x), y: Some(y), x2: Some(x + dx), y2: Some(y + dy), kind: Some(kind.into()), emote: None }
+        0..=29 => {
+            let kind = rng.pick(&["house", "house", "studio", "club", "cafe"]);
+            let (px, py) = if !kept.is_empty() && rng.below(100) < 25 {
+                kept[rng.below(kept.len() as u64) as usize]
+            } else if !roads.is_empty() && rng.below(100) < 70 {
+                // Right beside a road, which is where a place can stand.
+                let (rx, ry) = roads[rng.below(roads.len() as u64) as usize];
+                let (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][rng.below(4) as usize];
+                (rx + dx, ry + dy)
+            } else {
+                (x, y)
+            };
+            Move { action: "place".into(), x: Some(px), y: Some(py), x2: None, y2: None, kind: Some(kind.into()), emote: None }
         }
-        35..=59 if !roads.is_empty() && rng.below(100) < 60 => {
+        30..=54 if !roads.is_empty() && rng.below(100) < 60 => {
             // A road that starts beside an existing one and runs away from it.
             let (rx, ry) = roads[rng.below(roads.len() as u64) as usize];
             let (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][rng.below(4) as usize];
@@ -725,7 +733,7 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], built_roads: &[(i
             let (sx, sy) = (rx + dx, ry + dy);
             Move { action: "road".into(), x: Some(sx), y: Some(sy), x2: Some(sx + dx * (len - 1)), y2: Some(sy + dy * (len - 1)), kind: None, emote: None }
         }
-        35..=59 => {
+        30..=64 => {
             let long = rng.below(19) as i64 - 9;
             let (x2, y2) = match rng.below(40) {
                 0 => (x + long, y + rng.below(5) as i64 - 2),
@@ -734,10 +742,9 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], built_roads: &[(i
             };
             Move { action: "road".into(), x: Some(x), y: Some(y), x2: Some(x2), y2: Some(y2), kind: None, emote: None }
         }
-        60..=69 => mv("park", Some(x), Some(y)),
         _ => {
-            if !built_roads.is_empty() && rng.below(100) < 70 {
-                let (bx, by) = built_roads[rng.below(built_roads.len() as u64) as usize];
+            if !targets.is_empty() && rng.below(100) < 70 {
+                let (bx, by) = targets[rng.below(targets.len() as u64) as usize];
                 mv("bulldoze", Some(bx), Some(by))
             } else {
                 mv("bulldoze", Some(x), Some(y))
@@ -746,8 +753,8 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], built_roads: &[(i
     }
 }
 
-/// Plays `rounds` random moves by `players` in a world, with time passing and buildings growing,
-/// and checks every one against the whole map.
+/// Plays `rounds` random moves by `players` in a world, with time passing, and checks every one
+/// against the whole map.
 fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usize, seed: u64) -> FuzzStats {
     let row = server.state.db.world(world).unwrap().unwrap();
     let land = world::terrain(row.seed, row.size);
@@ -758,22 +765,53 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
     let mut before = server.tiles(world);
     for round in 0..rounds {
         at += 2;
+        // A person's places come with days (W61), so now and then a week goes by.
+        if round % 400 == 399 {
+            at += 8 * 86_400;
+        }
         let roads: Vec<(i64, i64)> =
             before.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1))).collect();
-        let built_roads: Vec<(i64, i64)> = before
+        let targets: Vec<(i64, i64)> = before
             .iter()
-            .filter(|(_, t)| t.kind == Kind::Road && t.player.is_some())
+            .filter(|(_, t)| t.player.is_some() && (t.kind == Kind::Road || t.kind.is_building()))
             .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
             .collect();
+        // Open tiles kept for a side street, near a few of the roads, so a place is often tried on one.
+        let mut kept: Vec<(i64, i64)> = Vec::new();
+        for _ in 0..20.min(roads.len()) {
+            let (rx, ry) = roads[rng.below(roads.len() as u64) as usize];
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                for i in 1..=3 {
+                    let (px, py) = (rx + dx * i, ry + dy * i);
+                    if (0..size).contains(&px)
+                        && (0..size).contains(&py)
+                        && !before.contains_key(&(px as u16, py as u16))
+                        && world::is_reserved(&before, (px as u16, py as u16))
+                    {
+                        kept.push((px, py));
+                    }
+                }
+            }
+        }
         let who = &players[rng.below(players.len() as u64) as usize];
-        let m = random_move(&mut rng, size, &roads, &built_roads);
+        let person = who.kind() == PlayerKind::Person;
+        let m = random_move(&mut rng, size, &roads, &targets, &kept);
         refill(server, who, at);
         let expected = the_whole_map_says(server, &land, &before, who.id as u64, &m, at);
         let got = worlds::act(&server.state, who, world, &m, at);
         let after = server.tiles(world);
         let text = format!("round {round}: {m:?} by player {} in {world}", who.id);
+        let is_place = m.action == "place";
         match (expected, got) {
+            // W54 to W61: who the player is, what they have and how long they have waited are not the
+            // map's to decide, and a guest is always told no. Whatever is said, nothing changes.
+            (_, Err(error)) if is_place && matches!(error.status, StatusCode::FORBIDDEN | StatusCode::CONFLICT) => {
+                assert!(person || error.status == StatusCode::FORBIDDEN, "{text}: a guest was told {}", error.status);
+                assert_eq!(after, before, "{text}: refused and changed tiles");
+                stats.held += 1;
+            }
             (Ok(plan), Ok(acted)) => {
+                assert!(person || !is_place, "{text}: somebody who is not a person put up a place");
                 assert_eq!((acted.cost, acted.changed as usize, acted.skipped), (plan.cost, plan.changes.len(), plan.skipped), "{text}");
                 let mut should = before.clone();
                 world::apply(&mut should, &plan.changes);
@@ -784,7 +822,7 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
                     let was = before.get(&(x, y)).copied();
                     if was.is_some_and(|tile| tile.kind == Kind::Road) {
                         stats.road_cuts += 1;
-                        // W17: nothing grown that had a road lost it.
+                        // W17: no place that had a road lost it.
                         let (served, still) = (served_the_long_way(&before), served_the_long_way(&after));
                         assert!(
                             served.is_subset(&still),
@@ -794,6 +832,8 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
                     }
                     if was.is_some_and(|tile| tile.player.is_some() && tile.player != Some(who.id as u64)) {
                         stats.abandoned_taken += 1;
+                        // W57: somebody else's place is never anyone's to take down.
+                        assert!(!was.is_some_and(|tile| tile.kind.is_building()), "{text}: a place was taken by someone else");
                     }
                 }
             }
@@ -812,27 +852,17 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
         }
         // W46: nothing with no builder is ever taken down or changed into something else by a move.
         for (pos, was) in before.iter().filter(|(_, t)| t.player.is_none()) {
-            let there = after.get(pos).unwrap_or_else(|| panic!("{text}: the street or building at {pos:?} with no builder is gone"));
+            let there = after.get(pos).unwrap_or_else(|| panic!("{text}: the street at {pos:?} with no builder is gone"));
             assert_eq!((there.kind, there.player), (was.kind, None), "{text}: {pos:?}");
         }
         before = after;
-        // Time passes, buildings grow, and now and then the tiles are made to look lived in.
+        // Time passes. A step changes no tile (W20, W46).
         if round % 6 == 5 {
             worlds::step_world(&server.state, world, at).unwrap();
-            before = server.tiles(world);
-        }
-        if round % 20 == 19 {
-            let mut boosts: Vec<Change> = Vec::new();
-            for (pos, t) in before.iter().filter(|(_, t)| t.kind.is_zone() && t.player.is_some()) {
-                if rng.below(3) == 0 {
-                    boosts.push(Change::Set(*pos, Tile { level: 1 + rng.below(3) as u8, ..*t }));
-                }
-            }
-            put_tiles(server, world, &boosts);
-            before = server.tiles(world);
+            assert_eq!(server.tiles(world), before, "round {round}: a step changed a tile");
         }
         if round % 45 == 44 {
-            // One of the others has not been seen for eight days: what they left at level 0 is anyone's.
+            // One of the others has not been seen for eight days: what they left that isn't a place is anyone's.
             let idle = &players[rng.below(players.len() as u64) as usize];
             last_seen(server, idle, at, 8 * 86_400);
         }
@@ -855,43 +885,77 @@ async fn some_players(server: &Server, people: usize, guests: usize) -> Vec<Play
     out
 }
 
-// W15, W17, W46
+// W15, W17, W46, W55
 #[tokio::test]
 async fn in_the_commons_every_move_is_decided_as_the_whole_map_would_decide_it() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
-    let players = some_players(&server, 3, 2).await;
-    let stats = fuzz_a_world(&server, COMMONS, &players, 1_500, 0x5EED_0001);
-    for action in ["zone", "road", "park", "bulldoze"] {
-        let least = if action == "road" { 15 } else { 30 };
+    let players = some_players(&server, 4, 2).await;
+    let stats = fuzz_a_world(&server, COMMONS, &players, 3_000, 0x5EED_0001);
+    for action in ["place", "road", "bulldoze"] {
+        let least = if action == "place" { 5 } else { 30 };
         assert!(stats.done.get(action).copied().unwrap_or(0) >= least, "too few {action} moves worked to say anything: {stats:?}");
     }
-    assert!(stats.kept >= 10, "side streets were hardly tried: {stats:?}");
+    assert!(stats.held >= 10, "who may place was hardly tried: {stats:?}");
+    assert!(stats.kept >= 3, "side streets were hardly tried: {stats:?}");
+    assert!(stats.road_cuts >= 5 && stats.needed >= 1, "the road-cut check was hardly tried: {stats:?}");
 }
 
-// W15, W17, W46
+// W25, W27
 #[tokio::test]
-async fn in_a_world_of_your_own_every_move_is_decided_as_the_whole_map_would_decide_it() {
+async fn nothing_can_be_done_in_a_frozen_world_whatever_is_asked_and_nothing_in_it_changes() {
     let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
     let owner = server.person("Owner").await;
-    let (world, _) = server.own_world_seeded(&owner, true, Some(4242)).await;
+    let id = "frozen0000000001";
+    server.frozen_world(id, Some(&owner.id), true, 4242, now());
+    // What it held when it froze, the old kinds among it.
+    let land = land_of_world(&server, id);
+    let (kinds, builder) = ([Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cafe, Kind::House], make_player(&server.state.db));
+    let old: Vec<Change> = (0..40u16)
+        .map(|n| (20 + n % 8, 10 + n / 8))
+        .filter(|&pos| land.at(pos).is_some_and(|ground| ground.is_open()))
+        .enumerate()
+        .map(|(n, pos)| {
+            // The house is the one a person can have.
+            let kind = if n == 3 { Kind::House } else { kinds[n % (kinds.len() - 1)] };
+            Change::Set(pos, tile(kind, u8::from(n % 2 == 0), Some(builder)))
+        })
+        .collect();
+    put_tiles(&server, id, &old);
     let mut players = vec![person_player(&server, &owner)];
     players.extend(some_players(&server, 2, 2).await);
-    let stats = fuzz_a_world(&server, &world, &players, 4_000, 0x5EED_0002);
-    for action in ["zone", "road", "park", "bulldoze"] {
-        let least = if action == "road" { 15 } else { 30 };
-        assert!(stats.done.get(action).copied().unwrap_or(0) >= least, "too few {action} moves worked to say anything: {stats:?}");
+    let (tiles, active) = (server.tiles(id), server.state.db.world(id).unwrap().unwrap().active_at);
+    let size = world::OWN_SIZE as i64;
+    let roads: Vec<(i64, i64)> =
+        tiles.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1))).collect();
+    let targets: Vec<(i64, i64)> = tiles.keys().map(|pos| (i64::from(pos.0), i64::from(pos.1))).collect();
+    let mut rng = Rng(0x5EED_0003);
+    let mut at = now();
+    for round in 0..400 {
+        // Each try is a minute later than the last, so the limit on refused moves never gets in the way.
+        at += 61;
+        let who = &players[rng.below(players.len() as u64) as usize];
+        let m = match round % 5 {
+            0 => mv("walk", Some(rng.below(size as u64) as i64), Some(rng.below(size as u64) as i64)),
+            1 => Move { emote: Some("wave".into()), ..mv("emote", None, None) },
+            _ => random_move(&mut rng, size, &roads, &targets, &[]),
+        };
+        refill(&server, who, at);
+        let error = worlds::act(&server.state, who, id, &m, at).expect_err(&format!("round {round}: {m:?} worked in a frozen world"));
+        assert_eq!(error.status, StatusCode::FORBIDDEN, "round {round}: {m:?}: {}", error.message);
+        assert!(server.state.db.world_player(id, who.id).unwrap().is_none(), "round {round}: {m:?} put a player in a frozen world");
     }
-    assert!(stats.kept >= 10, "side streets were hardly tried: {stats:?}");
-    assert!(stats.road_cuts >= 10 && stats.needed >= 3, "the road-cut check was hardly tried: {stats:?}");
+    assert_eq!(server.tiles(id), tiles, "a refused move changed a frozen world");
+    assert_eq!(server.state.db.world(id).unwrap().unwrap().active_at, active, "a refused move woke a frozen world");
 }
 
 // ----------------------------------------------------------------------------------------------
-// W28, W46, W24: the founding town, restarts, and what keeps a world awake
+// W28, W46, W24: the highway is all the server builds, restarts, and what steps
 // ----------------------------------------------------------------------------------------------
 
-/// A Commons as it was before the founding town existed: its row and the highway, and nothing else.
-fn a_commons_without_a_town(db: &Db) -> (world::Land, Vec<(u16, u16)>) {
+/// A Commons as a new server makes it: its row and the highway, and nothing else.
+fn a_bare_commons(db: &Db) -> (world::Land, Vec<(u16, u16)>) {
     let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
     let highway = world::highway(world::COMMONS_SEED, &land);
     db.insert_world(
@@ -913,52 +977,61 @@ fn a_commons_without_a_town(db: &Db) -> (world::Land, Vec<(u16, u16)>) {
     (land, highway)
 }
 
-// W28
-#[tokio::test]
-async fn starting_the_server_adds_the_town_to_a_commons_that_has_players_and_touches_nothing_they_built() {
-    let path = temp_db("town");
-    let (land, highway) = a_commons_without_a_town(&Db::open(&path).unwrap());
-    let town = world::founding_town(world::COMMONS_SEED, &land);
-    let highway_tiles: HashSet<(u16, u16)> = highway.iter().copied().collect();
-    // Players built all over the places the town wants: every kind of tile, grown and not.
-    let mut theirs = Vec::new();
-    for (n, (pos, _)) in town.iter().filter(|(pos, _)| !highway_tiles.contains(*pos)).enumerate() {
-        if n % 3 == 0 {
-            let kind = [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road][(n / 3) % 5];
-            let level = if kind.is_zone() { (n % 4) as u8 } else { 0 };
-            theirs.push(Change::Set(*pos, tile(kind, level, Some(77 + (n as u64 % 3)))));
-        }
-    }
-    {
-        let db = Db::open(&path).unwrap();
-        db.in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &theirs, now())).unwrap();
-    }
-    // The server starts, which is what adds the town.
-    let first = Server::on(Db::open(&path).unwrap()).await;
-    let before = first.tiles(COMMONS);
-    assert!(before.len() < town.len(), "the town is already there");
-    worlds::ensure_commons(&first.state).unwrap();
-    let after = first.tiles(COMMONS);
-    for (pos, was) in &before {
-        assert_eq!(after.get(pos), Some(was), "{pos:?}: something a player built was changed by starting the server");
-    }
-    for (pos, wanted) in &town {
-        if !before.contains_key(pos) {
-            assert_eq!(after.get(pos), Some(wanted), "{pos:?}: the town is missing a tile that was free");
-        }
-    }
-    assert!(after.len() > before.len());
-    // And it starts again, as a server does every day: nothing changes the second time.
-    let second = Server::on(Db::open(&path).unwrap()).await;
-    worlds::ensure_commons(&second.state).unwrap();
-    assert_eq!(second.tiles(COMMONS), after, "a second start changed the tiles");
-    drop((first, second));
-    remove_db(&path);
+fn land_of_world(server: &Server, world: &str) -> world::Land {
+    let row = server.state.db.world(world).unwrap().unwrap();
+    world::terrain(row.seed, row.size)
 }
 
 // W28, W46
 #[tokio::test]
-async fn a_long_run_of_steps_never_takes_a_tile_from_a_player_or_turns_what_the_founders_built_into_something_else() {
+async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_touches_nothing_players_built() {
+    // A new server makes the land and the highway, and no town.
+    let fresh = Server::start().await;
+    worlds::ensure_commons(&fresh.state).unwrap();
+    let land = land_of(&fresh, COMMONS);
+    let highway: HashSet<(u16, u16)> = world::highway(world::COMMONS_SEED, &land).into_iter().collect();
+    let tiles = fresh.tiles(COMMONS);
+    assert_eq!(tiles.keys().copied().collect::<HashSet<_>>(), highway, "a new Commons has more on it than the highway");
+    assert!(tiles.values().all(|t| *t == tile(Kind::Road, 0, None)), "something on the highway is not a road with no builder");
+    assert!(fresh.state.db.world_end(COMMONS).unwrap().is_none(), "a new Commons has a clock running");
+
+    // A Commons that already exists, with players' tiles of every kind on it, old and new, on the
+    // ground where a founding town used to be added.
+    let path = temp_db("town");
+    let (_, highway) = a_bare_commons(&Db::open(&path).unwrap());
+    let highway: HashSet<(u16, u16)> = highway.into_iter().collect();
+    let kinds = [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road, Kind::House, Kind::Cafe, Kind::Club, Kind::Studio];
+    // Each builder has one of each kind, as a person's house is the one they can have.
+    let builders: Vec<u64> = (0..10).map(|_| make_player(&Db::open(&path).unwrap())).collect();
+    let theirs: Vec<Change> = (0..90u16)
+        .map(|n| (48 + n % 12, 60 + n / 12))
+        .filter(|pos| !highway.contains(pos))
+        .enumerate()
+        .map(|(n, pos)| {
+            let kind = kinds[n % kinds.len()];
+            Change::Set(pos, tile(kind, if kind.is_old_city() { (n % 4) as u8 } else { 0 }, Some(builders[n / kinds.len()])))
+        })
+        .collect();
+    {
+        let db = Db::open(&path).unwrap();
+        db.in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &theirs, now())).unwrap();
+    }
+    // The server starts, and starts again, as a server does every day: nothing changes.
+    let first = Server::on(Db::open(&path).unwrap()).await;
+    let before = first.tiles(COMMONS);
+    assert!(before.len() >= highway.len() + theirs.len() - 5, "the tiles the test made are not all there");
+    worlds::ensure_commons(&first.state).unwrap();
+    assert_eq!(first.tiles(COMMONS), before, "starting the server changed what was on The Commons");
+    let second = Server::on(Db::open(&path).unwrap()).await;
+    worlds::ensure_commons(&second.state).unwrap();
+    assert_eq!(second.tiles(COMMONS), before, "a second start changed the tiles");
+    drop((first, second));
+    remove_db(&path);
+}
+
+// W19, W28, W46
+#[tokio::test]
+async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_with_nothing_of_the_old_city() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let players = some_players(&server, 2, 2).await;
@@ -971,7 +1044,7 @@ async fn a_long_run_of_steps_never_takes_a_tile_from_a_player_or_turns_what_the_
     for step in 0..3_000 {
         at += 60;
         if step % 20 == 0 {
-            // A player makes a move near the middle, where the town is.
+            // A player makes a move near the middle, where the highway ends.
             let roads: Vec<(i64, i64)> = before
                 .iter()
                 .filter(|(pos, t)| t.kind == Kind::Road && cheb((i64::from(pos.0), i64::from(pos.1)), (size / 2, size / 2)) < 30)
@@ -979,70 +1052,52 @@ async fn a_long_run_of_steps_never_takes_a_tile_from_a_player_or_turns_what_the_
                 .collect();
             let who = &players[rng.below(players.len() as u64) as usize];
             refill(&server, who, at);
-            let m = random_move(&mut rng, size, &roads, &[]);
+            let m = random_move(&mut rng, size, &roads, &[], &[]);
             player_moves += usize::from(worlds::act(&server.state, who, COMMONS, &m, at).is_ok());
             before = server.tiles(COMMONS);
         }
         worlds::step_world(&server.state, COMMONS, at).unwrap();
-        let after = server.tiles(COMMONS);
-        for (pos, was) in &before {
-            let is = after.get(pos).unwrap_or_else(|| panic!("step {step}: the tile at {pos:?} ({was:?}) vanished"));
-            assert_eq!((is.kind, is.player), (was.kind, was.player), "step {step}: {pos:?} was {was:?} and is {is:?}");
-            assert!(is.level.abs_diff(was.level) <= 1, "step {step}: {pos:?} jumped from level {} to {}", was.level, is.level);
-        }
-        // W46: a step never builds anything. Only a move does.
-        assert_eq!(after.len(), before.len(), "step {step} added a tile");
-        before = after;
+        // W46: a step builds nothing and takes nothing. Only a move does.
+        assert_eq!(server.tiles(COMMONS), before, "step {step} changed a tile");
     }
     println!("COST REPORT: 3,000 steps with {player_moves} moves from the players");
     assert!(player_moves >= 20, "the run proved little: {player_moves} moves");
+    // W64: nothing of the old city stands, so no clock ever started and no disaster is on the way.
+    assert!(server.state.db.world_end(COMMONS).unwrap().is_none(), "a clock started on a Commons with nothing of the old city");
+    assert_eq!(server.state.db.world(COMMONS).unwrap().unwrap().step, 3_000);
 }
 
-// W46
+// W19, W27, W46
 #[tokio::test]
-async fn a_step_builds_nothing_in_a_world_somebody_started() {
+async fn a_step_changes_nothing_in_a_world_somebody_started_and_never_starts_the_end_of_the_old_city_there() {
     let server = Server::start().await;
     let owner = server.person("Owner").await;
-    // A fixed seed, so the open ground beside the highway that the test builds on is always there.
-    let (world, _) = server.own_world_seeded(&owner, true, Some(4242)).await;
-    let player = person_player(&server, &owner);
+    let id = "frozen0000000001";
+    server.frozen_world(id, Some(&owner.id), true, 4242, now());
+    // What it held when it froze: the old kinds and a place.
+    let land = land_of_world(&server, id);
+    let (kinds, builder) = ([Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road, Kind::Cafe], make_player(&server.state.db));
+    let old: Vec<Change> = (0..60u16)
+        .map(|n| (16 + n % 10, 8 + n / 10))
+        .filter(|&pos| land.at(pos).is_some_and(|ground| ground.is_open()))
+        .enumerate()
+        .map(|(n, pos)| Change::Set(pos, tile(kinds[n % kinds.len()], if kinds[n % kinds.len()].is_old_city() { (n % 4) as u8 } else { 0 }, Some(builder))))
+        .collect();
+    assert!(old.iter().any(|c| matches!(c, Change::Set(_, t) if t.kind.is_old_city())));
+    put_tiles(&server, id, &old);
+    let before = server.tiles(id);
     let at0 = now();
-    // One small town of the owner's own, so the world has something to grow.
-    let tiles = server.tiles(&world);
-    let land = land_of_world(&server, &world);
-    let highway: Vec<(i64, i64)> = tiles.keys().map(|p| (i64::from(p.0), i64::from(p.1))).collect();
-    let (rx, ry) = highway[highway.len() / 2];
-    let mut tried = 0;
-    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        let (x, y) = (rx + dx, ry + dy);
-        if open_ground(&land, &tiles, x, y) {
-            refill(&server, &player, at0);
-            let _ = worlds::act(&server.state, &player, &world, &mv("park", Some(x), Some(y)), at0);
-            tried += 1;
-        }
-    }
-    assert!(tried > 0);
-    let mut before = server.tiles(&world);
+    // Far past the days after which the old city would end on The Commons.
     for step in 1..=2_500 {
-        worlds::step_world(&server.state, &world, at0 + step * 60).unwrap();
-        let after = server.tiles(&world);
-        assert_eq!(
-            after.keys().collect::<Vec<_>>(),
-            before.keys().collect::<Vec<_>>(),
-            "step {step}: a step added or took away a tile in a world of someone's own"
-        );
-        before = after;
+        worlds::step_world(&server.state, id, at0 + step * 60).unwrap();
     }
+    assert_eq!(server.tiles(id), before, "stepping changed a world in somebody's name");
+    assert!(server.state.db.world_end(id).unwrap().is_none(), "a clock started in a world that is not The Commons");
 }
 
-fn land_of_world(server: &Server, world: &str) -> world::Land {
-    let row = server.state.db.world(world).unwrap().unwrap();
-    world::terrain(row.seed, row.size)
-}
-
-// W46, W28
+// W19, W46, W29
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or_to_the_founders() {
+async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or_to_a_step() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let players = some_players(&server, 2, 2).await;
@@ -1094,7 +1149,7 @@ async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or
                 let mut done = 0;
                 for i in 0..500i64 {
                     let m = loop {
-                        let m = random_move(&mut rng, size, &roads, &[]);
+                        let m = random_move(&mut rng, size, &roads, &[], &[]);
                         // Nothing is bulldozed, so a tile can only ever change hands by being overwritten.
                         if m.action != "bulldoze" {
                             break m;
@@ -1115,67 +1170,50 @@ async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or
     println!("COST REPORT: {done} moves went in while the world stepped 1,500 times");
     assert!(done >= 40, "too few moves went in to say anything ({done})");
     assert!(bad.is_empty(), "tiles changed hands: {bad:?}");
+    assert!(server.state.db.world_end(COMMONS).unwrap().is_none(), "a clock started on a Commons with nothing of the old city");
 }
 
 // W24
 #[tokio::test]
-async fn only_a_move_that_works_wakes_a_world_and_the_commons_never_sleeps() {
+async fn only_the_commons_steps_whatever_happens_to_the_worlds_that_froze() {
     let server = Server::start().await;
     let long_ago = now() - 40 * 86_400;
-    // A world nobody has touched for forty days.
-    let land = world::terrain(4242, world::OWN_SIZE);
-    let highway = world::highway(4242, &land);
-    server
-        .state
-        .db
-        .insert_world(
-            &agenthangout::db::NewWorld {
-                id: "sleepy0000000001",
-                name: "Sleepy Meadow",
-                kind: "own",
-                seed: 4242,
-                size: world::OWN_SIZE,
-                owner_id: None,
-                open: false,
-                invite_code: Some("closedclosedclosedclosed"),
-                highway: &highway,
-                now: long_ago,
-            },
-            worlds::MAX_OWN_WORLDS,
-        )
-        .unwrap();
+    // Worlds nobody has touched for forty days, one closed and one open.
+    server.frozen_world("sleepy0000000001", None, false, 4242, long_ago);
+    server.frozen_world("awake00000000001", None, true, 4243, long_ago);
     let due = |at: i64| worlds::worlds_due(&server.state, at).unwrap();
-    assert!(!due(now()).contains(&"sleepy0000000001".to_string()), "a world asleep for forty days is stepping");
+    assert_eq!(due(now()), [COMMONS.to_string()], "a world asleep for forty days is stepping");
     let stranger = server.guest().await;
     let id = server.player_id(&stranger.token).await;
     let row = server.player_row(id);
-    // A move into a closed world by someone who never opened its link is refused, and wakes nothing.
-    for m in [mv("emote", None, None), mv("walk", Some(5), Some(5)), mv("bulldoze", Some(5), Some(5))] {
-        let mut m = m;
-        if m.action == "emote" {
-            m.emote = Some("wave".into());
+    // Nothing a stranger does in either of them is allowed, and none of it wakes anything.
+    let wave_move = || Move { emote: Some("wave".into()), ..mv("emote", None, None) };
+    for world in ["sleepy0000000001", "awake00000000001"] {
+        for m in [wave_move(), mv("walk", Some(5), Some(5)), mv("bulldoze", Some(5), Some(5))] {
+            assert!(worlds::act(&server.state, &row, world, &m, now()).is_err());
         }
-        assert!(worlds::act(&server.state, &row, "sleepy0000000001", &m, now()).is_err());
     }
-    assert!(!due(now()).contains(&"sleepy0000000001".to_string()), "a refused move woke a world");
+    assert_eq!(due(now()), [COMMONS.to_string()], "a refused move woke a world");
     // The Commons steps whenever anyone last moved, because its street walks by its step.
     let commons_active = server.state.db.world(COMMONS).unwrap().unwrap().active_at;
-    assert!(due(commons_active + 31 * 86_400).contains(&COMMONS.to_string()), "The Commons went to sleep");
-    // An emote in an open world, by anyone, does wake it.
+    assert_eq!(due(commons_active + 31 * 86_400), [COMMONS.to_string()], "The Commons went to sleep");
+    // Even an emote, which woke an open world once, does nothing in one now.
     let owner = server.person("Owner").await;
-    let (open, _) = server.own_world(&owner, true).await;
-    let now_t = now() + 45 * 86_400;
-    assert!(!due(now_t).contains(&open));
-    refill(&server, &row, now_t);
-    let mut wave = mv("emote", None, None);
-    wave.emote = Some("wave".into());
-    worlds::act(&server.state, &row, &open, &wave, now_t).unwrap();
-    assert!(due(now_t).contains(&open), "a move that worked did not wake the world");
+    let player = person_player(&server, &owner);
+    let later = now() + 45 * 86_400;
+    refill(&server, &player, later);
+    let refused = worlds::act(&server.state, &player, "awake00000000001", &wave_move(), later).unwrap_err();
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.message);
+    assert_eq!(due(later), [COMMONS.to_string()], "a move woke a frozen world");
+    // And a round of steps takes only The Commons.
+    let report = worlds::step_all(&server.state, later);
+    assert_eq!(report.stepped, [COMMONS.to_string()]);
+    assert!(report.failed.is_empty());
 }
 
 // W24, W25, W32
 #[tokio::test]
-async fn measure_a_round_of_steps_when_two_hundred_worlds_are_awake_and_full() {
+async fn measure_a_round_of_steps_when_two_hundred_frozen_worlds_are_full_and_only_the_commons_steps() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let at = now();
@@ -1183,27 +1221,8 @@ async fn measure_a_round_of_steps_when_two_hundred_worlds_are_awake_and_full() {
     for n in 0..200u64 {
         let seed = 10_000 + n * 37;
         let land = world::terrain(seed, world::OWN_SIZE);
-        let highway = world::highway(seed, &land);
         let id = format!("full{n:012}");
-        server
-            .state
-            .db
-            .insert_world(
-                &agenthangout::db::NewWorld {
-                    id: &id,
-                    name: "Full Meadow",
-                    kind: "own",
-                    seed,
-                    size: world::OWN_SIZE,
-                    owner_id: None,
-                    open: true,
-                    invite_code: None,
-                    highway: &highway,
-                    now: at,
-                },
-                worlds::MAX_OWN_WORLDS,
-            )
-            .unwrap();
+        server.frozen_world(&id, None, true, seed, at);
         let mut fill = Vec::new();
         for y in 0..world::OWN_SIZE as u16 {
             for x in 0..world::OWN_SIZE as u16 {
@@ -1215,13 +1234,13 @@ async fn measure_a_round_of_steps_when_two_hundred_worlds_are_awake_and_full() {
         }
         put_tiles(&server, &id, &fill);
     }
-    println!("COST REPORT: 200 full worlds made in {:.1} s", started.elapsed().as_secs_f64());
+    println!("COST REPORT: 200 full frozen worlds made in {:.1} s", started.elapsed().as_secs_f64());
     let started = Instant::now();
     let report = worlds::step_all(&server.state, at + 60);
     let took = started.elapsed().as_secs_f64();
     println!("COST REPORT: one round of steps over {} awake worlds took {took:.2} s", report.stepped.len());
     assert!(report.failed.is_empty());
-    assert!(report.stepped.len() >= 200);
+    assert_eq!(report.stepped, [COMMONS.to_string()], "a frozen world took a step");
     assert!(took < 60.0, "a round of steps took {took:.1} s, which is longer than the minute it has");
 }
 
@@ -1236,64 +1255,91 @@ fn random_town(rng: &mut Rng, side: u16, players: u64) -> Tiles {
     }
     for _ in 0..rng.below(140) + 10 {
         let pos = (rng.below(u64::from(side)) as u16, rng.below(u64::from(side)) as u16);
-        let kind = rng.pick(&[Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cleared, Kind::Homes, Kind::Shops]);
-        let level = if kind.is_zone() { rng.below(4) as u8 } else { 0 };
+        let kind = rng.pick(&[
+            Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cleared, Kind::House, Kind::Studio,
+            Kind::Club, Kind::Cafe, Kind::Road, Kind::House,
+        ]);
+        let level = if kind.is_old_city() { rng.below(4) as u8 } else { 0 };
         let owner = if rng.below(10) == 0 { None } else { Some(1 + rng.below(players)) };
         tiles.insert(pos, tile(kind, level, owner));
     }
     tiles
 }
 
+/// What one player built themselves, which is all a tip is worked out from.
+fn own_tiles(tiles: &Tiles, player: u64) -> Tiles {
+    tiles.iter().filter(|(_, t)| t.player == Some(player)).map(|(pos, t)| (*pos, *t)).collect()
+}
+
 // W47, W8
 #[test]
-fn a_tip_is_always_one_of_the_twelve_fixed_sentences_for_any_town_and_any_player() {
+fn a_tip_is_always_one_of_the_fixed_sentences_for_any_town_and_any_player() {
     let mut rng = Rng(0x71B5);
     let mut seen = HashSet::new();
     for _ in 0..1_500 {
         let tiles = random_town(&mut rng, 24, 4);
         for player in 0..=5u64 {
-            for moves in [0u32, 1, 30] {
-                let tip = world::tip(&tiles, player, moves);
-                assert!(world::TIPS.contains(&tip), "{tip:?} is not a fixed tip");
-                if moves == 0 {
-                    assert_eq!(tip, world::TIPS[0], "out of moves says so first");
+            let own = own_tiles(&tiles, player);
+            for person in [false, true] {
+                for moves in [0u32, 1, 30] {
+                    let tip = world::tip(&own, person, moves);
+                    assert!(world::TIPS.contains(&tip), "{tip:?} is not a fixed tip");
+                    // The one for the end of the old city is said by the server, never worked out from tiles.
+                    assert_ne!(tip, world::TIP_ENDING);
+                    if moves == 0 {
+                        assert_eq!(tip, world::TIPS[0], "out of moves says so first");
+                    }
+                    seen.insert(tip);
                 }
-                seen.insert(tip);
             }
         }
     }
-    assert!(seen.len() >= 8, "only {} of the tips were ever picked: {seen:?}", seen.len());
+    assert_eq!(seen.len(), 5, "only {} of the tips were ever picked: {seen:?}", seen.len());
     // An empty world and a player who has built nothing in it.
-    assert!(world::TIPS.contains(&world::tip(&Tiles::new(), 1, 30)));
+    for person in [false, true] {
+        assert!(world::TIPS.contains(&world::tip(&Tiles::new(), person, 30)));
+    }
 }
 
-// W47, W4
-#[test]
-fn a_tip_depends_on_what_is_yours_and_what_is_built_and_never_on_who_built_the_rest() {
+// W47, W48, W49, W4
+#[tokio::test]
+async fn a_tip_a_goal_and_your_town_depend_on_what_is_yours_and_never_on_what_the_others_build() {
     let mut rng = Rng(0x71B6);
     for round in 0..1_200 {
         let tiles = random_town(&mut rng, 24, 4);
         let me = 1 + rng.below(4);
-        // Everyone else becomes somebody else, in one way or another: same buildings, other builders.
-        let relabelled: Tiles = tiles
-            .iter()
-            .map(|(pos, t)| {
-                let owner = match t.player {
-                    Some(p) if p == me => Some(p),
-                    Some(p) => Some(1_000 + p * 7),
-                    None => None,
-                };
-                (*pos, Tile { player: owner, ..*t })
-            })
-            .collect();
-        assert_eq!(
-            world::tip(&tiles, me, 30),
-            world::tip(&relabelled, me, 30),
-            "round {round}: a tip changed when only the names of the other builders did"
-        );
-        // And a stranger who has built nothing hears nothing about anyone's town but the buildings.
-        let stranger = 9_999;
-        assert!(world::TIPS.contains(&world::tip(&tiles, stranger, 30)));
+        // The same buildings of mine, with another builder's name on them: nothing changes, because
+        // what a player's own tiles say is the whole of it.
+        let mine = own_tiles(&tiles, me);
+        let renamed: Tiles = mine.iter().map(|(pos, t)| (*pos, Tile { player: Some(1_000 + me), ..*t })).collect();
+        for person in [false, true] {
+            assert_eq!(world::tip(&mine, person, 30), world::tip(&renamed, person, 30), "round {round}: a tip changed with a name");
+            assert_eq!(
+                world::goal(&world::town(&mine), person),
+                world::goal(&world::town(&renamed), person),
+                "round {round}: a goal changed with a name"
+            );
+        }
+        // A stranger who has built nothing hears a listed sentence and has an empty town.
+        let stranger = own_tiles(&tiles, 9_999);
+        assert!(world::TIPS.contains(&world::tip(&stranger, true, 30)));
+        assert_eq!(world::town(&stranger), world::Town::default());
+    }
+    // And over HTTP: what other people put on the map, of every kind, changes nothing in my answer.
+    let server = Server::start().await;
+    let (ann, bob) = (server.guest().await, server.guest().await);
+    let (ann_id, bob_id) = (server.player_id(&ann.token).await, server.player_id(&bob.token).await);
+    lay(&server, ann_id, 110, &[(Kind::Road, 0), (Kind::Homes, 2), (Kind::House, 0)]);
+    let before = server.me(&ann.token, COMMONS).await;
+    lay(
+        &server,
+        bob_id,
+        112,
+        &[(Kind::Road, 0), (Kind::House, 0), (Kind::Studio, 0), (Kind::Club, 0), (Kind::Cafe, 0), (Kind::Homes, 3), (Kind::Park, 0)],
+    );
+    let after = server.me(&ann.token, COMMONS).await;
+    for key in ["your_town", "goal", "tip"] {
+        assert_eq!(before[key], after[key], "{key} changed when somebody else built");
     }
 }
 
@@ -1830,10 +1876,10 @@ fn a_name_in_a_private_city_can_only_reach_the_screen_as_text() {
 // W15, W17: side streets and road cuts, at the edges and in two steps
 // ----------------------------------------------------------------------------------------------
 
-/// Builds a situation on an edge of a world of someone's own: a street with no builder along the edge
-/// (as a highway is), a road of the owner's beside it, and a grown home that only the owner's road
-/// serves. `along` is the direction of the edge, `inward` the direction away from it.
-fn an_edge_town(server: &Server, world: &str, owner: u64, start: (i64, i64), along: (i64, i64), inward: (i64, i64), second_road: bool) -> ((i64, i64), (i64, i64), (i64, i64)) {
+/// Builds a situation on an edge of The Commons: a street with no builder along the edge (as a
+/// highway is), a road of the owner's beside it, and a place of someone else's that only the owner's
+/// road serves. `along` is the direction of the edge, `inward` the direction away from it.
+fn an_edge_town(server: &Server, owner: u64, start: (i64, i64), along: (i64, i64), inward: (i64, i64), second_road: bool) -> ((i64, i64), (i64, i64), (i64, i64)) {
     let at = |a: i64, b: i64| ((start.0 + along.0 * a + inward.0 * b) as u16, (start.1 + along.1 * a + inward.1 * b) as u16);
     let mut changes = Vec::new();
     for a in 0..12 {
@@ -1843,17 +1889,18 @@ fn an_edge_town(server: &Server, world: &str, owner: u64, start: (i64, i64), alo
     if second_road {
         changes.push(Change::Set(at(5, 2), tile(Kind::Road, 0, Some(owner))));
     }
-    changes.push(Change::Set(at(5, 4), tile(Kind::Homes, 2, Some(owner + 1_000))));
-    put_tiles(server, world, &changes);
+    changes.push(Change::Set(at(5, 4), tile(Kind::House, 0, Some(make_player(&server.state.db)))));
+    put_tiles(server, COMMONS, &changes);
     let pos = |t: (u16, u16)| (i64::from(t.0), i64::from(t.1));
     (pos(at(5, 1)), pos(at(5, 2)), pos(at(5, 4)))
 }
 
 // W17
 #[tokio::test]
-async fn a_road_along_any_edge_of_the_map_that_a_grown_home_depends_on_cannot_be_taken_down() {
+async fn a_road_along_any_edge_of_the_map_that_a_place_depends_on_cannot_be_taken_down() {
     let server = Server::start().await;
-    let size = i64::from(world::OWN_SIZE as u16);
+    worlds::ensure_commons(&server.state).unwrap();
+    let size = world::COMMONS_SIZE as i64;
     let mut tested = 0;
     for (n, (start, along, inward)) in [
         ((0, 20), (0, 1), (1, 0)),
@@ -1867,11 +1914,10 @@ async fn a_road_along_any_edge_of_the_map_that_a_grown_home_depends_on_cannot_be
     .enumerate()
     {
         let owner = server.person(&format!("Edge {n}")).await;
-        let (world, _) = server.own_world_seeded(&owner, true, Some(4242 + n as u64)).await;
         let player = person_player(&server, &owner);
-        let (road, _, home) = an_edge_town(&server, &world, player.id as u64, start, along, inward, false);
-        let before = server.tiles(&world);
-        // The world's own highway may pass close enough to serve the home as well: then there is nothing to protect.
+        let (road, _, home) = an_edge_town(&server, player.id as u64, start, along, inward, false);
+        let before = server.tiles(COMMONS);
+        // The highway may pass close enough to serve the place as well: then there is nothing to protect.
         let others = before.iter().filter(|(p, t)| t.kind == Kind::Road && (i64::from(p.0), i64::from(p.1)) != road && cheb((i64::from(p.0), i64::from(p.1)), home) <= 3);
         if others.filter(|(p, _)| ![(road.0 as u16, road.1 as u16)].contains(p)).any(|(_, t)| t.player != Some(player.id as u64)) {
             continue;
@@ -1879,45 +1925,48 @@ async fn a_road_along_any_edge_of_the_map_that_a_grown_home_depends_on_cannot_be
         tested += 1;
         assert!(served_the_long_way(&before).contains(&(home.0 as u16, home.1 as u16)), "the situation at {start:?} has nothing to protect");
         refill(&server, &player, now());
-        let cut = worlds::act(&server.state, &player, &world, &mv("bulldoze", Some(road.0), Some(road.1)), now());
-        let error = cut.expect_err(&format!("the road at {road:?} came down at the edge {start:?} and left a grown home without a road"));
+        let cut = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(road.0), Some(road.1)), now());
+        let error = cut.expect_err(&format!("the road at {road:?} came down at the edge {start:?} and left a place without a road"));
         assert!(error.message.contains("depends on that road"), "{}", error.message);
-        assert_eq!(server.tiles(&world), before);
+        assert_eq!(server.tiles(COMMONS), before);
     }
-    assert!(tested >= 4, "only {tested} of 6 edges had a home that only the road served");
+    assert!(tested >= 4, "only {tested} of 6 edges had a place that only the road served");
 }
 
-// W17
+// W16, W17, W57
 #[tokio::test]
-async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leave_a_grown_home_without_a_road() {
+async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leave_a_place_without_a_road() {
     let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
     let owner = server.person("Owner").await;
-    // A seed whose highway doesn't come to this edge: on about one in eight, it passes close enough
-    // to serve the home as well, and then there is nothing to protect.
-    let (world, _) = server.own_world_seeded(&owner, true, Some(1)).await;
     let player = person_player(&server, &owner);
-    let (first, second, home) = an_edge_town(&server, &world, player.id as u64, (0, 24), (0, 1), (1, 0), true);
+    // The edge at the west, where The Commons' highway doesn't come.
+    let (first, second, home) = an_edge_town(&server, player.id as u64, (0, 24), (0, 1), (1, 0), true);
     let now_t = now();
     refill(&server, &player, now_t);
-    // The tile further out serves the home as well as the first does, so it can go.
-    worlds::act(&server.state, &player, &world, &mv("bulldoze", Some(second.0), Some(second.1)), now_t).unwrap();
+    // The tile further out serves the place as well as the first does, so it can go.
+    worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(second.0), Some(second.1)), now_t).unwrap();
     // The first is what is left, and now it cannot.
-    let cut = worlds::act(&server.state, &player, &world, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 1);
-    assert!(cut.is_err(), "the second step left the home at {home:?} without a road");
-    // Put it back and lay a road over the owner's own lot instead: the cut is allowed once it serves nothing.
-    put_tiles(&server, &world, &[Change::Set((home.0 as u16, home.1 as u16), tile(Kind::Homes, 0, Some(player.id as u64)))]);
-    let freed = worlds::act(&server.state, &player, &world, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 2);
-    assert!(freed.is_ok(), "a road that serves only a lot that has not grown was refused: {freed:?}");
-    // A road laid over the owner's own lot, then taken down while it serves nothing grown: fine, and costs 1 each.
-    let lot = (first.0, first.1);
-    put_tiles(&server, &world, &[Change::Set((lot.0 as u16, lot.1 as u16), tile(Kind::Shops, 0, Some(player.id as u64)))]);
-    let laid = worlds::act(&server.state, &player, &world, &Move { action: "road".into(), x: Some(lot.0), y: Some(lot.1), x2: None, y2: None, kind: None, emote: None }, now_t + 3).unwrap();
-    assert_eq!((laid.cost, laid.changed), (1, 1));
+    let cut = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 1);
+    assert!(cut.is_err(), "the second step left the place at {home:?} without a road");
+    // The place is somebody else's, so it can't be taken down to get round that either (W57).
+    let theirs = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(home.0), Some(home.1)), now_t + 2);
+    assert!(theirs.is_err(), "somebody else's place was taken down");
+    // Once its owner has taken it down, the road serves nothing and the cut is allowed.
+    put_tiles(&server, COMMONS, &[Change::Remove((home.0 as u16, home.1 as u16))]);
+    let freed = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 3);
+    assert!(freed.is_ok(), "a road that serves no place was refused: {freed:?}");
+    // A road can't be laid over a place, the owner's own or anyone's (W16).
+    put_tiles(&server, COMMONS, &[Change::Set((first.0 as u16, first.1 as u16), tile(Kind::House, 0, Some(player.id as u64)))]);
+    let over = Move { action: "road".into(), x: Some(first.0), y: Some(first.1), x2: None, y2: None, kind: None, emote: None };
+    let laid = worlds::act(&server.state, &player, COMMONS, &over, now_t + 4).unwrap_err();
+    assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.message);
+    assert_eq!(server.tiles(COMMONS)[&(first.0 as u16, first.1 as u16)].kind, Kind::House);
 }
 
-// W15
+// W15, W54
 #[tokio::test]
-async fn measure_how_many_moves_it_takes_to_turn_every_side_street_of_the_highway_into_a_dead_end() {
+async fn measure_how_many_people_it_takes_to_turn_every_side_street_of_the_highway_into_a_dead_end() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let land = land_of(&server, COMMONS);
@@ -1947,17 +1996,15 @@ async fn measure_how_many_moves_it_takes_to_turn_every_side_street_of_the_highwa
     }
     let walls: Vec<(i64, i64)> = walls.into_iter().filter(|&p| free(p) && !kept(p)).collect();
     println!(
-        "COST REPORT: the highway has {} side streets of 3 tiles; closing the end and both sides of every one takes {} single-tile zones, which is {} moves: {:.1} guest-days",
+        "COST REPORT: the highway has {} side streets of 3 tiles; closing the end and both sides of every one takes {} single-tile places, and a person can have only 4, so {} people each signed in",
         alleys.len(),
         walls.len(),
-        walls.len(),
-        walls.len() as f64 / 30.0
+        walls.len().div_ceil(4)
     );
-    // And it does what it says, for one of them: the stub can be laid and cannot go any further.
+    // A wall has to be a place, so it takes a person. A guest can't put one up at all.
     let (street, (dx, dy)) = alleys.first().expect("a side street").clone();
     let sides = if dx == 0 { [(1, 0), (-1, 0)] } else { [(0, 1), (0, -1)] };
     let wall = server.guest().await;
-    let mut tried = 0;
     let end = (street[2].0 + dx, street[2].1 + dy);
     let mut to_block: Vec<(i64, i64)> = vec![end];
     for p in &street {
@@ -1965,17 +2012,22 @@ async fn measure_how_many_moves_it_takes_to_turn_every_side_street_of_the_highwa
             to_block.push((p.0 + sx, p.1 + sy));
         }
     }
-    for p in to_block {
-        if free(p) && !kept(p) {
-            server.acts_ok(&wall.token, COMMONS, json!({ "action": "zone", "kind": "workshops", "x": p.0, "y": p.1 })).await;
-            tried += 1;
-        }
+    let to_block: Vec<(i64, i64)> = to_block.into_iter().filter(|&p| free(p) && !kept(p)).collect();
+    for &p in &to_block {
+        let reply = server.act(&wall.token, COMMONS, json!({ "action": "place", "kind": "house", "x": p.0, "y": p.1 })).await;
+        assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
     }
+    assert_eq!(server.moves_left(&wall.token).await, 30, "a refused wall cost something");
+    assert_eq!(server.tiles(COMMONS), tiles, "a guest built a wall");
+    // And with every wall of that street standing anyway, the stub can be laid and cannot go any further.
+    let wall_builder = make_player(&server.state.db);
+    let builders: Vec<Change> = to_block.iter().map(|&p| Change::Set((p.0 as u16, p.1 as u16), tile(Kind::Cafe, 0, Some(wall_builder)))).collect();
+    put_tiles(&server, COMMONS, &builders);
     let honest = server.guest().await;
     let stub = server.act(&honest.token, COMMONS, road_move(street[0], street[2])).await;
     assert_eq!(stub.status, StatusCode::OK, "{}", stub.show());
     let beyond = server.act(&honest.token, COMMONS, road_move(street[0], (street[0].0 + dx * 6, street[0].1 + dy * 6))).await;
-    println!("COST REPORT: after {tried} single-tile zones by one guest the side street takes a 3 tile road and a road past it is refused: {}", beyond.show());
+    println!("COST REPORT: with {} places around it the side street takes a 3 tile road and a road past it is refused: {}", to_block.len(), beyond.show());
     assert_eq!(beyond.status, StatusCode::BAD_REQUEST);
 }
 
@@ -2080,20 +2132,14 @@ async fn a_claim_code_is_dead_once_its_guest_has_idled_out_and_a_claimed_guest_n
     };
     assert!(worlds::player_from_headers(&server.state, &headers(&nearly.token), month_on).is_ok(), "a claimed player idled out");
     assert!(worlds::player_from_headers(&server.state, &headers(&fresh.token), month_on).is_err(), "a guest nobody claimed never idled out");
-    // Claiming a guest that opened a closed world's link keeps it a member there.
-    let owner = server.person("Owner").await;
-    let (closed, code) = server.own_world(&owner, false).await;
-    assert_eq!(server.act(&fresh.token, &closed, wave()).await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&format!("/api/worlds/join/{code}"), json!({})).token(&fresh.token).send().await.status, StatusCode::OK);
+    // Claimed, a guest still plays in The Commons with a bigger day.
     server.post("/api/players/claim", json!({ "claim_code": fresh.claim })).token(&ann.key).send().await.ok();
-    assert_eq!(server.act(&fresh.token, &closed, wave()).await.status, StatusCode::OK, "claiming took a guest out of the world it had joined");
-    // The same guest, claimed, still builds in The Commons with a bigger day.
     assert_eq!(server.me(&fresh.token, COMMONS).await["moves_per_day"], 200);
 }
 
 // W1, W3, W4, W18
 #[tokio::test]
-async fn an_owner_removing_a_bots_player_from_their_world_changes_nothing_in_private_life_and_says_nothing_of_it() {
+async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing_in_private_life_and_says_nothing_of_it() {
     let path = temp_db("removal");
     let server = Server::on(Db::open(&path).unwrap()).await;
     // Alice has a city and a house and a bot called Pixel in its living room.
@@ -2106,40 +2152,43 @@ async fn an_owner_removing_a_bots_player_from_their_world_changes_nothing_in_pri
     let house = server.post(&format!("/api/cities/{city}/houses"), json!({ "name": "Alice House" })).token(&alice_key).send().await.ok();
     let living = house["living_room_id"].as_str().unwrap().to_string();
     let pixel = server.bot_in(&alice_key, &alice_id, &living, "Pixel").await;
-    // Carol has a world, and Pixel builds in it with a player of its own. The land is a seed's, so a
-    // seed that has room beside its highway keeps the test from depending on a random one.
+    // Carol's world froze with some of Pixel's tiles in it, from back when it could build there.
     let carol = server.person("Carol").await;
-    let (world, _) = server.own_world_seeded(&carol, true, Some(4242)).await;
-    let joined = server.post("/api/public/join", json!({ "world_id": world })).token(&pixel.token).ip("198.51.100.5").send().await.ok();
-    let token = joined["player_token"].as_str().unwrap().to_string();
-    let view = server.view(&world).await;
-    let highway: Vec<(i64, i64)> = view["tiles"].as_array().unwrap().iter().map(|t| (t[0].as_i64().unwrap(), t[1].as_i64().unwrap())).collect();
-    let (hx, hy) = highway[highway.len() / 2];
-    let mut built = 0;
-    for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-        let reply = server.act(&token, &world, json!({ "action": "zone", "kind": "homes", "x": hx + dx * 3, "y": hy + dy * 3 })).await;
-        built += usize::from(reply.status == StatusCode::OK);
-    }
-    assert!(built > 0, "Pixel built nothing in Carol's world");
-    let player_id = server.me(&token, &world).await["player"]["id"].as_i64().unwrap();
-    server.fresh_view(&world).await;
+    let world = "frozen0000000001";
+    server.frozen_world(world, Some(&carol.id), true, 4242, now());
+    let token = server.bot_player(&pixel).await;
+    let player_id = server.player_id(&token).await;
+    put_tiles(
+        &server,
+        world,
+        &[
+            Change::Set((20, 20), tile(Kind::Road, 0, Some(player_id as u64))),
+            Change::Set((21, 20), tile(Kind::Homes, 1, Some(player_id as u64))),
+            Change::Set((22, 20), tile(Kind::Road, 0, Some(player_id as u64))),
+        ],
+    );
+    server.fresh_view(world).await;
     let before = dump(&path);
 
     let removed = server.post(&format!("/api/worlds/{world}/players/{player_id}/remove"), json!({})).token(&carol.key).send().await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.show());
+    assert_eq!(removed.body["tiles_removed"], 3);
     // Carol's answer is a count of tiles, and nothing that names the bot, its owner, their city or house.
     for secret in [alice_id.as_str(), pixel.agent.as_str(), city.as_str(), pixel.token.as_str(), alice_key.as_str(), "Pixel", "Alice", "Friends"] {
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
-    let world_tables = ["worlds", "world_tiles", "players", "world_players", "world_members", "crawler_sightings"];
+    let world_tables = ["worlds", "world_tiles", "world_buildings", "players", "world_players", "world_members", "crawler_sightings", "place_clocks", "world_ends"];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
             assert_eq!(rows, &before[table], "removing a player from a world changed {table}");
         }
     }
-    // The bot is only barred from that world, and is a player everywhere else.
-    assert_eq!(server.act(&token, &world, wave()).await.status, StatusCode::FORBIDDEN);
+    assert!(server.tiles(world).values().all(|t| t.player != Some(player_id as u64)), "what the bot built stayed");
+    assert_eq!(after["world_members"].len(), 1, "the bot was not barred from that world");
+    // The bot is only barred from that world, and is a player everywhere else, The Commons included.
+    assert_eq!(server.act(&token, world, wave()).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(server.act(&token, COMMONS, wave()).await.status, StatusCode::OK, "one world's owner ended a player for the whole server");
     assert_eq!(server.post("/api/public/join", json!({ "world_id": world })).token(&pixel.token).ip("198.51.100.5").send().await.status, StatusCode::FORBIDDEN);
     let elsewhere = server.post("/api/public/join", json!({})).token(&pixel.token).ip("198.51.100.5").send().await;
     assert_eq!(elsewhere.status, StatusCode::OK, "{}", elsewhere.show());
@@ -2341,7 +2390,7 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     let guest = server.guest().await;
     assert_eq!(server.act(&guest.token, COMMONS, wave()).await.status, StatusCode::OK);
     let (_, commons) = (0, server.tiles(COMMONS));
-    assert!(commons.len() > 40, "The Commons has no town");
+    assert!(commons.len() > 40 && commons.values().all(|t| t.player.is_none()), "The Commons is not the highway");
     drop(server);
 
     // And a restart on top of all that: the same Commons, the same tiles, and still no complaints.
@@ -2400,31 +2449,37 @@ fn an_old_database_with_the_one_player_a_person_index_from_before_the_swap_opens
 
 // W45, W47
 #[tokio::test]
-async fn the_first_thirty_moves_in_the_guide_work_as_written_and_cost_what_it_says() {
+async fn every_road_the_guide_shows_works_as_written_and_costs_a_move_a_tile_and_no_other_build_is_taught() {
     let server = Server::start().await;
     let guide = server.get("/agents.md").send().await.text;
-    let calls = [
-        (r#"{"type": "road", "x": 47, "y": 40, "x2": 56, "y2": 40}"#, 10),
-        (r#"{"type": "workshops", "x": 47, "y": 41, "x2": 49, "y2": 42}"#, 6),
-        (r#"{"type": "homes", "x": 53, "y": 41, "x2": 55, "y2": 42}"#, 6),
-        (r#"{"type": "shops", "x": 51, "y": 41, "x2": 51, "y2": 42}"#, 2),
-        (r#"{"type": "park", "x": 54, "y": 39}"#, 2),
-    ];
-    for (call, _) in calls {
-        assert!(guide.contains(call), "the guide no longer shows {call}");
+    // Every `build` the guide shows, as the `{"type": ..., ...}` it is written as.
+    let mut calls = Vec::new();
+    let mut rest = guide.as_str();
+    while let Some(at) = rest.find("{\"type\": \"") {
+        let from = &rest[at..];
+        let end = from.find('}').expect("a call in the guide that never ends");
+        calls.push(from[..=end].to_string());
+        rest = &from[end..];
     }
+    assert!(!calls.is_empty(), "the guide shows no build call");
     let joined = server.tool("join", json!({})).await;
     let token = joined["player_token"].as_str().unwrap().to_string();
     assert_eq!(joined["moves_left"], 30);
     let mut left = 30;
-    for (call, cost) in calls {
-        let mut arguments: Value = serde_json::from_str(call).unwrap();
+    for call in &calls {
+        let mut arguments: Value = serde_json::from_str(call).unwrap_or_else(|e| panic!("the guide shows {call}, which is not JSON: {e}"));
+        // W13: a road is all an agent can build now, so it is all the guide may show.
+        assert_eq!(arguments["type"], "road", "the guide shows {call}, and only a road can be built");
+        let tiles = 1 + (arguments["x2"].as_i64().unwrap_or(arguments["x"].as_i64().unwrap()) - arguments["x"].as_i64().unwrap()).abs()
+            + (arguments["y2"].as_i64().unwrap_or(arguments["y"].as_i64().unwrap()) - arguments["y"].as_i64().unwrap()).abs();
         arguments["player_token"] = json!(token);
         let done = server.tool("build", arguments).await;
+        let cost = done["cost"].as_i64().unwrap();
         left -= cost;
-        assert_eq!((done["cost"].as_i64(), done["moves_left"].as_i64()), (Some(cost), Some(left)), "{call}: {done}");
+        assert_eq!(done["moves_left"].as_i64(), Some(left), "{call}: {done}");
+        assert_eq!(cost + done["skipped"].as_i64().unwrap(), tiles, "{call}: a road costs a move a tile, and a tile already there is skipped: {done}");
     }
-    assert_eq!(left, 4, "the guide says 26 of the 30 moves");
+    assert!(left >= 0, "the guide's first moves cost more than a guest's 30");
     // The highway is where the guide says it is.
     let land = land_of(&server, COMMONS);
     let highway: HashSet<(i64, i64)> = world::highway(world::COMMONS_SEED, &land).iter().map(|&(x, y)| (i64::from(x), i64::from(y))).collect();
@@ -2500,8 +2555,16 @@ async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_priva
     let player_id = server.player_id(&token).await;
     let land = land_of(&server, COMMONS);
     let tiles = server.tiles(COMMONS);
-    let spot = (0..128i64).flat_map(|y| (0..128i64).map(move |x| (x, y))).find(|&(x, y)| open_ground(&land, &tiles, x, y) && !world::is_reserved(&tiles, (x as u16, y as u16))).unwrap();
-    server.acts_ok(&token, COMMONS, json!({ "action": "zone", "kind": "homes", "x": spot.0, "y": spot.1 })).await;
+    // A tile of road, beside the highway, which is what an agent can build.
+    let spot = tiles
+        .keys()
+        .flat_map(|&(x, y)| {
+            let (x, y) = (i64::from(x), i64::from(y));
+            [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+        })
+        .find(|&(x, y)| open_ground(&land, &tiles, x, y))
+        .unwrap();
+    server.acts_ok(&token, COMMONS, road_move(spot, spot)).await;
 
     let before = dump(&path);
     let removed = server.post(&format!("/api/worlds/commons/players/{player_id}/remove"), json!({})).token(&keeper_key).send().await;
@@ -2582,8 +2645,8 @@ async fn a_bulldoze_with_no_builder_or_not_the_players_is_refused_without_readin
     let land = land_of(&server, COMMONS);
     let highway = world::highway(world::COMMONS_SEED, &land);
     let (hx, hy) = highway[highway.len() / 2];
-    // A home that somebody else built and that has grown, so it is not up for the taking.
-    let theirs = server.tiles(COMMONS).iter().find(|(_, t)| t.player == Some(999_001)).map(|(pos, _)| *pos).unwrap();
+    // A place that somebody else built, so it is not up for the taking.
+    let theirs = server.tiles(COMMONS).iter().find(|(_, t)| t.kind == Kind::House).map(|(pos, _)| *pos).unwrap();
     let row = server.player_row(guest_id);
     // Each try is a minute later than the last, so the limit on refused moves never gets in the way.
     let mut at = now();
@@ -2598,7 +2661,7 @@ async fn a_bulldoze_with_no_builder_or_not_the_players_is_refused_without_readin
     let no_builder = time(mv("bulldoze", Some(i64::from(hx)), Some(i64::from(hy))), 60);
     let not_yours = time(mv("bulldoze", Some(i64::from(theirs.0)), Some(i64::from(theirs.1))), 60);
     let depended_on = time(mv("bulldoze", Some(road.0), Some(road.1)), 20);
-    println!("COST REPORT: a refused bulldoze costs {no_builder:.2} ms with no builder, {not_yours:.2} ms when it is someone else's, and {depended_on:.2} ms for a road a grown home depends on");
+    println!("COST REPORT: a refused bulldoze costs {no_builder:.2} ms with no builder, {not_yours:.2} ms when it is someone else's, and {depended_on:.2} ms for a road a place depends on");
     assert!(
         depended_on > 8.0 * no_builder.max(not_yours),
         "a bulldoze that could never be allowed took {no_builder:.2} and {not_yours:.2} ms, as long as one that needed the whole network ({depended_on:.2} ms)"
@@ -2837,7 +2900,7 @@ fn lay(server: &Server, builder: i64, row: u16, built: &[(Kind, u8)]) {
     put_tiles(server, COMMONS, &changes);
 }
 
-// W47, W48, W49
+// W47, W48, W49, W62
 #[tokio::test]
 async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_nobody_elses() {
     let server = Server::start().await;
@@ -2849,34 +2912,30 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
         keys
     };
 
+    // An agent starts with nothing, and its ladder is roads. A guest can't place anything, so no `places`.
     let fresh = server.me(&ann.token, COMMONS).await;
     assert_eq!(sorted_keys(&fresh), ["goal", "moves_left", "moves_per_day", "player", "tip", "your_town"]);
-    let nothing = json!({ "roads": 0, "homes": 0, "shops": 0, "workshops": 0, "parks": 0, "people": 0, "jobs": 0, "best_level": 0 });
-    assert_eq!(fresh["your_town"], nothing);
-    assert_eq!(fresh["goal"], world::GOALS[0]);
+    assert_eq!(fresh["your_town"], json!({ "roads": 0, "places": 0 }));
+    assert_eq!(fresh["goal"], world::GOALS[4]);
     assert!(fresh["tip"].as_str().unwrap().starts_with("No road yet"), "{fresh}");
 
-    // Ann has a road, three homes (4, 4 and 8 people), a shop lot, a workshop and a park. Bob has twelve homes.
-    lay(&server, ann_id, 110, &[
-        (Kind::Road, 0), (Kind::Homes, 1), (Kind::Homes, 1), (Kind::Homes, 2), (Kind::Shops, 0), (Kind::Workshops, 1), (Kind::Park, 0),
-    ]);
-    lay(&server, bob_id, 112, &[(Kind::Homes, 3); 12]);
+    // Ann has a road, and tiles of the old city that count for nothing. Bob has twelve places.
+    lay(&server, ann_id, 110, &[(Kind::Road, 0), (Kind::Homes, 2), (Kind::Shops, 0), (Kind::Workshops, 1), (Kind::Park, 0)]);
+    lay(&server, bob_id, 112, &[(Kind::House, 0), (Kind::Cafe, 0), (Kind::Cafe, 0), (Kind::Cafe, 0), (Kind::Club, 0), (Kind::Club, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0)]);
     let mine = server.me(&ann.token, COMMONS).await;
-    let wanted = json!({ "roads": 1, "homes": 3, "shops": 1, "workshops": 1, "parks": 1, "people": 16, "jobs": 5, "best_level": 2 });
+    let wanted = json!({ "roads": 1, "places": 0 });
     assert_eq!(mine["your_town"], wanted, "{mine}");
-    assert_eq!(mine["goal"], world::GOALS[4], "a home at level 2 and the next rung is level 3");
-    // The road isn't joined to the highway, and the tip is worked out from her tiles as they are now.
-    assert_eq!(mine["tip"], world::TIPS[3], "{mine}");
+    assert_eq!(mine["goal"], world::GOALS[5], "one road and the next rung is 10 tiles");
+    assert_eq!(mine["tip"], world::TIPS[4], "{mine}");
     let his = server.me(&bob.token, COMMONS).await;
-    assert_eq!(his["your_town"]["people"], 144);
-    assert_eq!(his["your_town"]["roads"], 0);
-    assert_eq!(his["goal"], world::GOALS[0]);
+    assert_eq!(his["your_town"], json!({ "roads": 0, "places": 12 }));
+    assert_eq!(his["goal"], world::GOALS[4], "a guest's ladder is roads, whatever stands on its tiles");
     // The tool says the same, and a little more.
     let how = server.tool("how_am_i_doing", json!({ "player_token": ann.token })).await;
     for key in ["player", "moves_left", "moves_per_day", "your_town", "goal", "tip"] {
         assert_eq!(how[key], mine[key], "{key}");
     }
-    assert_eq!(how["built"], json!({ "homes": 3, "park": 1, "road": 1, "shops": 1, "workshops": 1 }));
+    assert_eq!(how["built"], json!({ "homes": 1, "park": 1, "road": 1, "shops": 1, "workshops": 1 }));
     assert_eq!(how["kind"], "guest");
     // The same maths as the world's, over her tiles: that is the whole of it.
     let hers: Tiles = server.tiles(COMMONS).into_iter().filter(|(_, t)| t.player == Some(ann_id as u64)).collect();
@@ -2884,6 +2943,24 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     // Everything in it is a number, a listed sentence, or her generated name.
     let numbers_only = mine["your_town"].as_object().unwrap().values().all(|v| v.is_u64());
     assert!(numbers_only && world::GOALS.contains(&mine["goal"].as_str().unwrap()) && world::TIPS.contains(&mine["tip"].as_str().unwrap()));
+
+    // A person's ladder is places, and they are told when each comes (W62).
+    let dee = server.person("Dee").await;
+    let dee_id = person_player(&server, &dee).id;
+    let start = server.me(&dee.key, COMMONS).await;
+    assert_eq!(sorted_keys(&start), ["goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]);
+    assert_eq!(start["goal"], world::GOALS[0]);
+    assert_eq!(start["tip"], world::TIPS[1], "{start}");
+    assert_eq!(sorted_keys(&start["places"]), ["cafe", "club", "house", "studio"]);
+    lay(&server, dee_id, 114, &[(Kind::House, 0)]);
+    let one = server.me(&dee.key, COMMONS).await;
+    assert_eq!((&one["goal"], &one["tip"]), (&json!(world::GOALS[1]), &json!(world::TIPS[2])), "{one}");
+    lay(&server, dee_id, 116, &[(Kind::Studio, 0)]);
+    assert_eq!(server.me(&dee.key, COMMONS).await["goal"], world::GOALS[2]);
+    lay(&server, dee_id, 118, &[(Kind::Club, 0), (Kind::Cafe, 0)]);
+    let all = server.me(&dee.key, COMMONS).await;
+    assert_eq!(all["goal"], world::GOALS[3]);
+    assert_eq!(all["your_town"], json!({ "roads": 0, "places": 4 }), "{all}");
 }
 
 // W30, W48
@@ -2912,7 +2989,7 @@ async fn me_is_limited_like_a_view_and_a_player_who_is_not_one_is_turned_away_fi
     assert_eq!(server.get("/api/worlds/nowhere/me").token(&guest.token).ip("198.51.100.57").send().await.status, StatusCode::NOT_FOUND);
 }
 
-// W31, W30, W15, W50
+// W31, W30, W15, W50, W54
 #[tokio::test]
 async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_kept_for_side_streets() {
     start_early_in_a_minute().await;
@@ -2922,7 +2999,7 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
     let land = land_of(&server, COMMONS);
     let tiles = server.tiles(COMMONS);
 
-    // The founding town's streets, in a window as big as it is allowed to be.
+    // The end of the highway, in a window as big as it is allowed to be.
     let http = server.get("/api/worlds/commons/look?x=64&y=64&w=40&h=40").ip("198.51.100.60").send().await.ok();
     assert_eq!((&http["window"]["w"], &http["window"]["h"]), (&json!(32), &json!(32)));
     assert_eq!(http["land"].as_array().unwrap().len(), 32);
@@ -2930,8 +3007,8 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
     assert_eq!(http, tool, "the tool and the route say the same");
     let (x0, y0) = (http["window"]["x"].as_i64().unwrap(), http["window"]["y"].as_i64().unwrap());
     let listed: HashSet<(i64, i64)> = http["reserved"].as_array().unwrap().iter().map(|p| (p[0].as_i64().unwrap(), p[1].as_i64().unwrap())).collect();
-    assert!(listed.len() >= 10, "the founding town keeps hardly any side streets: {}", listed.len());
-    // Every tile it lists is open ground in the window that a zone would skip, and it lists them all.
+    assert!(listed.len() >= 6, "the highway keeps hardly any side streets: {}", listed.len());
+    // Every tile it lists is open ground in the window that a place would be refused on, and it lists them all.
     let mut every = HashSet::new();
     for y in y0..y0 + 32 {
         for x in x0..x0 + 32 {
@@ -2941,12 +3018,17 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
         }
     }
     assert_eq!(listed, every);
-    // And a zone on one is skipped and costs nothing, which is what the list is for.
+    // And a place on one is refused and costs nothing, which is what the list is for. Only a person
+    // can ask, so a guest is told so first.
     let &(rx, ry) = listed.iter().next().unwrap();
-    let zone = server.act(&guest.token, COMMONS, json!({ "action": "zone", "kind": "homes", "x": rx, "y": ry })).await;
-    assert_eq!(zone.status, StatusCode::BAD_REQUEST, "{}", zone.show());
-    assert!(zone.body["error"].as_str().unwrap().contains("side street"));
+    let house = json!({ "action": "place", "kind": "house", "x": rx, "y": ry });
+    assert_eq!(server.act(&guest.token, COMMONS, house.clone()).await.status, StatusCode::FORBIDDEN);
     assert_eq!(server.moves_left(&guest.token).await, 30);
+    let dee = server.person("Dee").await;
+    let place = server.act(&dee.key, COMMONS, house).await;
+    assert_eq!(place.status, StatusCode::BAD_REQUEST, "{}", place.show());
+    assert!(place.body["error"].as_str().unwrap().contains("side street"));
+    assert_eq!(server.me(&dee.key, COMMONS).await["moves_left"], 300);
 
     // A player token says where you are, and a made-up one is turned away. Nobody needs either.
     let you = server.get("/api/worlds/commons/look?w=4&h=4").token(&guest.token).ip("198.51.100.60").send().await.ok();
@@ -2993,7 +3075,7 @@ async fn the_guides_explain_the_land_the_score_the_goal_side_streets_visitors_an
     let commons = &guide[..guide.find("## Private rooms").unwrap()];
     for needle in [
         "`12g3f`", "run-length", "rows from y=0", "`your_town`", "`goal`", "ladder", "`reserved`", "multiple of 6", "Visitors", "frogs", "midnight UTC",
-        "don't carry over", "from y 24", "/look?x=", "Retry-After", "best_level",
+        "don't carry over", "from y 24", "/look?x=", "Retry-After",
     ] {
         assert!(commons.contains(needle), "the guide never says: {needle}");
     }
@@ -3008,5 +3090,5 @@ async fn the_guides_explain_the_land_the_score_the_goal_side_streets_visitors_an
     assert!(tools.contains("your_town") && tools.contains("goal") && tools.contains("reserved"));
     // The page says it too, as text and never as markup.
     let page = read_web("app.js");
-    assert!(page.contains("Your town:") && page.contains("Goal:") && page.contains("/me`"));
+    assert!(page.contains("your_town") && page.contains("Goal:") && page.contains("/me`"));
 }

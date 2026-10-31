@@ -1,6 +1,6 @@
-//! The public city (docs/public-city.md): The Commons, the worlds people start, the players who
-//! build in them, the step that grows them, and the frogs and visitors that pass through. Every
-//! rule (W1-W51) lives here. The engine in `world` is pure, `db` only stores, and the routes and
+//! The public city (docs/public-city.md): The Commons, the frozen worlds people started, the players
+//! who build, the step and the end of the old city, and the frogs and visitors that pass through.
+//! Every rule (W1-W70) lives here. The engine in `world` is pure, `db` only stores, and the routes and
 //! the MCP tools are thin callers of what is below.
 //!
 //! Nothing in here touches a hangout, city, house, trip or scene (W1). It reads `people` to know
@@ -34,13 +34,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     auth::{self, Caller},
-    db::{
-        random_name_seed, BotJoined, Claimed, NewWorld, PlayerKind, PlayerRow, WorldAdded, WorldRow,
-        WorldTx,
-    },
+    db::{random_name_seed, BotJoined, Claimed, NewWorld, PlayerKind, PlayerRow, WorldEnd, WorldRow, WorldTx},
     error::{ApiError, ApiResult},
     now,
-    world::{self, Change, Ground, Kind, Land, Roads, Span, Tiles},
+    world::{self, Change, Ground, Kind, Land, Phase, Roads, Span, Tiles},
     AppState,
 };
 
@@ -59,35 +56,32 @@ pub const PERSON_MOVES: u32 = 300;
 pub const GUEST_IDLE_SECS: i64 = 7 * 24 * 60 * 60;
 /// Guests that have been idle this long are deleted, so a swarm of them can't fill the table.
 const PRUNE_AFTER_SECS: i64 = 30 * 24 * 60 * 60;
-/// W24: a world with no move in this long stops stepping, and a move wakes it.
-pub const IDLE_WORLD_SECS: i64 = 30 * 24 * 60 * 60;
 /// A player is on a world's street if they moved there in the last ten minutes.
 pub const PLAYER_ACTIVE_SECS: i64 = 10 * 60;
 /// W31: a world view lists this many players at most.
 pub const MAX_LISTED_PLAYERS: i64 = 64;
-/// W25: the server holds this many worlds of people's own.
+/// W25: nobody starts a world any more, and this is what the server held when they could.
 pub const MAX_OWN_WORLDS: i64 = 200;
 /// W11: a person can claim this many guests.
 pub const MAX_CLAIMS: i64 = 20;
 /// W56: buildings a person can have beside their house, and all the buildings The Commons holds.
 pub const MAX_THIRD_SPACES: i64 = 3;
 pub const MAX_BUILDINGS: i64 = 1_500;
+/// W61: how long after their first house a person can place each kind, in seconds. A place that's
+/// open to strangers comes last, because this wait stands in for the server's code (S39).
+pub const PLACE_WAITS: [(Kind, i64); 4] =
+    [(Kind::House, 0), (Kind::Studio, 86_400), (Kind::Club, 3 * 86_400), (Kind::Cafe, 7 * 86_400)];
 /// A walk goes at most this many tiles.
 pub const WALK_RANGE: i64 = 16;
 /// W31: `look` shows at most this many tiles across and down.
 pub const LOOK_MAX: usize = 32;
 const LOOK_DEFAULT: usize = 24;
-/// A seed is a whole number every browser can hold exactly.
-pub const MAX_SEED: u64 = (1 << 53) - 1;
-const PREVIEW_SEEDS: usize = 4;
 
 /// W12, W30: how many may come in.
 const GUESTS_PER_IP_PER_HOUR: u32 = 5;
 const GUESTS_PER_HOUR: u32 = 600;
-/// W30: no world can use more than its share of the server's moves, so one busy world can't use up
-/// The Commons.
+/// W30: the moves a world takes in a minute.
 const MOVES_PER_WORLD_PER_MINUTE: u32 = 300;
-const MOVES_PER_MINUTE: u32 = 600;
 /// W30: views come from memory, so an office behind one address has room to poll.
 const VIEWS_PER_IP_PER_MINUTE: u32 = 240;
 /// W30: a refused move costs its player nothing but costs the server a read, so each player and
@@ -212,7 +206,6 @@ impl WorldMoves {
 struct Limits {
     guests_per_ip: Limiter,
     guests: Limiter,
-    moves: Limiter,
     world_moves: WorldMoves,
     /// Refused moves, counted under `player:<id>` and `address:<ip>`.
     refused: Limiter,
@@ -225,7 +218,6 @@ impl Limits {
         Limits {
             guests_per_ip: Limiter::new(4096, 3600, GUESTS_PER_IP_PER_HOUR),
             guests: Limiter::new(1, 3600, GUESTS_PER_HOUR),
-            moves: Limiter::new(1, 60, MOVES_PER_MINUTE),
             world_moves: WorldMoves::new(),
             refused: Limiter::new(8192, 60, REFUSED_PER_MINUTE),
             views_per_ip: Limiter::new(8192, 60, VIEWS_PER_IP_PER_MINUTE),
@@ -248,9 +240,8 @@ pub struct Summary {
     pub name: String,
     pub size: usize,
     pub step: u64,
-    pub population: u32,
-    pub jobs: u32,
-    pub parks: u32,
+    pub places: u32,
+    pub roads: u32,
     pub stage: &'static str,
 }
 
@@ -259,9 +250,6 @@ pub struct Cached {
     pub body: Bytes,
     pub etag: String,
     pub summary: Summary,
-    /// Every tile of the world as it was built, for what needs the whole world (a tip) without
-    /// reading it from the database. Empty for the list of worlds.
-    pub tiles: Arc<Tiles>,
 }
 
 struct Slot {
@@ -352,15 +340,6 @@ impl Runtime {
                 Arc::new(WorldLand { land, rows })
             })
             .clone()
-    }
-
-    /// Keeps land that was made for a world which has just been added, so it isn't made again.
-    /// Land made for a seed that didn't become a world is never kept (W25).
-    fn keep_land(&self, seed: u64, size: usize, land: Land) {
-        locked(&self.lands).entry((seed, size)).or_insert_with(|| {
-            let rows = world::encode_land(&land);
-            Arc::new(WorldLand { land, rows })
-        });
     }
 
     /// Something in a world changed, so its view is rebuilt the next time it may be.
@@ -718,10 +697,9 @@ fn unauthorized_because(message: &'static str) -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, message)
 }
 
-/// W28: The Commons is 128 by 128 with a fixed seed, and is made if it isn't there, with its
-/// founding town. Every world route calls this first, and the server calls it when it starts, so it
-/// exists before anyone asks. It is safe to run on a Commons that already exists: it adds the town
-/// only where nothing is built yet, and touches nothing else.
+/// W28: The Commons is 128 by 128 with a fixed seed, and is made if it isn't there. Every world route
+/// calls this first, and the server calls it when it starts, so it exists before anyone asks. It is
+/// safe to run on a Commons that already exists: it touches nothing.
 pub fn ensure_commons(state: &AppState) -> ApiResult<()> {
     if state.worlds.commons_ready.load(Ordering::Acquire) {
         return Ok(());
@@ -743,24 +721,8 @@ pub fn ensure_commons(state: &AppState) -> ApiResult<()> {
         },
         MAX_OWN_WORLDS,
     )?;
-    found_town(state, &land.land)?;
     state.worlds.commons_ready.store(true, Ordering::Release);
     Ok(())
-}
-
-/// Puts the founding town on The Commons wherever the tile is still empty. A tile with no player
-/// is stored with a null builder, like the highway.
-fn found_town(state: &AppState, land: &Land) -> ApiResult<()> {
-    let town = world::founding_town(world::COMMONS_SEED, land);
-    state.db.in_transaction(|tx| -> ApiResult<()> {
-        let there = tx.all_tiles(COMMONS_ID)?;
-        let fresh: Vec<Change> = town
-            .into_iter()
-            .filter(|(pos, _)| !there.contains_key(pos))
-            .map(|(pos, tile)| Change::Set(pos, tile))
-            .collect();
-        Ok(tx.write_changes(COMMONS_ID, &fresh, now())?)
-    })
 }
 
 fn require_world(state: &AppState, id: &str) -> ApiResult<WorldRow> {
@@ -768,27 +730,31 @@ fn require_world(state: &AppState, id: &str) -> ApiResult<WorldRow> {
     state.db.world(id)?.ok_or_else(not_found)
 }
 
-fn is_owner(world: &WorldRow, player: &PlayerRow) -> bool {
-    world.owner_id.is_some() && world.owner_id == player.person_id
+/// W27: a world someone started stays where it is, and nothing happens there.
+fn refuse_frozen(world: &WorldRow) -> ApiResult<()> {
+    if world.kind == "public" {
+        return Ok(());
+    }
+    Err(ApiError::forbidden("this world is frozen: The Commons is the one map now"))
 }
 
 /// W27, W18: whether this player may build in this world.
 fn may_build(tx: &WorldTx, world: &WorldRow, player: &PlayerRow) -> ApiResult<()> {
-    match tx.member_state(&world.id, player.id)? {
-        Some(true) => Err(ApiError::forbidden("you were removed from this world")),
-        Some(false) => Ok(()),
-        None if world.open || is_owner(world, player) => Ok(()),
-        None => Err(ApiError::forbidden(
-            "this world is invite-only: open its link first, and then you can build",
-        )),
+    refuse_frozen(world)?;
+    if tx.member_state(&world.id, player.id)? == Some(true) {
+        return Err(ApiError::forbidden("you were removed from this world"));
     }
+    Ok(())
 }
 
-/// W54, W56: a building is for a person, in The Commons, within what they and the world can hold.
-fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind) -> ApiResult<()> {
-    if world.kind != "public" {
-        return Err(ApiError::bad_request("buildings are only in The Commons for now"));
-    }
+/// W61: seconds until a person can place a kind, given when their first house went up, if it has.
+fn wait_for(kind: Kind, since: Option<i64>, now: i64) -> i64 {
+    let wait = PLACE_WAITS.iter().find(|(listed, _)| *listed == kind).map_or(0, |(_, secs)| *secs);
+    (since.unwrap_or(now) + wait - now).max(0)
+}
+
+/// W54, W56, W61: a place is for a person, within what they and the world can hold, once it has come.
+fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind, now: i64) -> ApiResult<()> {
     if player.kind() != PlayerKind::Person {
         return Err(ApiError::forbidden("only a person can place a building: sign in on the site"));
     }
@@ -801,6 +767,9 @@ fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind) -> 
     }
     if everyone >= MAX_BUILDINGS {
         return Err(ApiError::conflict("The Commons has no room for more buildings right now"));
+    }
+    if wait_for(kind, tx.place_clock(&world.id, player.id)?, now) > 0 {
+        return Err(ApiError::conflict("that place hasn't come yet: places come with time"));
     }
     Ok(())
 }
@@ -823,8 +792,6 @@ pub struct Move {
 
 enum Parsed {
     Road(Span),
-    Zone(Kind, Span),
-    Park(i64, i64),
     Place(Kind, i64, i64),
     Bulldoze(i64, i64),
     Walk(i64, i64),
@@ -871,22 +838,6 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
             let (x, y) = point()?;
             Ok(Parsed::Road(span_of(x, y, mv.x2, mv.y2)?))
         }
-        "zone" => {
-            only(&["x", "y", "x2", "y2", "kind"])?;
-            let (x, y) = point()?;
-            let kind = mv
-                .kind
-                .as_deref()
-                .and_then(Kind::parse)
-                .filter(|kind| kind.is_zone())
-                .ok_or("a zone needs a kind: homes, shops or workshops")?;
-            Ok(Parsed::Zone(kind, span_of(x, y, mv.x2, mv.y2)?))
-        }
-        "park" => {
-            only(&["x", "y"])?;
-            let (x, y) = point()?;
-            Ok(Parsed::Park(x, y))
-        }
         "place" => {
             only(&["x", "y", "kind"])?;
             let (x, y) = point()?;
@@ -917,7 +868,7 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
                 .ok_or("that isn't an emote: wave, cheer, think, sleep or dance")?;
             Ok(Parsed::Emote(word))
         }
-        _ => Err("that isn't a move: road, zone, park, place, bulldoze, walk or emote"),
+        _ => Err("that isn't a move: road, place, bulldoze, walk or emote"),
     }
 }
 
@@ -925,7 +876,7 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acted {
     pub moves_left: u32,
-    /// Tiles built, grown or taken down.
+    /// Tiles built or taken down.
     pub changed: u32,
     /// Tiles left alone and not charged for.
     pub skipped: u32,
@@ -933,8 +884,7 @@ pub struct Acted {
 }
 
 /// The tiles a planner may look at for a span: its own, and `margin` more all round. A road looks
-/// one tile out for a road to touch, and a zone or a park three, for the roads that keep a side
-/// street (W15). A span that is off the map or too long gets none, because the planners refuse
+/// one tile out for a road to touch, and a place three, for the roads that keep a side street (W15). A span that is off the map or too long gets none, because the planners refuse
 /// those before they look at any.
 fn tiles_near(
     tx: &WorldTx,
@@ -980,6 +930,12 @@ fn apply_move(
         .filter(|player| !player.removed)
         .ok_or_else(ApiError::unauthorized)?;
     may_build(tx, world, &player)?;
+    // W67: nothing moves while it strikes.
+    if let Some(end) = tx.world_end(&world.id)? {
+        if matches!(phase_of(&end, world), Phase::Striking(..)) {
+            return Err(ApiError::conflict(world::TIP_ENDING));
+        }
+    }
     let left = moves_left(&player, now);
     // W30: this answer isn't counted as a refused move, so it comes before any of the work.
     if left == 0 {
@@ -1011,18 +967,8 @@ fn apply_move(
             let tiles = tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, 1)?;
             plan_parts(world::plan_road(land, &tiles, builder, *span))?
         }
-        Parsed::Zone(kind, span) => {
-            let tiles =
-                tiles_near(tx, &world.id, land, *span, world::MAX_ZONE_SIDE, world::SIDE_STREET)?;
-            plan_parts(world::plan_zone(land, &tiles, builder, *kind, *span))?
-        }
-        Parsed::Park(x, y) => {
-            let tiles =
-                tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
-            plan_parts(world::plan_park(land, &tiles, builder, *x, *y))?
-        }
         Parsed::Place(kind, x, y) => {
-            may_place(tx, world, &player, *kind)?;
+            may_place(tx, world, &player, *kind, now)?;
             let tiles =
                 tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
             plan_parts(world::plan_place(land, &tiles, builder, *kind, *x, *y))?
@@ -1041,7 +987,7 @@ fn apply_move(
             let is_gone = |who: u64| Some(who) == there && gone;
             // W17: a tile with no builder, or one this player can't take down, is refused from the
             // small read. A road that may come down also needs the whole network, to be sure
-            // nothing grown depends on it, so that is read only once the rest has said yes.
+            // no place depends on it, so that is read only once the rest has said yes.
             let planned = world::plan_bulldoze_tile(land, &near, builder, *x, *y, &is_gone);
             let is_road =
                 pos.and_then(|pos| near.get(&pos)).is_some_and(|tile| tile.kind == Kind::Road);
@@ -1060,16 +1006,13 @@ fn apply_move(
             now,
         ));
     }
-    // W30: counted last, so a move that was refused above doesn't use up any share. The world is
-    // counted first, so a busy world is turned away before it touches the server's.
-    let limits = &state.worlds.limits;
-    if !limits.world_moves.allow(&world.id, now) {
+    // W30: counted last, so a move that was refused above doesn't use up any of the minute's share.
+    if !state.worlds.limits.world_moves.allow(&world.id, now) {
         return Err(ApiError::too_many_requests(
             "this world is very busy right now: try again in a minute",
         )
-        .retry_after(limits.moves.wait(now)));
+        .retry_after((60 - now.rem_euclid(60)) as u64));
     }
-    limits.moves.take("all", now, "the city is very busy right now: try again in a minute")?;
 
     let start = land.centre();
     tx.enter_world(&world.id, player.id, start, now)?;
@@ -1081,6 +1024,10 @@ fn apply_move(
         }
         Parsed::Emote(word) => tx.set_emote(&world.id, player.id, word)?,
         _ => tx.write_changes(&world.id, &changes, now)?,
+    }
+    // W61: the wait starts with a person's first house, and bulldozing it doesn't start it again.
+    if matches!(parsed, Parsed::Place(Kind::House, ..)) {
+        tx.start_place_clock(&world.id, player.id, now)?;
     }
     let used = used_today(&player, now) + cost;
     tx.charge(player.id, day_of(&player, now), i64::from(used), now)?;
@@ -1179,26 +1126,33 @@ fn make_move(
     Ok(acted)
 }
 
-/// Who a player is, where they stand, and what they have built, worked out from their own tiles and
-/// the world's as the last view saw it. Their own tiles are read fresh, so what they built a moment
-/// ago counts at once; the rest of the world is memory (W29). Returns the reply, the view it used
-/// and their own tiles.
+/// Who a player is, where they stand, and what they have built, worked out from their own tiles, read
+/// fresh, so what they built a moment ago counts at once. Returns the reply and their own tiles.
 fn standing(
     state: &AppState,
     player: &PlayerRow,
     world_id: &str,
     now: i64,
-) -> ApiResult<(Value, Arc<Cached>, Tiles)> {
+) -> ApiResult<(Value, Tiles)> {
     let world = require_world(state, world_id)?;
     let land = state.worlds.land_for(world.seed, world.size);
     let (pos, emote) = state
         .db
         .world_player(&world.id, player.id)?
         .unwrap_or((land.land.centre(), None));
-    let cached = view_for(state, &world.id)?;
     let own = state.db.player_tiles(&world.id, player.id)?;
     let town = world::town(&own);
-    let reply = json!({
+    let person = player.kind() == PlayerKind::Person;
+    let striking = state
+        .db
+        .world_end(&world.id)?
+        .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
+    let tip = if striking {
+        world::TIP_ENDING
+    } else {
+        world::tip(&own, person, moves_left(player, now))
+    };
+    let mut reply = json!({
         "player": {
             "id": player.id,
             "name": name_of(player),
@@ -1209,24 +1163,24 @@ fn standing(
         "moves_left": moves_left(player, now),
         "moves_per_day": allowance(player),
         "your_town": town,
-        "goal": world::goal(&town),
-        "tip": tip_for(&cached, player, &own, now),
+        "goal": world::goal(&town, person),
+        "tip": tip,
     });
-    Ok((reply, cached, own))
+    if person {
+        reply["places"] = places_left(state, &world.id, player.id, now)?;
+    }
+    Ok((reply, own))
 }
 
-/// W47: the tip for a player. The world is the last view's, with this player's own tiles put in
-/// over it, so a tip that follows what they just did doesn't wait for the next view.
-fn tip_for(cached: &Cached, player: &PlayerRow, own: &Tiles, now: i64) -> &'static str {
-    let me = player.id as u64;
-    let mut tiles = (*cached.tiles).clone();
-    tiles.retain(|_, tile| tile.player != Some(me));
-    tiles.extend(own.iter().map(|(pos, tile)| (*pos, *tile)));
-    world::tip(&tiles, me, moves_left(player, now))
+/// W62: how long until a person can place each kind.
+fn places_left(state: &AppState, world_id: &str, player_id: i64, now: i64) -> ApiResult<Value> {
+    let since = state.db.place_clock(world_id, player_id)?;
+    let left = PLACE_WAITS.iter().map(|(kind, _)| (kind.as_str(), wait_for(*kind, since, now)));
+    Ok(Value::Object(left.map(|(kind, secs)| (kind.to_string(), json!(secs))).collect()))
 }
 
 /// A player's own view of themselves in a world: who they are, where, what they have left, their
-/// town and goal (W48, W49), and a tip.
+/// town and goal (W48, W49), a tip, and when their places come (W62).
 pub fn me(state: &AppState, player: &PlayerRow, world_id: &str, now: i64) -> ApiResult<Value> {
     let mut reply = standing(state, player, world_id, now)?.0;
     if player.id == STAND_IN {
@@ -1246,7 +1200,8 @@ pub fn how_am_i_doing(
     world_id: &str,
     now: i64,
 ) -> ApiResult<Value> {
-    let (mut out, cached, own) = standing(state, player, world_id, now)?;
+    let (mut out, own) = standing(state, player, world_id, now)?;
+    let cached = view_for(state, world_id)?;
     let mut built: BTreeMap<&str, u32> = BTreeMap::new();
     for tile in own.values() {
         *built.entry(tile.kind.as_str()).or_default() += 1;
@@ -1262,9 +1217,8 @@ fn summary_json(summary: &Summary) -> Value {
         "name": summary.name,
         "size": summary.size,
         "step": summary.step,
-        "population": summary.population,
-        "jobs": summary.jobs,
-        "parks": summary.parks,
+        "places": summary.places,
+        "roads": summary.roads,
         "stage": summary.stage,
     })
 }
@@ -1317,11 +1271,7 @@ pub fn join(
     now: i64,
 ) -> ApiResult<Joined> {
     let world = require_world(state, world_id.unwrap_or(COMMONS_ID))?;
-    if !world.open {
-        return Err(ApiError::forbidden(
-            "this world is invite-only: open its link to get in",
-        ));
-    }
+    refuse_frozen(&world)?;
     let token = auth::new_guest_token();
     let token_hash = auth::hash_secret(&token);
     let (player, claim_code) = match auth::bearer_token(headers) {
@@ -1373,16 +1323,12 @@ pub fn join(
     })?;
     state.worlds.mark_stale(&world.id);
     state.worlds.cards_stale.store(true, Ordering::Release);
-    // A new guest has built nothing. A bot that comes back may have a town, which is read the way
-    // `me` reads it: its own tiles, and the world from memory.
-    let tip = match claim_code {
-        Some(_) => world::tip(&Tiles::new(), player.id as u64, moves_left(&player, now)),
-        None => {
-            let own = state.db.player_tiles(&world.id, player.id)?;
-            let cached = view_for(state, &world.id)?;
-            tip_for(&cached, &player, &own, now)
-        }
+    // A new guest has built nothing. A bot that comes back may have a town, which is its own tiles.
+    let own = match claim_code {
+        Some(_) => Tiles::new(),
+        None => state.db.player_tiles(&world.id, player.id)?,
     };
+    let tip = world::tip(&own, false, moves_left(&player, now));
     Ok(Joined {
         player,
         token,
@@ -1392,28 +1338,15 @@ pub fn join(
     })
 }
 
-/// W27: a player opens a world's link, and may build there from then on.
+/// W27: a world's link opened one that was still open. Every world with a link is frozen now, so all
+/// it can say is that, to someone who holds the link.
 pub fn join_by_code(state: &AppState, player: &PlayerRow, code: &str, now: i64) -> ApiResult<String> {
     ensure_commons(state)?;
     state.worlds.limits.people.take(&format!("code:{}", player.id), now, "slow down")?;
     let world = state.db.world_by_code(code)?.ok_or_else(not_found)?;
-    let land = state.worlds.land_for(world.seed, world.size);
-    let centre = land.land.centre();
-    let allowed = state.db.in_transaction(|tx| -> ApiResult<bool> {
-        if !tx.add_member(&world.id, player.id)? {
-            return Ok(false);
-        }
-        tx.enter_world(&world.id, player.id, centre, now)?;
-        Ok(true)
-    })?;
-    if !allowed {
-        return Err(ApiError::forbidden("you were removed from this world"));
-    }
-    state.worlds.mark_stale(&world.id);
+    refuse_frozen(&world)?;
     Ok(world.id)
 }
-
-// Claiming, listing and renaming
 
 /// W11: a signed-in person enters a claim code, and the guest becomes theirs.
 pub fn claim(state: &AppState, caller: &Caller, code: &str, now: i64) -> ApiResult<PlayerRow> {
@@ -1535,89 +1468,6 @@ pub fn remove_player(
     Ok(down)
 }
 
-// Starting a world
-
-/// W26: a few generated maps to choose from. They are made and sent, and nothing is kept: only a
-/// world that exists keeps its land.
-pub fn preview(state: &AppState, caller: &Caller, now: i64) -> ApiResult<Value> {
-    require_person(caller)?;
-    state.worlds.limits.people.take(&format!("preview:{}", caller.person_id), now, "slow down")?;
-    let seeds: Vec<Value> = (0..PREVIEW_SEEDS)
-        .map(|_| {
-            let seed = rand::random_range(1..(1u64 << 32));
-            json!({
-                "seed": seed,
-                "name": world::world_name(seed),
-                "land": world::encode_land(&world::terrain(seed, world::OWN_SIZE)),
-            })
-        })
-        .collect();
-    Ok(json!({ "seeds": seeds }))
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NewWorldBody {
-    pub seed: Option<u64>,
-    pub open: Option<bool>,
-}
-
-/// Why a world couldn't be added, or `None` if it could.
-fn why_no_world(added: WorldAdded) -> Option<ApiError> {
-    match added {
-        WorldAdded::Added => None,
-        WorldAdded::OwnerHasOne => Some(ApiError::conflict("you already have a world")),
-        WorldAdded::Full => Some(ApiError::conflict("this server has all the worlds it can hold")),
-        WorldAdded::Exists => Some(ApiError::conflict("try that again")),
-    }
-}
-
-/// W25: a signed-in person starts a world, with no server code. One each, and the server holds 200.
-/// The cheap answers come first and no land is made for them, then the person's limit, and only
-/// then the land, which is kept once the world is there.
-pub fn create_world(
-    state: &AppState,
-    caller: &Caller,
-    body: &NewWorldBody,
-    now: i64,
-) -> ApiResult<Arc<Cached>> {
-    require_person(caller)?;
-    ensure_commons(state)?;
-    let seed = body.seed.unwrap_or_else(|| rand::random_range(1..(1u64 << 32)));
-    if seed > MAX_SEED {
-        return Err(ApiError::bad_request("that seed is too big"));
-    }
-    if let Some(refused) = why_no_world(state.db.room_for_world(&caller.person_id, MAX_OWN_WORLDS)?) {
-        return Err(refused);
-    }
-    state.worlds.limits.people.take(&format!("world:{}", caller.person_id), now, "slow down")?;
-    let land = world::terrain(seed, world::OWN_SIZE);
-    let highway = world::highway(seed, &land);
-    let id = auth::new_id();
-    let invite = auth::new_invite_code();
-    let added = state.db.insert_world(
-        &NewWorld {
-            id: &id,
-            name: &world::world_name(seed),
-            kind: "own",
-            seed,
-            size: world::OWN_SIZE,
-            owner_id: Some(&caller.person_id),
-            open: body.open.unwrap_or(true),
-            invite_code: Some(&invite),
-            highway: &highway,
-            now,
-        },
-        MAX_OWN_WORLDS,
-    )?;
-    if let Some(refused) = why_no_world(added) {
-        return Err(refused);
-    }
-    state.worlds.keep_land(seed, world::OWN_SIZE, land);
-    state.worlds.cards_stale.store(true, Ordering::Release);
-    view_for(state, &id)
-}
-
 /// The caller's own world, with the link that lets others build in it. Only they see the link.
 pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
     require_person(caller)?;
@@ -1650,10 +1500,9 @@ struct ViewOut<'a> {
     tiles: Vec<(u16, u16, &'static str, u8)>,
     /// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
     players: Vec<(i64, String, u16, u16, Option<&'static str>, &'static str)>,
-    population: u32,
-    jobs: u32,
+    places: u32,
+    roads: u32,
     stage: &'static str,
-    parks: u32,
     updated_at: i64,
     /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1662,6 +1511,47 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disaster: Option<DisasterOut>,
+}
+
+/// W66, W67, W69: what a view says about the end of the old city.
+#[derive(Serialize)]
+struct DisasterOut {
+    stage: &'static str,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    done: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    of: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hits: Option<Vec<world::Hit>>,
+}
+
+fn phase_of(end: &WorldEnd, world: &WorldRow) -> Phase {
+    world::phase(world.seed, end.clock_step, end.omen_step, end.ended_step, world.step)
+}
+
+fn disaster_of(world: &WorldRow, end: &WorldEnd) -> Option<DisasterOut> {
+    let quiet = |stage, disaster: world::Disaster| DisasterOut {
+        stage,
+        kind: disaster.as_str(),
+        done: None,
+        of: None,
+        hits: None,
+    };
+    match phase_of(end, world) {
+        Phase::Quiet => None,
+        Phase::Omen(disaster) => Some(quiet("omen", disaster)),
+        Phase::Over(disaster) => Some(quiet("over", disaster)),
+        Phase::Striking(disaster, done) => Some(DisasterOut {
+            stage: "striking",
+            kind: disaster.as_str(),
+            done: Some(done),
+            of: Some(world::STRIKE_STEPS),
+            hits: Some(world::strike(world.seed, disaster, done, world.size)),
+        }),
+    }
 }
 
 fn etag_of(body: &[u8]) -> String {
@@ -1704,6 +1594,8 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         })
         .collect();
 
+    let disaster = state.db.world_end(&world.id)?.and_then(|end| disaster_of(world, &end));
+
     let (crawlers, visitors, people) = if world.id == COMMONS_ID {
         let roads = Roads::from_tiles(&snapshot.tiles);
         let on_the_street = |numbers: Vec<u64>| -> Vec<(String, u16, u16)> {
@@ -1742,14 +1634,14 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         land: &land.rows,
         tiles,
         players,
-        population: stats.population,
-        jobs: stats.jobs,
+        places: stats.places,
+        roads: stats.roads,
         stage: stats.stage,
-        parks: stats.parks,
         updated_at: 0,
         crawlers,
         visitors,
         people,
+        disaster,
     };
     // The tag leaves out the time it was built and how long ago each frog was seen, because both
     // tick on their own. A view that didn't otherwise change keeps its tag, and a browser that
@@ -1772,12 +1664,10 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             name: world.name.clone(),
             size: world.size,
             step: world.step,
-            population: stats.population,
-            jobs: stats.jobs,
-            parks: stats.parks,
+            places: stats.places,
+            roads: stats.roads,
             stage: stats.stage,
         },
-        tiles: Arc::new(snapshot.tiles),
     })
 }
 
@@ -1838,8 +1728,8 @@ struct CardOut<'a> {
     name: &'a str,
     kind: &'a str,
     open: bool,
-    population: u32,
-    jobs: u32,
+    places: u32,
+    roads: u32,
     stage: &'static str,
     players_active: i64,
 }
@@ -1870,8 +1760,8 @@ pub fn cards(state: &AppState, now: i64) -> ApiResult<Arc<Cached>> {
             name: &world.name,
             kind: &world.kind,
             open: world.open,
-            population: stats.population,
-            jobs: stats.jobs,
+            places: stats.places,
+            roads: stats.roads,
             stage: stats.stage,
             players_active: *active,
         });
@@ -1888,12 +1778,10 @@ pub fn cards(state: &AppState, now: i64) -> ApiResult<Arc<Cached>> {
             name: String::new(),
             size: 0,
             step: 0,
-            population: 0,
-            jobs: 0,
-            parks: 0,
+            places: 0,
+            roads: 0,
             stage: "hamlet",
         },
-        tiles: Arc::new(Tiles::new()),
     });
     *cache = Some((Instant::now(), cached.clone()));
     Ok(cached)
@@ -2037,9 +1925,8 @@ pub fn look(
         "legend": "land rows are one letter a tile: g grass, f forest, w water, s sand, h hill. \
                    Row 0 of land is the window's top row, and its first letter is its left column. \
                    built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
-                   building a person placed. players is [id, name, x, y, emote]. reserved is \
-                   [x, y] for each open tile kept for a side street: zones and parks skip it and \
-                   roads may use it.",
+                   place a person put up. players is [id, name, x, y, emote]. reserved is [x, y] \
+                   for each open tile kept for a side street: a place can't use it and roads may.",
         "land": rows,
         "built": built,
         "reserved": reserved,
@@ -2068,13 +1955,12 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 
 // The step
 
-/// W19: one world, one step. Pure: the tiles, the seed and the step number decide it. The whole
-/// step is saved in one transaction, and a move can't land between reading the tiles and saving.
+/// W19: one step of The Commons. Everything it changes comes from the tiles, the seed and the step
+/// number, and it's saved in one transaction, so a move can't land between reading and saving.
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
-        let tiles = tx.all_tiles(&world.id)?;
-        let changes = world::step(world.seed, world.step, &tiles);
+        let changes = end_of_the_old_city(state, tx, &world)?;
         tx.write_changes(&world.id, &changes, now)?;
         tx.set_step(&world.id, world.step + 1)?;
         Ok(changes.len())
@@ -2083,16 +1969,40 @@ pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize
     Ok(changed)
 }
 
-/// W24: the worlds worth stepping now, which are the ones someone has moved in lately, and always
-/// The Commons, because the people, agents and frogs on its street walk by its step.
-pub fn worlds_due(state: &AppState, now: i64) -> ApiResult<Vec<String>> {
-    ensure_commons(state)?;
-    let mut due = state.db.worlds_awake(now - IDLE_WORLD_SECS)?;
-    if !due.iter().any(|id| id == COMMONS_ID) {
-        due.push(COMMONS_ID.to_string());
-        due.sort();
+/// W64 to W69: this step's part in the end of the old city. A step that fails is rolled back with
+/// the rest of the transaction and comes round again (W70).
+fn end_of_the_old_city(state: &AppState, tx: &WorldTx, world: &WorldRow) -> ApiResult<Vec<Change>> {
+    let Some(end) = tx.world_end(&world.id)? else {
+        if world.id == COMMONS_ID && tx.has_old_city(&world.id)? {
+            tx.start_end_clock(&world.id, world.step)?;
+        }
+        return Ok(Vec::new());
+    };
+    if end.omen_step.is_none() {
+        if world.step >= end.clock_step + world::omens_after(world.seed, end.clock_step) {
+            tx.start_omens(&world.id, world.step)?;
+        }
+        return Ok(Vec::new());
     }
-    Ok(due)
+    let Phase::Striking(disaster, done) = phase_of(&end, world) else {
+        return Ok(Vec::new());
+    };
+    let land = state.worlds.land_for(world.seed, world.size);
+    let highway = world::highway(world.seed, &land.land);
+    let hits = world::strike(world.seed, disaster, done, world.size);
+    let last = done + 1 == world::STRIKE_STEPS;
+    let changes = world::strike_changes(&tx.all_tiles(&world.id)?, &highway, &hits, last);
+    if last {
+        tx.finish_end(&world.id, world.step)?;
+    }
+    Ok(changes)
+}
+
+/// W24: only The Commons steps, and always, because the people, agents and frogs on its street walk
+/// by its step.
+pub fn worlds_due(state: &AppState, _now: i64) -> ApiResult<Vec<String>> {
+    ensure_commons(state)?;
+    Ok(vec![COMMONS_ID.to_string()])
 }
 
 /// Steps one world and says so if it fails. A failure is logged and retried on the next tick,
@@ -2385,10 +2295,10 @@ mod tests {
     #[test]
     fn a_drag_in_any_direction_is_the_same_span_with_the_top_left_corner_first() {
         for (x, y, x2, y2) in [(9, 9, 5, 5), (5, 5, 9, 9), (9, 5, 5, 9), (5, 9, 9, 5)] {
-            let Ok(Parsed::Zone(Kind::Shops, span)) =
-                parse(json!({ "action": "zone", "kind": "shops", "x": x, "y": y, "x2": x2, "y2": y2 }))
+            let Ok(Parsed::Road(span)) =
+                parse(json!({ "action": "road", "x": x, "y": y, "x2": x2, "y2": y2 }))
             else {
-                panic!("a zone");
+                panic!("a road");
             };
             assert_eq!((span.x, span.y, span.x2, span.y2), (5, 5, 9, 9));
         }
@@ -2406,10 +2316,12 @@ mod tests {
 
     #[test]
     fn a_move_takes_only_what_its_action_takes() {
-        assert!(parse(json!({ "action": "park", "x": 1, "y": 2 })).is_ok());
-        assert!(parse(json!({ "action": "park", "x": 1, "y": 2, "x2": 3, "y2": 4 })).is_err());
-        assert!(parse(json!({ "action": "zone", "x": 1, "y": 2 })).is_err(), "a zone needs a kind");
-        assert!(parse(json!({ "action": "zone", "kind": "park", "x": 1, "y": 2 })).is_err());
+        assert!(parse(json!({ "action": "place", "kind": "cafe", "x": 1, "y": 2 })).is_ok());
+        assert!(parse(json!({ "action": "place", "kind": "cafe", "x": 1, "y": 2, "x2": 3, "y2": 4 })).is_err());
+        assert!(parse(json!({ "action": "place", "x": 1, "y": 2 })).is_err(), "a place needs a kind");
+        assert!(parse(json!({ "action": "place", "kind": "park", "x": 1, "y": 2 })).is_err());
+        assert!(parse(json!({ "action": "zone", "kind": "homes", "x": 1, "y": 2 })).is_err());
+        assert!(parse(json!({ "action": "park", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "road", "x": 1, "y": 2, "x2": 3 })).is_err());
         assert!(parse(json!({ "action": "emote", "emote": "dance" })).is_ok());
         assert!(parse(json!({ "action": "emote", "emote": "dance", "x": 1 })).is_err());
