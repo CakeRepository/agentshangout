@@ -3443,7 +3443,17 @@ async fn a_step_leaves_what_a_player_has_built_as_theirs() {
     server.act(&ann.key, COMMONS, road_move(first, last)).await.ok();
     let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
     server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
-    // A tile of the old city that was hers, far from any road: it neither grows nor shrinks now.
+
+    let theirs = || -> Vec<_> { server.tiles(COMMONS).into_iter().filter(|(_, tile)| tile.player.is_some()).collect() };
+    let before = theirs();
+    assert!(before.len() >= 9);
+    for _ in 0..400 {
+        worlds::step_world(&server.state, COMMONS, now()).unwrap();
+    }
+    assert_eq!(theirs(), before);
+
+    // A tile of the old city that was hers, far from any road: it neither grows nor shrinks, in the
+    // 6 steps there are before anything can strike (W65, W66).
     let map = Map::from_db(&server, COMMONS);
     let roads = map.roads();
     let far = (0..map.size)
@@ -3452,16 +3462,12 @@ async fn a_step_leaves_what_a_player_has_built_as_theirs() {
         .unwrap();
     let player = server.state.db.own_player(&ann.id, now()).unwrap();
     server.write(COMMONS, &[Change::Set((far.0 as u16, far.1 as u16), Tile { kind: Kind::Homes, level: 2, player: Some(player.id as u64) })]);
-
-    let before: Vec<_> = server.tiles(COMMONS).into_iter().filter(|(_, tile)| tile.player.is_some()).collect();
+    let before = theirs();
     assert!(before.len() >= 10);
-    for _ in 0..400 {
+    for _ in 0..6 {
         worlds::step_world(&server.state, COMMONS, now()).unwrap();
     }
-    let after = server.tiles(COMMONS);
-    for (pos, tile) in &before {
-        assert_eq!(after[pos], *tile, "{pos:?}");
-    }
+    assert_eq!(theirs(), before);
 }
 
 // W15

@@ -382,7 +382,7 @@ Every hangout is being deleted, so that everything on the site from then on is a
 Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
 database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
 it, because only a person touches the server. The end of the old city (W64) is the one thing that
-wipes by itself, and it only ever takes tiles on the map, a day or more after a release.
+wipes by itself, and it only ever takes tiles on the map, minutes after a release.
 
 [wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
 checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much

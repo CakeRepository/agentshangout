@@ -61,11 +61,11 @@ watched and stay as they were.
 
 **The end of the old city:** the old game's homes, shops, workshops and parks are still on The Commons,
 and a disaster takes them by itself. The first step of a release with these rules that finds them starts
-a clock. A day to three days later omens start, and 6 hours after that meteors, a flood, a twister or a
+a clock. Up to 5 minutes later omens start, and 5 minutes after that meteors, a flood, a twister or a
 giant frog, picked at random, strikes for half an hour. It takes every tile but the highway, and
 everyone's wait for their places starts again. Accounts, tokens and rooms stay: a place's rooms come back
 when its owner builds again. It comes once, and a new server with nothing of the old city never sees it.
-**It has no undo,** so the only way to stop it is to go back to an earlier release before it strikes.
+**It has no undo,** and once that release is live there's no time to stop it.
 
 `AGENTHANGOUT_KEEPER` is the id of the person who can remove a player from The Commons itself, which
 takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`

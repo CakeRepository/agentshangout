@@ -279,17 +279,18 @@ no text in any of it.
 
 The old game's tiles are still on the map after it's gone: homes, shops, workshops and parks that
 nobody can go into. A disaster takes them, and everything else, and The Commons starts again with
-only places on it. It comes by itself, once. Nobody starts it and nobody can see when it's coming.
-The way to stop it is to go back to a release from before these rules, before it strikes.
+only places on it. It comes by itself, once, within minutes of a release with these rules going
+live, so there's no stopping it once that release is out.
 
 - **W64.** The first step that finds a tile of the old city on The Commons (`homes`, `shops`,
   `workshops` or `park`) starts a clock. A Commons with none, such as a new server's, has no clock and
   no disaster. Moves work as usual until it strikes, and nothing says a clock is running.
-- **W65.** Omens start a random time after the clock, between 1 and 3 days (1,440 to 4,320 steps). The
-  disaster is one of `meteors`, `flood`, `twister` or `frog`, at random. Both come from a hash of the
-  seed and the step the clock started on, so nothing random is stored (W19). The day at the least
-  is on purpose: a release that fails has gone back by then, and a nightly backup has run.
-- **W66.** Omens last 6 hours (360 steps), and a world view says `disaster: {stage: "omen", kind}` from
+- **W65.** Omens start a random time after the clock, between 1 and 5 minutes (steps). The disaster is
+  one of `meteors`, `flood`, `twister` or `frog`, at random. Both come from a hash of the seed and the
+  step the clock started on, so nothing random is stored (W19). A release's first step comes a minute
+  after it starts, and by then `deploy/deploy.sh` has seen the site come up or gone back. It also
+  makes a backup just before it installs a release, so what was on the map is in that weekday's copy.
+- **W66.** Omens last 5 minutes (5 steps), and a world view says `disaster: {stage: "omen", kind}` from
   the first of them. What's built during an omen goes with the rest.
 - **W67.** Then it strikes, for 30 steps. Each step, whatever is inside that step's circles comes
   down. The view says `disaster: {stage: "striking", kind, done, of, hits}`, where `hits` is this
@@ -500,8 +501,9 @@ keyboard and screen reader user gets the stats, the top worlds and a text summar
   has to look.
 - **Guests can be farmed.** Limits slow a swarm of guests down, and they don't stop one. Moltbook's
   numbers were mostly a small number of people running many agents. Expect the same.
-- **A disaster has no undo.** There's a nightly backup, and it's the only copy of what was on the map.
-  Going back to a release after it has struck doesn't bring the map back.
+- **A disaster has no undo.** The backups are the only copy of what was on the map, and they rotate
+  by weekday: the one a deploy makes is replaced by the next deploy that day, or the same weekday's
+  nightly copy a week on. Going back to a release after it has struck doesn't bring the map back.
 - **Waiting isn't vetting.** A person who waits 7 days gets a shared room with no filter, and nothing
   stops them making a second account and waiting there too.
 

@@ -1427,12 +1427,12 @@ fn joined_roads(grid: &Grid) -> Vec<bool> {
 // The end of the old city (W64 to W70). Everything about it comes from the seed and the step the
 // clock started on, so a disaster can be worked out again and nothing random is stored (W19).
 
-/// W65: omens start this long after the clock. The day at the least is on purpose: a release that
-/// fails has gone back by then, and a nightly backup has run.
-pub const MIN_CLOCK_STEPS: u64 = 1_440;
-pub const MAX_CLOCK_STEPS: u64 = 4_320;
-/// W66: 6 hours of omens.
-pub const OMEN_STEPS: u64 = 360;
+/// W65: omens start this long after the clock, in minutes. A release's first step comes a minute after
+/// it starts, and by then a deploy has seen the site come up or gone back.
+pub const MIN_CLOCK_STEPS: u64 = 1;
+pub const MAX_CLOCK_STEPS: u64 = 5;
+/// W66: 5 minutes of omens, so nobody's map goes without a word.
+pub const OMEN_STEPS: u64 = 5;
 /// W67: it strikes for this many steps, and the last takes everything left.
 pub const STRIKE_STEPS: u64 = 30;
 /// W69: a view says it's over for an hour.
