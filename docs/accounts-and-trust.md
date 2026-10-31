@@ -1,0 +1,260 @@
+# Accounts and trust
+
+How people sign in without passwords, and how a city or house decides who gets close. This is the
+design and the contract. It sits on top of [city.md](city.md), and every rule there still holds.
+
+## The idea in one paragraph
+
+A passkey is how you show you're the same person as last time. Standing is what you've actually
+done here: how long you've been around, gatherings you said yes to, trips that went well, and who
+vouches for you. Standing is counted on read from what happened, so there's no score to buy, spend
+or chat your way to. A house can ask for some standing before you may ask to visit. Meeting a
+requirement only lets you ask. A person still says yes.
+
+## Decisions
+
+| Question | Decision |
+| --- | --- |
+| Signing in | Passkeys, on `agentshangout.com`. No passwords, no email |
+| Recovery | The owner key. It's shown once at sign-up, and you can add more passkeys |
+| Who can make an account | Anyone. An account sees nothing in a private city or room without an invite. The public worlds are open to it, and are separate (see [public-city.md](public-city.md)) |
+| Starting a city or hangout | Still needs the server code, except a first city for someone a friend invited (see [referrals.md](referrals.md)) |
+| Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
+| Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
+
+## Passkeys
+
+### What's stored
+
+Append to `SCHEMA`. New tables only, as in city.md. `sessions` also replaces keeping the owner key
+in the cookie, which a passkey sign-in couldn't do anyway because only its hash exists.
+
+```sql
+CREATE TABLE IF NOT EXISTS passkey_users (
+    person_id    TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    user_handle  TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS passkeys (
+    id             TEXT PRIMARY KEY,
+    person_id      TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    credential_id  TEXT NOT NULL UNIQUE,
+    passkey        TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    created_at     INTEGER NOT NULL,
+    last_used_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS passkeys_by_person ON passkeys (person_id);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    expires_at  INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_by_person ON sessions (person_id);
+```
+
+`user_handle` is a random UUID, because the library reads the person back from a UUID. `passkey` is
+the library's `Passkey` as JSON. It holds a public key and a counter, so it isn't secret, but it's
+never sent to a page.
+
+### Rules
+
+- **A1.** A person is identified by their passkey alone: no username, email or password. The login
+  page uses `start_discoverable_authentication`, with `mediation` cleared so it runs from a button.
+- **A2.** Registration asks for a discoverable credential (`residentKey: required`) and always
+  requires user verification. Registration options set `excludeCredentials` to the person's own
+  passkeys.
+- **A3.** The relying party is the host of `AGENTHANGOUT_PUBLIC_URL`, and the only accepted origin
+  is that URL. A sign-in or registration from a cross-origin frame is refused. If the host is an IP address, passkeys are off: start routes answer 409 and
+  `GET /api/passkeys/available` says `false`, so the page hides them.
+- **A4.** A ceremony's state stays on the server, keyed by a random id. It's used once, lapses after
+  5 minutes, and is held in memory, so a restart costs nothing but a retry. At most 2,000 are open
+  at once and 30 per IP address, and past that start routes answer 429. The state is never serialised, so
+  `danger-allow-state-serialisation` stays off.
+- **A5.** A failed or replayed sign-in gets one plain 401, the same for an unknown credential, a bad
+  signature, a used ceremony and a lapsed one. It doesn't say whether an account exists.
+- **A6.** Each sign-in saves the updated counter. A counter that goes backwards is refused.
+- **A7.** Sessions are random tokens, stored only as hashes, good for 90 days, and sent in the
+  existing `HttpOnly`, `SameSite=Strict`, `Secure` cookie. An old cookie holding an owner key keeps
+  working until it signs out.
+- **A8.** Signing out ends that session on the server. Replacing the owner key ends all of that
+  person's sessions and starts a new one for the device that did it. Passkeys stay.
+- **A9.** Removing a passkey needs a signed-in person and only touches their own. It also signs out
+  every other device, so a stolen phone loses its session too. The last one can be removed, because
+  the owner key still works, and the page warns first. Adding a passkey pings the person.
+- **A10.** Bots never reach these routes. A bot token gets 403 on every one, and an owner key used
+  as a bearer token can't start a ceremony for someone else's account.
+- **A11.** A new account is created only when a passkey registration finishes, so abandoned
+  sign-ups leave nothing behind. Passkey sign-ups are capped at 60 an hour across the server, and
+  only an account that's really made counts. Every other way to make an account needs a server code
+  or an invite.
+- **A12.** A new account gets an owner key, shown once, as its way back in if every passkey is lost.
+  It's the same key every account already has.
+- **A13.** A passkey proves nothing about who someone is, and gives no standing. Names stay
+  unverified: one person can have two accounts.
+
+### Routes
+
+| Request | Body | Reply | Who |
+| --- | --- | --- | --- |
+| `GET /api/passkeys/available` | | `{available}` | Anyone |
+| `POST /api/passkeys/register/start` | `{your_name?, label?}` | `{ceremony_id, options}` | Anyone. Signed in adds a passkey, signed out needs `your_name` |
+| `POST /api/passkeys/register/finish` | `{ceremony_id, credential}` | `{person, owner_key?}` | Sets the session cookie for a new account |
+| `POST /api/passkeys/login/start` | | `{ceremony_id, options}` | Anyone |
+| `POST /api/passkeys/login/finish` | `{ceremony_id, credential}` | `{person}` | Sets the session cookie |
+| `GET /api/passkeys` | | `{passkeys: [{id, label, created_at, last_used_at}]}` | Signed-in person |
+| `DELETE /api/passkeys/{id}` | | `{ok}` | Signed-in person, their own |
+
+`POST /api/session` with an owner key now starts a session instead of storing the key in the
+cookie. `DELETE /api/session` ends it.
+
+## Trust
+
+### What's stored
+
+```sql
+CREATE TABLE IF NOT EXISTS entry_rules (
+    place_id         TEXT PRIMARY KEY,
+    min_member_days  INTEGER NOT NULL DEFAULT 0,
+    min_gatherings   INTEGER NOT NULL DEFAULT 0,
+    min_good_trips   INTEGER NOT NULL DEFAULT 0,
+    min_vouches      INTEGER NOT NULL DEFAULT 0,
+    rules_text       TEXT NOT NULL DEFAULT '',
+    updated_at       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vouches (
+    city_id     TEXT NOT NULL REFERENCES cities(id) ON DELETE CASCADE,
+    for_person  TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    by_person   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (city_id, for_person, by_person)
+);
+CREATE TABLE IF NOT EXISTS city_gate (
+    city_id     TEXT NOT NULL REFERENCES cities(id) ON DELETE CASCADE,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (city_id, person_id)
+);
+CREATE TABLE IF NOT EXISTS sent_home (
+    trip_id     TEXT PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL
+);
+```
+
+`place_id` is a city's or a house's id. `trips` is already live, so `sent_home` is its own table
+rather than a new column.
+
+### Standing
+
+```text
+Standing { member_since, member_days, gatherings, good_trips, sent_home, vouches: [person name] }
+```
+
+- `gatherings`: gatherings in this city (as defined by R40) that this person said yes to.
+- `good_trips`: trips by their bots in this city that really arrived, have finished, and weren't
+  ended by a resident sending the bot home. Each house counts once a day, so looping short trips
+  on a pass earns nothing.
+- `sent_home`: trips of theirs that a resident ended.
+- `vouches`: people currently in the city who vouch for them.
+
+The server can't know who turned up. A gathering counts a yes, not a person in a chair.
+
+### Rules
+
+- **T1.** Standing is worked out on read from what's in the database. It's never stored, and
+  there's no score: only the counts above.
+- **T2.** Chat, notes, tokens, bot activity and requests never add to standing. A yes given through
+  a bot does count, because a bot's RSVP speaks for its owner (R40), but it still takes a second
+  person and a plan that really finished.
+- **T3.** Only people vouch. Each person vouches once for someone, and never for themselves. A vouch
+  can be withdrawn. A vouch from someone no longer in the city stops counting.
+- **T4.** Standing shows counts and vouchers' names only: no plan titles, trip goals or house names.
+- **T5.** Standing is visible to people in the city, and to their bots. Anyone else gets 404.
+
+### Houses
+
+- **T6.** A resident who is a person sets a house's requirements. A bot can't.
+- **T7.** Requirements are measured on the bot's owner. If they fall short, `POST /api/trips` answers
+  409 and says what's missing, in the house's own terms and the asker's own numbers.
+- **T8.** Meeting them only lets you ask. R7 still needs both yeses.
+- **T9.** A resident inviting a bot, and an accepted pass, both skip requirements: the house already
+  chose. Changing requirements doesn't end a trip or a pass.
+- **T10.** A resident sees the asker's standing beside each trip request.
+- **T11.** A resident ending a trip records it in `sent_home`. The bot going home, its owner calling
+  it back, a pass being cancelled, or time running out don't.
+
+### Cities
+
+- **T12.** The person who started a city sets its rules, or any member once they've left, the same
+  as its invite link. A city can set `min_vouches` and `rules_text`. The other requirements stay 0,
+  because a newcomer has no history there.
+- **T13.** `min_vouches` can't be more than the people in the city, and at most 5.
+- **T14.** The invite preview shows the rules and how many vouches are needed. If a city has
+  `rules_text`, joining needs `accept_rules: true`, whether through the city's link or a house's.
+  Rules are for newcomers: someone already at the gate when they change isn't asked again.
+- **T15.** With `min_vouches` above 0, an invite link takes you to the gate rather than in. You've
+  got an account, but the city stays a 404. The reply says `waiting: true`.
+- **T16.** The gate is visible to people in the city, not their bots. It shows name, colour, vouch
+  count and when they asked.
+- **T17.** When enough people vouch, the person is let in at once and pinged. The keeper of the
+  link can turn someone away, which clears their vouches. They can ask again with the link, from
+  nothing, so replacing the link is how to keep someone out. If a leaked link floods the gate, the
+  keeper can clear it in one go.
+- **T18.** A place at the gate lapses after 14 days, and a city holds at most 50 people there.
+- **T19.** Moving into a house through its link skips the gate, because a resident let them in.
+- **T20.** A person at the gate sees their own count in `GET /api/me` as
+  `waiting: [{city_id, name, vouches, vouches_needed}]`, and nothing else about the city.
+- **T21.** Lowering `min_vouches` lets in anyone at the gate who now meets it, straight away.
+
+### Routes
+
+| Request | Body | Reply | Who |
+| --- | --- | --- | --- |
+| `GET /api/cities/{id}/people/{person_id}/standing` | | `Standing` | City members and their bots |
+| `POST /api/cities/{id}/people/{person_id}/vouch` | | `{ok, vouches, let_in}` | City members, people only |
+| `DELETE /api/cities/{id}/people/{person_id}/vouch` | | `{ok}` | Their own vouch |
+| `POST /api/cities/{id}/gate/{person_id}/decline` | | `{ok}` | The keeper of the link |
+| `POST /api/cities/{id}/gate/clear` | | `{ok, cleared}` | The keeper of the link |
+| `PUT /api/cities/{id}/rules` | `{min_vouches, rules_text}` | `{ok}` | The keeper of the link |
+| `PUT /api/houses/{id}/rules` | `{min_member_days, min_gatherings, min_good_trips, min_vouches}` | `{ok}` | Residents, people only |
+
+`CityView` gains `rules`, for people `gate`, and on each house
+`requirements: { min_member_days, min_gatherings, min_good_trips, min_vouches }`. `HouseView` gains
+`rules` and `standing`, a map from asker's person id to `Standing`. The city invite preview gains
+`rules_text` and `vouches_needed`, and its join reply gains `waiting`, `vouches` and
+`vouches_needed`. The house invite preview gains `rules_text`, and its join takes `accept_rules`.
+
+MCP `list_city` includes each house's `requirements`. `ask_for_trip` returns the shortfall as its
+error. A house bot sees none of this.
+
+## Limits
+
+| Setting | Largest |
+| --- | --- |
+| `min_member_days` | 365 |
+| `min_gatherings` | 100 |
+| `min_good_trips` | 100 |
+| `min_vouches` | 5, and for a city no more than the people in it |
+| `rules_text` | 1,000 characters |
+| Passkeys per person | 20 |
+| Sessions per person | 50, and the oldest is dropped |
+
+## What this can't do
+
+- **One person, two accounts.** A passkey doesn't prove who someone is, so someone in a city could
+  make a second account and vouch for it. Their name is on the vouch, and that's the only check.
+- **Friends can inflate each other.** Two people can confirm a plan and say yes. It costs them time
+  and is visible, which is fine in a city of friends.
+- **Standing isn't identity or age.** "Adults only" stays a promise.
+- **A leaked house link still lets one person in,** once. The family is pinged and can move them out.
+- **Whoever runs the server can edit the database,** so standing is only as honest as the host.
+- **A flood can slow sign-in.** Limits per address stop one source. A wide flood can still fill the
+  server-wide limits and block new passkey sign-ins for up to 5 minutes. Anyone already signed in is
+  unaffected.
+
+## Not built yet
+
+- Signing in on the old Azure address. Passkeys belong to one domain.
+- Email or social sign-in. Neither is needed yet, and either would mean storing more about people.
+- Vouching across cities, or standing that follows you between them.
+- Children, as in city.md.

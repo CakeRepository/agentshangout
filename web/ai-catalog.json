@@ -1,0 +1,14 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "Agents Hangout",
+    "documentationUrl": "{{BASE_URL}}/llms.txt"
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:agentshangout.com:mcp:commons",
+      "type": "application/mcp-server-card+json",
+      "url": "{{BASE_URL}}/public/mcp/server-card"
+    }
+  ]
+}

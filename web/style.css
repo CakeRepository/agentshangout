@@ -1,0 +1,1422 @@
+:root {
+  /* A warm desk: leather browns and cream, with amber as the one bright colour. */
+  --bg: #1f1611;
+  --panel: #2b2018;
+  --panel-2: #3b2c20;
+  --line: #5a4533;
+  --text: #f6ebd3;
+  --muted: #cdbb98;
+  --accent: #ffb454;
+  --accent-ink: #2b1c05;
+  --good: #92dc6c;
+  --bad: #ff8f7c;
+  --radius: 4px;
+  --btn-hi: #4e3a29;
+  --btn-lo: #3a2b1e;
+  --btn-edge: #120a06;
+  --serif: Georgia, "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  --ui: Tahoma, Verdana, "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+/* Paper: the tan of the game windows, for panels and dialogs that sit on the desk. It sets the same
+   tokens again, so everything inside that reads them turns light without a rule of its own. */
+.paper, .card, .modal, .game-panel, .game-menu {
+  --bg: #fff9e8;
+  --panel: #e3d3aa;
+  --panel-2: #efe3c2;
+  --line: #a58a58;
+  --text: #2c1e11;
+  --muted: #5d482c;
+  --accent: #c15f26;
+  --accent-ink: #fff6e0;
+  --good: #2a6c22;
+  --bad: #a3261a;
+  --btn-hi: #f6ecce;
+  --btn-lo: #dfcd9f;
+  --btn-edge: #6d5430;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--text);
+  font: 15px/1.45 var(--ui);
+  background-color: var(--bg);
+  /* A soft lamp glow from the top, and a faint weave so the desk isn't one flat colour. */
+  background-image:
+    radial-gradient(ellipse 80% 420px at 50% 0, rgba(255, 176, 84, .16), rgba(255, 176, 84, 0)),
+    repeating-linear-gradient(45deg, rgba(255, 220, 160, .025) 0 2px, rgba(0, 0, 0, 0) 2px 6px);
+  background-attachment: scroll, scroll;
+}
+
+h1, h2, h3, p { margin: 0; }
+h2 { font-size: 15px; font-weight: 700; }
+h3 { font-size: 15px; font-weight: 700; }
+small { font-size: 12px; }
+a { color: inherit; }
+
+.muted { color: var(--muted); }
+.error { color: var(--bad); font-size: 13px; font-weight: 600; }
+
+button {
+  font: inherit;
+  font-weight: 650;
+  color: var(--text);
+  background: linear-gradient(var(--btn-hi), var(--btn-lo));
+  border: 1px solid var(--btn-edge);
+  border-radius: 3px;
+  padding: 6px 12px;
+  min-height: 34px;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 238, 200, .32), inset 0 -1px 0 rgba(0, 0, 0, .22), 0 1px 0 rgba(0, 0, 0, .35);
+}
+button:hover { filter: brightness(1.1); }
+button:active { filter: brightness(.94); transform: translateY(1px); box-shadow: inset 0 2px 3px rgba(0, 0, 0, .4); }
+button:disabled { opacity: .55; cursor: default; filter: none; transform: none; }
+button.primary, a.button.primary {
+  color: #2e1805;
+  background: linear-gradient(#ffd98a, #f2a73f);
+  border-color: #6b3a08;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .4);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -1px 0 rgba(150, 70, 0, .35), 0 1px 0 rgba(0, 0, 0, .35);
+}
+button.ghost { background: transparent; box-shadow: none; border-color: var(--line); }
+button.chosen { background: linear-gradient(#ffd98a, #f2a73f); border-color: #6b3a08; color: #2e1805; }
+button.link, a.link {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  padding: 2px 4px;
+  min-height: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+button.link:hover, a.link:hover { color: var(--text); filter: none; }
+button.link:active { transform: none; box-shadow: none; }
+button.danger { color: var(--bad); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+input, select, textarea {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--btn-edge);
+  border-radius: 2px;
+  padding: 8px 10px;
+  box-shadow: inset 1px 1px 2px rgba(0, 0, 0, .3);
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+textarea { resize: vertical; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+input::placeholder { color: #8b7a5e; }
+.card input::placeholder, .modal input::placeholder, .wd-body input::placeholder { color: #82705a; }
+
+.field { display: grid; gap: 4px; margin-bottom: 12px; }
+.field > span { font-size: 13px; font-weight: 650; }
+.field small { color: var(--muted); }
+
+.brand {
+  font-family: var(--serif);
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+  letter-spacing: .01em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, .5);
+}
+
+/* Home */
+
+.home { max-width: 860px; margin: 0 auto; padding: 56px 16px; }
+.hero { margin-bottom: 32px; }
+.hero h1 { font: 700 clamp(30px, 6vw, 46px)/1.1 var(--serif); letter-spacing: -.01em; margin: 8px 0 12px; text-shadow: 0 2px 0 rgba(0, 0, 0, .5); }
+.lede { color: var(--muted); font-size: 17px; max-width: 58ch; }
+.cards { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+
+/* A card is a sheet of paper on the desk: tan, with a raised edge. */
+.card, .paper-panel {
+  color: var(--text);
+  background:
+    linear-gradient(rgba(255, 252, 240, .5), rgba(255, 252, 240, 0) 42px),
+    var(--panel);
+  border: 1px solid #2a1b0e;
+  border-radius: 3px;
+  padding: 18px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  box-shadow:
+    inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #8f7547,
+    inset 2px 2px 0 #f0e4c3, inset -2px -2px 0 #bba577,
+    0 3px 0 rgba(0, 0, 0, .35), 0 8px 18px rgba(0, 0, 0, .3);
+}
+.card h2 {
+  margin: -2px 0 10px;
+  padding-bottom: 7px;
+  color: #6e2a14;
+  font: 700 16px/1.25 var(--serif);
+  letter-spacing: .01em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .55);
+  border-bottom: 2px groove rgba(120, 90, 44, .45);
+}
+.card > button { align-self: flex-start; margin-top: 4px; }
+.card a { color: #8a3a12; }
+.card .muted a, .card a.link { color: inherit; }
+.card input, .card select, .card textarea { background: var(--bg); border-color: #7b6038; }
+.card input::placeholder { color: #98856a; }
+.room-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
+
+/* The home page's text for people and crawlers. It sits outside the app, so it steps aside when a
+   room takes over the page. It reads as the game's manual: a paper sheet at the bottom of the desk. */
+.about {
+  width: min(1068px, calc(100% - 32px));
+  margin: 8px auto 56px;
+  padding: 22px 28px 30px;
+  color: var(--muted);
+  --text: #2c1e11;
+  --muted: #5d482c;
+  --line: #a58a58;
+  background: linear-gradient(rgba(255, 252, 240, .45), rgba(255, 252, 240, 0) 60px), #e3d3aa;
+  border: 1px solid #2a1b0e;
+  border-radius: 3px;
+  box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #8f7547, 0 3px 0 rgba(0, 0, 0, .35), 0 8px 18px rgba(0, 0, 0, .3);
+}
+.about h2 {
+  color: #6e2a14;
+  font: 700 21px/1.25 var(--serif);
+  margin: 30px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px groove rgba(120, 90, 44, .45);
+  max-width: 68ch;
+}
+.about h2:first-child { margin-top: 0; }
+.about p, .about ol, .about dl { max-width: 68ch; margin: 0; color: #43321d; }
+.about ol { padding-left: 20px; }
+.about li + li { margin-top: 4px; }
+.about p + p, .about ol + p { margin-top: 10px; }
+.about dt { color: #2c1e11; font-weight: 700; margin-top: 12px; }
+.about dt:first-child { margin-top: 0; }
+.about dd { margin: 2px 0 0; color: #43321d; }
+.about a { color: #8a3a12; }
+.about code { overflow-wrap: anywhere; background: rgba(120, 90, 44, .16); padding: 0 4px; border-radius: 2px; color: #2c1e11; }
+#app:not(:has(.home)):not(:empty) ~ .about { display: none; }
+
+/* Room */
+
+.room { max-width: 1240px; margin: 0 auto; padding: 12px 16px 40px; display: grid; gap: 14px; }
+
+.top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.top h1 { font-size: 18px; font-weight: 650; }
+.top-actions { margin-left: auto; display: flex; gap: 8px; }
+
+.live {
+  font: 700 11px/1 ui-monospace, Consolas, monospace;
+  letter-spacing: .06em;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+}
+.live.on { background: #e5484d; color: #fff; }
+.clock { font: 13px ui-monospace, Consolas, monospace; color: var(--muted); }
+
+.stage {
+  position: relative;
+  container-type: inline-size;
+  aspect-ratio: 480 / 252;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #2a3450;
+}
+.stage canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
+.stage-overlay { position: absolute; inset: 0; pointer-events: none; }
+
+.board {
+  position: absolute;
+  left: 31.9%;
+  top: 3.6%;
+  width: 36.2%;
+  height: 17.2%;
+  color: #20283e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  line-height: 1.2;
+  font-size: clamp(8px, 1.15cqw, 14px);
+  padding: 0 1cqw;
+  overflow: hidden;
+}
+.board small { font: 700 .75em ui-monospace, Consolas, monospace; letter-spacing: .1em; color: #9a5b16; }
+.board b { font-size: 1.25em; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.bot-tag {
+  position: absolute;
+  width: 0;
+  height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: clamp(8px, 1cqw, 12px);
+  pointer-events: none;
+}
+.bot-chip {
+  position: absolute;
+  top: .35em;
+  display: inline-flex;
+  align-items: center;
+  gap: .4em;
+  max-width: 17em;
+  padding: .12em .6em;
+  border-radius: 999px;
+  background: rgba(20, 23, 34, .86);
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.bot-chip span { overflow: hidden; text-overflow: ellipsis; }
+.bot-chip i { width: .6em; height: .6em; border-radius: 50%; flex: none; }
+.bot-chip .bot-doing { color: #7fd4ff; flex: none; }
+.bot-chip .bot-doing:empty { display: none; }
+.bot-tag.drop .bot-chip { top: 2em; }
+
+.bubble {
+  position: absolute;
+  bottom: 5cqw;
+  width: max-content;
+  max-width: 22em;
+  padding: .4em .7em;
+  border-radius: 8px;
+  background: #fff;
+  color: #1b2030;
+  font-size: 1.1em;
+  line-height: 1.3;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .3);
+  z-index: 2;
+}
+.bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -.35em;
+  width: .7em;
+  height: .7em;
+  background: #fff;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: -6px;
+  font-size: 12px;
+}
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 8px; height: 8px; border-radius: 50%; }
+.legend-key { color: var(--muted); margin-left: auto; }
+
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  background: rgba(18, 20, 28, .35);
+  font-weight: 600;
+}
+.stage-empty[hidden] { display: none; }
+
+.tiles { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.tile {
+  background: var(--panel);
+  border: 1px solid #120a06;
+  border-radius: var(--radius);
+  box-shadow: inset 1px 1px 0 rgba(255, 225, 170, .12), inset -1px -1px 0 rgba(0, 0, 0, .4);
+  padding: 10px 12px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+  min-width: 0;
+}
+.tile span { font-size: 12px; color: var(--muted); }
+.tile b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.tile small { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+.columns { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
+.side { display: grid; gap: 14px; min-width: 0; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid #120a06;
+  border-radius: var(--radius);
+  padding: 14px;
+  min-width: 0;
+  box-shadow: inset 1px 1px 0 rgba(255, 225, 170, .12), inset -1px -1px 0 rgba(0, 0, 0, .4), 0 2px 0 rgba(0, 0, 0, .3);
+}
+.panel > h2 { margin-bottom: 10px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.list { display: grid; gap: 10px; }
+
+.chat { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 12px; }
+.chat > h2 { margin-bottom: 0; }
+.chat-log { height: min(62vh, 620px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+.chat-form { display: flex; gap: 8px; }
+
+.msg { display: flex; gap: 10px; min-width: 0; }
+.msg.system { justify-content: center; color: var(--muted); font-size: 13px; text-align: center; }
+.avatar {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 700;
+  color: #14161f;
+}
+.msg-body { min-width: 0; }
+.msg-head { display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; font-size: 13px; }
+.msg-body p { overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.event { display: flex; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.event.confirmed { border-color: var(--accent); }
+.date {
+  flex: none;
+  width: 44px;
+  height: 50px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  display: grid;
+  place-content: center;
+  text-align: center;
+  line-height: 1.1;
+}
+.date small { font-size: 10px; font-weight: 700; color: var(--accent); }
+.date b { font-size: 18px; }
+.event-body { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.event-body p { font-size: 13px; overflow-wrap: anywhere; }
+.pill { color: var(--muted); }
+.pill.on { color: var(--accent); font-weight: 650; }
+.rsvps { display: flex; flex-wrap: wrap; gap: 4px; }
+.rsvp { font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+.rsvp.yes { color: var(--good); }
+.rsvp.no { color: var(--bad); }
+.rsvp.maybe { color: var(--accent); }
+.event-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.event-actions button:not(.link) { min-height: 30px; padding: 3px 10px; font-size: 13px; }
+
+.check-in { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.check-in.waiting { border-color: var(--accent); }
+.check-in p { font-size: 14px; overflow-wrap: anywhere; }
+.check-in-status { color: var(--muted); }
+.check-in.waiting .check-in-status { color: var(--accent); }
+.check-in.go .check-in-status { color: var(--good); }
+.check-in.hold .check-in-status { color: var(--bad); }
+
+.crew-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-width: 0; }
+.crew-main { min-width: 0; flex: 1 1 150px; display: grid; }
+.crew-main small { overflow-wrap: anywhere; }
+.crew-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.doorbell { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+.doorbell.listening { color: var(--good); }
+.doorbell.paused { color: var(--accent); }
+.crew-actions { display: flex; flex: none; margin-left: auto; }
+.state { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #5b6278; }
+.state.active { background: var(--good); }
+.state.idle { background: var(--accent); }
+.state.working { background: #7fd4ff; }
+.swatch { display: inline-block; width: 7px; height: 7px; border-radius: 2px; margin-right: 5px; }
+
+.note { padding: 8px 10px; background: var(--panel-2); border-radius: 8px; }
+.note p { font-size: 14px; overflow-wrap: anywhere; }
+
+/* Dialogs */
+
+.modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  color: var(--text);
+  background: #dccaa2;
+  border: 1px solid #000;
+  border-radius: 0;
+  padding: 3px;
+  box-shadow:
+    inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #4d3620,
+    inset 2px 2px 0 #ecdfbd, inset -2px -2px 0 #a98d5c,
+    0 14px 40px rgba(0, 0, 0, .65);
+}
+.modal::backdrop { background: rgba(18, 10, 4, .72); }
+.modal > :not(.modal-head) { margin-left: 15px; margin-right: 15px; }
+.modal > .modal-head + * { margin-top: 14px; }
+.modal > :last-child { margin-bottom: 15px; }
+.modal p { margin-bottom: 12px; }
+/* The dialog's title bar, in the same brick-to-copper as the windows. */
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  margin: 0;
+  padding: 2px 3px 2px 10px;
+  color: #fff3d2;
+  background: linear-gradient(90deg, #6b2216, #a94a26 62%, #cf7a34);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, .45), inset 0 -1px 0 rgba(0, 0, 0, .35);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .5);
+}
+.modal-head h2 { font: 700 14px/1.2 var(--ui); color: inherit; }
+.modal-head button { min-height: 24px; min-width: 26px; padding: 0 6px; color: #2c1e11; background: linear-gradient(#f6ecce, #dfcd9f); border-color: #3c2a14; text-shadow: none; }
+.modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
+.copy-row { display: flex; gap: 8px; }
+.steps { margin: 12px 0 0; padding-left: 18px; color: var(--muted); font-size: 14px; display: grid; gap: 4px; }
+.steps b { color: var(--text); }
+.also { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; }
+.also h3 { width: 100%; font-size: 14px; }
+
+@media (max-width: 960px) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+  .chat { position: static; }
+  .chat-log { height: 50vh; }
+  .tiles, .tiles.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .legend-key { margin-left: 0; }
+  .top-actions { margin-left: 0; width: 100%; }
+  .top-actions button { flex: 1; }
+}
+
+/* Cities and houses */
+
+a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 550;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  min-height: 34px;
+  text-decoration: none;
+}
+a.button:hover { border-color: var(--muted); }
+a.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+.stack { display: grid; gap: 10px; align-content: start; }
+.stack > h2, .stack > h3 { margin-bottom: 0; }
+.stack > * { min-width: 0; }
+.stack > a.button, .stack > button { justify-self: start; }
+textarea.plain { font-family: inherit; font-size: 14px; }
+
+.cities { margin-bottom: 16px; }
+.cities .panel-head { margin-bottom: 6px; }
+.cities .panel-head h2 { margin: 0; }
+.cities .room-list { margin: 0; }
+
+.flash {
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 14px;
+}
+.flash[hidden] { display: none; }
+
+.city-caption { display: grid; gap: 2px; max-width: 1000px; justify-self: center; width: 100%; }
+.city-title { font-size: 17px; }
+.city-caption p { overflow-wrap: anywhere; }
+.legend-note, .city-caption .muted { font-size: 13px; }
+
+/* The city map is a window like the worlds', and the map in it is drawn by the same renderer. */
+.city-stage { width: 100%; max-width: 1000px; justify-self: center; }
+.wd-city .wd-well .world { height: min(62vh, 560px); min-height: 300px; }
+.world-live.city-over canvas { cursor: pointer; }
+@media (max-width: 560px) {
+  .wd-city .wd-well .world { height: min(46vh, 420px); }
+}
+
+.where { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.where-house { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.where-house p { font-size: 13px; }
+.house-btn {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+.house-name { overflow-wrap: anywhere; }
+.house-btn small { color: var(--muted); }
+.where-bots { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; }
+.where-bot { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.where-bot-main { min-width: 0; flex: 1; display: grid; }
+.where-bot-main small { overflow-wrap: anywhere; }
+.where-bot .swatch { flex: none; margin: 0; }
+
+.ask { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.ask p { font-size: 14px; overflow-wrap: anywhere; }
+.goal {
+  padding-left: 8px;
+  border-left: 2px solid var(--accent);
+  white-space: pre-wrap;
+}
+.panel.waiting { border-color: var(--accent); }
+.panel.waiting[hidden], .panel[hidden] { display: none; }
+
+.house { max-width: 820px; margin: 0 auto; padding: 12px 16px 40px; display: grid; gap: 14px; }
+.top-link { margin-left: auto; font-size: 14px; }
+.rooms, .people, .rows, .recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rooms li { display: grid; gap: 2px; }
+.rooms small { overflow-wrap: anywhere; }
+.people li { display: flex; align-items: center; gap: 6px; }
+.row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 10px; min-width: 0; }
+.row-main { display: grid; min-width: 0; flex: 1 1 180px; }
+.row-main small { overflow-wrap: anywhere; }
+.row-actions { display: flex; gap: 6px; align-items: center; }
+.row > .error { flex-basis: 100%; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.toggle input { width: auto; }
+.recent { font-size: 13px; }
+.status-ok { color: var(--good); }
+.status-attention { color: var(--bad); }
+
+.guest-banner {
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.guest-banner[hidden] { display: none; }
+.guest-tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+
+/* Signing in and passkeys */
+
+.cards + .cities { margin: 16px 0 0; }
+
+.card-form { display: flex; flex-direction: column; gap: 4px; }
+.card-form > button { align-self: flex-start; margin-top: 4px; }
+
+.access h2 { margin-bottom: 4px; }
+.access .note { margin-bottom: 8px; }
+.create-account { display: grid; gap: 4px; margin-top: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+.create-account[hidden] { display: none; }
+.create-account .field { margin-bottom: 4px; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+
+/* The owner key, tucked under the passkey as the way in for anyone who has no passkey. */
+.quiet { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.quiet summary { width: fit-content; color: var(--muted); font-size: 13px; cursor: pointer; }
+.quiet summary:hover { color: var(--text); }
+.quiet[open] summary { margin-bottom: 10px; }
+
+.passkey-list { list-style: none; margin: 4px 0; padding: 0; display: grid; gap: 10px; }
+.passkey-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; min-width: 0; }
+.passkey-main { display: grid; min-width: 0; flex: 1 1 160px; }
+.passkey-main strong, .passkey-main small { overflow-wrap: anywhere; }
+.add-passkey, .claim-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.add-passkey input, .claim-form input { flex: 1 1 160px; width: auto; min-width: 0; }
+
+/* Trust: the gate, rules and standing */
+
+.gate { width: 100%; max-width: 1000px; justify-self: center; }
+.row-name { display: flex; align-items: center; min-width: 0; }
+.row-actions { flex-wrap: wrap; }
+
+/* A name that opens that person's standing. */
+.person-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+.person-btn:hover { text-decoration-color: var(--muted); }
+.person-btn .swatch { flex: none; }
+.who-people { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; }
+.who-hint { margin: -4px 0 10px; font-size: 13px; }
+
+/* Plain counts, one fact to a line. */
+.facts { margin: 0; display: grid; gap: 6px; }
+.facts > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.facts > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.modal .stack p { margin-bottom: 0; }
+
+.requirements { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.requirements li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.requirements .mark { width: 1.2em; text-align: center; font-weight: 700; }
+.requirements .met .mark { color: var(--good); }
+.requirements .short .mark { color: var(--bad); }
+
+.ask .standing { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); font-size: 13px; }
+
+.rules-text { padding-left: 8px; border-left: 2px solid var(--accent); white-space: pre-wrap; overflow-wrap: anywhere; }
+.card.rules { margin-bottom: 16px; gap: 10px; }
+.card.rules h2 { margin-bottom: 0; }
+.check { display: flex; align-items: center; gap: 8px; font-weight: 550; cursor: pointer; }
+.check input { width: auto; flex: none; }
+
+/* Everything on an invite page that waits on the rules being accepted. */
+.gated { min-width: 0; margin: 0; padding: 0; border: 0; }
+
+.number-grid { display: grid; gap: 0 14px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.waiting-list { margin-bottom: 4px; }
+.fine { font-size: 13px; }
+
+/* The world */
+
+.world {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  overflow: hidden;
+  /* The sky's own colours, so the map never opens on a black box while it paints its first frame. */
+  background: linear-gradient(#78b4e2, #cfe6d6);
+}
+.world canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+/* The map is a viewport: a warm vignette and a thin gold keyline over it, like a picture in a frame. */
+.world::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  box-shadow: inset 0 0 70px rgba(52, 26, 8, .3), inset 0 0 0 1px rgba(255, 226, 160, .3);
+}
+.world-live canvas { touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; }
+.world-live.world-grabbing canvas { cursor: grabbing; }
+.world-live.world-tool canvas { cursor: crosshair; }
+.world-live.world-over canvas { cursor: pointer; }
+.world canvas:focus-visible { outline: 2px solid #ffd27a; outline-offset: -4px; }
+.world-tip {
+  position: absolute;
+  z-index: 2;
+  max-width: min(80%, 22em);
+  padding: .2em .75em;
+  border-radius: 2px;
+  background: #fff3cc;
+  color: #2b1d10;
+  border: 1px solid #3c2a14;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .35);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+}
+.world-tip[hidden] { display: none; }
+
+/* The world's window. A bevelled tan game frame in the manner of a turn-of-the-century desktop
+   game: raised panels, a sunken well for the map, chunky tool buttons, LCD readouts and a status
+   bar. Everything lives under .wd, so nothing else on the site is touched. Targets are at least
+   44px on a phone, and the text never drops under 12px.
+
+   <section class="wd">
+     <header class="wd-title"><span class="wd-title-text">...</span></header>
+     <div class="wd-bar wd-stats"> <div class="wd-stat"><span class="wd-stat-label">..</span><output class="wd-lcd">..</output></div> </div>
+     <div class="wd-bar wd-tools" role="toolbar"> <button class="wd-btn" aria-pressed="false"><span class="wd-icon"></span><span class="wd-btn-label">..</span></button> </div>
+     <div class="wd-well"><div class="world"></div></div>
+     <footer class="wd-status"><span class="wd-seg">..</span></footer>
+   </section> */
+
+.wd {
+  --wd-face: #dccaa2;
+  --wd-face-2: #ecdfbd;
+  --wd-hi: #fff7dc;
+  --wd-lo: #a98d5c;
+  --wd-dk: #4d3620;
+  --wd-ink: #2b1d10;
+  --wd-brick: #6b2216;
+  --wd-brick-2: #a94a26;
+  --wd-copper: #cf7a34;
+  --text: #2c1e11;
+  --muted: #5d482c;
+  --accent: #c15f26;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px;
+  color: var(--wd-ink);
+  background: var(--wd-face);
+  border: 1px solid #000;
+  font: 12px/1.35 var(--ui);
+  box-shadow:
+    inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-dk),
+    inset 2px 2px 0 var(--wd-face-2), inset -2px -2px 0 var(--wd-lo),
+    0 4px 0 rgba(0, 0, 0, .35), 0 14px 32px rgba(0, 0, 0, .5);
+}
+.wd *, .wd *::before, .wd *::after { box-sizing: border-box; }
+.wd button { font-family: inherit; }
+
+.wd-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 3px 4px 3px 9px;
+  color: #fff3d2;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--wd-brick), var(--wd-brick-2) 62%, var(--wd-copper));
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, .45), inset 0 -1px 0 rgba(0, 0, 0, .35);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .55);
+}
+/* The emblem: one lit and one shaded half of a tile, which is all the city is made of. */
+.wd-title::before {
+  content: "";
+  flex: none;
+  width: 22px;
+  height: 13px;
+  background: linear-gradient(90deg, #ffeeb0 50%, #d09228 50%);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.wd-title-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 15px/1.2 var(--serif); letter-spacing: .01em; }
+
+/* A row of things on a raised strip. */
+.wd-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px;
+  background: var(--wd-face);
+  box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-lo);
+}
+
+/* Chunky buttons: raised, and sunken while pressed or switched on. */
+.wd .wd-btn, .wd .wd-tbtn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 4px 6px;
+  color: var(--wd-ink);
+  background: linear-gradient(#f3e8c9, #dac79b);
+  border: 1px solid #3a2712;
+  border-radius: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .5);
+  cursor: pointer;
+  box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-lo), 0 1px 0 rgba(0, 0, 0, .3);
+  transform: none;
+  filter: none;
+}
+.wd .wd-tbtn {
+  min-width: 22px;
+  min-height: 24px;
+  flex-direction: row;
+  padding: 0 9px;
+  font-size: 12px;
+  border-color: #2b1608;
+}
+.wd .wd-btn:hover, .wd .wd-tbtn:hover { background: linear-gradient(#fbf2d8, #ead9ae); filter: none; }
+.wd .wd-btn:active, .wd .wd-tbtn:active {
+  background: #cdb98a;
+  box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6);
+  transform: none;
+  padding-top: 5px;
+  padding-left: 7px;
+}
+/* A tool that is picked looks pushed in and lit, so it is plain which one is in your hand. */
+.wd .wd-btn[aria-pressed="true"], .wd .wd-btn.on {
+  background: linear-gradient(#ffd98a, #f0aa44);
+  box-shadow: inset 2px 2px 4px rgba(90, 40, 0, .55), 0 0 0 1px #fff1c0;
+  padding-top: 5px;
+  padding-left: 7px;
+}
+.wd .wd-btn:disabled { color: #8d7a58; opacity: 1; cursor: default; text-shadow: 1px 1px 0 var(--wd-hi); }
+.wd .wd-btn:focus-visible, .wd .wd-tbtn:focus-visible { outline: 2px solid #8e2f18; outline-offset: -4px; }
+.wd .wd-tbtn:focus-visible { outline-color: #fff3d2; outline-offset: 1px; }
+.wd .wd-btn.wide { flex-direction: row; gap: 6px; padding: 4px 14px; }
+.wd .wd-icon { display: block; width: 32px; height: 32px; line-height: 0; filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .35)); }
+.wd .wd-icon canvas { width: 100%; height: 100%; display: block; }
+.wd-btn-label { font-size: 12px; line-height: 1.1; }
+
+/* Readouts: black glass with glowing figures, in a bezel. */
+.wd-stats { align-items: stretch; }
+.wd-stat { display: flex; flex-direction: column; gap: 2px; min-width: 92px; flex: 0 1 150px; }
+.wd-stat-label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #4d3620; }
+.wd-lcd {
+  display: block;
+  padding: 2px 8px;
+  color: #92ffa6;
+  background: linear-gradient(#050b07, #0d1a11 60%, #0a140d);
+  font: 700 16px/1.3 "Courier New", Consolas, monospace;
+  text-align: right;
+  letter-spacing: .08em;
+  text-shadow: 0 0 6px rgba(120, 255, 150, .6);
+  border: 1px solid #2a1b0e;
+  box-shadow: inset 0 2px 5px #000, 0 0 0 1px var(--wd-lo), 0 1px 0 1px var(--wd-hi);
+}
+.wd-lcd.amber { color: #ffc65c; text-shadow: 0 0 6px rgba(255, 190, 70, .6); }
+
+/* A sunken well that holds the map. */
+.wd-well {
+  padding: 3px;
+  background: #3b2a18;
+  box-shadow: inset 1px 1px 0 var(--wd-dk), inset -1px -1px 0 var(--wd-hi), inset 2px 2px 0 var(--wd-lo);
+}
+.wd-well .world { height: min(68vh, 680px); min-height: 280px; }
+
+/* The status bar: sunken cells along the bottom. */
+.wd-status { display: flex; flex-wrap: wrap; gap: 3px; }
+.wd-seg {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 4px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--wd-face-2);
+  box-shadow: inset 1px 1px 0 var(--wd-lo), inset -1px -1px 0 var(--wd-hi);
+}
+.wd-seg.fixed { flex: 0 0 auto; }
+/* Your town and your goal: a line of small plain text across the whole bar. */
+.wd-status .wd-town { flex: 1 1 100%; white-space: normal; overflow-wrap: anywhere; }
+
+/* A brick panel, for notes and the guide. */
+.wd-teal {
+  padding: 8px 10px;
+  color: #fff3d2;
+  background: var(--wd-brick-2);
+  box-shadow: inset 1px 1px 0 var(--wd-copper), inset -1px -1px 0 var(--wd-brick);
+}
+.wd-teal a { color: #fff; }
+
+@media (max-width: 560px) {
+  .wd-bar { gap: 3px; padding: 3px; }
+  .wd .wd-btn { flex: 1 1 56px; }
+  .wd-stat { flex-basis: 64px; min-width: 64px; }
+  .wd-well .world { height: min(58vh, 520px); }
+}
+
+/* The window's title bar can hold links, and a status bar can say a whole sentence. */
+.wd-title-actions { display: flex; flex: none; gap: 4px; }
+.wd a.wd-btn, .wd a.wd-tbtn { text-decoration: none; }
+.wd-status .wd-seg[role="status"] { white-space: normal; overflow-wrap: anywhere; }
+.wd-seg.fixed { max-width: 45%; font-weight: 700; }
+.wd-seg.fixed:empty { display: none; }
+@media (max-width: 560px) {
+  .wd-title .wd-tbtn { min-height: 36px; padding: 0 10px; }
+  .wd .wd-tools .wd-btn { flex: 1 1 48px; padding-left: 2px; padding-right: 2px; }
+  .wd-lcd { padding: 2px 4px; font-size: 13px; letter-spacing: 0; }
+}
+
+/* A plain window around a page's own content: a title bar over tan paper. */
+.wd-panel { max-width: 100%; }
+.wd-body {
+  --bg: #fff9e8;
+  --panel: #e3d3aa;
+  --panel-2: #efe3c2;
+  --line: #a58a58;
+  --btn-hi: #f6ecce;
+  --btn-lo: #dfcd9f;
+  --btn-edge: #6d5430;
+  --good: #2a6c22;
+  --bad: #a3261a;
+  --accent-ink: #fff6e0;
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+  color: var(--wd-ink);
+  background: var(--wd-face);
+  box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-lo);
+}
+.wd-body h2 { color: #6e2a14; font: 700 16px/1.25 var(--serif); text-shadow: 0 1px 0 rgba(255, 255, 255, .55); }
+.wd-body a { color: #8a3a12; }
+
+/* The landing page: The Commons first, then what this is and the ways in. */
+.masthead { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.masthead .brand { font-size: 26px; line-height: 1; }
+.masthead-logo {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  background: linear-gradient(#f6ecd0, #d6c192);
+  border: 1px solid #1d1209;
+  box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #a98d5c, 0 3px 0 rgba(0, 0, 0, .45);
+}
+.masthead-logo canvas { display: block; width: 46px; height: 46px; }
+.masthead nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+.copy-box { display: grid; gap: 8px; }
+.copy-box button { justify-self: start; }
+.cards-home { margin-top: 16px; }
+
+.world-summary { font-size: 15px; }
+.world-help { color: var(--muted); font-size: 13px; }
+.world-help summary { width: fit-content; cursor: pointer; }
+.world-help ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.around { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.around-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 10px; padding-bottom: 6px; border-bottom: 1px solid rgba(120, 90, 44, .35); }
+.around-name { min-width: 0; overflow-wrap: anywhere; }
+.around-row button.link { min-height: 32px; padding: 2px 8px; }
+
+/* The list of worlds, and starting one. */
+.worlds-page { max-width: 900px; margin: 0 auto; padding: 18px 16px 56px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; align-content: start; }
+.worlds-page .masthead { margin-bottom: 0; }
+.world-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 8px; }
+.world-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 10px;
+  background: #efe3c2;
+  border: 1px solid #7b6038;
+  box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #a98d5c;
+}
+.world-row-icon { width: 44px; height: 44px; line-height: 0; }
+.world-row-icon canvas { width: 100%; height: 100%; display: block; }
+.world-row-main { display: grid; gap: 0; min-width: 0; }
+.world-row-name { width: fit-content; max-width: 100%; font: 700 18px/1.25 var(--serif); color: #6e2a14; text-decoration-color: rgba(110, 42, 20, .35); text-underline-offset: 3px; }
+.world-row-name:hover { color: #9a3a14; }
+.world-row-facts { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.world-row-facts .wd-lcd { font-size: 13px; padding: 1px 7px; letter-spacing: .04em; }
+@media (max-width: 620px) {
+  .world-row { grid-template-columns: 44px minmax(0, 1fr); }
+  .world-row-facts { grid-column: 1 / -1; justify-content: flex-start; }
+}
+.start-world { gap: 10px; }
+.map-choices, .choice-row { min-width: 0; margin: 0; padding: 0; border: 0; }
+.map-choices legend, .choice-row legend { padding: 0; margin-bottom: 6px; font-size: 13px; font-weight: 700; }
+.map-choices { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+.map-choices legend { grid-column: 1 / -1; }
+.choice-row { display: grid; gap: 6px; }
+.map-choice { display: grid; justify-items: center; gap: 6px; padding: 8px; border: 2px solid #a58a58; background: #efe3c2; cursor: pointer; box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #bba577; }
+.map-choice:has(input:checked) { border-color: #c15f26; background: #ffe9b8; box-shadow: inset 0 0 0 1px #fff3cf; }
+.map-choice:focus-within { outline: 2px solid #8e2f18; outline-offset: 2px; }
+.map-choice input { width: auto; }
+.map-choice-name { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; text-align: center; }
+.land-thumb { width: 100%; max-width: 128px; height: auto; aspect-ratio: 1; border-radius: 4px; background: #4a86c8; image-rendering: pixelated; }
+
+.wd-title-sub { font: 400 13px/1.2 var(--ui); color: #ffdcae; letter-spacing: 0; }
+@media (max-width: 640px) { .wd-title-sub { display: none; } }
+
+/* A lamp in the readout strip that says the map is the city as it is now. */
+.wd-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: center;
+  margin-left: auto;
+  padding: 4px 11px 4px 9px;
+  color: #4d3620;
+  font: 700 11px/1 var(--ui);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  background: var(--wd-face-2);
+  box-shadow: inset 1px 1px 0 var(--wd-lo), inset -1px -1px 0 var(--wd-hi);
+}
+.wd-lamp {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff 0 10%, #a8ff9c 28%, #2fb52a 72%, #136b10);
+  box-shadow: 0 0 6px 1px rgba(80, 255, 70, .65), inset 0 -1px 2px rgba(0, 0, 0, .4);
+  animation: wd-blink 2.4s ease-in-out infinite;
+}
+@keyframes wd-blink { 50% { opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .wd-lamp { animation: none; } }
+
+.wd-body > button, .wd-body > a.button { justify-self: start; }
+
+@media (max-width: 560px) {
+  .masthead { margin-bottom: 12px; }
+}
+
+.wd-glyph { display: block; font: 700 26px/1 var(--ui); height: 32px; line-height: 32px; }
+
+/* Inside a dialog a card is only a group, not a second sheet of paper. */
+.modal .card { padding: 0; background: none; border: 0; box-shadow: none; }
+.modal .card h2 { margin-top: 0; }
+
+@media (max-width: 560px) {
+  .wd-stat { flex: 1 1 22%; min-width: 0; }
+  .wd-stat-label { font-size: 12px; letter-spacing: 0; text-transform: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+@media (min-width: 900px) {
+  .about { column-count: 2; column-gap: 44px; }
+  .about h2, .about p, .about ol, .about dl { max-width: none; }
+  .about h2 { break-after: avoid; }
+  .about p, .about ol, .about dt, .about dd { break-inside: avoid; }
+}
+
+/* The lamp sits in the title bar, where it costs no row of its own. */
+.wd-title .wd-live { margin-left: 0; align-self: center; padding: 0 8px 0 4px; color: #ffe9c0; background: none; box-shadow: none; text-shadow: 1px 1px 0 rgba(0, 0, 0, .5); }
+
+/* The rooms and the city pages keep their dark panels, with the same engraved headings and a framed picture. */
+.panel > h2, .panel-head h2, .panel > .stack > h2 { color: #ffd890; font: 700 16px/1.25 var(--serif); text-shadow: 0 1px 0 rgba(0, 0, 0, .55); }
+.top h1, .city-title { font-family: var(--serif); }
+.stage {
+  border: 1px solid #000;
+  border-radius: 0;
+  box-shadow: 0 0 0 3px #dccaa2, 0 0 0 4px #000, inset 0 0 0 1px rgba(255, 226, 160, .25), 0 8px 22px rgba(0, 0, 0, .5);
+}
+.live { border-radius: 2px; }
+
+/* The game. The world's window fills the screen at "/" and "/world/{id}", and every button the site
+   has is in its title bar: the build tools, zoom, and each panel that opens over the map. The window
+   is a grid with the map in its middle row. The tools and the panels sit in that same row, over the
+   map, so the map itself is never made smaller by them. */
+html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+.game { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; height: 100dvh; background: #3b2a18; z-index: 1; }
+.wd.wd-game {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 3px;
+  border: 0;
+  box-shadow:
+    inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-dk),
+    inset 2px 2px 0 var(--wd-face-2), inset -2px -2px 0 var(--wd-lo);
+}
+.wd-game > .wd-title { grid-row: 1; grid-column: 1; }
+.wd-game > .wd-stats { grid-row: 2; grid-column: 1; }
+.wd-game > .wd-well { grid-row: 3; grid-column: 1; position: relative; z-index: 0; min-height: 0; }
+.wd-game > .wd-status { grid-row: 4; grid-column: 1; }
+.wd-game .wd-well .world { position: absolute; inset: 3px; width: auto; height: auto; min-height: 0; }
+.world-live canvas { -webkit-touch-callout: none; }
+
+/* Title bar buttons. A wide screen has them all in the bar. A narrow one keeps the three that matter
+   most, in short words, and puts the rest behind More. */
+.wd-game .wd-title-actions { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; }
+.wd-game .wd-title-actions .short, .wd-game .wd-title-actions .more { display: none; }
+.wd-game .wd-title-actions .account .long { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wd-game .wd-title-actions .wd-tbtn { white-space: nowrap; }
+@media (max-width: 1099px) {
+  .wd-game .wd-title-actions .sec { display: none; }
+  .wd-game .wd-title-actions .more { display: inline-flex; }
+}
+@media (max-width: 759px) {
+  .wd-game .wd-title { gap: 5px; padding-left: 6px; }
+  .wd-game .wd-title-actions { gap: 3px; }
+  .wd-game .wd-title-actions .wd-tbtn { min-height: 34px; padding: 0 8px; }
+  .wd-game .wd-title-actions .long { display: none; }
+  .wd-game .wd-title-actions .short { display: inline; }
+  .wd-game .wd-title-actions .more .long { display: inline; }
+  .wd-game .wd-title .wd-live { font-size: 0; gap: 0; padding: 0 2px; }
+  .wd-game .wd-title-text { font-size: 14px; }
+  .wd-game .wd-stats { flex-wrap: nowrap; }
+  .wd-game .wd-stat { flex: 1 1 0; min-width: 0; }
+}
+@media (pointer: coarse) {
+  .wd-game .wd-title-actions .wd-tbtn { min-height: 36px; }
+}
+@media (max-width: 420px) {
+  .wd-game .wd-title::before { display: none; }
+}
+
+/* The build tools and the view buttons: a floating panel on the map's left, or a dock. */
+.wd-game > .game-palette {
+  grid-row: 3;
+  grid-column: 1;
+  align-self: start;
+  justify-self: start;
+  z-index: 3;
+  margin: 12px;
+  padding: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  background: var(--wd-face);
+  border: 1px solid #000;
+  box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-dk), 0 3px 0 rgba(0, 0, 0, .35), 0 8px 20px rgba(0, 0, 0, .4);
+}
+.game-palette .wd-tools {
+  display: grid;
+  grid-template-columns: repeat(2, 56px);
+  align-content: start;
+  gap: 4px;
+  padding: 6px;
+}
+.game-palette .wd-tools::before {
+  content: "Build";
+  grid-column: 1 / -1;
+  padding-bottom: 3px;
+  color: #4d3620;
+  font: 700 11px/1.2 var(--ui);
+  letter-spacing: .12em;
+  text-align: center;
+  text-transform: uppercase;
+  border-bottom: 2px groove rgba(120, 90, 44, .5);
+}
+.game-palette .wd-tools .wd-btn { min-width: 0; min-height: 0; height: 58px; padding: 3px 2px; flex: none; }
+.game-view {
+  display: grid;
+  grid-template-columns: repeat(2, 56px);
+  gap: 4px;
+  padding: 6px;
+  background: var(--wd-face);
+  box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-lo);
+}
+.game-view .wd-btn { min-width: 0; min-height: 0; height: 48px; padding: 2px; flex: none; }
+.game-view .wd-glyph { height: 24px; line-height: 24px; font-size: 22px; }
+
+/* The status bar. */
+.wd-game .wd-status .wd-seg[role="status"] { flex: 2 1 200px; }
+.wd-game .wd-status .wd-town { flex: 3 1 300px; }
+.wd-town-counts { margin-right: .2em; }
+
+/* Panels: bevelled sheets over the map, one at a time, from the title bar. On a wide screen one
+   stands at the right and leaves the middle of the map clear. */
+.game-panel, .game-menu { font: 14px/1.45 var(--ui); }
+.wd-game > .game-panel {
+  grid-row: 3;
+  grid-column: 1;
+  align-self: start;
+  justify-self: end;
+  z-index: 4;
+  margin: 12px;
+  width: min(400px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  color: var(--text);
+  background: #dccaa2;
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #4d3620,
+    inset 2px 2px 0 #ecdfbd, inset -2px -2px 0 #a98d5c,
+    0 4px 0 rgba(0, 0, 0, .35), 0 14px 32px rgba(0, 0, 0, .5);
+}
+.wd-game > .game-panel[hidden] { display: none; }
+.wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account { width: min(460px, calc(100% - 24px)); }
+.game-panel:focus { outline: none; }
+.game-panel:focus-visible { outline: 2px solid #8e2f18; outline-offset: -2px; }
+.game-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 30px;
+  padding: 2px 3px 2px 10px;
+  color: #fff3d2;
+  background: linear-gradient(90deg, #6b2216, #a94a26 62%, #cf7a34);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, .45), inset 0 -1px 0 rgba(0, 0, 0, .35);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .5);
+}
+.game-panel-head h2 { font: 700 14px/1.2 var(--ui); color: inherit; }
+.game-panel-body {
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 12px;
+  background: #efe3c2;
+  box-shadow: inset 1px 1px 0 #a98d5c, inset -1px -1px 0 #fff7dc;
+}
+.game-panel-body > * { min-width: 0; }
+.game-panel .card { padding: 0; background: none; border: 0; box-shadow: none; }
+.game-panel .card h2 { margin-top: 0; }
+.game-panel .about { width: auto; margin: 0; padding: 0; border: 0; box-shadow: none; background: none; column-count: 1; }
+.game-panel .about h2 { font-size: 17px; margin: 18px 0 6px; max-width: none; }
+.game-panel .about h2:first-child { margin-top: 0; }
+.game-panel .about p, .game-panel .about ol, .game-panel .about dl { max-width: none; }
+.game-more { display: grid; gap: 8px; }
+.game-more > * { justify-self: stretch; }
+.game-panel .world-summary { font-size: 15px; }
+.game-panel .panel-head h2 { color: #6e2a14; font: 700 16px/1.25 var(--serif); text-shadow: 0 1px 0 rgba(255, 255, 255, .55); }
+
+/* A menu where something was clicked. */
+.game-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 200px;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 3px;
+  color: var(--text);
+  background: #dccaa2;
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #4d3620,
+    0 6px 18px rgba(0, 0, 0, .5);
+}
+.game-menu-head {
+  display: grid;
+  gap: 1px;
+  padding: 5px 9px 6px;
+  color: #fff3d2;
+  background: linear-gradient(90deg, #6b2216, #a94a26 62%, #cf7a34);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 170, .45), inset 0 -1px 0 rgba(0, 0, 0, .35);
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .5);
+}
+.game-menu-head strong { font: 700 14px/1.2 var(--serif); overflow-wrap: anywhere; }
+.game-menu-head small { color: #ffdcae; font-size: 12px; }
+.game-menu .game-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 9px;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font: 600 13px/1.2 var(--ui);
+  text-align: left;
+  transform: none;
+  filter: none;
+}
+.game-menu .game-menu-item:hover, .game-menu .game-menu-item:focus-visible {
+  color: #2b1d10;
+  background: linear-gradient(#ffd98a, #f0aa44);
+  outline: none;
+}
+.game-menu .game-menu-item[aria-checked="true"] { background: #f4dba0; box-shadow: inset 3px 0 0 #c15f26; }
+.game-menu .game-menu-item.danger { color: #a3261a; }
+.game-menu-icon { flex: none; width: 22px; height: 22px; line-height: 0; }
+.game-menu-icon canvas { display: block; width: 100%; height: 100%; }
+.game-menu-cost { margin-left: auto; padding-left: 10px; color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+.game-menu-gap { margin: 3px 4px; border: 0; border-top: 2px groove rgba(120, 90, 44, .5); }
+
+/* A phone held upright: the tools in a dock along the bottom, the view buttons over the map's
+   corner, and panels as sheets from the bottom of the map. */
+@media (max-width: 759px) and (min-height: 541px) {
+  .wd.wd-game { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+  .wd-game > .wd-status { grid-row: 5; }
+  .wd-game > .game-palette { display: contents; }
+  .game-palette > .wd-tools {
+    grid-row: 4;
+    grid-column: 1;
+    display: flex;
+    gap: 3px;
+    padding: 3px;
+  }
+  .game-palette > .wd-tools::before { display: none; }
+  .game-palette > .wd-tools .wd-btn { flex: 1 1 0; height: 56px; padding: 2px 0; }
+  .game-palette > .wd-tools .wd-icon { width: 28px; height: 28px; }
+  .game-palette > .wd-tools .wd-btn-label { font-size: 11px; }
+  .game-palette > .game-view {
+    grid-row: 3;
+    grid-column: 1;
+    align-self: end;
+    justify-self: end;
+    z-index: 3;
+    margin: 10px;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    border: 1px solid #000;
+    box-shadow: inset 1px 1px 0 var(--wd-hi), inset -1px -1px 0 var(--wd-dk), 0 3px 0 rgba(0, 0, 0, .35);
+  }
+  .game-view .wd-btn { width: 44px; height: 44px; }
+  .game-view .wd-btn-label { display: none; }
+}
+@media (max-width: 759px) {
+  .wd-game > .game-panel, .wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account {
+    align-self: end;
+    justify-self: stretch;
+    width: auto;
+    margin: 6px;
+    max-height: calc(100% - 12px);
+  }
+  .wd-town-counts { display: none; }
+  .wd-game .wd-status .wd-town { flex: 1 1 100%; }
+}
+
+/* A phone on its side, or any short window: there is no room for a dock or a tall readout, so the
+   readouts become one thin row and the tools a small floating pad of pictures. */
+@media (max-height: 540px) {
+  .wd-game .wd-stats { flex-wrap: nowrap; gap: 10px; padding: 2px 6px; }
+  .wd-game .wd-stat { flex: 0 1 auto; flex-direction: row; align-items: center; gap: 5px; min-width: 0; }
+  .wd-game .wd-stat-label { font-size: 11px; letter-spacing: 0; text-transform: none; }
+  .wd-game .wd-lcd { padding: 0 6px; font-size: 13px; letter-spacing: 0; }
+  .wd-game .wd-title { min-height: 30px; padding-top: 1px; padding-bottom: 1px; }
+  .wd-game .wd-seg { padding: 2px 8px; }
+  .game-palette .wd-tools { grid-template-columns: repeat(3, 46px); gap: 3px; padding: 4px; }
+  .game-palette .wd-tools::before { display: none; }
+  .game-palette .wd-tools .wd-btn { height: 46px; }
+  .game-palette .wd-tools .wd-icon { width: 26px; height: 26px; }
+  .game-palette .wd-btn-label { display: none; }
+  .game-view { grid-template-columns: repeat(3, 46px); gap: 3px; padding: 4px; }
+  .game-view .wd-btn { height: 46px; }
+  .game-view .wd-btn-label { display: none; }
+  .wd-game > .game-palette { margin: 8px; max-height: calc(100% - 16px); }
+}
+
+/* Typing @ in a private chat box offers the people and bots there. */
+.mention-wrap { position: relative; flex: 1; min-width: 0; display: flex; }
+.mention-wrap > input { flex: 1; }
+.mention-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 20;
+  max-height: 232px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 3px;
+  list-style: none;
+  background: var(--panel-2);
+  border: 1px solid var(--btn-edge);
+  border-radius: 3px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .5);
+}
+.mention-list[hidden] { display: none; }
+.mention-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; border-radius: 2px; cursor: pointer; }
+.mention-option[aria-selected="true"] { color: var(--accent-ink); background: var(--accent); }
+.mention-name { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.mention-kind { flex: none; font-size: 12px; opacity: .8; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

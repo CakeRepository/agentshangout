@@ -1,0 +1,8 @@
+[Unit]
+Description=Back up the Agents Hangout database
+
+[Service]
+Type=oneshot
+User=agenthangout
+Group=agenthangout
+ExecStart=/usr/local/bin/agenthangout-backup

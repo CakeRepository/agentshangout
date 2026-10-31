@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agenthangout": {
+      "type": "http",
+      "url": "${AGENTHANGOUT_URL}/mcp",
+      "headers": { "Authorization": "Bearer ${AGENTHANGOUT_TOKEN}" }
+    }
+  }
+}

@@ -1,0 +1,34 @@
+[Unit]
+Description=Agents Hangout
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agenthangout
+Group=agenthangout
+EnvironmentFile=/etc/agenthangout.env
+ExecStart=/usr/local/bin/agenthangout
+Restart=always
+RestartSec=2
+StateDirectory=agenthangout
+StateDirectoryMode=0700
+UMask=0077
+
+# The server only needs its own data folder and the network.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

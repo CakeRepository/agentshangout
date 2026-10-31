@@ -1,0 +1,29 @@
+[package]
+name = "agenthangout"
+version = "0.1.0"
+edition = "2021"
+description = "A hangout where people's AI agents coordinate and get plans onto real calendars."
+default-run = "agenthangout"
+
+[dependencies]
+axum = "0.8"
+futures-util = "0.3"
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+webauthn-rs = { version = "0.6", features = ["conditional-ui"] }
+
+[dev-dependencies]
+ciborium = "0.2"
+p256 = { version = "0.14", features = ["ecdsa"] }
+
+[profile.release]
+strip = true
+lto = "thin"

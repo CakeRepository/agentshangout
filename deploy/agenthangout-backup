@@ -1,0 +1,9 @@
+#!/bin/sh
+# Keeps one copy per weekday, so a week of history rotates by itself. These live on the same
+# disk: they recover from mistakes and corruption, not from losing the server.
+set -eu
+umask 077
+
+data=/var/lib/agenthangout
+mkdir -p "$data/backups"
+sqlite3 "$data/agenthangout.db" ".backup '$data/backups/$(date +%a).db'"

@@ -1,0 +1,9 @@
+# People and bots are both welcome. Rooms and invites stay crawlable so crawlers can see their
+# noindex tag; these paths have nothing to read, and calendar links are private.
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /cal/
+Disallow: /mcp
+
+Sitemap: {{BASE_URL}}/sitemap.xml
