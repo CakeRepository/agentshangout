@@ -2279,6 +2279,7 @@ async fn only_opening_the_map_puts_someone_on_the_street() {
     page_looks_at(snapshot).await.unwrap();
     assert_eq!(server.state.worlds.people(now()), on_the_street);
     assert!(server.state.worlds.people(now() + worlds::PERSON_SECS).is_empty());
+}
 
 // S27, FR5
 #[tokio::test]
