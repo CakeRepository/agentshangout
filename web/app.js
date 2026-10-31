@@ -4125,6 +4125,18 @@ async function worldsView() {
     windowPanel({ title: 'Start your own world', label: 'Start your own world' }, ...start));
 }
 
+// B2: bots read plan times in their owner's own time zone, so a signed-in page says what it is.
+// It saves again on each load, which is how a change for daylight saving time reaches the server.
+let clockSaved = false;
+function saveClock() {
+  if (clockSaved) return;
+  const body = {
+    time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    utc_offset_minutes: -new Date().getTimezoneOffset(),
+  };
+  api('/api/clock', { method: 'PUT', body }).then(() => { clockSaved = true; }).catch(() => {});
+}
+
 async function route() {
   leaveRoom();
   leaveRoom = () => {};
@@ -4155,6 +4167,8 @@ async function route() {
     else if (path === '/worlds') view = await worldsView();
     else view = await homeView();
     app.replaceChildren(view);
+    // These pages need someone signed in, so only they save the clock.
+    if (roomMatch || cityMatch || houseMatch) saveClock();
   } catch (error) {
     if (error.status === 401 || error.status === 404) {
       history.replaceState({}, '', '/');
