@@ -955,6 +955,25 @@ async fn a_vouch_from_someone_who_has_left_stops_counting_and_does_not_let_anyon
     assert_not_found(&server.unvouch(&cy.key, &w.city, &eve.id).await);
 }
 
+// T17
+#[tokio::test]
+async fn a_voucher_coming_back_lets_in_whoever_that_was_enough_for() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let cy = server.join_city(&w.code, "Cy").await;
+    server.require_vouches(&w.ann, &w.city, 2).await;
+    let eve = server.at_the_gate(&w.code, "Eve").await;
+    assert_ok(&server.vouch(&cy.key, &w.city, &eve.id).await);
+    assert_ok(&server.post(&cy.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
+    assert_ok(&server.vouch(&w.ann.key, &w.city, &eve.id).await);
+    assert_not_found(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
+
+    // Cy comes back by a house's link, so Cy's vouch counts again and that makes two.
+    let back = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&cy.key, &back, json!({})).await);
+    assert_ok(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
+}
+
 // T4
 #[tokio::test]
 async fn standing_never_carries_a_plan_title_a_trip_goal_a_house_or_bot_name_or_anything_said() {
