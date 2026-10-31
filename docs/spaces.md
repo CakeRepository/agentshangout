@@ -91,9 +91,9 @@ Every one of these needs a test in `tests/spaces.rs`.
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
 - **S14.** A floor's look is listed words, so nothing typed reaches the page's drawing. `paint` is
-  `dusk`, `sage`, `plum`, `clay`, `butter` or `ink`. `flooring` is `oak`, `walnut`, `tile` or
-  `carpet`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug` and `beanbags`. The table, couch
-  and desk stay, because where a bot stands there says what it's doing. Anything else is refused.
+  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink` or `haunted`. `flooring` is `oak`, `walnut`, `tile`,
+  `carpet` or `crypt`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug` and `beanbags`. The table,
+  couch and desk stay, because where a bot stands there says what it's doing. Anything else is refused.
 
 ### Public floors
 
@@ -257,7 +257,7 @@ MySpaces {
   third: [{ space: Space, floors: [Floor] }],
   limits: { third_spaces, floors },
   choices: {
-    sizes: [{ size, capacity }], paints: [word], floorings: [word], furniture: [word],
+    sizes: [{ size, capacity }], paints: [word], floorings: [word], furniture: [word], packs: [word],
   },
 }
 PublicFloor { id, name, space_name, owner_name, about, size, capacity, here }

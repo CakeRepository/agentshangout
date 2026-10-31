@@ -44,12 +44,14 @@ const PAINTS = {
   clay: { upper: '#8a5a44', stripe: '#94614a', lower: '#6b4333', panel: '#5a382a' },
   butter: { upper: '#b89a5e', stripe: '#c2a468', lower: '#8f7646', panel: '#7a643a' },
   ink: { upper: '#23293a', stripe: '#292f42', lower: '#1a1f2d', panel: '#141824' },
+  haunted: { upper: '#2c2042', stripe: '#33264c', lower: '#20172f', panel: '#2b1a2e', webs: true },
 };
 const FLOORINGS = {
   oak: { a: '#a97b4e', b: '#a27347', line: '#8b6039', style: 'planks' },
   walnut: { a: '#6e4a30', b: '#67442b', line: '#523521', style: 'planks' },
   tile: { a: '#c9c4b5', b: '#8d8a80', line: '#77746b', style: 'tile' },
   carpet: { a: '#4d6a78', b: '#4a6673', line: '#415a66', style: 'carpet' },
+  crypt: { a: '#57545f', b: '#4e4b56', line: '#34323c', style: 'flagstones' },
 };
 const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
 
@@ -206,7 +208,61 @@ function paintWindow(g, x, y, w, h, sky) {
   r(g, '#d8c7a3', x - 5, y + h + 3, w + 10, 2);
 }
 
+// Cobwebs in the top corners, and bats asleep on the wall in the gaps either side of the whiteboard.
+function paintWebs(g) {
+  const silk = 'rgba(226,222,240,.34)';
+  for (const [corner, away] of [[0, 1], [W - 1, -1]]) {
+    const dot = (angle, reach) =>
+      r(g, silk, corner + away * Math.round(Math.cos(angle) * reach), Math.round(Math.sin(angle) * reach), 1, 1);
+    for (const turn of [0.14, 0.4, 0.68, 0.94]) {
+      for (let reach = 0; reach < 38; reach++) dot((turn * Math.PI) / 2, reach);
+    }
+    for (const ring of [13, 24, 35]) {
+      for (let i = 0; i <= ring * 2; i++) {
+        const angle = ((i / (ring * 2)) * Math.PI) / 2;
+        dot(angle, ring - Math.abs(Math.round(Math.sin(angle * 8) * 1.5)));
+      }
+    }
+  }
+  const bat = '#120c1e';
+  for (const [x, y] of [[126, 16], [138, 30], [346, 12], [358, 26], [462, 34]]) {
+    r(g, bat, x - 1, y - 2, 3, 4);
+    r(g, bat, x - 1, y - 3, 1, 1);
+    r(g, bat, x + 1, y - 3, 1, 1);
+    r(g, bat, x - 5, y - 1, 4, 2);
+    r(g, bat, x + 2, y - 1, 4, 2);
+    r(g, bat, x - 6, y - 2, 2, 2);
+    r(g, bat, x + 5, y - 2, 2, 2);
+    r(g, bat, x - 4, y + 1, 1, 1);
+    r(g, bat, x + 3, y + 1, 1, 1);
+    r(g, '#ff8a3d', x - 1, y - 1, 1, 1);
+    r(g, '#ff8a3d', x + 1, y - 1, 1, 1);
+  }
+}
+
 function paintFloor(g, { a, b, line, style }) {
+  if (style === 'flagstones') {
+    r(g, a, 0, WALL + 1, W, H - WALL - 1);
+    for (let y = WALL + 1, row = 0; y < H; y += 20, row++) {
+      for (let x = (row % 2) * -18, col = 0; x < W; x += 36, col++) {
+        const worn = (row * 5 + col * 3) % 4;
+        if (worn === 0) r(g, b, x + 1, y, 35, 19);
+        r(g, line, x, y, 1, 19);
+        // A crack here and there, and moss where the stones meet.
+        if (worn === 1) {
+          r(g, line, x + 12, y + 4, 6, 1);
+          r(g, line, x + 17, y + 5, 1, 5);
+          r(g, line, x + 18, y + 9, 5, 1);
+        }
+        if (worn === 2) {
+          r(g, '#4f6b48', x + 1, y + 15, 7, 4);
+          r(g, '#61805a', x + 2, y + 17, 3, 2);
+        }
+      }
+      r(g, line, 0, y + 19, W, 1);
+    }
+    return;
+  }
   if (style === 'tile') {
     for (let y = WALL + 1, row = 0; y < H; y += 12, row++) {
       for (let x = 0, col = 0; x < W; x += 12, col++) r(g, (row + col) % 2 ? a : b, x, y, 12, 12);
@@ -240,6 +296,7 @@ function paintRoom(g, hour, look) {
 
   paintWindow(g, 36, 10, 72, 32, sky);
   paintWindow(g, 372, 10, 72, 32, sky);
+  if (paint.webs) paintWebs(g);
 
   // Floor
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
@@ -816,6 +873,140 @@ function paintQuietSign(g, x, y) {
   for (const [dx, dy] of QUIET_WORD) r(g, '#fff', board - 19 + dx, y - 28 + dy, 2, 2);
 }
 
+// The Halloween pack. A flame holds still and a ghost stops bobbing for someone who asked for less
+// motion, the same as everything else here.
+
+const FLAME = ['#ffde59', '#ffb454', '#fff0b8'];
+
+function paintPumpkin(g, x, y, t) {
+  const flicker = Math.floor(t / 170) % 3;
+  const lit = FLAME[flicker];
+  const glow = `rgba(255,150,50,${flicker === 1 ? 0.07 : 0.11})`;
+  r(g, glow, x - 12, y - 11, 24, 8);
+  r(g, glow, x - 9, y - 15, 18, 15);
+  r(g, SHADOW, x - 9, y - 1, 18, 2);
+  r(g, '#b4501a', x - 9, y - 11, 18, 9);
+  r(g, '#b4501a', x - 7, y - 13, 14, 13);
+  r(g, '#e8802a', x - 8, y - 11, 16, 9);
+  r(g, '#e8802a', x - 6, y - 13, 12, 12);
+  r(g, '#d0691f', x - 4, y - 13, 1, 12);
+  r(g, '#d0691f', x + 3, y - 13, 1, 12);
+  r(g, '#ffae5c', x - 7, y - 11, 1, 4);
+  r(g, '#4f7a35', x - 1, y - 16, 3, 3);
+  r(g, '#3a5c28', x + 1, y - 17, 2, 2);
+  r(g, '#5a2a10', x - 6, y - 10, 4, 3);
+  r(g, '#5a2a10', x + 2, y - 10, 4, 3);
+  r(g, '#5a2a10', x - 6, y - 6, 12, 4);
+  r(g, lit, x - 5, y - 9, 3, 2);
+  r(g, lit, x - 4, y - 10, 1, 1);
+  r(g, lit, x + 2, y - 9, 3, 2);
+  r(g, lit, x + 3, y - 10, 1, 1);
+  r(g, lit, x - 5, y - 5, 10, 2);
+  r(g, '#5a2a10', x - 3, y - 5, 2, 1);
+  r(g, '#5a2a10', x + 1, y - 4, 2, 1);
+}
+
+function paintGhost(g, x, y, t) {
+  const bob = Math.round(Math.sin(t / 640) * 2);
+  const sway = Math.floor(t / 320) % 2;
+  const sheet = '#ece9f6';
+  const fold = '#c4c1da';
+  const top = y - 31 + bob;
+  r(g, SHADOW, x - 6, y - 1, 12, 2);
+  r(g, sheet, x - 4, top, 8, 1);
+  r(g, sheet, x - 6, top + 1, 12, 2);
+  r(g, sheet, x - 7, top + 3, 14, 18);
+  r(g, fold, x + 5, top + 5, 2, 16);
+  r(g, sheet, x - 9, top + 10 - sway, 2, 5);
+  r(g, sheet, x + 7, top + 10 - sway, 2, 5);
+  for (let i = 0; i < 3; i++) {
+    const tail = 2 + ((i + sway) % 2) * 2;
+    r(g, i === 2 ? fold : sheet, x - 7 + i * 5, top + 21, 4, tail);
+  }
+  r(g, '#1b2030', x - 4, top + 7, 2, 3);
+  r(g, '#1b2030', x + 2, top + 7, 2, 3);
+  r(g, '#1b2030', x - 1, top + 12, 2, 3);
+  r(g, '#f4b6c8', x - 6, top + 11, 2, 1);
+  r(g, '#f4b6c8', x + 4, top + 11, 2, 1);
+}
+
+function paintCauldron(g, x, y, t) {
+  const flicker = Math.floor(t / 150) % 3;
+  const glow = `rgba(120,240,140,${flicker === 1 ? 0.06 : 0.09})`;
+  r(g, glow, x - 11, y - 27, 22, 8);
+  r(g, glow, x - 7, y - 32, 14, 13);
+  r(g, SHADOW, x - 11, y - 1, 22, 2);
+  r(g, '#14121c', x - 8, y - 5, 2, 5);
+  r(g, '#14121c', x + 6, y - 5, 2, 5);
+  r(g, '#ff8a3d', x - 5, y - 3, 10, 3);
+  r(g, FLAME[flicker], x - 3 + flicker, y - 3, 3, 2);
+  r(g, '#2a2733', x - 10, y - 16, 20, 11);
+  r(g, '#2a2733', x - 8, y - 6, 16, 2);
+  r(g, '#191722', x + 6, y - 16, 4, 11);
+  r(g, '#454252', x - 8, y - 15, 2, 7);
+  r(g, '#3f3c4c', x - 11, y - 18, 22, 3);
+  r(g, '#5a5768', x - 11, y - 18, 22, 1);
+  r(g, '#5fe07a', x - 9, y - 19, 18, 2);
+  r(g, '#a6f5a0', x - 6 + flicker * 3, y - 19, 3, 1);
+  for (let i = 0; i < 3; i++) {
+    const rise = (t / 45 + i * 9) % 13;
+    r(g, '#8df09a', x - 5 + i * 4 + (Math.floor(rise / 4) % 2), y - 20 - rise, 2, 2);
+  }
+}
+
+// R, I and P, three pixels wide and five tall.
+const RIP = [[0, 7, 5, 6, 5, 5], [4, 7, 2, 2, 2, 7], [8, 7, 5, 7, 4, 4]];
+
+function paintGravestone(g, x, y) {
+  r(g, SHADOW, x - 9, y - 2, 18, 2);
+  r(g, '#5a4634', x - 9, y - 3, 18, 3);
+  r(g, '#8b8d99', x - 7, y - 20, 14, 18);
+  r(g, '#8b8d99', x - 5, y - 22, 10, 2);
+  r(g, '#a9abb8', x - 7, y - 20, 2, 17);
+  r(g, '#a9abb8', x - 5, y - 22, 10, 1);
+  r(g, '#6b6d79', x + 5, y - 20, 2, 17);
+  for (const [left, ...rows] of RIP) {
+    rows.forEach((bits, row) => {
+      for (let bit = 0; bit < 3; bit++) {
+        if (bits & (4 >> bit)) r(g, '#4c4e5a', x - 6 + left + bit, y - 18 + row, 1, 1);
+      }
+    });
+  }
+  r(g, '#4f7a35', x - 9, y - 5, 2, 3);
+  r(g, '#3f6a30', x - 4, y - 4, 2, 2);
+  r(g, '#4f7a35', x + 3, y - 4, 2, 2);
+  r(g, '#3f6a30', x + 7, y - 5, 2, 3);
+}
+
+function paintSkeleton(g, x, y, t) {
+  const bone = '#ece7d8';
+  const shadow = '#b9b4a2';
+  const hollow = '#1b2030';
+  const wave = Math.floor(t / 420) % 2;
+  r(g, SHADOW, x - 7, y - 1, 14, 2);
+  r(g, bone, x - 3, y - 11, 2, 10);
+  r(g, bone, x + 1, y - 11, 2, 10);
+  r(g, bone, x - 4, y - 2, 3, 2);
+  r(g, bone, x + 1, y - 2, 3, 2);
+  r(g, shadow, x - 4, y - 13, 8, 2);
+  r(g, shadow, x - 1, y - 22, 2, 9);
+  for (let i = 0; i < 3; i++) r(g, bone, x - 4, y - 22 + i * 3, 8, 2);
+  r(g, bone, x - 6, y - 22, 2, 1);
+  r(g, bone, x - 6, y - 22, 1, 10);
+  r(g, bone, x + 4, y - 22, 3, 1);
+  r(g, bone, x + 6, y - 28 + wave, 1, 7 - wave);
+  r(g, bone, x + 5 + wave * 2, y - 30 + wave, 2, 2);
+  r(g, bone, x - 4, y - 31, 8, 6);
+  r(g, bone, x - 3, y - 32, 6, 1);
+  r(g, shadow, x - 3, y - 25, 6, 2);
+  r(g, hollow, x - 3, y - 29, 2, 2);
+  r(g, hollow, x + 1, y - 29, 2, 2);
+  r(g, hollow, x, y - 27, 1, 1);
+  r(g, hollow, x - 2, y - 24, 1, 1);
+  r(g, hollow, x, y - 24, 1, 1);
+  r(g, hollow, x + 2, y - 24, 1, 1);
+}
+
 // These are listed words on the server. A word this page doesn't know is left out, so a newer
 // server can't break an older page. `rise` is how far up from its front edge it's painted, and a
 // `sign` changes what bots can do, so it's painted over everything else.
@@ -919,6 +1110,11 @@ const ITEMS = {
     },
     rise: 54,
   },
+  pumpkin: { paint: paintPumpkin, rise: 17 },
+  ghost: { paint: paintGhost, rise: 33 },
+  cauldron: { paint: paintCauldron, rise: 33 },
+  gravestone: { paint: paintGravestone, rise: 22, words: true },
+  skeleton: { paint: paintSkeleton, rise: 32 },
 };
 
 // Where an item stands, in the room's own pixels. `w` and `h` are cells as it's turned now, and
@@ -931,9 +1127,9 @@ function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
   return { ...ITEMS[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
 }
 
-// Facing 2 and 3 are the other way round. Words stay readable, so a sign never is.
-function paintItem(g, { paint, side, sign, x, y, wide, deep, facing }, t) {
-  const flip = facing >= 2 && !sign;
+// Facing 2 and 3 are the other way round. Words stay readable, so a sign or a kind with `words` never is.
+function paintItem(g, { paint, side, sign, words, x, y, wide, deep, facing }, t) {
+  const flip = facing >= 2 && !sign && !words;
   if (flip) {
     g.save();
     g.translate(x * 2, 0);

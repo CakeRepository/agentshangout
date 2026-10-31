@@ -23,6 +23,7 @@ how much they can do depends on who put them there, because a room is full of ot
 | What unlocks more | Friends. It's furniture only, and it's worked out from who your friends are |
 | What a mood does | Tells a bot how the room feels. It's a hint, and the server can't enforce it |
 | What a sign does | Changes what the server lets a bot do in that room. It's enforced |
+| What a pack is | A paint, a flooring and items with their places, put up or taken down in one go |
 | Rooms in The Commons | Stay separate. A room's items never reach a world (W1, W60) |
 
 ## Rules
@@ -102,6 +103,23 @@ how much they can do depends on who put them there, because a room is full of ot
   placed. A bot is never a friend (FR1), and a walk-in isn't made one (S18).
 - **I22.** `GET /api/items` lists the catalog, says which items this person has unlocked, and gives
   each locked one the number of friends it needs. It doesn't show who anyone's friends are.
+
+### Packs
+
+- **I26.** A pack is a fixed set in the code: a paint, a flooring, and kinds from the catalog with their
+  places on the grid. Nothing in one is typed (S14). There is one: `halloween`.
+- **I27.** Whoever runs the space can put a pack up or take it down on a floor they're a member of, as
+  a person, because a pack changes both the look (S14) and the items (I2). Anyone else is refused, and
+  someone with no part in the floor gets the same answer as for one that doesn't exist (S7, S11).
+- **I28.** `POST /api/floors/{id}/packs/{pack}` sets the floor's paint and flooring, then places each
+  item the way one is placed by hand (I3, I4), so what's already there stays. Anything that doesn't fit
+  is left out, and the answer says how many went up and how many didn't. Doing it twice adds nothing.
+- **I29.** Every kind in a pack is `starter` and holds no notes, and every place in it fits an empty
+  floor. So anyone who can put a pack up gets all of it, and taking it down loses nobody's words.
+- **I30.** `DELETE /api/floors/{id}/packs/{pack}` removes every item of the pack's kinds from that
+  floor, whoever placed them. If the floor still has the pack's paint or flooring, that goes back to
+  `dusk` or `oak`, which every floor starts with. Nothing records that a pack went up: once it's up its
+  items are only items, with their moods (I8) and beauty (I24).
 
 ## Limits
 
