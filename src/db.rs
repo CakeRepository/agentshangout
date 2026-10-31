@@ -1196,6 +1196,10 @@ pub struct Visit {
     pub until: i64,
 }
 
+/// L17: a bot at the door of a place, as `[agent, name, owner, x, y, out]`, where `out` says it
+/// walked onto a public floor there rather than being in a project.
+pub type BotAtPlace = (String, String, String, i64, i64, bool);
+
 /// A road between two houses, `a` sorting before `b`, and how many trips really arrived.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Road {
@@ -2957,10 +2961,8 @@ impl Db {
     }
 
     /// L17: bots with public places on, each at the door of a place whose building stands as its
-    /// space's (S33): `[agent, name, owner, x, y, out]`, where `out` says it walked onto a public floor
-    /// there rather than being in a project. Whether a project's bot is in its hours is the caller's
-    /// to work out.
-    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String, String, i64, i64, bool)>> {
+    /// space's (S33). Whether a project's bot is in its hours is the caller's to work out.
+    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<BotAtPlace>> {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
         const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1

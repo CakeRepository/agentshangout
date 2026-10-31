@@ -610,7 +610,7 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
         assert!(!reply.text.contains("player_token"));
     }
     // Nothing was made: not a player, not a place on the street, not a claim.
-    assert!(server.state.db.players_of(&made["person"]["id"].as_str().unwrap().to_string()).unwrap().is_empty());
+    assert!(server.state.db.players_of(made["person"]["id"].as_str().unwrap()).unwrap().is_empty());
     assert_eq!(server.view(COMMONS).await["players"], json!([]));
     // The same through MCP.
     let reply = server.rpc("tools/call", json!({ "name": "join", "arguments": {} })).await;
@@ -624,7 +624,7 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
         reply.body["result"]["content"][0]["text"].as_str().unwrap().to_string()
     };
     assert!(text.contains("stays home"), "{text}");
-    assert!(server.state.db.players_of(&made["person"]["id"].as_str().unwrap().to_string()).unwrap().is_empty());
+    assert!(server.state.db.players_of(made["person"]["id"].as_str().unwrap()).unwrap().is_empty());
 }
 
 // W3, W9
@@ -1425,7 +1425,7 @@ async fn a_road_is_a_straight_line_of_up_to_16_and_a_drag_in_any_direction_works
     let map = Map::from_db(&server, COMMONS);
 
     // 17 tiles is too long, a diagonal is not a line.
-    let long = map.line_from_road(17).and_then(|line| Some(line));
+    let long = map.line_from_road(17);
     if let Some((first, last)) = long {
         assert!(server.act(&ann.key, COMMONS, road_move(first, last)).await.status.is_client_error());
     }
@@ -1995,9 +1995,10 @@ async fn moves_are_capped_in_a_world_at_300_a_minute() {
     }
     assert_eq!(applied, 300, "300 moves went through");
     assert_eq!(refused, 30, "and the rest were told to wait");
-    // A refused one cost nothing: the last guest only used what went through.
+    // A refused one cost nothing: the last guest only used what went through, and the 300 that did
+    // were the first 10 guests' 30 each, so this one spent none.
     let last = guests.last().unwrap();
-    assert_eq!(server.moves_left(&last.token).await, 30 - (300 - 10 * 30));
+    assert_eq!(server.moves_left(&last.token).await, 30);
     // Moves that are refused for another reason did not count towards the cap. A player's refused
     // moves have a limit of their own (60 a minute), so seven players are refused 50 times each.
     let fresh = Server::start().await;
