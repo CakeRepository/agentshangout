@@ -3622,7 +3622,7 @@ function townText(mine) {
   return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
 }
 
-const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land' };
+const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Café', club: 'Club', studio: 'Studio' };
 const LAND_NAME = { grass: 'Open grass', forest: 'Forest', water: 'Water', sand: 'Sand', hill: 'Hill' };
 const EMOTE_MENU = [['wave', 'Wave'], ['cheer', 'Cheer'], ['think', 'Think'], ['sleep', 'Sleep'], ['dance', 'Dance']];
 // A narrow screen gets sheets instead of side panels, and a dock along the bottom.
