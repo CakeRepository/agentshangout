@@ -356,8 +356,9 @@ pub fn city_for_rules(state: &AppState, caller: &Caller, city_id: &str) -> ApiRe
 }
 
 /// T12 and T13: sets what newcomers must do. A city asks for vouches and for its rules to be
-/// accepted, and nothing else. Lowering `min_vouches` lets in everyone at the gate who now has
-/// enough (T21), and 0 lets in everyone.
+/// accepted, and nothing else. `min_vouches` can't be raised above the people in the city, and can
+/// always be lowered, even if the city has since shrunk below the new number. Lowering it lets in
+/// everyone at the gate who now has enough (T21), and 0 lets in everyone.
 pub fn set_city_rules(state: &AppState, city: &City, input: &CityRulesInput) -> ApiResult<()> {
     let others = [
         ("min_member_days", input.min_member_days),
@@ -372,7 +373,7 @@ pub fn set_city_rules(state: &AppState, city: &City, input: &CityRulesInput) -> 
 
     let current = state.db.entry_rules(&city.id)?;
     let min_vouches = limited(input.min_vouches, current.min_vouches, "min_vouches", MAX_VOUCHES)?;
-    if min_vouches != current.min_vouches {
+    if min_vouches > current.min_vouches {
         let people = state.db.city_members(&city.id)?.len() as i64;
         if min_vouches > people {
             return Err(ApiError::bad_request(format!(
@@ -488,7 +489,7 @@ pub fn enter_city(
             city: city.clone(),
             waiting,
             vouches: state.db.vouch_count(&city.id, &person.id)?,
-            vouches_needed: rules.min_vouches,
+            vouches_needed: state.db.vouches_needed(&city.id)?,
         })
     };
     if state.db.is_city_member(&city.id, &person.id)? {
@@ -1495,6 +1496,94 @@ mod tests {
             )),
             StatusCode::BAD_REQUEST
         );
+    }
+
+    // T13
+    #[test]
+    fn a_city_that_shrinks_asks_for_no_more_vouches_than_it_has_people() {
+        let w = world();
+        let (dan_p, dan) = person(&w.state, "Dan");
+        join_city(&w.state, &dan_p, &w.city.invite_code, false).unwrap();
+        w.city_asks(&w.ann, CityRulesInput { min_vouches: Some(3), ..CityRulesInput::default() })
+            .unwrap();
+        let (eve_p, _, joined) = w.arrives("Eve");
+        assert_eq!(joined.vouches_needed, 3);
+
+        leave_city(&w.state, &dan, &w.city.id).unwrap();
+        // The rules still say 3, and everything that says what's needed now says 2.
+        let view = city::city_view(&w.state, &w.ann, &w.city.id).unwrap();
+        assert_eq!((view.rules.min_vouches, view.vouches_needed), (3, 2));
+        let preview = city::city_invite_preview(&w.state, &w.city.invite_code).unwrap();
+        assert_eq!(preview.vouches_needed, 2);
+        assert_eq!(waiting(&w.state, &eve_p.id).unwrap()[0].vouches_needed, 2);
+
+        // So the two who are left can let Eve in.
+        assert!(!vouch(&w.state, &w.ann, &w.city.id, &eve_p.id).unwrap().let_in);
+        assert!(vouch(&w.state, &w.bo, &w.city.id, &eve_p.id).unwrap().let_in);
+        assert!(w.state.db.is_city_member(&w.city.id, &eve_p.id).unwrap());
+    }
+
+    // T13, T21
+    #[test]
+    fn someone_leaving_lets_in_whoever_that_was_enough_for() {
+        let w = world();
+        let (dan_p, dan) = person(&w.state, "Dan");
+        join_city(&w.state, &dan_p, &w.city.invite_code, false).unwrap();
+        w.city_asks(&w.ann, CityRulesInput { min_vouches: Some(3), ..CityRulesInput::default() })
+            .unwrap();
+        let (eve_p, _, _) = w.arrives("Eve");
+        vouch(&w.state, &w.ann, &w.city.id, &eve_p.id).unwrap();
+        vouch(&w.state, &w.bo, &w.city.id, &eve_p.id).unwrap();
+        assert!(!w.state.db.is_city_member(&w.city.id, &eve_p.id).unwrap());
+
+        leave_city(&w.state, &dan, &w.city.id).unwrap();
+        assert!(w.state.db.is_city_member(&w.city.id, &eve_p.id).unwrap());
+    }
+
+    // T13
+    #[test]
+    fn a_city_that_shrank_can_lower_its_number_but_not_raise_it() {
+        let w = world();
+        let others: Vec<_> = ["Cy", "Dan", "Fay"].map(|name| person(&w.state, name)).into();
+        for (person, _) in &others {
+            join_city(&w.state, person, &w.city.invite_code, false).unwrap();
+        }
+        w.city_asks(&w.ann, CityRulesInput { min_vouches: Some(5), ..CityRulesInput::default() })
+            .unwrap();
+        for (_, caller) in &others {
+            leave_city(&w.state, caller, &w.city.id).unwrap();
+        }
+
+        // 5 down to 3 in a city of 2 is still lowering.
+        w.city_asks(&w.ann, CityRulesInput { min_vouches: Some(3), ..CityRulesInput::default() })
+            .unwrap();
+        assert_eq!(
+            status(w.city_asks(
+                &w.ann,
+                CityRulesInput { min_vouches: Some(4), ..CityRulesInput::default() }
+            )),
+            StatusCode::BAD_REQUEST
+        );
+        // Leaving the number alone while the text changes is fine too.
+        let text = CityRulesInput { rules_text: Some("Hello".to_string()), ..CityRulesInput::default() };
+        w.city_asks(&w.ann, text).unwrap();
+    }
+
+    // T13
+    #[test]
+    fn the_last_person_leaving_doesnt_open_the_gate() {
+        let state = new_state();
+        let (zed_p, zed) = person(&state, "Zed");
+        let (eve_p, _) = person(&state, "Eve");
+        let oak = create_city(&state, &zed_p, "Oak").unwrap();
+        let found = city_for_rules(&state, &zed, &oak.id).unwrap();
+        let input = CityRulesInput { min_vouches: Some(1), ..CityRulesInput::default() };
+        set_city_rules(&state, &found, &input).unwrap();
+        assert!(join_city(&state, &eve_p, &oak.invite_code, false).unwrap().waiting);
+
+        leave_city(&state, &zed, &oak.id).unwrap();
+        assert!(!state.db.is_city_member(&oak.id, &eve_p.id).unwrap());
+        assert_eq!(state.db.vouches_needed(&oak.id).unwrap(), 1);
     }
 
     #[test]

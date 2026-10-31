@@ -1492,6 +1492,17 @@ const GATHERINGS: &str = "FROM events e JOIN cities c ON c.square_id = e.hangout
 const VOUCHERS_IN_CITY: &str = "FROM vouches v
      JOIN city_members cm ON cm.city_id = v.city_id AND cm.person_id = v.by_person";
 
+/// T13: what a city asks of someone at its gate, as SQL for the city `id`. Only people in the city
+/// can vouch, so it's never more than there are of them. A city that asks for any always asks for
+/// at least one, so the last person leaving doesn't open the gate.
+fn vouches_needed_sql(id: &str) -> String {
+    format!(
+        "COALESCE((SELECT MIN(e.min_vouches, MAX(1, (SELECT COUNT(*) FROM city_members m
+                                                     WHERE m.city_id = e.place_id)))
+                   FROM entry_rules e WHERE e.place_id = {id}), 0)"
+    )
+}
+
 const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
      CASE WHEN r.person_id IS NOT NULL THEN i.claimed_by END,
      CASE WHEN r.person_id IS NOT NULL THEN p.name END,
@@ -5745,6 +5756,12 @@ impl Db {
         rows.collect()
     }
 
+    /// T13: how many vouches someone at this city's gate needs right now.
+    pub fn vouches_needed(&self, city_id: &str) -> rusqlite::Result<i64> {
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        self.conn().query_row(&sql, [city_id], |row| row.get(0))
+    }
+
     /// The gates this person is waiting at, with their vouches and what each city asks for.
     pub fn gates_of_person(&self, person_id: &str, cutoff: i64) -> rusqlite::Result<Vec<GatePlace>> {
         let conn = self.conn();
@@ -5752,10 +5769,11 @@ impl Db {
             "SELECT c.id, c.name,
                     (SELECT COUNT(*) {VOUCHERS_IN_CITY}
                       WHERE v.city_id = g.city_id AND v.for_person = g.person_id),
-                    COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = c.id), 0)
+                    {}
              FROM city_gate g JOIN cities c ON c.id = g.city_id
              WHERE g.person_id = ?1 AND g.created_at > ?2
-             ORDER BY g.created_at, g.rowid"
+             ORDER BY g.created_at, g.rowid",
+            vouches_needed_sql("c.id")
         ))?;
         let rows = stmt.query_map(params![person_id, cutoff], |row| {
             Ok(GatePlace {
@@ -5787,11 +5805,8 @@ impl Db {
         )? {
             return Ok(false);
         }
-        let needed: i64 = tx.query_row(
-            "SELECT COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = ?), 0)",
-            [city_id],
-            |row| row.get(0),
-        )?;
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        let needed: i64 = tx.query_row(&sql, [city_id], |row| row.get(0))?;
         let have: i64 = tx.query_row(
             &format!("SELECT COUNT(*) {VOUCHERS_IN_CITY} WHERE v.city_id = ? AND v.for_person = ?"),
             params![city_id, person_id],
