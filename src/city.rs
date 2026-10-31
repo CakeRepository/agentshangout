@@ -452,10 +452,7 @@ pub fn build_house(
     let city = require_city(state, caller, city_id)?;
     ops::require_human(caller, "build a house")?;
     let name = ops::clean(name, "house name", MAX_NAME_CHARS)?;
-    if state.db.house_of_person_in_city(&city.id, &caller.person_id)?.is_some() {
-        return Err(ApiError::conflict("you already have a house in this city"));
-    }
-    let house = state.db.create_house(&NewHouse {
+    let made = state.db.create_house(&NewHouse {
         id: &auth::new_id(),
         city_id: &city.id,
         name: &name,
@@ -467,6 +464,7 @@ pub fn build_house(
         created_by: &caller.person_id,
         now: now(),
     })?;
+    let house = made.ok_or_else(|| ApiError::conflict("you already have a house in this city"))?;
     ops::announce(state, &city.square_id, &format!("{} built {}.", caller.name, house.name))?;
     ops::refresh_city(state, &city.id);
     Ok(house)
@@ -564,13 +562,19 @@ pub fn join_house(
     let city = state.db.city(&house.city_id)?.ok_or_else(ApiError::not_found)?;
     // The gate doesn't stop them (T19), but the city's rules still need accepting (T14).
     let was_in_city = state.db.is_city_member(&city.id, &person.id)?;
-    if !was_in_city {
+    if !was_in_city && !trust::is_waiting(state, &city, &person.id, now)? {
         trust::check_rules_accepted(state, &city, accept_rules)?;
     }
     let family = resident_ids(state, &house.id)?;
+    // R5: a link works once, so one person gets past here however many use it at the same moment.
+    // The others get what a used link gets.
+    if !state.db.take_house_invite(&house.id, code, &auth::new_invite_code())? {
+        return Err(ApiError::not_found());
+    }
     // Joining the city here also ends any wait they had at its gate.
-    state.db.add_resident(&house.id, &person.id, now)?;
-    state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
+    if !state.db.add_resident(&house.id, &person.id, now)? {
+        return Err(ApiError::conflict("you already live in this city: leave that house first"));
+    }
     let text = format!("{} moved into {}.", person.name, house.name);
     ping(state, family, "house.joined", &house.living_room_id, &text);
     // A pass to a house you now live in means nothing: your bots can't visit it.
@@ -605,6 +609,7 @@ pub fn leave_house(state: &AppState, caller: &Caller, house_id: &str) -> ApiResu
     ops::announce(state, &house.living_room_id, &format!("{} moved out.", caller.name))?;
     state.db.remove_resident(&house.id, &caller.person_id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
+    end_passes_from(state, caller, &caller.name, &house)?;
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
     Ok(())
@@ -632,6 +637,7 @@ pub fn remove_resident(
     ops::announce(state, &house.living_room_id, &line)?;
     state.db.remove_resident(&house.id, &person.id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
+    end_passes_from(state, caller, &person.name, &house)?;
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
     Ok(())
@@ -1185,19 +1191,37 @@ pub fn accept_pass(state: &AppState, caller: &Caller, pass_id: &str) -> ApiResul
 pub fn cancel_pass(state: &AppState, caller: &Caller, pass_id: &str) -> ApiResult<()> {
     let (pass, house) = pass_for(state, caller, pass_id)?;
     ops::require_human(caller, "cancel a pass")?;
-    let now = now();
-    let ended = state.db.end_trip_for_pass(&pass.id, &caller.name, now)?;
+    end_pass(state, caller, &pass, &house, now())?;
+    refresh_house(state, &house);
+    Ok(())
+}
+
+/// Ends a pass, and at once any trip it's covering, in the name of whoever `by` is.
+fn end_pass(state: &AppState, by: &Caller, pass: &Pass, house: &House, now: i64) -> ApiResult<()> {
+    let ended = state.db.end_trip_for_pass(&pass.id, &by.name, now)?;
     state.db.delete_pass(&pass.id)?;
     if ended > 0 {
-        let line = format!("{} sent {} home.", caller.name, pass.agent_name);
+        let line = format!("{} sent {} home.", by.name, pass.agent_name);
         ops::announce(state, &house.porch_id, &line)?;
         let mut others = resident_ids(state, &house.id)?;
         others.push(pass.owner_id.clone());
-        others.retain(|id| *id != caller.person_id);
+        others.retain(|id| *id != by.person_id);
         ping(state, others, "trip.ended", &house.porch_id, &line);
         ops::refresh_city(state, &house.city_id);
     }
-    refresh_house(state, &house);
+    Ok(())
+}
+
+/// R7, H12: a pass or a key is one resident's yes, so it goes when they do. `granted_by` is a name,
+/// and names never change. Two residents with one name can lose what can be given again.
+fn end_passes_from(state: &AppState, by: &Caller, name: &str, house: &House) -> ApiResult<()> {
+    let now = now();
+    for pass in state.db.passes_for_house(&house.id)? {
+        if pass.granted_by == name {
+            end_pass(state, by, &pass, house, now)?;
+        }
+    }
+    state.db.remove_keys_given_by(&house.id, name)?;
     Ok(())
 }
 

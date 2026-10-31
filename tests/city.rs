@@ -3633,7 +3633,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
         "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
         "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks",
+        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "friend_invite_ends",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -3650,7 +3650,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
+        for table in ["friend_invite_ends", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection
@@ -5079,7 +5079,7 @@ async fn a_line_written_in_the_same_second_a_guest_arrives_is_not_shown_to_it() 
 }
 
 // R5
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn building_two_houses_at_the_same_moment_still_leaves_a_person_with_one() {
     let server = Server::start().await;
     let w = server.world().await;
@@ -5099,7 +5099,7 @@ async fn building_two_houses_at_the_same_moment_still_leaves_a_person_with_one()
 }
 
 // R5
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn moving_into_two_houses_at_the_same_moment_still_leaves_a_person_with_one() {
     let server = Server::start().await;
     let w = server.world().await;
@@ -5298,4 +5298,134 @@ async fn a_house_room_says_which_house_and_city_it_is_in_and_an_ordinary_room_do
     let club = server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await;
     let plain = server.get(&w.ann.key, &format!("/api/hangouts/{}", text(&club.body["hangout"]["id"]))).await;
     assert!(plain.body["city_id"].is_null() && plain.body["house_id"].is_null());
+}
+
+// R5
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_house_link_lets_in_one_person_however_many_use_it_at_the_same_moment() {
+    let server = Arc::new(Server::start().await);
+    for round in 0..40 {
+        let w = server.world().await;
+        let path = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+        let mut people = Vec::new();
+        for n in 0..4 {
+            people.push(server.join_city(&w.city_code, &format!("Newcomer {n}")).await);
+        }
+        let start = Arc::new(tokio::sync::Barrier::new(people.len()));
+        let tries: Vec<_> = people
+            .into_iter()
+            .map(|person| {
+                let (server, start, path) = (server.clone(), start.clone(), path.clone());
+                tokio::spawn(async move {
+                    start.wait().await;
+                    server.post(&person.key, &path, json!({})).await.status
+                })
+            })
+            .collect();
+        let mut moved_in = 0;
+        for attempt in tries {
+            if attempt.await.unwrap() == StatusCode::OK {
+                moved_in += 1;
+            }
+        }
+        assert_eq!(moved_in, 1, "round {round}");
+        assert_eq!(server.state.db.resident_count(&w.ann_home.id).unwrap(), 2, "round {round}");
+    }
+}
+
+// R30, R44
+#[tokio::test]
+async fn someone_who_moved_out_no_longer_sees_or_manages_the_house_bot_they_made() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let casa = server.house_bot(&zed, &w.ann_home, "Casa").await;
+    let notify = format!("/api/agents/{}/notify", casa.id);
+    let doorbell = format!("/api/agents/{}/doorbell", casa.id);
+    let wake = json!({ "url": "https://example.com/hook" });
+    let paused = json!({ "paused": true });
+    assert!(has(&server.get(&zed.key, "/api/me").await.body["bots"], "Casa"));
+    assert_ok(&server.put(&zed.key, &notify, wake.clone()).await);
+
+    let path = format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id);
+    assert_ok(&server.delete(&w.ann.key, &path).await);
+    assert!(!has(&server.get(&zed.key, "/api/me").await.body["bots"], "Casa"));
+    assert_not_found(&server.put(&zed.key, &notify, wake.clone()).await);
+    assert_not_found(&server.put(&zed.key, &doorbell, paused.clone()).await);
+
+    // It's the house's, so it carries on, and moving back in gives them their say again.
+    assert_ok(&server.get(&casa.token, "/api/house/queue").await);
+    let back = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&zed.key, &back, json!({})).await);
+    assert!(has(&server.get(&zed.key, "/api/me").await.body["bots"], "Casa"));
+    assert_ok(&server.put(&zed.key, &notify, wake).await);
+    assert_ok(&server.put(&zed.key, &doorbell, paused).await);
+}
+
+// R30
+#[tokio::test]
+async fn a_house_bot_finds_its_work_in_its_queue_and_is_never_woken_for_it() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
+    let (url, received) = start_receiver().await;
+    let path = format!("/api/agents/{}/notify", casa.id);
+    assert_ok(&server.put(&w.ann.key, &path, json!({ "url": url })).await);
+    let scene = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
+    assert_ok(&server.request_scene(&w.ann.key, &scene).await);
+    assert_eq!(server.queue(&casa).await.len(), 1);
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(received.lock().unwrap().is_empty());
+}
+
+/// Scout, Bo's bot, has been to Ann House and holds an accepted pass that Zed, who lives there, offered.
+async fn pass_offered_by_zed(server: &Server, w: &World) -> (Who, Bot) {
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
+    server.hosted_once(&scout, &w.bo, &zed, &w.ann_home).await;
+    let pass = server.offer_pass(&zed, &w.ann_home, &scout.id, Some(240)).await;
+    assert_ok(&pass);
+    assert_ok(&server.accept_pass(&w.bo.key, &text(&pass.body["id"])).await);
+    (zed, scout)
+}
+
+// R7
+#[tokio::test]
+async fn a_pass_ends_when_the_resident_who_offered_it_is_moved_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (zed, scout) = pass_offered_by_zed(&server, &w).await;
+    assert_ok(&server.delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id)).await);
+    let page = server.house_page(&w.ann, &w.ann_home).await;
+    assert_eq!(page["passes"], json!([]), "{page}");
+    let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_ok(&asked);
+    assert_eq!(asked.body["status"], "asking", "{}", asked.body);
+    assert_eq!(asked.body["host_ok_by"], Value::Null, "{}", asked.body);
+}
+
+// R7
+#[tokio::test]
+async fn a_trip_on_a_pass_ends_at_once_when_the_resident_who_offered_it_leaves() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (zed, scout) = pass_offered_by_zed(&server, &w).await;
+    let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_eq!(here.body["status"], "here", "{}", here.body);
+    assert_ok(&server.post(&zed.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    let page = server.house_page(&w.ann, &w.ann_home).await;
+    assert_eq!(page["passes"], json!([]), "{page}");
+}
+
+// R7
+#[tokio::test]
+async fn a_pass_stays_when_someone_else_moves_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (_zed, scout) = pass_offered_by_zed(&server, &w).await;
+    let yan = server.move_in(&w.ann_home, "Yan").await;
+    assert_ok(&server.post(&yan.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_eq!(here.body["status"], "here", "{}", here.body);
 }

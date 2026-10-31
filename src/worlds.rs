@@ -611,6 +611,40 @@ pub fn player_from_headers(state: &AppState, headers: &HeaderMap, now: i64) -> A
     }
 }
 
+/// The id of the stand-in for a signed-in person who hasn't made a move. No real player has it.
+const STAND_IN: i64 = 0;
+
+/// A signed-in person with no player yet. Only a move makes one, so looking saves nothing.
+fn not_playing_yet(state: &AppState, headers: &HeaderMap) -> ApiResult<Option<String>> {
+    let Some(secret) = auth::bearer_token(headers).or_else(|| auth::session_cookie(headers)) else {
+        return Ok(None);
+    };
+    let Some(caller) = state.authenticate(&auth::hash_secret(secret))? else {
+        return Ok(None);
+    };
+    Ok((!caller.is_agent() && !state.db.has_own_player(&caller.person_id)?).then_some(caller.person_id))
+}
+
+/// Who `GET /api/worlds/{id}/me` is about. A person who hasn't made a move gets a stand-in with
+/// their allowance and an empty town, and nothing is saved.
+pub fn player_or_stand_in(state: &AppState, headers: &HeaderMap, now: i64) -> ApiResult<PlayerRow> {
+    let Some(person_id) = not_playing_yet(state, headers)? else {
+        return player_from_headers(state, headers, now);
+    };
+    Ok(PlayerRow {
+        id: STAND_IN,
+        name_seed: 0,
+        person_id: Some(person_id),
+        agent_id: None,
+        has_token: false,
+        removed: false,
+        moves_day: 0,
+        moves_used: 0,
+        seen_at: now,
+        created_at: now,
+    })
+}
+
 /// The same for an MCP tool: the `player_token` argument, or else a bearer token that is one.
 pub fn player_from_token(
     state: &AppState,
@@ -947,6 +981,10 @@ fn apply_move(
         .ok_or_else(ApiError::unauthorized)?;
     may_build(tx, world, &player)?;
     let left = moves_left(&player, now);
+    // W30: this answer isn't counted as a refused move, so it comes before any of the work.
+    if left == 0 {
+        return Err(out_of_moves("you have no moves left today", now));
+    }
     let builder = player.id as u64;
 
     let (changes, cost, skipped) = match parsed {
@@ -1017,10 +1055,10 @@ fn apply_move(
     };
 
     if cost > left {
-        return Err(ApiError::too_many_requests(format!(
-            "that costs {cost} moves and you have {left} left today: they come back at midnight UTC"
-        ))
-        .retry_after((86_400 - now.rem_euclid(86_400)) as u64));
+        return Err(out_of_moves(
+            &format!("that costs {cost} moves and you have {left} left today"),
+            now,
+        ));
     }
     // W30: counted last, so a move that was refused above doesn't use up any share. The world is
     // counted first, so a busy world is turned away before it touches the server's.
@@ -1053,6 +1091,12 @@ fn apply_move(
         skipped,
         cost,
     })
+}
+
+/// A move the player can't pay for. Moves come back at midnight UTC, so that's when to try again.
+fn out_of_moves(why: &str, now: i64) -> ApiError {
+    ApiError::too_many_requests(format!("{why}: they come back at midnight UTC"))
+        .retry_after((86_400 - now.rem_euclid(86_400)) as u64)
 }
 
 fn plan_parts(planned: world::Planned) -> ApiResult<(Vec<Change>, u32, u32)> {
@@ -1184,7 +1228,11 @@ fn tip_for(cached: &Cached, player: &PlayerRow, own: &Tiles, now: i64) -> &'stat
 /// A player's own view of themselves in a world: who they are, where, what they have left, their
 /// town and goal (W48, W49), and a tip.
 pub fn me(state: &AppState, player: &PlayerRow, world_id: &str, now: i64) -> ApiResult<Value> {
-    Ok(standing(state, player, world_id, now)?.0)
+    let mut reply = standing(state, player, world_id, now)?.0;
+    if player.id == STAND_IN {
+        reply["player"] = Value::Null;
+    }
+    Ok(reply)
 }
 
 fn listed_emote(emote: Option<&str>) -> Option<&'static str> {
@@ -1903,7 +1951,7 @@ pub fn player_if_any(
     headers: &HeaderMap,
     now: i64,
 ) -> ApiResult<Option<PlayerRow>> {
-    if auth::bearer_token(headers).is_none() {
+    if auth::bearer_token(headers).is_none() || not_playing_yet(state, headers)?.is_some() {
         return Ok(None);
     }
     player_from_headers(state, headers, now).map(Some)

@@ -25,11 +25,14 @@ something with, so there's nothing to add, accept or fall out of date.
 - **FR4.** An invite lets nobody in. It only points them at that place's normal invite page, so a
   city's rules and vouches apply exactly as they do with the link.
 - **FR5.** The person invited sees it in `GET /api/me` as `invited` and in the Rooms and cities panel:
-  who invited them, the place's name, and today's link. Replacing a place's link can't break an
-  invite, because the link is read when it's shown.
-- **FR6.** An invite waits 14 days. It goes away once they're in, or once the sender has left the
-  place. Saying no sticks for that place. Sending another changes nothing and answers the same as
-  the first, so nobody can tell whether a friend said no.
+  who invited them, the place's name, and the place's link. Replacing that link ends every invite
+  waiting for it, which is how to take one back, so someone it was replaced to keep out never
+  sees the new one (T17). Someone turned out of a space isn't shown its floors' links (S27).
+- **FR6.** An invite waits 14 days. It goes away once they're in, once the sender has left the
+  place, once the place's link is replaced, or once they're turned away at the gate. Sending
+  another brings back one that ended, with no second ping. Saying no sticks for that place, and
+  sending another then changes nothing and answers the same as the first, so nobody can tell
+  whether a friend said no.
 - **FR7.** A person can send 20 invites a day. Past that, they get 429.
 - **FR8.** Houses aren't included, because their invites are one-use links for the adults who live
   there. An invite-only world isn't either. Both can come later.
@@ -47,5 +50,6 @@ something with, so there's nothing to add, accept or fall out of date.
 
 ## Storage
 
-One new table, `friend_invites`, holding who invited whom to which place, when, and whether they
-said no. Friends themselves aren't stored.
+`friend_invites` holds who invited whom to which place, when, and whether they said no.
+`friend_invite_ends` holds the ones that ended, so a day's count (FR7) still sees them. Friends
+themselves aren't stored.
