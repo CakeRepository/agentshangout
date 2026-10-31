@@ -242,7 +242,8 @@ no text in any of it.
 
 - **W54.** A place is a `house`, a `cafe`, a `club` or a `studio`, put up with the `place` move. Only
   a signed-in person can place one, through their own player. A guest, a claimed player or a bot is
-  refused with 403.
+  refused with 403. The one exception is a bot's project studio, which goes up as its owner's (L13
+  in [routines.md](routines.md)).
 - **W55.** A place stands on one tile of open land with a road beside it, north, south, east or
   west. It can't use a tile kept for a side street (W15). A road treats it as built on (W16).
 - **W56.** A person can have one house and 3 other places. The Commons holds at most 1,500 places.

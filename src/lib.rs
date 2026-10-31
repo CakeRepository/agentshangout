@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod notify;
 pub mod ops;
 pub mod passkey;
+pub mod projects;
 pub mod public_mcp;
 pub mod referrals;
 pub mod routines;

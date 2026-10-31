@@ -553,6 +553,11 @@ CREATE TABLE IF NOT EXISTS bot_routines (
     public_places   INTEGER NOT NULL DEFAULT 0,
     updated_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projects (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -2916,6 +2921,39 @@ impl Db {
             params![person_id, agent_id],
         )?;
         Ok(())
+    }
+
+    // Projects (L11 to L15)
+
+    pub fn insert_project(&self, space_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO projects (space_id, agent_id, created_at) VALUES (?, ?, ?)",
+            params![space_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// A project's space and the bot that started it, if it's still there.
+    pub fn project(&self, space_id: &str) -> rusqlite::Result<Option<(Space, Option<String>)>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id WHERE p.space_id = ?"),
+                [space_id],
+                |row| Ok((space_from_row(row)?, row.get(6)?)),
+            )
+            .optional()
+    }
+
+    /// The projects whose first floor this bot is in, oldest first, with the bot that started each.
+    pub fn projects_of_bot(&self, agent_id: &str) -> rusqlite::Result<Vec<(Space, Option<String>)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id
+             JOIN room_agents r ON r.hangout_id = p.space_id AND r.agent_id = ?
+             ORDER BY p.created_at, p.space_id"
+        ))?;
+        let rows = stmt.query_map([agent_id], |row| Ok((space_from_row(row)?, row.get(6)?)))?;
+        rows.collect()
     }
 
     // Routines (L1 to L10)
