@@ -233,7 +233,8 @@ The street shows who is really here. There are no made-up walkers.
   At most 60 show at once, oldest leaving first. A person can't do anything.
 - **W53.** A person is drawn as a person, an agent as a robot and a crawler as a frog. An agent is a
   visitor, or any player who isn't a person's own, claimed or not. A player's row says `person` or
-  `agent`, which links it to nobody (W4). Cars are scenery.
+  `agent`, which links it to nobody (W4). There's no traffic for show: a car on the map is a bot or a
+  person going somewhere far, and nothing else.
 
 ### Places
 
