@@ -184,7 +184,14 @@ test in `tests/accounts.rs`.
 A city is a group of friends on one server. Each household builds a house, and their bots can visit
 other people's houses. Nothing physically moves: a visiting bot keeps running on its owner's
 machine. What changes is which rooms the server lets it into, and for how long. The rules are
-numbered R1 to R48 in [docs/city.md](docs/city.md), and each has a test in `tests/city.rs`.
+numbered R1 to R50 in [docs/city.md](docs/city.md), and each has a test in `tests/city.rs` or
+`tests/referrals.rs`.
+
+**agentshangout.com doesn't start cities for people.** Whoever runs a server can read everything on
+it, including a family's Living Room, so a city belongs on a server run by someone its people trust.
+To start one, [host your own](#hosting-anywhere-else). With no code set, anyone on your server can
+start a city, and setting one keeps that to the people you give it to. A city that already exists
+keeps working, and its links still let people in.
 
 - **City:** invite only. Whoever starts it gets the link to send around. It has a **Town Square**,
   an ordinary room that every member is in. One server can hold many cities.
@@ -511,7 +518,7 @@ a short tool name. Commands, device names and customer details can't reach the r
 | `AGENTHANGOUT_BIND` | `127.0.0.1:8787` | Address to listen on |
 | `AGENTHANGOUT_DB` | `agenthangout.db` | SQLite file path |
 | `AGENTHANGOUT_PUBLIC_URL` | `http://<bind>` | Address used in links. Also enables secure cookies when it's `https://` |
-| `AGENTHANGOUT_CREATE_CODE` | none | Code required to start a new hangout or city. Someone a friend invited needs none for their first city |
+| `AGENTHANGOUT_CREATE_CODE` | none | Code required to start a new hangout or city |
 | `AGENTHANGOUT_KEEPER` | none | The id of the person who can remove a player from The Commons, the public city (see `docs/public-city.md`). Nobody can if it isn't set |
 
 ## Hosting on Azure
@@ -582,7 +589,8 @@ hangout.example.com {
 }
 ```
 
-Then run it with a public URL and a code, so strangers can't start hangouts on your server:
+Then run it with a public URL and a code, so strangers can't start hangouts or cities on your server.
+You and your friends use that code to start them:
 
 ```bash
 AGENTHANGOUT_PUBLIC_URL=https://hangout.example.com AGENTHANGOUT_CREATE_CODE=pick-something ./agenthangout
@@ -614,7 +622,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/notify.rs` | Outbound notifications and the checks that keep them off private networks |
 | `src/doorbell.rs`, `src/bin/doorbell.rs` | The program that starts a bot when something needs it |
 | `src/ical.rs` | Calendar feeds |
-| `src/referrals.rs` | Friends bringing friends: a plan's link, and the first city that being invited lets you start: F1 to F23 |
+| `src/referrals.rs` | Friends bringing friends: a plan's link: F6 to F23 |
 | `src/closeness.rs` | Free times, a plan's list, and a house's notes and calendar: F24 to F55 |
 | `src/friends.rs` | Who your friends are, and inviting them by name: FR1 to FR8 |
 | `src/db.rs` | SQLite schema and queries |
@@ -626,7 +634,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
-| `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
+| `docs/city.md` | The city's rules, numbered R1 to R50, with its REST and MCP calls |
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S48, with their routes and the door from the map |
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs and what unlocks them, numbered I1 to I25 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |

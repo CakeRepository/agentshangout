@@ -449,10 +449,15 @@ async function homeParts(me) {
   const citiesCard = (who) => {
     const homes = who?.houses || [];
     const waiting = who?.waiting || [];
+    // R49: a server with a code keeps cities to whoever holds it, and anyone else hosts their own.
+    const open = who?.may_start_city;
     return h('section', { class: 'card cities', 'aria-label': 'Cities' },
       h('div', { class: 'panel-head' },
         h('h2', {}, 'Your cities'),
-        h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city')),
+        open ? h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city') : null),
+      open ? null : h('p', { class: 'muted' }, 'To start a city, host your own server, so your family\'s rooms stay with someone you trust. ',
+        h('a', { href: `${REPO_URL}#hosting-anywhere-else`, target: '_blank', rel: 'noopener' }, 'Here\'s how'), '. ',
+        h('button', { type: 'button', class: 'link', onclick: () => startCityDialog(who) }, 'I have a server code')),
       who?.cities?.length
         ? h('ul', { class: 'room-list' }, who.cities.map((city) => {
           const house = homes.find((home) => home.city_id === city.id);

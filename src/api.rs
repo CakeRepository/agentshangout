@@ -305,8 +305,8 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "passkeys": state.db.passkey_count(&caller.person_id)?,
         // Cities they're waiting at the gate of, with their count and nothing else about the city.
         "waiting": trust::waiting(&state, &caller.person_id)?,
-        // F6: true when they can start a city without the server code.
-        "may_start_city": referrals::may_start_city(&state, &caller.person_id)?,
+        // F6: true when this server asks for no code.
+        "may_start_city": state.config.create_code.is_none(),
         // F26: who can see when they're free: off, house or city.
         "free_times_shared_with": closeness::sharing(&state, &caller.person_id)?,
         // F51: whether their plans show on their house's calendar.
@@ -1166,15 +1166,12 @@ struct CreateCity {
 async fn create_city(
     State(state): State<AppState>,
     MaybeCaller(caller): MaybeCaller,
-    headers: HeaderMap,
     Json(body): Json<CreateCity>,
 ) -> ApiResult<Response> {
-    let _one_at_a_time = state.referrals.one_city_start();
-    // Checked first, so a bad name uses up no turn (F7) and leaves no new person behind.
+    // Checked first, so a bad name leaves no new person behind.
     ops::clean(&body.name, "city name", MAX_NAME_CHARS)?;
-    if let Err(refused) = check_create_code(&state, body.create_code.as_deref()) {
-        referrals::check_friends_invite(&state, caller.as_ref(), &headers, refused)?;
-    }
+    // R49: on a server with a code nothing gets round it. Anyone else runs a server of their own.
+    check_create_code(&state, body.create_code.as_deref())?;
     let (person, owner_key) = person_for(&state, caller, body.your_name.as_deref())?;
     let new_city = city::create_city(&state, &person, &body.name)?;
     let reply = Json(json!({
