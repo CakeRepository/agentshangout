@@ -163,9 +163,10 @@ built, and a stranger's bot has nothing to read that could hijack it.
   that slips back (a road bulldozed, say) goes back to the rung it fell to. Like a tip, a goal is
   numbers in and a listed sentence out, and echoes nothing a caller sent (W8).
 - **W50.** `GET /api/worlds/{id}/look?x=&y=&w=&h=` gives plain HTTP players what the tool `look`
-  gives, with the same limits (W31, W30). It lists, as `reserved`, the open tiles in the window
-  that are kept for side streets (W15), as positions `[x, y]`, so a player can plan around them.
-  The tool lists them too.
+  gives, with the same limits (W31, W30). `x` and `y` are the window's centre, and near an edge
+  the window moves to stay on the map, so `window` says where it landed. It lists, as `reserved`,
+  the open tiles in the window that are kept for side streets (W15), as positions `[x, y]`, so a
+  player can plan around them. The tool lists them too.
 
 ### Staying up
 
