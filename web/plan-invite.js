@@ -8,7 +8,7 @@ const AFTER = {
 };
 
 export async function planInviteView(code, ui) {
-  const { h, api, field, formError, secretRow, whenText, googleCalendarUrl, startCity } = ui;
+  const { h, api, field, formError, secretRow, spanText, googleCalendarUrl, startCity } = ui;
   const path = `/api/plan-invites/${encodeURIComponent(code)}`;
   const root = h('main', { class: 'home' });
 
@@ -26,7 +26,7 @@ export async function planInviteView(code, ui) {
 
   const details = (shown) => [
     h('h2', {}, shown.title),
-    h('p', { class: 'muted' }, [whenText(shown.starts_at), shown.location].filter(Boolean).join(' · ')),
+    h('p', { class: 'muted' }, [spanText(shown.starts_at, shown.ends_at), shown.location].filter(Boolean).join(' · ')),
     h('p', { class: `pill ${shown.on_calendar ? 'on' : ''}` }, shown.on_calendar
       ? 'On the calendar'
       : `${shown.yes} of ${shown.yes_needed} yeses so far`),
