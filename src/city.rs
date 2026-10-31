@@ -586,6 +586,7 @@ pub fn join_house(
     ops::announce(state, &house.living_room_id, &format!("{} moved in.", person.name))?;
     if !was_in_city {
         ops::announce(state, &city.square_id, &format!("{} joined {}.", person.name, city.name))?;
+        trust::admit_anyone_ready(state, &city, now)?;
     }
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
