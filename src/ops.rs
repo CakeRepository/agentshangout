@@ -884,6 +884,8 @@ pub struct Snapshot {
     pub house_id: Option<String>,
     /// Which floor of which space this is. Null for a Town Square, Living Room or Porch.
     pub floor: Option<spaces::Place>,
+    /// The ids of the people with this floor open. Empty anywhere but a floor, and for a bot.
+    pub present: Vec<String>,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
@@ -950,6 +952,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         state.db.open_owner_questions(hangout_id, &caller.person_id, now - QUESTION_LAPSE_SECS)?
     };
     let floor = spaces::place(state, caller, hangout_id)?;
+    let present = spaces::present(state, caller, &floor, &people, now);
     Ok(Snapshot {
         hangout,
         you: You {
@@ -970,6 +973,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         city_id,
         house_id,
         floor,
+        present,
     })
 }
 

@@ -75,6 +75,8 @@ pub struct Shared {
     pub referrals: referrals::Limits,
     /// The limit on asking when people are free.
     pub closeness: closeness::Limits,
+    /// Who has a floor open. In memory only, and it never leaves the floor (S41 to S46).
+    pub presence: spaces::Presence,
     write_windows: Mutex<HashMap<String, (i64, u32)>>,
 }
 
@@ -102,6 +104,7 @@ impl AppState {
             worlds: worlds::Runtime::new(),
             referrals: referrals::Limits::new(),
             closeness: closeness::Limits::new(),
+            presence: spaces::Presence::default(),
             write_windows: Mutex::new(HashMap::new()),
         }))
     }
