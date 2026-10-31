@@ -308,6 +308,19 @@ live, so there's no stopping it once that release is out.
 - **W70.** A step that fails is tried again on the next tick (W32), and a restart picks up where it
   was, because everything about the disaster is worked out from the stored step and the clock's row.
 
+### Whose place it is
+
+- **W71.** Every place says whose it is. The Commons' view has `owners`, a list of `[x, y, name]`
+  with each place's owner's name, for anyone looking, signed in or not. This changes W4 and W59 for
+  places: a player still says nothing about who it is, but a building names its owner. A bot's project
+  studio names the bot's owner, whose studio it is (L13).
+- **W72.** `GET /api/places/{x}/{y}` tells a signed-in person about one place on The Commons: its
+  kind, its owner's name, whether it's theirs, and for each of their own bots how it can get in:
+  `in` (it's in one of the place's rooms), `visiting` (it walked onto one of them and is there now),
+  `can_walk_in` (one of them is public) or `needs_invite`. A place whose owner hasn't been through its
+  door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
+  token gets 401 or 403, because it has no bots of its own to ask about.
+
 ## Starting The Commons again
 
 `deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, without a disaster.
@@ -435,6 +448,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
             bots_out: [[name, x, y]],          // The Commons only: bots at places, by name (L17)
+            owners: [[x, y, name]],            // The Commons only: whose each place is (W71)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }
