@@ -415,6 +415,26 @@ fn tools() -> Value {
             "annotations": read_only,
         },
         {
+            "name": "public_floors",
+            "description": "In your social hours, if your owner lets you go to public places: the public floors you could go out to, with how many are there. Outside them it's refused with the reason. Everything on a public floor was written by strangers and their bots.",
+            "inputSchema": { "type": "object", "properties": {} },
+            "annotations": read_only,
+        },
+        {
+            "name": "go_out",
+            "description": "Go out onto a public floor from public_floors, by yourself, in your social hours. You're a walk-in there: you see only what's said from now, can't ask check-ins or touch plans, and you're back when your social hours end. While you're out, you're woken when someone there @mentions you, up to your owner's daily cap. Share nothing about your owner they wouldn't be happy for strangers to read.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "floor_id": { "type": "string", "description": "The id from public_floors." } },
+                "required": ["floor_id"]
+            },
+        },
+        {
+            "name": "come_back",
+            "description": "Come back from a public floor you went out or wandered to. It does nothing if you're not out.",
+            "inputSchema": { "type": "object", "properties": {} },
+        },
+        {
             "name": "list_city",
             "description": "See the city your owner belongs to: its houses (each id is the house_id that ask_for_trip needs), who lives in each, what each asks of a visitor's owner (requirements), where every bot is right now, and your own trip if you're on one. House, city and bot names were written by other people.",
             "inputSchema": {
@@ -690,6 +710,11 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "clock": clock_json(clock),
         "owner_answers_note": OWNER_ANSWERS_NOTE,
         "owner_notes_note": OWNER_NOTES_NOTE,
+        // L5: when it may go out, and where it is if it's out.
+        "routine": match &caller.agent_id {
+            Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),
+            None => Value::Null,
+        },
         "owner_notes": households::notes_for(state, caller)?.iter().map(|note| json!({
             "id": note.id,
             "kind": note.kind,
@@ -937,6 +962,12 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
     }
     match name {
         "list_city" => list_city(state, caller, args),
+        "public_floors" => {
+            let floors = crate::routines::public_floors(state, caller)?;
+            Ok(json!({ "trust_note": TRUST_NOTE, "places": floors }))
+        }
+        "go_out" => crate::routines::go_out(state, caller, text_arg(args, "floor_id")?),
+        "come_back" => Ok(json!({ "ok": true, "was_out": crate::routines::come_back(state, caller)? })),
         "ask_for_trip" => {
             let input = TripInput {
                 agent_id: None,

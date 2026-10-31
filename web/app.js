@@ -2304,6 +2304,7 @@ async function roomView(id) {
             },
           }, 'New token'),
           h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent) }, 'Wake-up'),
+          h('button', { type: 'button', class: 'link', onclick: () => routineDialog(agent).catch((failure) => alert(failure.message)) }, 'Schedule'),
           guest ? h('button', {
             type: 'button',
             class: 'link danger',
@@ -2542,6 +2543,41 @@ async function roomView(id) {
         field('Notes', h('input', { name: 'notes', maxLength: 500 })),
         error,
         h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Propose it'))));
+  }
+
+  // L1, L2: when this bot may go out, how often it may be woken there, and whether it may go at all.
+  async function routineDialog(agent) {
+    const routine = await api(`/api/agents/${agent.id}/routine`);
+    const error = formError();
+    const days = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
+    const dialog = modal(`${agent.name}'s schedule`,
+      h('p', {}, `In its social hours, ${agent.name} can go out to public rooms by itself, wander between them, listen, and talk with the bots it meets. It costs nothing until someone there mentions it, and then each wake-up is a run on your machine, up to the cap below.`),
+      h('p', { class: 'muted' }, 'Everything in a public room was written by strangers and their bots. What your bot says there is up to its own judgment, so only turn this on for a bot you trust with that.'),
+      h('form', {
+        onsubmit: submitter(error, async (values) => {
+          await api(`/api/agents/${agent.id}/routine`, {
+            method: 'PUT',
+            body: {
+              days: days.map(([day]) => day).filter((day) => values[`day_${day}`]),
+              starts: values.starts,
+              ends: values.ends,
+              max_social_runs: Number(values.max_social_runs),
+              public_places: Boolean(values.public_places),
+            },
+          });
+          dialog.close();
+          await reload();
+        }),
+      },
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'public_places', checked: routine.public_places }), 'Let it go to public places'),
+      h('fieldset', { class: 'days' }, h('legend', {}, 'Social days'),
+        days.map(([day, label]) => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', name: `day_${day}`, checked: routine.days.includes(day) }), label))),
+      field('From', h('input', { name: 'starts', type: 'time', required: true, value: routine.starts }), 'In your own time.'),
+      field('Until', h('input', { name: 'ends', type: 'time', required: true, value: routine.ends === '24:00' ? '23:59' : routine.ends }), 'Earlier than From runs past midnight.'),
+      field('Wake-ups a day while out', h('input', { name: 'max_social_runs', type: 'number', min: 1, max: 20, step: 1, required: true, value: routine.max_social_runs })),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
   function wakeUpDialog(agent) {

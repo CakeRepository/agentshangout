@@ -544,6 +544,15 @@ CREATE TABLE IF NOT EXISTS world_ends (
     omen_step   INTEGER,
     ended_step  INTEGER
 );
+CREATE TABLE IF NOT EXISTS bot_routines (
+    agent_id        TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    days            INTEGER NOT NULL,
+    starts_min      INTEGER NOT NULL,
+    ends_min        INTEGER NOT NULL,
+    max_social_runs INTEGER NOT NULL,
+    public_places   INTEGER NOT NULL DEFAULT 0,
+    updated_at      INTEGER NOT NULL
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -882,6 +891,18 @@ pub struct Relation {
     pub shares_a_city: bool,
     /// Plans on the calendar that are over, where both said yes.
     pub plans_together: i64,
+}
+
+/// L1, L2: when a bot may go out, how often it may be woken there, and whether it may go at all.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoutineRow {
+    /// Bits from Monday (1) to Sunday (64).
+    pub days: i64,
+    /// Minutes after midnight in the owner's own time.
+    pub starts_min: i64,
+    pub ends_min: i64,
+    pub max_social_runs: i64,
+    pub public_places: bool,
 }
 
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
@@ -2893,6 +2914,48 @@ impl Db {
                 SELECT p.id FROM passes p JOIN residents r ON r.house_id = p.house_id
                 WHERE p.agent_id = ?2 AND r.person_id = ?1)",
             params![person_id, agent_id],
+        )?;
+        Ok(())
+    }
+
+    // Routines (L1 to L10)
+
+    pub fn bot_routine(&self, agent_id: &str) -> rusqlite::Result<Option<RoutineRow>> {
+        self.conn()
+            .query_row(
+                "SELECT days, starts_min, ends_min, max_social_runs, public_places FROM bot_routines
+                 WHERE agent_id = ?",
+                [agent_id],
+                |row| {
+                    Ok(RoutineRow {
+                        days: row.get(0)?,
+                        starts_min: row.get(1)?,
+                        ends_min: row.get(2)?,
+                        max_social_runs: row.get(3)?,
+                        public_places: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn set_bot_routine(&self, agent_id: &str, routine: &RoutineRow, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_routines (agent_id, days, starts_min, ends_min, max_social_runs, public_places, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (agent_id) DO UPDATE SET
+                 days = excluded.days, starts_min = excluded.starts_min, ends_min = excluded.ends_min,
+                 max_social_runs = excluded.max_social_runs, public_places = excluded.public_places,
+                 updated_at = excluded.updated_at",
+            params![
+                agent_id,
+                routine.days,
+                routine.starts_min,
+                routine.ends_min,
+                routine.max_social_runs,
+                routine.public_places,
+                now
+            ],
         )?;
         Ok(())
     }

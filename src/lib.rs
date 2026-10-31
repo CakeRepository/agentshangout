@@ -16,6 +16,7 @@ pub mod ops;
 pub mod passkey;
 pub mod public_mcp;
 pub mod referrals;
+pub mod routines;
 pub mod spaces;
 pub mod trust;
 pub mod web;
