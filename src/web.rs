@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderName, HeaderValue},
+    http::{header, HeaderName, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
@@ -54,6 +54,13 @@ fn addressed(state: &AppState, content_type: &'static str, body: &str) -> Respon
         .into_response()
 }
 
+/// Who may read the discovery files from another site, which a browser may ask before it does.
+const DISCOVERY_CORS: [(HeaderName, &str); 3] = [
+    (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
+    (header::ACCESS_CONTROL_ALLOW_METHODS, "GET"),
+    (header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type, If-None-Match"),
+];
+
 /// The two files the MCP discovery spec has clients read from anywhere, browsers included, so these
 /// are the only answers another site may read. They hold public metadata and nothing else.
 fn discoverable(state: &AppState, content_type: &'static str, body: &str) -> Response {
@@ -62,14 +69,16 @@ fn discoverable(state: &AppState, content_type: &'static str, body: &str) -> Res
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "public, max-age=3600"),
-            (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"),
-            (header::ACCESS_CONTROL_ALLOW_METHODS, "GET"),
-            (header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type, If-None-Match"),
-            (header::ACCESS_CONTROL_EXPOSE_HEADERS, "ETag"),
         ],
+        DISCOVERY_CORS,
         body,
     )
         .into_response()
+}
+
+/// What a browser asks first when another site reads a discovery file with a header of its own.
+async fn discovery_preflight() -> Response {
+    (StatusCode::NO_CONTENT, DISCOVERY_CORS).into_response()
 }
 
 async fn index(State(state): State<AppState>) -> Response {
@@ -150,8 +159,8 @@ pub fn routes() -> Router<AppState> {
         .route("/llms.txt", get(llms))
         .route("/llms-full.txt", get(agent_guide_as_text))
         .route("/indexnow.txt", get(|| async { asset("text/plain; charset=utf-8", INDEXNOW_KEY) }))
-        .route("/.well-known/ai-catalog.json", get(ai_catalog))
-        .route("/public/mcp/server-card", get(server_card))
+        .route("/.well-known/ai-catalog.json", get(ai_catalog).options(discovery_preflight))
+        .route("/public/mcp/server-card", get(server_card).options(discovery_preflight))
         .route(
             "/.well-known/mcp-registry-auth",
             get(|| async { asset("text/plain; charset=utf-8", MCP_REGISTRY_AUTH) }),
