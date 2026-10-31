@@ -1640,7 +1640,6 @@ async fn set_house_status(
 fn world_routes() -> Router<AppState> {
     Router::new()
         .route("/api/worlds", get(list_worlds).post(create_world))
-        .route("/api/worlds/preview", get(preview_worlds))
         .route("/api/worlds/mine", get(my_world))
         .route("/api/worlds/join/{code}", post(join_world_by_code))
         .route("/api/worlds/{id}", get(world_view))
@@ -1834,18 +1833,9 @@ async fn revoke_player(
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn preview_worlds(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {
-    Ok(Json(worlds::preview(&state, &caller, now())?))
-}
-
-async fn create_world(
-    State(state): State<AppState>,
-    SignedIn(caller): SignedIn,
-    body: axum::body::Bytes,
-) -> ApiResult<Response> {
-    let body: worlds::NewWorldBody = worlds::optional_body(&body)?;
-    let view = worlds::create_world(&state, &caller, &body, now())?;
-    Ok(worlds::respond(&view, &HeaderMap::new()))
+/// W25: nobody can start a world any more.
+async fn create_world() -> ApiError {
+    ApiError::new(StatusCode::GONE, "nobody can start a world any more: The Commons is the one map")
 }
 
 async fn my_world(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {

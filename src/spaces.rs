@@ -34,6 +34,9 @@ pub const WALK_IN_SECS: i64 = 12 * 60 * 60;
 pub const MAX_BOTS_WALKED_IN: i64 = 3;
 /// S28.
 const MAX_LISTED: i64 = 50;
+/// What a room is told when a floor opens.
+const FLOOR_OPENED: &str =
+    "This floor is public now. Anyone signed in can walk in and read what's said from here on.";
 /// S13: a size and how many fit.
 const SIZES: [(&str, i64); 3] = [("small", 8), ("medium", 50), ("big", 150)];
 const DEFAULT_CAPACITY: i64 = 50;
@@ -243,7 +246,7 @@ async fn public_floors(State(state): State<AppState>, caller: Caller) -> ApiResu
     Ok(Json(json!({ "floors": floors })))
 }
 
-// The door between a building and its rooms (S30 to S37). This is the one place a world touches a
+// The door between a building and its rooms (S30 to S37, S47, S48). This is the one place a world touches a
 // room (W60), and it goes one way: nothing here changes the map, and the world never reads this.
 
 /// What stands on a plot: its kind and the person whose it is.
@@ -256,15 +259,27 @@ fn is_door_to(building: &Building, space: &Space) -> bool {
         && (building.0 == "house") == (space.kind == "house")
 }
 
-fn stands_on_map(state: &AppState, space: &Space) -> ApiResult<bool> {
+/// The building that's the way into this space now, if one is.
+fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<Building>> {
     let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    Ok(state.db.building_at(COMMONS_ID, x, y)?.is_some_and(|building| is_door_to(&building, space)))
+    Ok(state.db.building_at(COMMONS_ID, x, y)?.filter(|building| is_door_to(building, space)))
+}
+
+fn stands_on_map(state: &AppState, space: &Space) -> ApiResult<bool> {
+    Ok(building_of(state, space)?.is_some())
+}
+
+/// S48: whether this space's building is a café, whose owner needs no code to open its floors.
+fn is_cafe(state: &AppState, space: &Space) -> ApiResult<bool> {
+    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe"))
 }
 
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
 /// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
+/// S47: a new one behind a café starts open. A room that came back stays as its owner left it, so
+/// placing a café never opens a room someone already has.
 fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> ApiResult<Space> {
     for space in state.db.third_spaces_of(&caller.person_id)? {
         if !stands_on_map(state, &space)? {
@@ -289,6 +304,20 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
             MAX_THIRD_SPACES,
         )?
         .ok_or_else(|| ApiError::conflict(format!("you have {MAX_THIRD_SPACES} third spaces")))?;
+    if kind == "Café" {
+        state.db.change_floor(&FloorChange {
+            id: &id,
+            name: None,
+            access: Some("public"),
+            size: None,
+            paint: None,
+            flooring: None,
+            hidden: None,
+            keep_bots_of: &caller.person_id,
+            private_only: &items::private_only(),
+        })?;
+        ops::announce(state, &id, FLOOR_OPENED)?;
+    }
     state.db.space(&id)?.ok_or_else(ApiError::not_found)
 }
 
@@ -603,8 +632,9 @@ async fn change_floor(
         None => None,
     };
     let opening = body.access.as_deref() == Some("public") && floor.access != "public";
-    // S16: the same code as starting a hangout, so a server that gates one gates the other.
-    if opening {
+    // S16: the same code as starting a hangout, so a server that gates one gates the other. S48: a
+    // café doesn't ask its owner, who waited for it. Whoever runs it once they've left (S8) didn't.
+    if opening && !(caller.person_id == space.owner_id && is_cafe(&state, &space)?) {
         api::check_create_code(&state, body.create_code.as_deref())?;
     }
     let taken_off = state
@@ -623,11 +653,7 @@ async fn change_floor(
         // I11: flirty items are for private floors.
         .ok_or_else(|| ApiError::conflict("take the flirty items off this floor before opening it"))?;
     if opening {
-        ops::announce(
-            &state,
-            &floor.id,
-            "This floor is public now. Anyone signed in can walk in and read what's said from here on.",
-        )?;
+        ops::announce(&state, &floor.id, FLOOR_OPENED)?;
         // S25: no bot goes in front of strangers without its owner choosing it.
         if !taken_off.is_empty() {
             let line = format!(
