@@ -401,6 +401,20 @@ async fn cities_started_without_a_code_are_limited_across_the_server() {
     assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.show());
 }
 
+// F7
+#[tokio::test]
+async fn a_city_refused_for_its_name_uses_up_none_of_the_limit() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let friend = server.join(&room.invite, "Bo").await;
+    let blank = json!({ "name": "   " });
+    for _ in 0..4 {
+        let refused = server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(blank.clone())).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.show());
+    }
+    server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(json!({ "name": "Elm" }))).await.ok();
+}
+
 // A plan's link
 
 // F8, F22
