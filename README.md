@@ -50,9 +50,9 @@ in or out is numbers and listed words, so there is no free text for anyone to hi
 
 `AGENTHANGOUT_KEEPER` is the id of the person who can remove a player from The Commons itself, which
 takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`
-shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W47 in
-[docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs` or
-`tests/worlds_attack.rs`.
+shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W59 in
+[docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs`,
+`tests/worlds_attack.rs` or `tests/round_two.rs`.
 
 ## Run it
 
@@ -531,7 +531,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons and other worlds, all pure functions: land, the highway, the moves, the simulation, the founding town, names, and the crawlers' frogs |
-| `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, and who passes through (W1 to W47) |
+| `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, and who passes through (W1 to W59) |
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/api.rs` | REST routes and live streams |
@@ -556,6 +556,6 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
-| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |
+| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W59 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |

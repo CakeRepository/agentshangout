@@ -1,4 +1,4 @@
-//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W51) and what
+//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W59) and what
 //! they touch. Round one (`worlds_attack.rs`) found real bugs and they were fixed; this round looks
 //! for what is still wrong, and above all for what the fixes brought in: side streets (W15), the
 //! road-cut check (W17), the founding town (W28, W46), tips (W47), the address limits
