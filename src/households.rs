@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::{self, Caller},
-    db::{NewOwnerNote, OwnerNote, Person},
+    db::{BotMark, NewOwnerNote, OwnerNote, Person},
     error::{ApiError, ApiResult},
     now,
     ops::{self, require_human, MAX_ABOUT_CHARS},
@@ -22,11 +22,21 @@ use crate::{
 /// H1: how many notes one person keeps for their bots.
 pub const MAX_OWNER_NOTES: i64 = 50;
 const NOTE_KINDS: [&str; 4] = ["fact", "may_share", "may_approve", "avoid"];
+/// H14: the only things a mark can say.
+pub const MARK_REASONS: [&str; 5] = [
+    "asked_for_private_info",
+    "pushed_for_approval",
+    "pretended_to_be_someone",
+    "spammed",
+    "other_unwanted",
+];
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/owner-notes", get(list_notes).post(add_note))
         .route("/api/owner-notes/{id}", put(change_note).delete(delete_note))
+        .route("/api/marks", get(list_marks))
+        .route("/api/marks/{agent_id}", put(mark).delete(unmark))
 }
 
 #[derive(Deserialize)]
@@ -172,6 +182,71 @@ pub fn people_here(
             })
         })
         .collect()
+}
+
+/// H14, H15, H19: a person marks a bot they've come across, and it loses its keys in their house.
+pub fn mark_bot(state: &AppState, caller: &Caller, agent_id: &str, reason: &str) -> ApiResult<BotMark> {
+    require_human(caller, "mark a bot")?;
+    if !MARK_REASONS.contains(&reason) {
+        return Err(ApiError::bad_request(format!("reason must be one of {}", MARK_REASONS.join(", "))));
+    }
+    let agent = state.db.agent(agent_id, now())?.ok_or_else(ApiError::not_found)?;
+    if !state.db.has_come_across(&caller.person_id, &agent.id)? {
+        return Err(ApiError::not_found());
+    }
+    if agent.owner_id == caller.person_id {
+        return Err(ApiError::conflict("that's your own bot: pause it or send it home instead"));
+    }
+    state.db.set_bot_mark(&caller.person_id, &agent.id, reason, now())?;
+    state.db.take_keys_at_homes_of(&caller.person_id, &agent.id)?;
+    state
+        .db
+        .bot_marks(&caller.person_id)?
+        .into_iter()
+        .find(|mark| mark.agent_id == agent.id)
+        .ok_or_else(ApiError::not_found)
+}
+
+/// H20: only the person who made a mark removes it.
+pub fn unmark_bot(state: &AppState, caller: &Caller, agent_id: &str) -> ApiResult<()> {
+    require_human(caller, "remove a mark")?;
+    if !state.db.remove_bot_mark(&caller.person_id, agent_id)? {
+        return Err(ApiError::not_found());
+    }
+    Ok(())
+}
+
+/// H16 to H18: the marks of the caller's side, for its own pages and bots.
+pub fn marks_for(state: &AppState, caller: &Caller) -> ApiResult<Vec<BotMark>> {
+    Ok(state.db.bot_marks(&caller.person_id)?)
+}
+
+async fn list_marks(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
+    require_human(&caller, "see marks")?;
+    Ok(Json(json!({ "marks": marks_for(&state, &caller)? })))
+}
+
+#[derive(Deserialize)]
+struct MarkInput {
+    reason: String,
+}
+
+async fn mark(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(agent_id): Path<String>,
+    Json(body): Json<MarkInput>,
+) -> ApiResult<Json<BotMark>> {
+    Ok(Json(mark_bot(&state, &caller, &agent_id, &body.reason)?))
+}
+
+async fn unmark(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(agent_id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    unmark_bot(&state, &caller, &agent_id)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn list_notes(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {

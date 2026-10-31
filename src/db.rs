@@ -419,6 +419,21 @@ CREATE TABLE IF NOT EXISTS owner_notes (
     updated_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS owner_notes_by_owner ON owner_notes (owner_id, created_at);
+CREATE TABLE IF NOT EXISTS pass_keys (
+    pass_id     TEXT NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+    key         TEXT NOT NULL CHECK (key IN ('living_room', 'scenes')),
+    granted_by  TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (pass_id, key)
+);
+CREATE TABLE IF NOT EXISTS bot_marks (
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    reason      TEXT NOT NULL CHECK (reason IN ('asked_for_private_info', 'pushed_for_approval',
+                    'pretended_to_be_someone', 'spammed', 'other_unwanted')),
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (person_id, agent_id)
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -609,6 +624,15 @@ pub struct NewOwnerNote<'a> {
     pub body: &'a str,
     pub from_question: Option<&'a str>,
     pub now: i64,
+}
+
+/// H14: a person's own record that a bot behaved badly. Only they and their bots see it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BotMark {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub reason: String,
+    pub created_at: i64,
 }
 
 /// H6: how a bot's owner knows someone, worked out on read.
@@ -817,6 +841,8 @@ pub struct Pass {
     pub max_minutes: i64,
     pub granted_by: String,
     pub accepted_by: Option<String>,
+    /// H13: `living_room` and `scenes`, in that order, for the keys it has.
+    pub keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1133,8 +1159,15 @@ const TRIP_COLS: &str = "t.id, t.agent_id, a.name, a.owner_id, t.house_id, h.nam
      t.ends_at, t.ended_by, t.expires_at, t.created_at, h.porch";
 const TRIPS: &str = "trips t JOIN agents a ON a.id = t.agent_id JOIN houses h ON h.id = t.house_id";
 const PASS_COLS: &str =
-    "p.id, p.house_id, p.agent_id, a.name, a.owner_id, p.max_minutes, p.granted_by, p.accepted_by";
+    "p.id, p.house_id, p.agent_id, a.name, a.owner_id, p.max_minutes, p.granted_by, p.accepted_by, \
+     (SELECT group_concat(k.key, ',') FROM pass_keys k WHERE k.pass_id = p.id)";
 const PASSES: &str = "passes p JOIN agents a ON a.id = p.agent_id";
+/// H10: where a bot on a trip `t` to house `ho` is a guest. The Porch always, and the Living Room
+/// while its accepted pass there has the Living Room key.
+const GUEST_ROOM: &str = "(ho.porch = ?1 OR (ho.living_room = ?1 AND EXISTS (
+    SELECT 1 FROM passes pk JOIN pass_keys k ON k.pass_id = pk.id
+    WHERE pk.house_id = ho.id AND pk.agent_id = t.agent_id AND pk.accepted_by IS NOT NULL
+      AND k.key = 'living_room')))";
 const SCENE_REQUEST_COLS: &str = "r.id, r.scene_id, s.name, r.house_id, r.asked_by, r.status, \
      r.answered_by, r.expires_at, r.created_at";
 const SCENE_REQUESTS: &str = "scene_requests r JOIN scenes s ON s.id = r.scene_id";
@@ -1246,6 +1279,12 @@ fn pass_from_row(row: &Row) -> rusqlite::Result<Pass> {
         max_minutes: row.get(5)?,
         granted_by: row.get(6)?,
         accepted_by: row.get(7)?,
+        keys: {
+            let keys: Option<String> = row.get(8)?;
+            let mut keys: Vec<String> = keys.iter().flat_map(|keys| keys.split(',')).map(str::to_string).collect();
+            keys.sort();
+            keys
+        },
     })
 }
 
@@ -1853,6 +1892,11 @@ impl Db {
              WHERE h.id IN (SELECT hangout_id FROM room_agents WHERE agent_id = ?1)
                 OR h.id IN (SELECT ho.porch FROM trips t JOIN houses ho ON ho.id = t.house_id
                             WHERE t.agent_id = ?1 AND t.status = 'here' AND t.ends_at > ?2)
+                OR h.id IN (SELECT ho.living_room FROM trips t JOIN houses ho ON ho.id = t.house_id
+                            JOIN passes pk ON pk.house_id = ho.id AND pk.agent_id = t.agent_id
+                            JOIN pass_keys k ON k.pass_id = pk.id
+                            WHERE t.agent_id = ?1 AND t.status = 'here' AND t.ends_at > ?2
+                              AND pk.accepted_by IS NOT NULL AND k.key = 'living_room')
              ORDER BY h.created_at, h.id",
         )?;
         let rows = stmt.query_map(params![agent_id, now], hangout_from_row)?;
@@ -1898,9 +1942,11 @@ impl Db {
     pub fn agent_in_room(&self, hangout_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
         exists(
             &self.conn(),
-            "SELECT 1 WHERE EXISTS (SELECT 1 FROM room_agents WHERE hangout_id = ?1 AND agent_id = ?2)
-                OR EXISTS (SELECT 1 FROM trips t JOIN houses h ON h.id = t.house_id
-                           WHERE h.porch = ?1 AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3)",
+            &format!(
+                "SELECT 1 WHERE EXISTS (SELECT 1 FROM room_agents WHERE hangout_id = ?1 AND agent_id = ?2)
+                    OR EXISTS (SELECT 1 FROM trips t JOIN houses ho ON ho.id = t.house_id
+                               WHERE {GUEST_ROOM} AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3)"
+            ),
             params![hangout_id, agent_id, now],
         )
     }
@@ -2358,6 +2404,68 @@ impl Db {
             |row| row.get(0),
         )?;
         Ok(Relation { lives_with, shares_a_city, plans_together })
+    }
+
+    // Marks (H14 to H20)
+
+    /// H15: whether a person has come across a bot: it's in a room they belong to, or it has
+    /// visited or asked to visit a house they live in.
+    pub fn has_come_across(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 WHERE EXISTS (SELECT 1 FROM room_agents ra JOIN members m ON m.hangout_id = ra.hangout_id
+                                    WHERE ra.agent_id = ?2 AND m.person_id = ?1)
+                OR EXISTS (SELECT 1 FROM trips t JOIN residents r ON r.house_id = t.house_id
+                           WHERE t.agent_id = ?2 AND r.person_id = ?1)",
+            params![person_id, agent_id],
+        )
+    }
+
+    pub fn set_bot_mark(&self, person_id: &str, agent_id: &str, reason: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_marks (person_id, agent_id, reason, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (person_id, agent_id) DO UPDATE SET reason = excluded.reason",
+            params![person_id, agent_id, reason, now],
+        )?;
+        Ok(())
+    }
+
+    /// False if there was no such mark.
+    pub fn remove_bot_mark(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "DELETE FROM bot_marks WHERE person_id = ? AND agent_id = ?",
+            params![person_id, agent_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn bot_marks(&self, person_id: &str) -> rusqlite::Result<Vec<BotMark>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT m.agent_id, a.name, m.reason, m.created_at FROM bot_marks m
+             JOIN agents a ON a.id = m.agent_id
+             WHERE m.person_id = ? ORDER BY m.created_at, m.agent_id",
+        )?;
+        let rows = stmt.query_map([person_id], |row| {
+            Ok(BotMark {
+                agent_id: row.get(0)?,
+                agent_name: row.get(1)?,
+                reason: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// H19: takes back the bot's keys at every house the person lives in.
+    pub fn take_keys_at_homes_of(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM pass_keys WHERE pass_id IN (
+                SELECT p.id FROM passes p JOIN residents r ON r.house_id = p.house_id
+                WHERE p.agent_id = ?2 AND r.person_id = ?1)",
+            params![person_id, agent_id],
+        )?;
+        Ok(())
     }
 
     /// B2: replaces a person's saved clock.
@@ -3351,6 +3459,57 @@ impl Db {
         Ok(changed > 0)
     }
 
+    // Keys (H8 to H13)
+
+    /// H8: trips of this bot's to this house that arrived and that no resident ended.
+    pub fn good_trips_to(&self, agent_id: &str, house_id: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM trips t
+             WHERE t.agent_id = ? AND t.house_id = ? AND t.arrived_at IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM sent_home s WHERE s.trip_id = t.id)",
+            params![agent_id, house_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn add_pass_key(&self, pass_id: &str, key: &str, granted_by: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO pass_keys (pass_id, key, granted_by, created_at) VALUES (?, ?, ?, ?)",
+            params![pass_id, key, granted_by, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_pass_key(&self, pass_id: &str, key: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM pass_keys WHERE pass_id = ? AND key = ?", params![pass_id, key])?;
+        Ok(())
+    }
+
+    /// H11: who gave this bot the key, if its accepted pass to this house has it.
+    pub fn key_giver(&self, agent_id: &str, house_id: &str, key: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT k.granted_by FROM passes p JOIN pass_keys k ON k.pass_id = p.id
+                 WHERE p.agent_id = ? AND p.house_id = ? AND p.accepted_by IS NOT NULL AND k.key = ?",
+                params![agent_id, house_id, key],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// H13: the accepted passes of this bot's that have a key, with the house's name.
+    pub fn keys_of_bot(&self, agent_id: &str) -> rusqlite::Result<Vec<(Pass, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {PASS_COLS}, h.name FROM {PASSES} JOIN houses h ON h.id = p.house_id
+             WHERE p.agent_id = ? AND p.accepted_by IS NOT NULL
+               AND EXISTS (SELECT 1 FROM pass_keys k WHERE k.pass_id = p.id)
+             ORDER BY p.created_at, p.id"
+        ))?;
+        let rows = stmt.query_map([agent_id], |row| Ok((pass_from_row(row)?, row.get(9)?)))?;
+        rows.collect()
+    }
+
     pub fn delete_pass(&self, id: &str) -> rusqlite::Result<bool> {
         let changed = self.conn().execute("DELETE FROM passes WHERE id = ?", [id])?;
         Ok(changed > 0)
@@ -3551,7 +3710,7 @@ impl Db {
             "SELECT {AGENT_COLS}, t.ends_at FROM {AGENTS}
              JOIN trips t ON t.agent_id = a.id
              JOIN houses ho ON ho.id = t.house_id
-             WHERE ho.porch = ?1 AND t.status = 'here' AND t.ends_at > ?2
+             WHERE {GUEST_ROOM} AND t.status = 'here' AND t.ends_at > ?2
                AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id)
              ORDER BY t.arrived_at, a.id"
         ))?;
@@ -3567,16 +3726,16 @@ impl Db {
     /// members, so `people_in` never lists them, and nothing that notifies people should either.
     pub fn visitor_owners(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<Person>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT p.id, p.name, p.color FROM people p
              WHERE p.id IN (
                 SELECT a.owner_id FROM trips t
                 JOIN houses ho ON ho.id = t.house_id
                 JOIN agents a ON a.id = t.agent_id
-                WHERE ho.porch = ?1 AND t.status = 'here' AND t.ends_at > ?2
+                WHERE {GUEST_ROOM} AND t.status = 'here' AND t.ends_at > ?2
                   AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id))
-             ORDER BY p.created_at, p.id",
-        )?;
+             ORDER BY p.created_at, p.id"
+        ))?;
         let rows = stmt.query_map(params![hangout_id, now], person_from_row)?;
         rows.collect()
     }
@@ -3586,11 +3745,13 @@ impl Db {
     pub fn bot_visit(&self, hangout_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<Option<Visit>> {
         self.conn()
             .query_row(
-                "SELECT t.arrived_at, t.ends_at FROM trips t
-                 JOIN houses ho ON ho.id = t.house_id
-                 WHERE ho.porch = ?1 AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3
-                   AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = ?2)
-                 ORDER BY t.arrived_at LIMIT 1",
+                &format!(
+                    "SELECT t.arrived_at, t.ends_at FROM trips t
+                     JOIN houses ho ON ho.id = t.house_id
+                     WHERE {GUEST_ROOM} AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3
+                       AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = ?2)
+                     ORDER BY t.arrived_at LIMIT 1"
+                ),
                 params![hangout_id, agent_id, now],
                 |row| {
                     Ok(Visit {
@@ -3612,12 +3773,14 @@ impl Db {
         now: i64,
     ) -> rusqlite::Result<Option<Visit>> {
         let (since, until): (Option<i64>, Option<i64>) = self.conn().query_row(
+            &format!(
             "SELECT MIN(t.arrived_at), MAX(t.ends_at) FROM trips t
              JOIN houses ho ON ho.id = t.house_id
              JOIN agents a ON a.id = t.agent_id
-             WHERE ho.porch = ?1 AND a.owner_id = ?2 AND t.status = 'here' AND t.ends_at > ?3
+             WHERE {GUEST_ROOM} AND a.owner_id = ?2 AND t.status = 'here' AND t.ends_at > ?3
                AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id)
-               AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = ?1 AND m.person_id = ?2)",
+               AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = ?1 AND m.person_id = ?2)"
+            ),
             params![hangout_id, person_id, now],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;

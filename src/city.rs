@@ -1189,6 +1189,66 @@ pub fn cancel_pass(state: &AppState, caller: &Caller, pass_id: &str) -> ApiResul
     Ok(())
 }
 
+// Keys (H8 to H13): more than a pass, for a bot that has earned it.
+
+pub const KEYS: [&str; 2] = ["living_room", "scenes"];
+/// H8: trips a bot has to have had to a house, that no resident ended, before it can have a key.
+pub const GOOD_TRIPS_FOR_A_KEY: i64 = 2;
+
+fn key_name(key: &str) -> &'static str {
+    if key == "living_room" { "Living Room key" } else { "scenes key" }
+}
+
+/// H8: a resident, as a person, gives a key on an accepted pass to a bot with two good trips.
+pub fn give_key(state: &AppState, caller: &Caller, pass_id: &str, key: &str) -> ApiResult<Pass> {
+    let (pass, house) = pass_for(state, caller, pass_id)?;
+    ops::require_human(caller, "give a key")?;
+    if !state.db.is_resident(&house.id, &caller.person_id)? {
+        return Err(ApiError::not_found());
+    }
+    if !KEYS.contains(&key) {
+        return Err(ApiError::bad_request("key must be living_room or scenes"));
+    }
+    if pass.accepted_by.is_none() {
+        return Err(ApiError::conflict(format!(
+            "{} has to accept the pass before {} can have a key",
+            state.db.person(&pass.owner_id)?.map_or("Its owner".to_string(), |person| person.name),
+            pass.agent_name
+        )));
+    }
+    if state.db.good_trips_to(&pass.agent_id, &house.id)? < GOOD_TRIPS_FOR_A_KEY {
+        return Err(ApiError::conflict(format!(
+            "{} needs {GOOD_TRIPS_FOR_A_KEY} good trips here before it can have a key",
+            pass.agent_name
+        )));
+    }
+    state.db.add_pass_key(&pass.id, key, &caller.name, now())?;
+    let text = format!("{} gave {} the {}.", caller.name, pass.agent_name, key_name(key));
+    ping(state, vec![pass.owner_id.clone()], "trip.asked", &house.porch_id, &text);
+    refresh_house(state, &house);
+    state.db.pass(&pass.id)?.ok_or_else(ApiError::not_found)
+}
+
+/// H12: a resident or the bot's owner takes a key back. It stops working on the next read.
+pub fn take_key(state: &AppState, caller: &Caller, pass_id: &str, key: &str) -> ApiResult<Pass> {
+    let (pass, house) = pass_for(state, caller, pass_id)?;
+    ops::require_human(caller, "take a key back")?;
+    if !KEYS.contains(&key) {
+        return Err(ApiError::bad_request("key must be living_room or scenes"));
+    }
+    state.db.remove_pass_key(&pass.id, key)?;
+    refresh_house(state, &house);
+    state.db.pass(&pass.id)?.ok_or_else(ApiError::not_found)
+}
+
+/// H13: a bot's keys, house by house.
+pub fn keys_of_bot(state: &AppState, caller: &Caller) -> ApiResult<Vec<(Pass, String)>> {
+    match &caller.agent_id {
+        Some(agent_id) => Ok(state.db.keys_of_bot(agent_id)?),
+        None => Ok(Vec::new()),
+    }
+}
+
 // Scenes
 
 /// A scene name is letters, numbers and spaces, short, and free of words that sound like opening
@@ -1274,9 +1334,16 @@ pub fn request_scene(state: &AppState, caller: &Caller, scene_id: &str) -> ApiRe
     ops::note_agent_write(state, caller)?;
     let now = now();
     let resident = !caller.is_agent() && state.db.is_resident(&house.id, &caller.person_id)?;
+    // H11: a visiting bot with the scenes key is approved by whoever gave it the key.
+    let key_giver = match &caller.agent_id {
+        Some(agent_id) if !resident => state.db.key_giver(agent_id, &house.id, "scenes")?,
+        _ => None,
+    };
     let id = auth::new_id();
     let (status, answered_by, expires_at) = if resident {
         ("approved", Some(caller.name.as_str()), now + SCENE_APPROVED_SECS)
+    } else if let Some(giver) = &key_giver {
+        ("approved", Some(giver.as_str()), now + SCENE_APPROVED_SECS)
     } else {
         ("waiting", None, now + SCENE_WAIT_SECS)
     };
@@ -1293,7 +1360,10 @@ pub fn request_scene(state: &AppState, caller: &Caller, scene_id: &str) -> ApiRe
     if !opened {
         return Err(ApiError::conflict("that scene already has a request open"));
     }
-    if !resident {
+    if key_giver.is_some() {
+        let text = format!("{} used its scenes key to run {}.", caller.name, scene.name);
+        ping(state, resident_ids(state, &house.id)?, "scene.asked", &house.living_room_id, &text);
+    } else if !resident {
         let text = format!("{} asked for the scene {}.", caller.name, scene.name);
         ping(state, resident_ids(state, &house.id)?, "scene.asked", &house.living_room_id, &text);
     }
