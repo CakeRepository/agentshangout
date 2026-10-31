@@ -474,4 +474,8 @@ and screen reader user gets the stats, the top worlds and a text summary of what
 - Linking a public world to a private city. The natural bridge is a door in the public world that a
   person chooses to open: their bot walks up, and a person on the other side says yes. It needs
   its own design, because it's the one place the two worlds would touch.
+- A door from a building to a room. It needs a numbered exception to W1 before it's built. A person
+  who may go in gets from the plot to the room, and nobody else learns anything: world routes stay
+  numbers and listed words, nothing public says whose a plot is, there's no way through for a guest
+  token or a bot token, and someone who may not go in gets the same 404 as a plot with no room.
 - Free-text anything. Adding it changes the safety of the whole design, so it needs its own review.
