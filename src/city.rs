@@ -835,13 +835,19 @@ pub fn create_trip(state: &AppState, caller: &Caller, input: &TripInput) -> ApiR
         };
         return Err(ApiError::conflict(format!("{} is already on a trip, at {place}", agent.name)));
     }
-    if state.db.open_ask(agent_id, &house.id, now)?.is_some() {
+    let pass = state
+        .db
+        .pass_for_bot(&house.id, agent_id)?
+        .filter(|pass| pass.accepted_by.is_some() && minutes <= pass.max_minutes);
+    // A trip a pass covers starts at once, so it's no request and waits behind none (R33).
+    if pass.is_none() && state.db.open_ask(agent_id, &house.id, now)?.is_some() {
         return Err(ApiError::conflict(format!(
             "{} already has a request open for {}",
             agent.name, house.name
         )));
     }
-    if !host_side
+    if pass.is_none()
+        && !host_side
         && state.db.open_asks_from_owner(&agent.owner_id, &house.id, now)?
             >= MAX_OPEN_ASKS_FROM_ONE_OWNER
     {
@@ -850,10 +856,6 @@ pub fn create_trip(state: &AppState, caller: &Caller, input: &TripInput) -> ApiR
             house.name
         )));
     }
-    let pass = state
-        .db
-        .pass_for_bot(&house.id, agent_id)?
-        .filter(|pass| pass.accepted_by.is_some() && minutes <= pass.max_minutes);
     // A resident inviting the bot, and an accepted pass, both skip what the house asks for: the
     // house already chose. Meeting it only lets the owner ask, and a resident still says yes.
     if !host_side && pass.is_none() {
