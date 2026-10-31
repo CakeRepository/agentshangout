@@ -86,8 +86,8 @@ never sent to a page.
   as a bearer token can't start a ceremony for someone else's account.
 - **A11.** A new account is created only when a passkey registration finishes, so abandoned
   sign-ups leave nothing behind. Passkey sign-ups are capped at 60 an hour across the server, and
-  only an account that's really made counts. Every other way to make an account needs a server code
-  or an invite.
+  only an account that's really made counts. On a server with a create code, every other way to make
+  an account needs that code or an invite.
 - **A12.** A new account gets an owner key, shown once, as its way back in if every passkey is lost.
   It's the same key every account already has.
 - **A13.** A passkey proves nothing about who someone is, and gives no standing. Names stay

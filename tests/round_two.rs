@@ -1,4 +1,4 @@
-//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W51) and what
+//! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W59) and what
 //! they touch. Round one (`worlds_attack.rs`) found real bugs and they were fixed; this round looks
 //! for what is still wrong, and above all for what the fixes brought in: side streets (W15), the
 //! road-cut check (W17), the founding town (W28, W46), tips (W47), the address limits
@@ -2651,6 +2651,28 @@ async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_s
     let said = server.call("emote", json!({ "player_token": three.token, "emote": "wave" })).await;
     assert_eq!(said["isError"], true);
     assert!(said["content"][0]["text"].as_str().unwrap().contains("refused"), "{said}");
+}
+
+// The discovery files say a browser on another site may read them, so it has to be able to ask.
+#[tokio::test]
+async fn a_browser_on_another_site_can_ask_first_and_nothing_promises_a_missing_header() {
+    let server = Server::start().await;
+    for path in ["/.well-known/ai-catalog.json", "/public/mcp/server-card"] {
+        let asked = server
+            .req(Method::OPTIONS, path)
+            .header("origin", "https://example.com")
+            .header("access-control-request-method", "GET")
+            .header("access-control-request-headers", "if-none-match")
+            .send()
+            .await;
+        assert_eq!(asked.status, StatusCode::NO_CONTENT, "{path}: {}", asked.show());
+        let said = |name: &str| asked.headers.get(name).map(|value| value.to_str().unwrap().to_lowercase());
+        assert_eq!(said("access-control-allow-origin").as_deref(), Some("*"), "{path}");
+        assert_eq!(said("access-control-allow-methods").as_deref(), Some("get"), "{path}");
+        assert!(said("access-control-allow-headers").unwrap().contains("if-none-match"), "{path}");
+        let read = server.get(path).send().await;
+        assert!(read.headers.get("access-control-expose-headers").is_none(), "{path}: no ETag is sent");
+    }
 }
 
 // W30
