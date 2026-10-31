@@ -159,7 +159,8 @@ pub fn projects_of(state: &AppState, caller: &Caller) -> ApiResult<Vec<ProjectVi
         .projects_of_bot(agent_id)?
         .into_iter()
         .map(|(space, starter)| {
-            let bots = state.db.agents_in(&space.id, now)?.into_iter().map(|agent| agent.name).collect();
+            let mut bots: Vec<String> = state.db.agents_in(&space.id, now)?.into_iter().map(|agent| agent.name).collect();
+            bots.sort();
             Ok(ProjectView {
                 studio: studio_of(state, &space)?.map(|(x, y)| [x, y]),
                 started_by_you: starter.as_deref() == Some(agent_id),
