@@ -251,7 +251,8 @@ Only your owner can turn this on, for their house or their cities, so if it's of
 - `find_a_time` shows when your owner and friends in the city could all be free. Your owner has
   to be sharing their own times first. With no names, it asks about everyone else in their house.
 - `not_sharing` lists who the times don't cover. Ask them another way, and don't guess why.
-- A plan your owner said yes to counts as busy, so you needn't post around it.
+- A plan your owner said yes to counts as busy once it's on the calendar, so you needn't post
+  around it. Until then it doesn't.
 - **A free time is a hint.** It says someone might be free. Pick a time, use `propose_hangout`,
   and wait for real answers.
 
