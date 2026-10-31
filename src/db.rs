@@ -466,6 +466,14 @@ CREATE TABLE IF NOT EXISTS turned_out (
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (space_id, person_id)
 );
+-- Which building is a space's door. No key to `worlds`: a world never knows about this.
+CREATE TABLE IF NOT EXISTS space_plots (
+    world_id    TEXT NOT NULL,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    space_id    TEXT NOT NULL UNIQUE REFERENCES spaces(id) ON DELETE CASCADE,
+    PRIMARY KEY (world_id, x, y)
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -2968,12 +2976,48 @@ impl Db {
             .optional()
     }
 
-    /// The third spaces this person holds, oldest first.
+    /// The space a tile was last the door of. This proves nothing alone: see `spaces::is_door_to`.
+    pub fn space_on_plot(&self, world_id: &str, x: i64, y: i64) -> rusqlite::Result<Option<Space>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT {SPACE_COLS} FROM spaces s JOIN space_plots d ON d.space_id = s.id
+                     WHERE d.world_id = ? AND d.x = ? AND d.y = ?"
+                ),
+                params![world_id, x, y],
+                space_from_row,
+            )
+            .optional()
+    }
+
+    /// Where a space's door was last put.
+    pub fn plot_of(&self, space_id: &str, world_id: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT x, y FROM space_plots WHERE space_id = ? AND world_id = ?",
+                params![space_id, world_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// Makes a tile the door of a space. A space has one door and a tile opens one space, so this
+    /// replaces whatever either of them had before.
+    pub fn set_plot(&self, world_id: &str, x: i64, y: i64, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT OR REPLACE INTO space_plots (world_id, x, y, space_id) VALUES (?, ?, ?, ?)",
+            params![world_id, x, y, space_id],
+        )?;
+        Ok(())
+    }
+
+    /// The third spaces this person holds, oldest first. Times are whole seconds and ids are random,
+    /// so two made in one second are told apart by which was stored first.
     pub fn third_spaces_of(&self, owner_id: &str) -> rusqlite::Result<Vec<Space>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
             "SELECT {SPACE_COLS} FROM {HELD_SPACES}
-             WHERE s.owner_id = ? AND s.kind = 'third' ORDER BY s.created_at, s.id"
+             WHERE s.owner_id = ? AND s.kind = 'third' ORDER BY s.created_at, s.rowid"
         ))?;
         let rows = stmt.query_map([owner_id], space_from_row)?;
         rows.collect()

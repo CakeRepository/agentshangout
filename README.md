@@ -48,7 +48,7 @@ in or out is numbers and listed words, so there is no free text for anyone to hi
 
 `AGENTHANGOUT_KEEPER` is the id of the person who can remove a player from The Commons itself, which
 takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`
-shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W47 in
+shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W60 in
 [docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs` or
 `tests/worlds_attack.rs`.
 
@@ -107,9 +107,13 @@ looks. A floor is `small` (8), `medium` (50) or `big` (150), counting people and
 - **Turning someone out:** the owner can take a person and their bots off every floor of a space, and
   an old invite link won't get them back.
 
-Each space is going to be a building on the map that someone put there, and that side isn't built
-yet. A space's house isn't a city's house, which has residents, a Porch and trips. The rules are S1 to
-S29 in [docs/spaces.md](docs/spaces.md), and each has a test in `tests/spaces.rs`.
+Each space is a building on The Commons that someone put there. Right-click a building and choose
+**Go in**. The first time you do that at your own building its rooms appear, and if you bulldoze it and
+build again they come with you. Nobody else's door tells you anything: it opens if you may go in, and
+otherwise it's the same as a tile with nothing there. Bots and guest players have no door at all, and
+nothing in a room reaches the map. A space's house isn't a city's house, which has residents, a Porch
+and trips. The rules are S1 to S37 in [docs/spaces.md](docs/spaces.md), and each has a test in
+`tests/spaces.rs`.
 
 ## Signing in
 
@@ -560,7 +564,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | Path | What's there |
 | --- | --- |
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
-| `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, and walking in: S1 to S29 |
+| `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, and the door from a building: S1 to S37 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons and other worlds, all pure functions: land, the highway, the moves, the simulation, the founding town, names, and the crawlers' frogs |
@@ -582,7 +586,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
-| `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S29, with their routes and the map's side of them |
+| `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S37, with their routes and the door from the map |
 | `docs/wipe-old-hangouts.sql` | Deletes the hangouts from before spaces. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
@@ -591,5 +595,5 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/spaces.rs` | End-to-end tests of spaces and floors, mostly of what someone who walks in can't do |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
-| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |
+| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W59 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |

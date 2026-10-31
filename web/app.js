@@ -396,18 +396,18 @@ async function homeParts(me) {
 
   // A person's house and third spaces, and the way to change each.
   const owned = spaces ? [spaces.house, ...spaces.third] : [];
-  const atLimit = spaces && spaces.third.length >= spaces.limits.third_spaces;
-  const spaceRow = ({ space, floors }) => {
+  const spaceRow = ({ space, floors, on_map: onMap }) => {
     const open = floors.filter((floor) => floor.access === 'public').length;
     return h('li', {},
       link(`/h/${floors[0].id}`, space.name),
-      h('span', { class: 'muted' }, ` · ${floors.length === 1 ? '1 floor' : `${floors.length} floors`}${open ? ` · ${open} public` : ''} · `),
+      h('span', { class: 'muted' }, ` · ${floors.length === 1 ? '1 floor' : `${floors.length} floors`}${open ? ` · ${open} public` : ''}${onMap ? '' : ' · not on the map yet'} · `),
       link(`/s/${space.id}`, 'Customize'));
   };
   const spacesCard = spaces && h('section', { class: 'card', 'aria-label': 'Your spaces' },
     h('h2', {}, 'Your spaces'),
     h('ul', { class: 'room-list' }, owned.map(spaceRow)),
-    h('p', { class: 'muted' }, `Your house, and ${spaces.third.length} of ${spaces.limits.third_spaces} third spaces.`));
+    h('p', { class: 'muted' }, `Your house, and ${spaces.third.length} of ${spaces.limits.third_spaces} third spaces.`),
+    h('p', { class: 'muted' }, 'Every space is a building on the map. Build a house or a studio beside a road, then right-click it and choose Go in.'));
 
   // Public floors. Walk in opens the room, which is what walks someone in.
   const publicCard = publicFloors.length ? h('section', { class: 'card', 'aria-label': 'Public floors' },
@@ -487,7 +487,8 @@ async function homeParts(me) {
     signIn,
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
-    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, atLimit ? null : createForm].filter(Boolean),
+    // Someone signed in starts a third space by building one on the map.
+    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me ? null : createForm].filter(Boolean),
     stop: () => stop(),
   };
 }
@@ -3582,6 +3583,7 @@ const BUILD_TOOLS = [
 ];
 // W54: buildings are only in The Commons for now.
 const PLACED_TOOLS = new Set(['house', 'studio']);
+const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -4101,12 +4103,24 @@ async function worldView(id, { home = false } = {}) {
     return { title: self ? `${f.name} (you)` : f.name, sub: what, items };
   }
 
+  // Offered on every building to anyone signed in, so the menu never says whose one is or whether it
+  // will open (W4). Only the server knows, and a door that stays shut says nothing about why.
+  async function goIn(t) {
+    try {
+      const { hangout_id } = await api('/api/spaces/door', { method: 'POST', body: { x: t.x, y: t.y } });
+      go(`/h/${hangout_id}`);
+    } catch (failure) {
+      say(failure.status === 404 ? 'Nothing opens for you here.' : failure.message);
+    }
+  }
+
   function tileMenu(t) {
     const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
     } else {
+      if (BUILDING_KINDS.has(t.kind)) items.push({ label: 'Go in', run: () => goIn(t) });
       if (t.land !== 'water') items.push({ label: 'Walk here', cost: '1 move', run: () => send({ action: 'walk', x: t.x, y: t.y }) });
       if ((t.kind && t.kind !== 'cleared') || (!t.kind && t.land === 'forest')) {
         items.push({ label: 'Clear', cost: '1 move', run: () => send({ action: 'bulldoze', x: t.x, y: t.y }) });

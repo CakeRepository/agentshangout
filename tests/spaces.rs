@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use agenthangout::{
     app,
     db::{Db, NewCity, NewHouse},
-    now, spaces, AppState, Config,
+    now, spaces, worlds, AppState, Config,
 };
 use reqwest::{Client, Method, StatusCode};
 use rusqlite::Connection;
@@ -186,6 +186,42 @@ impl Server {
 
     async fn add_floor(&self, owner: &Who, space: &str, name: &str) -> Reply {
         self.post(&owner.key, &format!("/api/spaces/{space}/floors"), json!({ "name": name })).await
+    }
+
+    /// Tiles beside a road, which is where a building can stand.
+    async fn beside_roads(&self) -> Vec<(i64, i64)> {
+        worlds::ensure_commons(&self.state).unwrap();
+        let view = self.get("", "/api/worlds/commons").await.ok();
+        let tiles = view["tiles"].as_array().unwrap();
+        let mut spots = Vec::new();
+        for road in tiles.iter().filter(|tile| tile[2] == "road") {
+            let (x, y) = (road[0].as_i64().unwrap(), road[1].as_i64().unwrap());
+            spots.extend([(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]);
+        }
+        spots
+    }
+
+    async fn place(&self, who: &Who, kind: &str, (x, y): (i64, i64)) -> Reply {
+        let body = json!({ "action": "place", "kind": kind, "x": x, "y": y });
+        self.post(&who.key, "/api/worlds/commons/act", body).await
+    }
+
+    /// Puts up a building wherever the rules allow it. A move that's refused costs nothing.
+    async fn build(&self, who: &Who, kind: &str) -> (i64, i64) {
+        for spot in self.beside_roads().await {
+            if self.place(who, kind, spot).await.status == StatusCode::OK {
+                return spot;
+            }
+        }
+        panic!("nowhere to build a {kind}");
+    }
+
+    async fn bulldoze(&self, who: &Who, (x, y): (i64, i64)) -> Reply {
+        self.post(&who.key, "/api/worlds/commons/act", json!({ "action": "bulldoze", "x": x, "y": y })).await
+    }
+
+    async fn go_in(&self, token: &str, (x, y): (i64, i64)) -> Reply {
+        self.post(token, "/api/spaces/door", json!({ "x": x, "y": y })).await
     }
 
     /// The floors this caller is shown from a room, lowest first.
@@ -1357,4 +1393,256 @@ fn the_wipe_takes_the_old_hangouts_and_nothing_else() {
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{path_text}{suffix}"));
     }
+}
+
+// S30, S34
+
+#[tokio::test]
+async fn your_own_door_opens_your_house_and_the_list_says_it_stands_on_the_map() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let before = server.get(&ann.key, "/api/spaces").await.ok();
+    assert_eq!(before["house"]["on_map"], false);
+
+    let spot = server.build(&ann, "house").await;
+    // Placing it made no room: the move can't, because a world doesn't touch a hangout.
+    assert_eq!(server.get(&ann.key, "/api/spaces").await.ok()["house"]["on_map"], false);
+
+    let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    assert_eq!(room, text(&before["house"]["space"]["id"]));
+    assert_eq!(server.get(&ann.key, "/api/spaces").await.ok()["house"]["on_map"], true);
+    // Going in again finds the same room.
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], room.as_str());
+    assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["space"]["kind"], "house");
+}
+
+// S34
+
+#[tokio::test]
+async fn a_studio_takes_the_oldest_third_space_with_no_building_and_then_starts_a_new_one() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let second = text(&server.third_space(&ann, "Second").await.ok()["hangout"]["id"]);
+
+    let spot = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], first.as_str());
+    let spot = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], second.as_str());
+
+    // Every third space has its building, so the next one starts a new space, with no code.
+    let spot = server.build(&ann, "studio").await;
+    let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    let seen = server.snapshot(&ann.key, &room).await.ok();
+    assert_eq!(seen["floor"]["space"]["name"], "Ann's Studio");
+    assert_eq!(seen["floor"]["space"]["kind"], "third");
+    assert_eq!(seen["floor"]["floor"]["access"], "private");
+
+    // A house never takes a third space, and a studio never takes a house.
+    let mine = server.get(&ann.key, "/api/spaces").await.ok();
+    assert_eq!(mine["house"]["on_map"], false);
+    assert!(mine["third"].as_array().unwrap().iter().all(|space| space["on_map"] == true), "{mine}");
+}
+
+// S31, W60
+
+#[tokio::test]
+async fn only_a_person_goes_through_a_door() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (_, bot) = server.bot(&ann, &room, "Scout").await;
+    let spot = server.build(&ann, "house").await;
+    server.go_in(&ann.key, spot).await.ok();
+
+    // A bot gets what a token nobody knows gets, even at its own owner's door.
+    let unknown = server.go_in("not-a-token", spot).await;
+    let from_bot = server.go_in(&bot, spot).await;
+    assert_eq!(unknown.status, StatusCode::UNAUTHORIZED);
+    assert_eq!((from_bot.status, from_bot.body), (unknown.status, unknown.body));
+
+    let joined = server.post("", "/api/public/join", json!({})).await.ok();
+    let guest = text(&joined["player_token"]);
+    server.go_in(&guest, spot).await.refused(StatusCode::UNAUTHORIZED);
+    server.go_in("", spot).await.refused(StatusCode::UNAUTHORIZED);
+
+    // There's no tool for it either, public or private.
+    for name in ["go_in", "door", "go_through_door", "enter_building"] {
+        let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": {} } });
+        let reply = server.post(&bot, "/mcp", call.clone()).await.ok();
+        assert!(!reply["error"].is_null() || reply["result"]["isError"] == true, "{name}: {reply}");
+    }
+}
+
+// S32, W4, W60
+
+#[tokio::test]
+async fn a_shut_door_looks_exactly_like_a_tile_with_nothing_on_it() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    let house = server.build(&ann, "house").await;
+    let empty = (0, 0);
+    let nothing = server.go_in(&stranger.key, empty).await;
+    assert_eq!(nothing.status, StatusCode::NOT_FOUND);
+
+    // Before the owner has gone in, and after: it never shows there's a room, or whose it is.
+    for _ in 0..2 {
+        let shut = server.go_in(&stranger.key, house).await;
+        assert_eq!((shut.status, shut.body.clone()), (nothing.status, nothing.body.clone()));
+        server.go_in(&ann.key, house).await.ok();
+    }
+}
+
+// S32
+
+#[tokio::test]
+async fn a_door_opens_onto_the_lowest_floor_you_can_reach() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let spot = server.build(&ann, "house").await;
+    let ground = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    let upstairs = text(&server.add_floor(&ann, &ground, "Upstairs").await.ok()["id"]);
+    let attic = text(&server.add_floor(&ann, &ground, "Attic").await.ok()["id"]);
+
+    // On the upstairs floor only, so that's where the door lets them in.
+    let bo = server.join(&ann, &upstairs, "Bo").await;
+    assert_eq!(server.go_in(&bo.key, spot).await.ok()["hangout_id"], upstairs.as_str());
+
+    // A public floor lets a stranger through, and the room page walks them in as usual.
+    let (_, stranger) = server.someone("Stranger").await;
+    server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);
+    server.open(&ann, &attic).await;
+    assert_eq!(server.go_in(&stranger.key, spot).await.ok()["hangout_id"], attic.as_str());
+    server.snapshot(&stranger.key, &attic).await.refused(StatusCode::NOT_FOUND);
+    server.walk_in(&stranger, &attic).await.ok();
+
+    // Turned out means shut, whatever is public.
+    let out = format!("/api/spaces/{ground}/people/{}/turn-out", stranger.id);
+    server.post(&ann.key, &out, json!({})).await.ok();
+    server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S33
+
+#[tokio::test]
+async fn a_new_building_on_an_old_tile_never_opens_the_old_room() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let (_, bo) = server.someone("Bo").await;
+    let spot = server.build(&ann, "house").await;
+    let anns = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    server.say(&ann.key, &anns, "Ann's private words").await.ok();
+
+    server.bulldoze(&ann, spot).await.ok();
+    // With the building gone the door is gone, even for its owner.
+    server.go_in(&ann.key, spot).await.refused(StatusCode::NOT_FOUND);
+
+    // Bo builds on the very tile, and gets Bo's own house.
+    server.place(&bo, "house", spot).await.ok();
+    let bos = text(&server.go_in(&bo.key, spot).await.ok()["hangout_id"]);
+    assert_ne!(bos, anns);
+    assert!(!server.snapshot(&bo.key, &bos).await.ok().to_string().contains("Ann's private words"));
+    server.snapshot(&bo.key, &anns).await.refused(StatusCode::NOT_FOUND);
+    // And Ann gets nothing there, and has lost nothing.
+    server.go_in(&ann.key, spot).await.refused(StatusCode::NOT_FOUND);
+    assert!(server.snapshot(&ann.key, &anns).await.ok().to_string().contains("Ann's private words"));
+}
+
+// S33: the same building is no door to a space of the wrong sort, or a stale row of someone else's.
+
+#[tokio::test]
+async fn a_stale_row_opens_nothing_for_anyone_but_a_rightful_owner() {
+    let server = Server::start().await;
+    let (third, ann) = server.someone("Ann").await;
+    let (_, bo) = server.someone("Bo").await;
+    let spot = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], third.as_str());
+
+    // As after a wipe: the row is still there, and a stranger's building stands on the tile.
+    server.bulldoze(&ann, spot).await.ok();
+    server.place(&bo, "studio", spot).await.ok();
+    assert_eq!(server.state.db.space_on_plot("commons", spot.0, spot.1).unwrap().unwrap().id, third);
+    let (stranger_room, stranger) = server.someone("Stranger").await;
+    server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);
+    server.go_in(&ann.key, spot).await.refused(StatusCode::NOT_FOUND);
+
+    // Bo's own door makes Bo's own room, and Bo's room is not Ann's.
+    let bos = text(&server.go_in(&bo.key, spot).await.ok()["hangout_id"]);
+    assert_ne!(bos, third);
+    assert_ne!(bos, stranger_room);
+    assert_eq!(server.snapshot(&bo.key, &bos).await.ok()["floor"]["space"]["owner_id"], bo.id.as_str());
+}
+
+// S35
+
+#[tokio::test]
+async fn bulldozing_keeps_the_rooms_and_the_next_building_gets_them_back() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let spot = server.build(&ann, "house").await;
+    let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    server.say(&ann.key, &room, "still here").await.ok();
+
+    server.bulldoze(&ann, spot).await.ok();
+    assert_eq!(server.get(&ann.key, "/api/spaces").await.ok()["house"]["on_map"], false);
+    assert!(Server::lines(&server.snapshot(&ann.key, &room).await.ok()).contains(&"still here".to_string()));
+
+    let moved = server.build(&ann, "house").await;
+    assert_eq!(server.go_in(&ann.key, moved).await.ok()["hangout_id"], room.as_str());
+    assert_eq!(server.get(&ann.key, "/api/spaces").await.ok()["house"]["on_map"], true);
+    // The old tile opens nothing now: a space has one door.
+    if moved != spot {
+        assert!(server.state.db.space_on_plot("commons", spot.0, spot.1).unwrap().is_none());
+    }
+}
+
+// S35: closing a third space takes its rooms and leaves its building, which can start another.
+
+#[tokio::test]
+async fn a_closed_space_leaves_its_building_standing_and_the_door_starts_again() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let spot = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], room.as_str());
+    server.delete(&ann.key, &format!("/api/spaces/{room}")).await.ok();
+    let next = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    assert_ne!(next, room);
+}
+
+// S36, W59
+
+#[tokio::test]
+async fn nothing_in_a_room_reaches_the_map() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let spot = server.build(&ann, "house").await;
+    let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    server.say(&ann.key, &room, "words that stay indoors").await.ok();
+    server.put(&ann.key, &format!("/api/spaces/{room}"), json!({ "name": "Secret Name" })).await.ok();
+
+    let code = server.invite_code(&ann, &room).await;
+    for path in ["/api/worlds/commons", "/api/worlds/commons/look", "/api/worlds"] {
+        let seen = server.get("", path).await.body.to_string();
+        for private in [room.as_str(), "Secret Name", "words that stay indoors", code.as_str(), ann.id.as_str()] {
+            assert!(!seen.contains(private), "{path} shows {private}");
+        }
+    }
+}
+
+// S37
+
+#[tokio::test]
+async fn nobody_can_try_every_door() {
+    let server = Server::start().await;
+    let (_, stranger) = server.someone("Stranger").await;
+    // A minute can turn over partway, so 61: that can't fit in two windows of 30.
+    let mut refused = 0;
+    for x in 0..61 {
+        if server.go_in(&stranger.key, (x, 0)).await.status == StatusCode::TOO_MANY_REQUESTS {
+            refused += 1;
+        }
+    }
+    assert!(refused >= 1, "every door was tried");
+    // That's their own count, and writes on a floor have a count of their own.
+    let (_, other) = server.someone("Other").await;
+    server.go_in(&other.key, (0, 0)).await.refused(StatusCode::NOT_FOUND);
 }

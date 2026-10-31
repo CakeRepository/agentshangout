@@ -18,6 +18,7 @@ use crate::{
     error::{ApiError, ApiResult},
     now,
     ops::{self, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
+    worlds::COMMONS_ID,
     AppState,
 };
 
@@ -40,11 +41,14 @@ const FLOORINGS: [&str; 4] = ["oak", "walnut", "tile", "carpet"];
 /// What an owner can leave out. The table, couch and desk stay, because where a bot stands says what
 /// it's doing.
 const FURNITURE: [&str; 5] = ["bar", "arcade", "plants", "rug", "beanbags"];
+/// S37: the doors a person can try in a minute.
+const MAX_DOORS_PER_MINUTE: u32 = 30;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/spaces", get(my_spaces))
         .route("/api/spaces/public", get(public_floors))
+        .route("/api/spaces/door", post(go_through_door))
         .route("/api/spaces/{id}", get(space_view).put(change_space).delete(close_space))
         .route("/api/spaces/{id}/floors", post(add_floor))
         .route("/api/spaces/{id}/people/{person_id}/turn-out", post(turn_out).delete(let_back))
@@ -61,6 +65,8 @@ pub fn routes() -> Router<AppState> {
 pub struct SpaceAndFloors {
     pub space: Space,
     pub floors: Vec<Floor>,
+    /// Whether its building is standing on the map (S30).
+    pub on_map: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -177,10 +183,13 @@ pub fn capacity(size: &str) -> i64 {
 
 // Starting out
 
+/// How long "'s Studio" is, which is what naming a space after someone adds to their name.
+const NAMED_AFTER_CHARS: usize = 9;
+
 /// S2: a person's house, built if they have none. Doing it here rather than at sign-up gives one to
 /// accounts from before spaces, and to nobody who never looks.
 fn house_of(state: &AppState, caller: &Caller) -> ApiResult<Space> {
-    let name: String = caller.name.chars().take(MAX_NAME_CHARS - 8).collect();
+    let name: String = caller.name.chars().take(MAX_NAME_CHARS - NAMED_AFTER_CHARS).collect();
     Ok(state.db.ensure_house(
         &auth::new_id(),
         &format!("{name}'s House"),
@@ -191,7 +200,7 @@ fn house_of(state: &AppState, caller: &Caller) -> ApiResult<Space> {
 }
 
 fn with_floors(state: &AppState, space: Space) -> ApiResult<SpaceAndFloors> {
-    Ok(SpaceAndFloors { floors: state.db.floors_of(&space.id)?, space })
+    Ok(SpaceAndFloors { floors: state.db.floors_of(&space.id)?, on_map: stands_on_map(state, &space)?, space })
 }
 
 async fn my_spaces(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<MySpaces>> {
@@ -226,6 +235,104 @@ async fn public_floors(State(state): State<AppState>, caller: Caller) -> ApiResu
         floor.capacity = capacity(&floor.size);
     }
     Ok(Json(json!({ "floors": floors })))
+}
+
+// The door between a building and its rooms (S30 to S37). This is the one place a world touches a
+// room (W60), and it goes one way: nothing here changes the map, and the world never reads this.
+
+/// What stands on a plot: its kind and the person whose it is.
+type Building = (String, Option<String>);
+
+/// S33: whether this building is still the way into this space. A row in `space_plots` proves
+/// nothing alone, because after a bulldoze or a wipe someone else's building can stand on that tile.
+fn is_door_to(building: &Building, space: &Space) -> bool {
+    building.1.as_deref() == Some(space.owner_id.as_str())
+        && (building.0 == "house") == (space.kind == "house")
+}
+
+fn stands_on_map(state: &AppState, space: &Space) -> ApiResult<bool> {
+    let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
+        return Ok(false);
+    };
+    Ok(state.db.building_at(COMMONS_ID, x, y)?.is_some_and(|building| is_door_to(&building, space)))
+}
+
+/// S34: the third space a new building opens onto: the oldest with no building standing, or a new
+/// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
+fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> ApiResult<Space> {
+    for space in state.db.third_spaces_of(&caller.person_id)? {
+        if !stands_on_map(state, &space)? {
+            return Ok(space);
+        }
+    }
+    let kind = match kind {
+        "cafe" => "Café",
+        "club" => "Club",
+        _ => "Studio",
+    };
+    let name: String = caller.name.chars().take(MAX_NAME_CHARS - NAMED_AFTER_CHARS).collect();
+    let id = auth::new_id();
+    state
+        .db
+        .start_third_space(
+            &id,
+            &format!("{name}'s {kind}"),
+            &auth::new_invite_code(),
+            &caller.person_id,
+            now(),
+            MAX_THIRD_SPACES,
+        )?
+        .ok_or_else(|| ApiError::conflict(format!("you have {MAX_THIRD_SPACES} third spaces")))?;
+    state.db.space(&id)?.ok_or_else(ApiError::not_found)
+}
+
+#[derive(Deserialize)]
+struct Door {
+    x: i64,
+    y: i64,
+}
+
+/// S31: for people only, so a bot's token gets what a token nobody knows gets. S32: anyone who can't
+/// go in gets the same answer as for a tile with nothing on it.
+async fn go_through_door(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<Door>,
+) -> ApiResult<Json<Value>> {
+    if caller.is_agent() {
+        return Err(ApiError::unauthorized());
+    }
+    if !state.allow_writes(&format!("door:{}", caller.person_id), MAX_DOORS_PER_MINUTE) {
+        return Err(ApiError::too_many_requests(format!(
+            "slow down: {MAX_DOORS_PER_MINUTE} doors a minute"
+        )));
+    }
+    let building =
+        state.db.building_at(COMMONS_ID, body.x, body.y)?.ok_or_else(ApiError::not_found)?;
+    let found = state
+        .db
+        .space_on_plot(COMMONS_ID, body.x, body.y)?
+        .filter(|space| is_door_to(&building, space));
+    let space = match found {
+        Some(space) => space,
+        // S34: only here does a door make anything, and only for the person whose building it is.
+        None if building.1.as_deref() == Some(caller.person_id.as_str()) => {
+            let space = match building.0.as_str() {
+                "house" => house_of(&state, &caller)?,
+                kind => third_space_for_building(&state, &caller, kind)?,
+            };
+            state.db.set_plot(COMMONS_ID, body.x, body.y, &space.id)?;
+            space
+        }
+        None => return Err(ApiError::not_found()),
+    };
+    let turned_out = state.db.is_turned_out(&space.id, &caller.person_id)?;
+    for floor in state.db.floors_of(&space.id)? {
+        if state.in_room(&caller, &floor.id)? || (floor.access == "public" && !turned_out) {
+            return Ok(Json(json!({ "hangout_id": floor.id })));
+        }
+    }
+    Err(ApiError::not_found())
 }
 
 // A room's place in its space

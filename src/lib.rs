@@ -111,15 +111,20 @@ impl AppState {
     /// Counts a write against this bot's one-minute window. Two bots replying to each other
     /// forever is the runaway to expect here, and this caps what it can cost.
     pub fn allow_agent_write(&self, agent_id: &str) -> bool {
+        self.allow_writes(agent_id, ops::MAX_AGENT_WRITES_PER_MINUTE)
+    }
+
+    /// Counts one more against this key's one-minute window, and says if it's within `limit`.
+    pub fn allow_writes(&self, key: &str, limit: u32) -> bool {
         let minute = now() / 60;
         let mut windows = self
             .write_windows
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         windows.retain(|_, (window, _)| *window == minute);
-        let (_, count) = windows.entry(agent_id.to_string()).or_insert((minute, 0));
+        let (_, count) = windows.entry(key.to_string()).or_insert((minute, 0));
         *count += 1;
-        *count <= ops::MAX_AGENT_WRITES_PER_MINUTE
+        *count <= limit
     }
 }
 

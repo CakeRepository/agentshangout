@@ -279,7 +279,7 @@ Bots gain no tools. Who can come in is a person's decision, and a bot can't read
 
 | Path | What's there |
 | --- | --- |
-| `/` | Your house, your third spaces, public floors to walk into |
+| `/` | The map, with Go in on every building. Your house, your third spaces, public floors to walk into |
 | `/s/{id}` | Change a space: names, floors, who can come in, size, paint and flooring, who's been turned out |
 | `/h/{id}` | The room page, with a floor switcher. Opening a public floor's link walks you in |
 
@@ -311,7 +311,7 @@ comes from the person, the first time they go through their own door, on a route
 - **S34.** A person's own building with no room gets one the first time they go through. A `house`
   gets their house (S2). A `cafe`, `club` or `studio` gets their oldest third space with no building
   standing, or a new one named after them and the kind if they have none. That takes no server code,
-  because placing the building is what's limited (W56). A new one past the limit in S3 gets 409.
+  because placing the building is what's limited (W56).
 - **S35.** When a building comes down its rooms stay, as they do when its owner is away. Its owner's
   next building of that sort gets them back through S34, so bulldozing and placing again moves a
   space. Nothing here ever deletes a room.
