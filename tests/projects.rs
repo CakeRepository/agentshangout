@@ -181,6 +181,32 @@ impl Server {
         worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
     }
 
+    /// A place put up at a time of the test's choosing, through its person's own player.
+    fn place_at(&self, who: &Who, kind: &str, at: i64) -> (i64, i64) {
+        let player = self.state.db.own_player(&who.id, at).unwrap();
+        let (x, y) = self.free_spots()[0];
+        let mv = Move { action: "place".into(), x: Some(x), y: Some(y), x2: None, y2: None, kind: Some(kind.into()), emote: None };
+        worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
+        (x, y)
+    }
+
+    /// A bot's owner gives it every hour of every day, with public places on or off.
+    async fn all_day(&self, owner: &Who, token: &str, public_places: bool) {
+        let agent_id = text(&self.get(token, "/api/me").await.ok()["agent_id"]);
+        let body = json!({ "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "starts": "00:00", "ends": "24:00", "public_places": public_places });
+        self.put(&owner.key, &format!("/api/agents/{agent_id}/routine"), body).await.ok();
+    }
+
+    /// The bots The Commons shows at places, by name, after the pause that lets a change show (W29).
+    async fn bots_out(&self) -> Vec<(String, i64, i64)> {
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let view = self.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+        view["bots_out"]
+            .as_array()
+            .map(|rows| rows.iter().map(|row| (text(&row[0]), row[1].as_i64().unwrap(), row[2].as_i64().unwrap())).collect())
+            .unwrap_or_default()
+    }
+
     fn tile(&self, (x, y): (i64, i64)) -> Option<Kind> {
         self.state.db.world_tiles(COMMONS).unwrap().get(&(x as u16, y as u16)).map(|tile| tile.kind)
     }
@@ -285,4 +311,54 @@ async fn a_bot_reads_its_projects_in_inbox() {
     assert!(listed["studio"].is_null());
     let rover = server.tool(&town.rover, "inbox", json!({})).await;
     assert_eq!(rover["your_projects"][0]["started_by_you"], false);
+}
+
+/// Whether a bot is shown by name next to a place.
+fn shown_at(out: &[(String, i64, i64)], name: &str, (x, y): (i64, i64)) -> bool {
+    out.iter().any(|(shown, bx, by)| shown == name && (bx - x).abs() + (by - y).abs() <= 1)
+}
+
+// L17
+#[tokio::test]
+async fn in_its_hours_a_bot_is_shown_by_name_at_its_projects_studio() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let spot = server.free_spots()[0];
+    server.tool(&town.fern, "build_studio", json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 })).await;
+
+    // No social hours, so it isn't shown.
+    assert!(!shown_at(&server.bots_out().await, "Fern", spot));
+    server.all_day(&town.ann, &town.fern, true).await;
+    assert!(shown_at(&server.bots_out().await, "Fern", spot), "{:?}", server.bots_out().await);
+    // Public places off keeps its name and where it is off the map.
+    server.all_day(&town.ann, &town.fern, false).await;
+    assert!(server.bots_out().await.iter().all(|(name, _, _)| name != "Fern"));
+}
+
+// L17
+#[tokio::test]
+async fn a_bot_that_went_out_is_shown_by_name_at_that_place_and_nobody_else_is() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    // Cy's public floor goes in by a cafe, which comes a week after a house.
+    let (_, cy) = server.someone("Cy2").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let cafe_spot = server.place_at(&cy, "cafe", now());
+    let door = server.post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 })).await.ok();
+    let floor = text(&door["hangout_id"]);
+    server.put(&cy.key, &format!("/api/floors/{floor}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+
+    server.all_day(&town.bo, &town.rover, true).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": floor })).await;
+    let out = server.bots_out().await;
+    assert!(shown_at(&out, "Rover", cafe_spot), "{out:?}");
+    assert!(out.iter().all(|(name, _, _)| name == "Rover"), "nobody else, and no person: {out:?}");
+
+    // Sent in by its owner with public places off, it isn't shown.
+    server.tool(&town.rover, "come_back", json!({})).await;
+    server.all_day(&town.bo, &town.rover, false).await;
+    server.post(&town.bo.key, &format!("/api/floors/{floor}/walk-in"), json!({ "agent_id": town.rover_id })).await.ok();
+    assert!(server.bots_out().await.is_empty());
 }

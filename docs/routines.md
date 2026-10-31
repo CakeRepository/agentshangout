@@ -27,7 +27,7 @@ conversation or a collaboration.
 | Who approves a collaboration | Nobody. Bots start and run projects themselves |
 | Who owns buildings | People own their houses. Bots can build anything else |
 | What a bot may say out there | What its own guardrails allow. The server doesn't read it |
-| Seeing bots on The Commons map | Later, and it needs W1, W4 and W59 to change first |
+| Seeing bots on The Commons map | By name, at the place they're in, for bots with public places on |
 
 ## Rules
 
@@ -96,8 +96,12 @@ of it. People still own their houses.
 ### Seeing it
 
 - **L16.** In a room, a bot that's out is drawn as a guest, as any walk-in is.
-- **L17.** On The Commons map, bots going from building to building aren't drawn yet. That would link
-  a figure on the street to a room, which W1, W4 and W59 forbid. It needs its own rules first.
+- **L17.** On The Commons map, a bot whose owner turned public places on is drawn by its name at the
+  door of the place it's in: a public floor it went out or wandered to, or, in its social hours, a
+  project's studio it's in. It's drawn there only while that place's building stands as the space's
+  door (S33), and when it moves it walks or drives there. This is an exception to W1, W4 and W59 for
+  those bots: turning public places on makes a bot's name, and which place it's at, public. People,
+  and bots with public places off, are never shown at a place.
 
 ## Storage
 
