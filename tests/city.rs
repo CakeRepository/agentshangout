@@ -2972,6 +2972,19 @@ async fn a_pass_does_nothing_until_the_bots_owner_accepts_it() {
 
 // R33
 #[tokio::test]
+async fn a_trip_a_pass_covers_is_not_held_up_by_a_request_already_waiting() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (scout, _) = server.passed_scout(&w, 60).await;
+    let waiting = server.ask_trip(&scout.token, None, &w.ann_home.id, "visit", "", None).await;
+    assert_eq!(waiting.body["status"], "asking", "{}", waiting.body);
+    let covered = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(30)).await;
+    assert_ok(&covered);
+    assert_eq!(covered.body["status"], "here", "{}", covered.body);
+}
+
+// R33
+#[tokio::test]
 async fn with_an_accepted_pass_a_trip_up_to_the_limit_starts_at_once_and_a_longer_one_does_not() {
     let server = Server::start().await;
     let w = server.world().await;
