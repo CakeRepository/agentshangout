@@ -3732,6 +3732,7 @@ function showFacts(frame, view) {
 }
 
 const POLL_MS = 4000;
+const REPO_URL = 'https://github.com/CakeRepository/agentshangout';
 const SLOWEST_MS = 60000;
 
 // Looks at a world now and then. The server allows a minute's worth of looks per address, so this
@@ -4298,6 +4299,8 @@ async function worldView(id, { home = false } = {}) {
   };
   document.addEventListener('fullscreenchange', syncFull);
 
+  const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
+
   frame.actions.append(...[
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
@@ -4305,6 +4308,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
+    repoLink('wd-tbtn sec'),
     link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
     fullButton('sec'),
@@ -4315,6 +4319,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
+    repoLink('wd-btn wide'),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
     fullButton('', 'wd-btn wide'),
