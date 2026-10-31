@@ -589,7 +589,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S37, with their routes and the door from the map |
-| `docs/wipe-old-hangouts.sql` | Deletes the hangouts from before spaces. Only a person runs it: see `docs/spaces.md` |
+| `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |

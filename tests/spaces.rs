@@ -4,11 +4,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use agenthangout::{
-    app,
-    db::{Db, NewCity, NewHouse},
-    now, spaces, worlds, AppState, Config,
-};
+use agenthangout::{app, db::Db, now, spaces, worlds, AppState, Config};
 use reqwest::{Client, Method, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -63,11 +59,15 @@ fn names(list: &Value) -> Vec<String> {
 
 impl Server {
     async fn start() -> Self {
+        Self::on(Db::open(":memory:").unwrap()).await
+    }
+
+    async fn on(db: Db) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let base = format!("http://127.0.0.1:{port}");
-        // The keeper has to exist before the server does, so they're made here.
-        let db = Db::open(":memory:").unwrap();
+        // The keeper has to exist before the server does, so they're made here. A server starting
+        // again on the same file finds them there already.
         let keeper_key = "keeper-key".to_string();
         let keeper_id = "keeper".to_string();
         db.create_person(
@@ -77,7 +77,7 @@ impl Server {
             "keeper-feed",
             now(),
         )
-        .unwrap();
+        .ok();
         let state = AppState::new(
             db,
             Config {
@@ -1288,108 +1288,161 @@ async fn the_page_that_changes_a_space_is_served_to_anyone_and_holds_nothing_but
     assert!(!page.body.to_string().contains("Ann"), "{}", page.body);
 }
 
-// docs/spaces.md, Deleting the old hangouts: a person runs this script, once, on the live database, and
-// it can't be taken back, so it has to take exactly what it says.
+// docs/spaces.md, Starting fresh: a person runs this script on the live database and it can't be taken
+// back, so it has to take exactly what it says and leave a site that still works.
 
-#[test]
-fn the_wipe_takes_the_old_hangouts_and_nothing_else() {
+/// The SQL the script runs, exactly as it's written there.
+fn wipe_sql() -> String {
+    let script = include_str!("../docs/wipe-all-hangouts.sh").replace("\r\n", "\n");
+    let (_, rest) = script.split_once("<<'SQL'\n").expect("the script has its SQL");
+    let (sql, _) = rest.split_once("\nSQL\n").expect("the SQL ends");
+    sql.to_string()
+}
+
+/// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
+/// escape it by nobody remembering.
+const KEPT_BY_THE_WIPE: [&str; 18] = [
+    "people", "passkey_users", "passkeys", "sessions", "agents", "agent_activity", "agent_doorbell",
+    "notify_targets", "free_sharing", "free_windows", "house_plan_sharing", "worlds", "world_tiles",
+    "world_buildings", "world_players", "world_members", "players", "crawler_sightings",
+];
+
+#[tokio::test]
+async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_working_site() {
     let path = std::env::temp_dir().join(format!("spaces-wipe-{}.db", std::process::id()));
     let path_text = path.to_str().unwrap().to_string();
-    let db = Db::open(&path_text).unwrap();
-    db.create_person("ann", "Ann", "hash", "feed", 100).unwrap();
-    db.create_hangout("space", "A space", "code-space", "ann", 100).unwrap();
-    db.create_city(&NewCity {
-        id: "city",
-        name: "Elm",
-        invite_code: "code-city",
-        square_id: "square",
-        square_code: "code-square",
-        created_by: "ann",
-        now: 100,
-    })
-    .unwrap();
-    db.create_house(&NewHouse {
-        id: "house",
-        city_id: "city",
-        name: "Ann's",
-        invite_code: "code-house",
-        living_room_id: "living",
-        living_room_code: "code-living",
-        porch_id: "porch",
-        porch_code: "code-porch",
-        created_by: "ann",
-        now: 100,
-    })
-    .unwrap();
-    db.create_agent("bot", "ann", "Scout", "bot-hash", 100).unwrap();
-    db.add_agent_to_room("space", "bot").unwrap();
-    drop(db);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{path_text}{suffix}"));
+    }
+    let server = Server::on(Db::open(&path_text).unwrap()).await;
 
-    // A room from before spaces, with something of everything in it. The older binary wrote these.
-    let connection = Connection::open(&path).unwrap();
-    connection
-        .execute_batch(
-            "INSERT INTO hangouts (id, name, invite_code, created_by, created_at) VALUES ('old', 'Old', 'code-old', 'ann', 50);
-             INSERT INTO members (hangout_id, person_id, joined_at) VALUES ('old', 'ann', 50);
-             INSERT INTO room_agents (hangout_id, agent_id) VALUES ('old', 'bot');
-             INSERT INTO messages (hangout_id, speaker, kind, body, created_at) VALUES ('old', 'Ann', 'chat', 'old words', 50);
-             INSERT INTO messages (hangout_id, speaker, kind, body, created_at) VALUES ('space', 'Ann', 'chat', 'new words', 150);
-             INSERT INTO events (id, hangout_id, title, starts_at, ends_at, status, min_yes, proposed_by, proposer, created_at, updated_at)
-                VALUES ('plan', 'old', 'Tacos', 200, 300, 'confirmed', 1, 'ann', 'Ann', 50, 50);
-             INSERT INTO rsvps (event_id, person_id, response, updated_at) VALUES ('plan', 'ann', 'yes', 50);
-             INSERT INTO check_ins (id, hangout_id, asked_by, asker, about, needs_human, status, expires_at, created_at)
-                VALUES ('check', 'old', 'ann', 'Ann', 'Go?', 0, 'waiting', 60, 50);
-             INSERT INTO friend_invites (id, kind, place_id, from_person, to_person, created_at) VALUES ('to-old', 'room', 'old', 'ann', 'ann', 50);
-             INSERT INTO friend_invites (id, kind, place_id, from_person, to_person, created_at) VALUES ('to-city', 'city', 'city', 'ann', 'ann', 50);",
-        )
-        .unwrap();
-    drop(connection);
+    // Rooms and floors, with something of everything in them, through the real routes.
+    let (room, ann) = server.someone("Ann").await;
+    let upstairs = text(&server.add_floor(&ann, &room, "Upstairs").await.ok()["id"]);
+    let room_code = server.invite_code(&ann, &room).await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let (_, scout_token) = server.bot(&ann, &room, "Scout").await;
+    server.say(&ann.key, &room, "gone after the wipe").await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a note" })).await.ok();
+    let plan = json!({ "title": "Tacos", "starts_at": LATER });
+    let event = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
+    server.post(&ann.key, &format!("/api/events/{event}/items"), json!({ "text": "Salsa" })).await.ok();
+    server.post(&ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": "Go?" })).await.ok();
+    let question = json!({ "question": "May I?" });
+    server.post(&scout_token, &format!("/api/hangouts/{room}/owner-questions"), question).await.ok();
+    let invite = json!({ "person_id": bo.id });
+    server.post(&ann.key, &format!("/api/hangouts/{upstairs}/invite-friend"), invite).await.ok();
 
-    let script = include_str!("../docs/wipe-old-hangouts.sql");
-    // Run as the sqlite3 command would, on a connection that starts with foreign keys off.
+    // Your house, a building on the map, a public floor with someone on it and someone turned out.
+    let own_house = text(&server.get(&ann.key, "/api/spaces").await.ok()["house"]["space"]["id"]);
+    let spot = server.build(&ann, "house").await;
+    assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], own_house.as_str());
+    server.open(&ann, &own_house).await;
+    let (_, stranger) = server.someone("Stranger").await;
+    let (_, nuisance) = server.someone("Nuisance").await;
+    server.walk_in(&stranger, &own_house).await.ok();
+    server.walk_in(&nuisance, &own_house).await.ok();
+    server.post(&ann.key, &format!("/api/spaces/{own_house}/people/{}/turn-out", nuisance.id), json!({})).await.ok();
+
+    // A city, with two households, a bot that stays home, a house bot, a scene, and a trip that came.
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+        .await
+        .ok();
+    let cy = who(&made);
+    let city = text(&made["city"]["id"]);
+    let square = text(&made["city"]["square_id"]);
+    let city_code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
+    server.put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" })).await.ok();
+    let home = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" })).await.ok();
+    let (house, living) = (text(&home["house"]["id"]), text(&home["living_room_id"]));
+    let (keys, keys_token) = server.bot(&cy, &living, "Keys").await;
+    let stays = json!({ "house_id": house, "stays_home": true });
+    server.put(&cy.key, &format!("/api/agents/{keys}/home"), stays).await.ok();
+    let house_bot = server.post(&cy.key, &format!("/api/houses/{house}/house-bot"), json!({ "name": "Home" })).await.ok();
+    let house_token = text(&house_bot["token"]);
+    server.post(&cy.key, &format!("/api/houses/{house}/scenes"), json!({ "name": "Movie Night" })).await.ok();
+    let joined = server
+        .post("", &format!("/api/city-invites/{city_code}/join"), json!({ "your_name": "Kim", "accept_rules": true }))
+        .await
+        .ok();
+    let kim = who(&joined);
+    let kims = server.post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" })).await.ok();
+    let (visitor, _) = server.bot(&kim, &text(&kims["living_room_id"]), "Visitor").await;
+    let trip = json!({ "agent_id": visitor, "house_id": house, "kind": "call" });
+    let trip = text(&server.post(&kim.key, "/api/trips", trip).await.ok()["id"]);
+    server.post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
+
     let connection = Connection::open(&path).unwrap();
-    connection.pragma_update(None, "foreign_keys", false).unwrap();
-    connection.execute_batch(script).unwrap();
     let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
+    let rows = |table: &str| count(&format!("SELECT COUNT(*) FROM {table}"));
+    // Proof that the test built what it's about to delete.
+    for table in [
+        "hangouts", "members", "room_agents", "messages", "events", "rsvps", "plan_items", "plan_invites",
+        "check_ins", "owner_questions", "friend_invites", "spaces", "floors", "floor_visits", "turned_out",
+        "space_plots", "cities", "city_members", "houses", "residents", "bot_homes", "trips", "scenes",
+        "entry_rules",
+    ] {
+        assert!(rows(table) > 0, "the test never made a row in {table}");
+    }
+    let (people, bots) = (rows("people"), rows("agents"));
 
-    let mut rooms: Vec<String> = connection
-        .prepare("SELECT id FROM hangouts")
+    // As the sqlite3 command would run it: a new connection, with foreign keys off until it says.
+    connection.pragma_update(None, "foreign_keys", false).unwrap();
+    connection.execute_batch(&wipe_sql()).unwrap();
+
+    let tables: Vec<String> = connection
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
         .unwrap()
         .query_map([], |row| row.get(0))
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    rooms.sort();
-    assert_eq!(rooms, ["living", "porch", "space", "square"]);
-    for leftover in [
-        "SELECT COUNT(*) FROM messages WHERE hangout_id = 'old'",
-        "SELECT COUNT(*) FROM events",
-        "SELECT COUNT(*) FROM rsvps",
-        "SELECT COUNT(*) FROM check_ins",
-        "SELECT COUNT(*) FROM members WHERE hangout_id = 'old'",
-        "SELECT COUNT(*) FROM room_agents WHERE hangout_id = 'old'",
-        "SELECT COUNT(*) FROM friend_invites WHERE id = 'to-old'",
-    ] {
-        assert_eq!(count(leftover), 0, "{leftover}");
+    for table in KEPT_BY_THE_WIPE {
+        assert!(tables.iter().any(|name| name == table), "{table} isn't a table any more");
     }
-    for kept in [
-        "SELECT COUNT(*) FROM people",
-        "SELECT COUNT(*) FROM agents",
-        "SELECT COUNT(*) FROM spaces",
-        "SELECT COUNT(*) FROM cities",
-        "SELECT COUNT(*) FROM houses",
-        "SELECT COUNT(*) FROM friend_invites WHERE id = 'to-city'",
-        "SELECT COUNT(*) FROM messages WHERE body = 'new words'",
-        "SELECT COUNT(*) FROM room_agents WHERE hangout_id = 'space'",
-    ] {
-        assert_eq!(count(kept), 1, "{kept}");
+    for table in tables.iter().filter(|table| !KEPT_BY_THE_WIPE.contains(&table.as_str())) {
+        assert_eq!(rows(table), 0, "{table} should be empty, or be on the list of what stays");
     }
-
-    // Running it again finds nothing more to take, and the database still opens.
-    connection.execute_batch(script).unwrap();
-    assert_eq!(count("SELECT COUNT(*) FROM hangouts"), 4);
+    assert_eq!(rows("people"), people, "every account stays");
+    assert_eq!(rows("agents"), bots - 1, "only the house bot goes");
+    let broken = connection.prepare("PRAGMA foreign_key_check").unwrap().query_map([], |_| Ok(())).unwrap().count();
+    assert_eq!(broken, 0, "nothing should point at something deleted");
+    // Running it twice does no harm.
+    connection.execute_batch(&wipe_sql()).unwrap();
     drop(connection);
-    Db::open(&path_text).unwrap();
+
+    // A new server starts on what's left, and the site works.
+    let after = Server::on(Db::open(&path_text).unwrap()).await;
+    let me = after.get(&ann.key, "/api/me").await.ok();
+    assert_eq!((me["hangouts"].clone(), me["cities"].clone(), me["houses"].clone()), (json!([]), json!([]), json!([])));
+    assert_eq!(after.get(&cy.key, "/api/me").await.ok()["cities"], json!([]));
+
+    // Every old room and link is a 404.
+    for gone in [&room, &upstairs, &own_house, &square, &living] {
+        after.snapshot(&ann.key, gone).await.refused(StatusCode::NOT_FOUND);
+    }
+    after.get("", &format!("/api/invites/{room_code}")).await.refused(StatusCode::NOT_FOUND);
+    after.get("", &format!("/api/city-invites/{city_code}")).await.refused(StatusCode::NOT_FOUND);
+    after.get(&ann.key, &format!("/api/events/{event}/ics")).await.refused(StatusCode::NOT_FOUND);
+
+    // A bot stays, in no room. The house bot is gone, so its token is one nobody knows.
+    assert_eq!(after.get(&scout_token, "/api/me").await.ok()["hangouts"], json!([]));
+    assert_eq!(after.get(&keys_token, "/api/me").await.ok()["hangouts"], json!([]));
+    after.get(&house_token, "/api/me").await.refused(StatusCode::UNAUTHORIZED);
+
+    // A person starts again: a new house, which their building on the map still opens onto.
+    let fresh = after.get(&ann.key, "/api/spaces").await.ok();
+    let new_house = text(&fresh["house"]["space"]["id"]);
+    assert_ne!(new_house, own_house);
+    assert_eq!(fresh["third"], json!([]));
+    assert_eq!(fresh["house"]["on_map"], false);
+    assert_eq!(after.go_in(&ann.key, spot).await.ok()["hangout_id"], new_house.as_str());
+    after.say(&ann.key, &new_house, "starting fresh").await.ok();
+
+    drop(after);
+    drop(server);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{path_text}{suffix}"));
     }

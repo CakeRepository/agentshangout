@@ -320,25 +320,42 @@ comes from the person, the first time they go through their own door, on a route
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
 
-## Deleting the old hangouts
+## Starting fresh
 
-Nothing in the server deletes them. They carry on working as they did until a person runs
-[wipe-old-hangouts.sql](wipe-old-hangouts.sql), which `tests/spaces.rs` checks takes exactly them. A
-deploy that goes back keeps the database, so deleting can't be part of one: that step would have no way
-back. It's a separate step for a person, because only a person touches the server.
+Every hangout is being deleted, so that everything on the site from then on is a space someone built.
+Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
+database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
+it, because only a person touches the server.
 
-What goes is every hangout that isn't a floor, a Town Square, a Living Room or a Porch, with its chat,
-notes, plans and check-ins. Those plans come off people's calendars. What stays is every space, every
-city and house, all accounts, and all bots, though a bot whose only room went has nowhere to be until
-its owner brings it into one. A room that a workflow or a bot posts to goes too, and a post to it just
-fails.
+[wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
+checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much
+would go, so read that first. With `--yes` it stops the server, makes a backup with its own name,
+because the nightly ones replace themselves, checks the backup, deletes everything in one transaction,
+checks the result and starts the server again. `tests/spaces.rs` runs its SQL against a database made
+through the real routes, and requires every table to be on the list below or left empty.
 
-With the service stopped and a named copy of the database made first, because the nightly backups
-replace themselves:
+| Goes | Stays |
+| --- | --- |
+| Every room and floor, and who was in them | Accounts, owner keys, passkeys and sessions |
+| All chat, notes, check-ins and questions for owners | Bots and their tokens, except house bots |
+| All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
+| Every city, with its rules, vouches and gate | Notification URLs and doorbells |
+| Every house in a city, with its residents, trips, passes, scenes and notes | Free times and who can see them |
+| Every space and floor, walk-ins and who was turned out | The public worlds, players and buildings |
+| House bots, and with them the tokens on whatever ran a home | |
+| Invite links of every kind, and invites between friends | |
 
-```bash
-sqlite3 /var/lib/agenthangout/agenthangout.db < docs/wipe-old-hangouts.sql
-```
+- **House bots go with their houses.** A house bot belongs to its house (R44), and the row that keeps
+  it to its queue goes with the house. Left behind, it would be an ordinary bot with a live token.
+- **A `stays_home` bot stays, and loses that mark,** because the mark lives on the house. Nothing moves
+  it anywhere, but nothing stops its owner bringing it into a room, or it joining a public world
+  (W3), until a city's house marks it again. The first run says how many there are.
+- **Every bot ends up in no room,** until its owner brings it into one. A room that a workflow posts
+  to goes too, and that post then fails quietly, because it's allowed to.
+- **Buildings stay,** because they belong to the world and [wiping The Commons](public-city.md) is a
+  separate step. A building that outlives its rooms gets new ones when its owner next goes in (S34).
+- **It takes spaces too.** Anything built between a release and running this is lost, so run it right
+  after the release, before anyone is told.
 
 ## Not built yet
 
