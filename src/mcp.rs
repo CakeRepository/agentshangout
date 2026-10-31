@@ -443,6 +443,21 @@ fn resolve_hangout(state: &AppState, caller: &Caller, args: &Value) -> ApiResult
     }
 }
 
+/// A list of names from the arguments, or nothing if it's left out. Anything else is refused, so a
+/// bad list can't quietly turn into asking about the wrong people.
+fn names_arg(args: &Value, name: &str) -> ApiResult<Option<Vec<String>>> {
+    let refused = || ApiError::bad_request(format!("{name} has to be a list of names"));
+    match &args[name] {
+        Value::Null => Ok(None),
+        Value::Array(names) => names
+            .iter()
+            .map(|entry| entry.as_str().map(str::to_string).ok_or_else(refused))
+            .collect::<ApiResult<Vec<_>>>()
+            .map(Some),
+        _ => Err(refused()),
+    }
+}
+
 fn calendar_json(snapshot: &ops::Snapshot) -> Vec<Value> {
     let person_name = |id: &str| {
         snapshot
@@ -807,12 +822,7 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         }
         "find_a_time" => {
             let city_id = resolve_city(state, caller, args)?;
-            let input = FindTime {
-                with: args["with"].as_array().map(|names| {
-                    names.iter().filter_map(Value::as_str).map(str::to_string).collect()
-                }),
-                minutes: args["minutes"].as_i64(),
-            };
+            let input = FindTime { with: names_arg(args, "with")?, minutes: args["minutes"].as_i64() };
             let found = closeness::find_a_time(state, caller, &city_id, &input)?;
             Ok(json!({
                 "trust_note": CITY_TRUST_NOTE,

@@ -208,7 +208,8 @@ fn shares_with(state: &AppState, them: &str, you: &str) -> ApiResult<bool> {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct FindTime {
-    /// Names or ids of people in the city. Left out, it means everyone else in your house (F34).
+    /// Names or ids of people in the city. Left out or empty, it means everyone else in your house
+    /// (F34).
     pub with: Option<Vec<String>>,
     pub minutes: Option<i64>,
 }
@@ -230,7 +231,7 @@ fn people_asked_about(
     input: &FindTime,
 ) -> ApiResult<Vec<Person>> {
     let everyone = state.db.city_members(city_id)?;
-    let Some(asked) = &input.with else {
+    let Some(asked) = input.with.as_deref().filter(|asked| !asked.is_empty()) else {
         let house = state.db.house_of_person_in_city(city_id, &caller.person_id)?.ok_or_else(|| {
             ApiError::bad_request("your owner doesn't live in a house here, so say who with `with`")
         })?;
