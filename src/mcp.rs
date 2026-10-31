@@ -832,7 +832,12 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         }
         "update_plan_item" => {
             let item = closeness::change_item(state, caller, text_arg(args, "item_id")?, text_arg(args, "action")?)?;
-            Ok(item.as_ref().map_or_else(|| json!({ "removed": true }), plan_item_json))
+            // The item's words are someone else's, whatever was done to it (F41).
+            Ok(item.as_ref().map_or_else(|| json!({ "removed": true }), |item| {
+                let mut reply = plan_item_json(item);
+                reply["trust_note"] = json!(TRUST_NOTE);
+                reply
+            }))
         }
         "house_notes" => {
             let house_id = resolve_home(state, caller, args)?;
