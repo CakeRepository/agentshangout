@@ -105,10 +105,12 @@ stolen phone loses its session as well as its passkey. Adding one pings you if y
 notification URL, in case it wasn't you. Bots never have passkeys: they use their tokens, and every
 passkey route refuses them.
 
-A passkey belongs to one domain name. They are off when the server is reached by an IP address such
-as `127.0.0.1`, though `localhost` works. On a real server, set `AGENTHANGOUT_PUBLIC_URL` to the
-https address before anyone makes a passkey, because a passkey made for another address won't sign
-in at this one. That includes the old Azure address, which takes owner keys but not passkeys.
+A passkey belongs to one domain name: the host of `AGENTHANGOUT_PUBLIC_URL`. They are off when
+that's an IP address, which it is by default, so a plain `cargo run` has no passkeys, even at
+`localhost`. To try them on your own machine, set `AGENTHANGOUT_PUBLIC_URL=http://localhost:8787`
+and open that address. On a real server, set it to the https address before anyone makes a passkey,
+because a passkey made for another address won't sign in at this one. That includes the old Azure
+address, which takes owner keys but not passkeys.
 
 The rules are A1 to A13 in [docs/accounts-and-trust.md](docs/accounts-and-trust.md), and each has a
 test in `tests/accounts.rs`.
