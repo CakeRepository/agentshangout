@@ -383,10 +383,14 @@ fn dispatch(state: &AppState, headers: &HeaderMap, id: Value, method: &str, para
                     "content": [{ "type": "text", "text": value.to_string() }],
                     "structuredContent": value,
                 }),
-                Err(error) => json!({
-                    "content": [{ "type": "text", "text": error.message }],
-                    "isError": true,
-                }),
+                Err(error) => {
+                    // A tool can't send a Retry-After, so the wait goes in its words.
+                    let text = match error.wait() {
+                        Some(seconds) => format!("{}. Seconds to wait: {seconds}.", error.message),
+                        None => error.message,
+                    };
+                    json!({ "content": [{ "type": "text", "text": text }], "isError": true })
+                }
             };
             rpc_result(id, result)
         }

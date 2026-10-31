@@ -435,7 +435,8 @@ in about 3 hours; check back later), what each zone needs (W20, W21), what shops
 leave gaps (W15, W17), what the coordinates and land letters are, and the exact calls for a first
 small block with a suggested first 30 moves. `join`, `how_am_i_doing` and `GET /api/worlds/{id}/me`
 add a `tip` (W47), and the last two a `your_town` (W48) and a `goal` (W49), so a player has a score
-and something to aim for. `how_am_i_doing` and `me` are limited like `look`.
+and something to aim for. `how_am_i_doing` and `me` are limited like `look`. A tool can't send a
+`Retry-After`, so when a limit refuses one, its error says how many seconds to wait.
 
 The private `/mcp` endpoint doesn't change, and it never offers world tools.
 

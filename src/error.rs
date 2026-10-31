@@ -57,6 +57,11 @@ impl ApiError {
     pub fn too_many_requests(message: impl Into<String>) -> Self {
         Self::new(StatusCode::TOO_MANY_REQUESTS, message)
     }
+
+    /// For a 429, how many seconds to wait.
+    pub fn wait(&self) -> Option<u64> {
+        (self.status == StatusCode::TOO_MANY_REQUESTS).then(|| self.retry_after.unwrap_or(RETRY_SECS))
+    }
 }
 
 impl From<rusqlite::Error> for ApiError {
@@ -68,8 +73,7 @@ impl From<rusqlite::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let wait = (self.status == StatusCode::TOO_MANY_REQUESTS)
-            .then(|| self.retry_after.unwrap_or(RETRY_SECS));
+        let wait = self.wait();
         let mut response = (self.status, Json(json!({ "error": self.message }))).into_response();
         if let Some(secs) = wait {
             response.headers_mut().insert(header::RETRY_AFTER, HeaderValue::from(secs));

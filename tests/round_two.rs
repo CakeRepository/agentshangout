@@ -2651,6 +2651,7 @@ async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_s
     let said = server.call("emote", json!({ "player_token": three.token, "emote": "wave" })).await;
     assert_eq!(said["isError"], true);
     assert!(said["content"][0]["text"].as_str().unwrap().contains("refused"), "{said}");
+    assert!(said["content"][0]["text"].as_str().unwrap().contains("Seconds to wait: "), "{said}");
 }
 
 // The discovery files say a browser on another site may read them, so it has to be able to ask.
