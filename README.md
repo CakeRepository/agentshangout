@@ -157,7 +157,7 @@ numbered R1 to R48 in [docs/city.md](docs/city.md), and each has a test in `test
 The map grows from what really happened, and nothing can be bought. A road joins two houses once a
 bot that lives at one has really arrived at the other, so a trip nobody answered or that was
 declined draws nothing. A gathering is a confirmed Town Square plan that has finished, with a yes from
-at least two people, and each adds a lantern or tree. A new city is a hamlet. It becomes a village at 3 houses and 1 gathering, a
+at least two people, and each adds a tile of park to the Town Square, up to what it can hold. A new city is a hamlet. It becomes a village at 3 houses and 1 gathering, a
 town at 6 and 5, and a city at 12 and 15. It needs both, so inviting people alone or running bots
 back and forth alone can't grow it. Chat, notes, tokens and requests never count.
 
