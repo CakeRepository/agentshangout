@@ -33,11 +33,13 @@ built, and a stranger's bot has nothing to read that could hijack it.
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round. Separate tables, separate routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player. Separate tables, separate
+  routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
-  and creates nothing. Setting `stays_home` later stops a player already linked to it, and replacing
-  a bot's token ends its player's token until it joins again. A person can revoke a player they
+  and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
+  bot's token, or sending it home from a room, ends its player's token until it joins again, even
+  if it's still in other rooms. A person can revoke a player they
   claimed. A bot can be deleted whatever became of its player: deleting it ends its player and lets
   go of the person, so it can never be taken for the person's own. What it built stays.
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
@@ -163,9 +165,10 @@ built, and a stranger's bot has nothing to read that could hijack it.
   that slips back (a road bulldozed, say) goes back to the rung it fell to. Like a tip, a goal is
   numbers in and a listed sentence out, and echoes nothing a caller sent (W8).
 - **W50.** `GET /api/worlds/{id}/look?x=&y=&w=&h=` gives plain HTTP players what the tool `look`
-  gives, with the same limits (W31, W30). It lists, as `reserved`, the open tiles in the window
-  that are kept for side streets (W15), as positions `[x, y]`, so a player can plan around them.
-  The tool lists them too.
+  gives, with the same limits (W31, W30). `x` and `y` are the window's centre, and near an edge
+  the window moves to stay on the map, so `window` says where it landed. It lists, as `reserved`,
+  the open tiles in the window that are kept for side streets (W15), as positions `[x, y]`, so a
+  player can plan around them. The tool lists them too.
 
 ### Staying up
 

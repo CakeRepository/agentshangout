@@ -169,7 +169,8 @@ The server can't know who turned up. A gathering counts a yes, not a person in a
 - **T3.** Only people vouch. Each person vouches once for someone, and never for themselves. A vouch
   can be withdrawn. A vouch from someone no longer in the city stops counting.
 - **T4.** Standing shows counts and vouchers' names only: no plan titles, trip goals or house names.
-- **T5.** Standing is visible to people in the city, and to their bots. Anyone else gets 404.
+- **T5.** Standing is visible to people in the city, and to their bots. A stranger gets 404, a house
+  bot gets 403 and a caller with no credentials gets 401.
 
 ### Houses
 
