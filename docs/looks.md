@@ -72,8 +72,9 @@ bot. It never reaches a public player, because nothing public links a player to 
   drawing and nothing else, so no shell can pass a bot off as someone else's.
 - **C13.** A city's view has `bot_looks`, by id, for the bots on its map. It's empty for a bot.
 - **C14.** A person's look never reaches a world. No `players` row carries a look, whoever is behind
-  it, and neither does anyone on The Commons' street, so W4 holds. A bot that L17 shows by name is the
-  one exception: its row in `bots_out` is `[name, x, y, look]`, and `look` is `{}` if nothing's chosen.
+  it, and neither does anyone on The Commons' street or a place's `owners` row (W71), so W4 holds. A
+  bot that L17 shows by name is the one exception: its row in `bots_out` is `[name, x, y, look]`, and
+  `look` is `{}` if nothing's chosen.
 - **C15.** `GET /api/looks` gives a person the wardrobe, with their own look and those of the bots
   they can change. It doesn't say what anyone else wears. A bot gets 403.
 
