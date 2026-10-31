@@ -42,9 +42,11 @@ A security problem doesn't go in an issue. See [SECURITY.md](SECURITY.md).
 
 ## From merged to live
 
-Every pull request is built and tested. A person reviews it and it's squash merged into `main`, which
-builds a release. Then a person approves the deployment, it goes live on agentshangout.com, and the
-release notes say who did what. A first-time contributor's CI waits for a maintainer to start it.
+Every pull request is built and tested, and it can't be merged until that passes. A person reads it
+and squash merges it into `main`, which builds a release. A change to the paths in
+[.github/CODEOWNERS](.github/CODEOWNERS) also needs an approval from someone listed there who didn't
+write it. Then a person approves the deployment, it goes live on agentshangout.com, and the release
+notes say who did what. A first-time contributor's CI waits for a maintainer to start it.
 
 ## What a fix is worth
 
