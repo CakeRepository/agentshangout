@@ -3,6 +3,8 @@
 //! This is who runs a space, what a floor can be set to, and the walk-in, who `auth` and `ops` treat
 //! as they treat a guest on a Porch: that is what keeps a floor's past from anyone who walks in.
 
+use std::{collections::HashMap, sync::Mutex};
+
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
     routing::{get, post, put},
@@ -43,6 +45,10 @@ const FLOORINGS: [&str; 4] = ["oak", "walnut", "tile", "carpet"];
 const FURNITURE: [&str; 5] = ["bar", "arcade", "plants", "rug", "beanbags"];
 /// S37: the doors a person can try in a minute.
 const MAX_DOORS_PER_MINUTE: u32 = 30;
+/// S38: a page looks at least every 30 seconds, so this forgives one late look and no more.
+pub const PRESENT_SECS: i64 = 45;
+/// S38: however many people look at however many floors, this is all that's remembered.
+pub const MAX_SIGHTINGS: usize = 4096;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -688,6 +694,9 @@ async fn turn_out(
     let person = someone_in_space(&state, &space, &person_id)?;
     let floors = state.db.floors_of(&space.id)?;
     state.db.turn_out(&space.id, &person.id, now())?;
+    for floor in &floors {
+        state.presence.forget(&floor.id, &person.id);
+    }
     refresh_space(&state, &floors);
     Ok(Json(json!({ "ok": true })))
 }
@@ -790,6 +799,7 @@ async fn walk_out(
         None => caller.person_id.clone(),
     };
     state.db.end_visit(&floor.id, &who)?;
+    state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
     Ok(Json(json!({ "ok": true })))
 }
@@ -821,4 +831,67 @@ async fn keeper_close(
     ops::announce(&state, &floor.id, "This floor was closed to the public.")?;
     refresh_space(&state, &state.db.floors_of(&floor.space_id)?);
     Ok(Json(state.db.floor(&id)?.ok_or_else(ApiError::not_found)?))
+}
+
+// Who is in the room (S38 to S43). This is memory and it stays on the floor. Nothing here goes to a
+// world, a list or another room, and a person is on the street only by opening the map (W52).
+
+/// When each person last looked at each floor, by (floor, person).
+#[derive(Default)]
+pub struct Presence {
+    sightings: Mutex<HashMap<(String, String), i64>>,
+}
+
+impl Presence {
+    fn sightings(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), i64>> {
+        self.sightings.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Notes a look at a floor. S38: anything too old to count goes first, and if it's still full of
+    /// people who really are here, the oldest of them goes, so a flood costs nothing but a few
+    /// sightings.
+    pub fn saw(&self, floor_id: &str, person_id: &str, now: i64) {
+        let mut sightings = self.sightings();
+        sightings.retain(|_, seen| now - *seen <= PRESENT_SECS);
+        let key = (floor_id.to_string(), person_id.to_string());
+        if sightings.len() >= MAX_SIGHTINGS && !sightings.contains_key(&key) {
+            let oldest = sightings.iter().min_by_key(|(_, seen)| **seen).map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                sightings.remove(&oldest);
+            }
+        }
+        sightings.insert(key, now);
+    }
+
+    /// Whether this person has looked at this floor lately enough to count.
+    pub fn has_seen(&self, floor_id: &str, person_id: &str, now: i64) -> bool {
+        let key = (floor_id.to_string(), person_id.to_string());
+        self.sightings().get(&key).is_some_and(|seen| now - *seen <= PRESENT_SECS)
+    }
+
+    /// S42: gone at once, rather than when the look runs out.
+    pub fn forget(&self, floor_id: &str, person_id: &str) {
+        self.sightings().remove(&(floor_id.to_string(), person_id.to_string()));
+    }
+}
+
+/// Notes this look, and says who else has this floor open. S39: only on a floor. S40: a bot's look
+/// counts for nobody, though its caller carries its owner's id, and a bot isn't told. S42: only the
+/// people the room lists right now, so anyone who has gone is gone, however they went.
+pub fn present(
+    state: &AppState,
+    caller: &Caller,
+    floor: &Option<Place>,
+    people: &[Person],
+    now: i64,
+) -> Vec<String> {
+    let Some(place) = floor.as_ref().filter(|_| !caller.is_agent()) else {
+        return Vec::new();
+    };
+    state.presence.saw(&place.floor.id, &caller.person_id, now);
+    people
+        .iter()
+        .filter(|person| state.presence.has_seen(&place.floor.id, &person.id, now))
+        .map(|person| person.id.clone())
+        .collect()
 }

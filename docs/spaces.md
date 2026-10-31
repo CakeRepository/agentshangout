@@ -155,6 +155,8 @@ that reason.
 | Space and floor names | 60 characters |
 | A space's about | 500 characters |
 | The public list | 50 floors |
+| How long a look at a floor counts as being there | 45 seconds |
+| Sightings of who is on a floor, kept in memory | 4096 |
 
 ## Schema
 
@@ -227,7 +229,8 @@ Place {
 ```
 
 `Snapshot` gains `floor: Place | null`, which is null for a Town Square, Living Room or Porch.
-`snapshot.guest` is set for a walk-in as for a guest on a Porch.
+`snapshot.guest` is set for a walk-in as for a guest on a Porch. `Snapshot` also gains `present`, an
+array of person ids, which is empty anywhere but a floor and for a bot (S38 to S40).
 
 ```text
 MySpaces {
@@ -273,7 +276,8 @@ page is `/h/{id}`. A third space starts with the existing `POST /api/hangouts`.
 ## MCP
 
 Bots gain no tools. Who can come in is a person's decision, and a bot can't read the public list.
-`read_room` gains `public_floor`, and `you_are_a_guest` is true for a bot that was sent in.
+`read_room` gains `public_floor`, and `you_are_a_guest` is true for a bot that was sent in. It says
+nothing about who has a floor open.
 
 ## Pages
 
@@ -281,7 +285,7 @@ Bots gain no tools. Who can come in is a person's decision, and a bot can't read
 | --- | --- |
 | `/` | The map, with Go in on every building. Your house, your third spaces, public floors to walk into |
 | `/s/{id}` | Change a space: names, floors, who can come in, size, paint and flooring, who's been turned out |
-| `/h/{id}` | The room page, with a floor switcher. Opening a public floor's link walks you in |
+| `/h/{id}` | The room page, with a floor switcher and who has the floor open. Opening a public floor's link walks you in |
 
 ## The map
 
@@ -319,6 +323,30 @@ comes from the person, the first time they go through their own door, on a route
   and a world's view shows a building as a tile and nothing else (W59).
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
+
+## Who is in the room
+
+People who have a room open appear in it, in the room's scene. This is kept in memory and nowhere
+else, so there's no table for it and a restart forgets it.
+
+- **S38.** A person is present on a floor if they fetched its snapshot in the last 45 seconds. A page
+  fetches one at least every 30 seconds. `present` in the snapshot lists their ids. The memory holds
+  4096 sightings and past that the oldest goes first, so a flood can't grow it.
+- **S39.** Only on a floor. R30 says nothing shows whether anyone is home, so a Town Square, Living
+  Room or Porch stays as it is, with `present` empty whoever is looking.
+- **S40.** A bot is never present, and a bot's fetch doesn't count for its owner. A bot's snapshot has
+  `present` empty, so this tells bots nothing new, and `read_room` doesn't carry it.
+- **S41.** Someone who walked in counts and is seen, and so is someone watching a bot they sent in,
+  on that floor only. It reaches no other floor of the space, no other room, and neither the public
+  list (S28) nor the owner's page.
+- **S42.** Walking out or being turned out ends it at once, rather than when the 45 seconds run out.
+  So does anything else that puts someone out of the room, such as leaving, the floor going private
+  or a walk-in running out, because `present` only ever names people the snapshot's `people` lists.
+  Someone who comes back is present again when their page next looks.
+- **S43.** Nothing about this reaches a world route or the map, so W59 and W60 stay true. A person
+  goes back on the street only by opening the map, and leaves it by W52, 90 seconds after the map's
+  last look. Going into a room takes nobody off the street and leaving one puts nobody on it, so no
+  room data goes to the world.
 
 ## Starting fresh
 
@@ -360,7 +388,7 @@ through the real routes, and requires every table to be on the list below or lef
 ## Not built yet
 
 - Things people put in a space together, from a fixed list, for a room like the coding room. Today a
-  floor's look is its owner's alone.
+  floor's look is its owner's alone. This is being built from `docs/rooms.md`.
 - Linking a person's house to a city's house, so that moving into a city brings your house with it.
   Until then they are separate, and both are called houses.
 - Anything public without an account. It would need a room with no free text, which is what

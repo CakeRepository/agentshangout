@@ -216,7 +216,6 @@ input::placeholder { color: #8b7a5e; }
 
 .top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .top h1 { font-size: 18px; font-weight: 650; }
-.top-actions { margin-left: auto; display: flex; gap: 8px; }
 
 .live {
   font: 700 11px/1 ui-monospace, Consolas, monospace;
@@ -227,11 +226,14 @@ input::placeholder { color: #8b7a5e; }
   color: var(--muted);
 }
 .live.on { background: #e5484d; color: #fff; }
-.clock { font: 13px ui-monospace, Consolas, monospace; color: var(--muted); }
 
+/* The pixel room, scaled to fit the well it stands in and never out of shape. --fill is how much of
+   the well it takes, which is how a floor's size shows. */
 .stage {
+  --fill: 1;
   position: relative;
   container-type: inline-size;
+  width: min(calc(100cqw * var(--fill)), calc(100cqh * 480 / 252 * var(--fill)));
   aspect-ratio: 480 / 252;
   border-radius: var(--radius);
   overflow: hidden;
@@ -239,7 +241,14 @@ input::placeholder { color: #8b7a5e; }
   background: #2a3450;
 }
 .stage canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
-.stage-overlay { position: absolute; inset: 0; pointer-events: none; }
+/* Over the board and the empty state: a person's name sits above their head, so at the back of the
+   room it would slide behind the whiteboard, and with no bots here the empty state would cover it. */
+.stage-overlay { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.stage[data-size="small"] { --fill: .62; }
+.stage[data-size="medium"] { --fill: .82; }
+@media (max-width: 700px) {
+  .stage[data-size="small"], .stage[data-size="medium"] { --fill: 1; }
+}
 
 .board {
   position: absolute;
@@ -321,7 +330,6 @@ input::placeholder { color: #8b7a5e; }
   display: flex;
   flex-wrap: wrap;
   gap: 4px 14px;
-  margin-top: -6px;
   font-size: 12px;
 }
 .legend span { display: inline-flex; align-items: center; gap: 5px; }
@@ -336,27 +344,13 @@ input::placeholder { color: #8b7a5e; }
   gap: 8px;
   align-items: center;
   justify-content: center;
-  background: rgba(18, 20, 28, .35);
+  color: #fff3d2;
+  background: rgba(18, 20, 28, .45);
+  font-size: 14px;
   font-weight: 600;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
 }
 .stage-empty[hidden] { display: none; }
-
-.tiles { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
-.tiles.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.tile {
-  background: var(--panel);
-  border: 1px solid #120a06;
-  border-radius: var(--radius);
-  box-shadow: inset 1px 1px 0 rgba(255, 225, 170, .12), inset -1px -1px 0 rgba(0, 0, 0, .4);
-  padding: 10px 12px;
-  display: grid;
-  gap: 2px;
-  align-content: start;
-  min-width: 0;
-}
-.tile span { font-size: 12px; color: var(--muted); }
-.tile b { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.tile small { color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .columns { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
 .side { display: grid; gap: 14px; min-width: 0; }
@@ -373,9 +367,7 @@ input::placeholder { color: #8b7a5e; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .list { display: grid; gap: 10px; }
 
-.chat { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 12px; }
-.chat > h2 { margin-bottom: 0; }
-.chat-log { height: min(62vh, 620px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+.chat-log { overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
 .chat-form { display: flex; gap: 8px; }
 
 .msg { display: flex; gap: 10px; min-width: 0; }
@@ -495,15 +487,10 @@ input::placeholder { color: #8b7a5e; }
 
 @media (max-width: 960px) {
   .columns { grid-template-columns: minmax(0, 1fr); }
-  .chat { position: static; }
-  .chat-log { height: 50vh; }
-  .tiles, .tiles.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 560px) {
   .legend-key { margin-left: 0; }
-  .top-actions { margin-left: 0; width: 100%; }
-  .top-actions button { flex: 1; }
 }
 
 /* Cities and houses */
@@ -605,34 +592,14 @@ textarea.plain { font-family: inherit; font-size: 14px; }
 .status-ok { color: var(--good); }
 .status-attention { color: var(--bad); }
 
-.guest-banner {
-  padding: 10px 14px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius);
-  background: var(--panel);
-  overflow-wrap: anywhere;
-}
-.guest-banner[hidden] { display: none; }
 .field[hidden], .floors[hidden] { display: none; }
 
-/* A space's floors. A floor's size shows as how much of the page its room takes. */
+/* Changing a space's floors. */
 
-.floors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-.floors a { font-size: 14px; }
-.floors-about { flex-basis: 100%; overflow-wrap: anywhere; }
-.floor-chip { padding: 1px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; overflow-wrap: anywhere; }
-.floor-chip.here { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
-.floor-tag { font-size: 11px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; }
-.floor-tag.public { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
-.stage[data-size="small"] { width: 62%; justify-self: center; }
-.stage[data-size="medium"] { width: 82%; justify-self: center; }
 .floor-card { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); }
 .look-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
 .checks legend { font-size: 13px; padding: 0 4px; }
-@media (max-width: 700px) {
-  .stage[data-size="small"], .stage[data-size="medium"] { width: 100%; }
-}
 .guest-tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 650; }
 
 /* Signing in and passkeys */
@@ -1404,6 +1371,118 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .game-view .wd-btn { height: 46px; }
   .game-view .wd-btn-label { display: none; }
   .wd-game > .game-palette { margin: 8px; max-height: calc(100% - 16px); }
+}
+
+/* A room: the game window with the camera moved indoors. The well holds the pixel room instead of
+   the map, and the page's panels open over it from the title bar. A wide screen keeps the whole room
+   in view by standing the open panel beside it. */
+.room-host { position: absolute; inset: 8px; display: grid; place-items: center; container-type: size; }
+@media (min-width: 1000px) {
+  .wd-room.has-panel .room-host { right: 420px; }
+}
+.wd-room .stage { animation: room-enter .28s ease-out; }
+@keyframes room-enter { from { opacity: .35; transform: scale(.93); } }
+@media (prefers-reduced-motion: reduce) { .wd-room .stage { animation: none; } }
+
+/* A button or readout that doesn't apply here. They set their own display, so `hidden` needs saying. */
+.wd .wd-tbtn[hidden], .wd .wd-btn[hidden], .wd-stat[hidden] { display: none; }
+
+/* The readouts. A phone has room for a word, and the amber one holds the longest text. */
+.wd-room .wd-lcd { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wd-room .wd-stat-label .short { display: none; }
+@media (max-width: 759px), (max-height: 540px) {
+  .wd-room .wd-stat-label .long { display: none; }
+  .wd-room .wd-stat-label .short { display: inline; }
+}
+@media (max-width: 759px) {
+  .wd-room .wd-stat:has(.amber) { flex-grow: 1.6; }
+}
+
+/* The title bar. The room has more panels than the bar has room for, so More stays at every width
+   and only lists what the bar is leaving out. Something waiting on an answer lights up, and stays in
+   the bar on a phone. */
+.wd-room .wd-title-actions .more { display: inline-flex; }
+.wd-room .wd-title-actions .wd-tbtn[aria-expanded="true"] { background: #cdb98a; box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6); }
+.wd .wd-tbtn.wait { background: linear-gradient(#ffd98a, #f0aa44); }
+.room-count { margin-left: 5px; padding: 0 4px; color: #ffc65c; background: #0a140d; font: 700 11px/1.35 "Courier New", Consolas, monospace; text-shadow: none; }
+@media (max-width: 759px) {
+  .wd-room .wd-title-actions .mid:not(.wait) { display: none; }
+}
+@media (min-width: 760px) {
+  .game-more .wd-btn.mid { display: none; }
+}
+@media (min-width: 1100px) {
+  .game-more .wd-btn.sec { display: none; }
+}
+.wd-live.off .wd-lamp {
+  background: radial-gradient(circle at 35% 30%, #fff 0 10%, #ffd98a 28%, #c98a1e 72%, #7a4a0c);
+  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .4);
+  animation: none;
+}
+
+/* The status bar: the guest banner across the whole of it, then the floors, the message and the
+   clock, then the legend. */
+.wd-room .wd-status .room-note { white-space: nowrap; overflow-wrap: normal; }
+.wd-game .wd-status .wd-seg.room-guest { flex: 1 1 100%; }
+.room-about { flex: 2 1 200px; }
+.wd-room .floors { flex: 3 1 340px; gap: 3px 8px; white-space: normal; }
+.wd .floor-chip { min-height: 22px; overflow-wrap: anywhere; }
+.wd .floor-chip.here { background: #cdb98a; box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6); cursor: default; }
+.floor-tag { padding: 0 6px; font-weight: 700; background: var(--wd-face); box-shadow: inset 1px 1px 0 var(--wd-lo), inset -1px -1px 0 var(--wd-hi); }
+.floor-tag.public { background: linear-gradient(#ffd98a, #f0aa44); }
+.wd-room .room-legend { flex: 1 1 100%; max-height: 45px; white-space: normal; }
+@media (max-width: 759px) {
+  .room-about, .room-legend .legend-key { display: none; }
+  .wd-room .room-legend { max-height: 24px; }
+}
+@media (max-height: 540px) {
+  .wd-room .room-legend, .room-about { display: none; }
+}
+@media (pointer: coarse) {
+  .wd-room .floors .wd-tbtn { min-height: 34px; }
+}
+
+/* The chat fills its panel: the log scrolls, and the box to type in is always showing. On a phone
+   the sheet leaves the room in view above it, and takes the whole well once someone is typing. */
+.wd-game > .game-panel-room { height: calc(100% - 24px); }
+.game-panel-room .game-panel-body { flex: 1; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.game-panel-room .chat-log { flex: 1; min-height: 0; }
+.game-panel .mention-list { max-height: min(232px, 40vh); }
+@media (max-width: 759px) {
+  .wd-game > .game-panel-room { height: max(55%, calc(100% - 52.5vw - 18px)); }
+  .wd-game > .game-panel-room:has(input:focus) { height: calc(100% - 12px); }
+  .wd-room.has-panel .room-host { align-items: start; }
+}
+@media (max-width: 759px) and (max-height: 540px) {
+  .wd-game > .game-panel-room { height: calc(100% - 12px); }
+}
+
+/* What the room's panels hold, with the square corners of the window around them. */
+.game-panel .event, .game-panel .check-in, .game-panel .ask, .game-panel .note, .game-panel .floor-card, .game-panel .checks,
+.game-panel .date, .game-panel .avatar, .game-panel .rsvp, .game-panel .doorbell, .game-panel .guest-tag { border-radius: 2px; }
+/* A phone zooms the whole page in on a box smaller than this, and this window can't scroll back. */
+@media (pointer: coarse) {
+  .game-panel input, .game-panel select, .game-panel textarea { font-size: 16px; }
+}
+
+/* A space's settings: the same window, with the well holding a column of forms that scrolls. Each
+   part is a sheet like the panels over a room, left open. */
+.space-host { position: absolute; inset: 3px; overflow-y: auto; overscroll-behavior: contain; padding: 12px; }
+.space-sheets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; max-width: 820px; margin: 0 auto; }
+.space-sheet {
+  padding: 3px;
+  color: var(--text);
+  background: #dccaa2;
+  border: 1px solid #000;
+  box-shadow:
+    inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #4d3620,
+    inset 2px 2px 0 #ecdfbd, inset -2px -2px 0 #a98d5c;
+}
+.space-sheet .game-panel-body { overflow: visible; }
+@media (max-width: 759px) {
+  .space-host { padding: 6px; }
+  .space-sheets { gap: 8px; }
+  .space-sheet .game-panel-body { padding: 10px; }
 }
 
 /* Typing @ in a private chat box offers the people and bots there. */

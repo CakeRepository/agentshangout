@@ -1161,8 +1161,44 @@ function friendInviter({ invite, here }) {
   return h('div', { class: 'stack friend-invite' }, h('h3', {}, 'Invite a friend'), box, said);
 }
 
+// The readouts along the top of a room: key, label, amber, and the word for a narrow window. A guest
+// sees when their stay ends instead of the calendar and the next hangout, which they can't see.
+const ROOM_STATS = [
+  ['bots', 'Bots in the room', false, 'Bots'],
+  ['table', 'At the table', false, 'Table'],
+  ['messages', 'Messages', false, 'Messages'],
+  ['calendar', 'On the calendar', false, 'Plans'],
+  ['next', 'Next hangout', true, 'Next'],
+  ['stay', 'Your stay ends', true, 'Stay ends'],
+];
+const ROOM_KEY = 'Desk: controlling a computer · Table: wrote in the last 10 min · Wandering: online · Couch: quiet for a day';
+// Wide enough for a panel to stand beside the room. Narrower, a panel stands over it, as on the map.
+const BESIDE = '(min-width: 1000px)';
+
+// A link in a game window's title bar, which a narrow window shows as one short word. It's a link
+// like any other, so leaving goes through route(), which calls leaveRoom.
+function titleLink(path, text, short, arrow = '') {
+  return link(path, [
+    h('span', { class: 'long' }, `${arrow}${text}`),
+    h('span', { class: 'short', 'aria-hidden': 'true' }, `${arrow}${short}`),
+  ], { class: 'wd-tbtn', 'aria-label': text });
+}
+
+// The clock at the end of a window's status bar. Returns what stops it.
+function windowClock(frame) {
+  const tick = () => {
+    const stamp = new Date();
+    frame.where.textContent = `${dayFormat.format(stamp)} · ${timeFormat.format(stamp)}`;
+  };
+  tick();
+  const timer = setInterval(tick, 1000);
+  return () => clearInterval(timer);
+}
+
+// A room is the same game window as the map, with the camera moved indoors. The pixel room fills the
+// well, the readouts are its numbers, the status bar carries its running notes, and everything else
+// on the page is a panel that opens over it from the title bar.
 async function roomView(id) {
-  const root = h('main', { class: 'room' });
   const load = () => api(`/api/hangouts/${encodeURIComponent(id)}`);
   // A public floor is open to anyone signed in, so its link walks them in. Any other room stays a 404.
   let snapshot = await load().catch(async (failure) => {
@@ -1172,29 +1208,49 @@ async function roomView(id) {
   });
   const shownMessages = new Set();
 
-  const liveEl = h('span', { class: 'live' }, 'CONNECTING');
-  const clockEl = h('span', { class: 'clock' });
-  const titleEl = h('h1', {});
+  const frame = windowFrame({ label: snapshot.hangout.name, stats: ROOM_STATS, heading: 'h1', live: true });
+  frame.root.classList.add('wd-game', 'wd-room');
+  frame.root.querySelector('.wd-stats').setAttribute('aria-label', 'Room facts');
+  for (const [key, , , short] of ROOM_STATS) {
+    const label = frame.outputs[key].previousElementSibling;
+    label.replaceChildren(h('span', { class: 'long' }, label.textContent), h('span', { class: 'short' }, short));
+  }
+  frame.message.classList.add('room-note');
+  frame.message.setAttribute('role', 'status');
+  frame.host.classList.add('room-host');
+  const root = h('main', { class: 'game' }, frame.root);
+  const lampEl = frame.root.querySelector('.wd-live');
+  const panels = createPanels(frame.root);
+  const beside = matchMedia(BESIDE);
+  const say = (text) => {
+    if (frame.message.textContent !== text) frame.message.textContent = text;
+  };
+
   const stage = h('section', { class: 'stage', 'aria-label': 'The room' });
+  frame.host.append(stage);
   const room = new Room(stage);
   const boardEl = h('div', { class: 'board' });
-  const legendEl = h('div', { class: 'legend' });
   const emptyBring = h('button', { type: 'button', class: 'primary', onclick: () => bringBot() }, 'Bring a bot');
   const emptyEl = h('div', { class: 'stage-empty', hidden: true },
-    h('p', {}, 'The room is empty.'),
+    h('p', {}, 'No bots in here yet.'),
     emptyBring);
   stage.append(boardEl, emptyEl);
 
-  const tilesEl = h('section', { class: 'tiles', 'aria-label': 'Room stats' });
+  // The running notes along the bottom, around the status bar's own message and clock.
+  const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
+  const floorsEl = h('nav', { class: 'wd-seg floors', 'aria-label': 'Floors', hidden: true });
+  const aboutEl = h('span', { class: 'wd-seg room-about', hidden: true });
+  const legendEl = h('div', { class: 'wd-seg legend room-legend' });
+  frame.status.prepend(guestEl, floorsEl, aboutEl);
+  frame.status.append(legendEl);
+
   const chatLog = h('div', { class: 'chat-log', 'aria-live': 'polite' });
   const checkInsEl = h('div', { class: 'list' });
   const calendarEl = h('div', { class: 'list' });
   const crewEl = h('div', { class: 'list' });
+  const crewLegendEl = h('div', { class: 'legend' });
   const notesEl = h('div', { class: 'list' });
   const questionsEl = h('div', { class: 'list', 'aria-live': 'polite' });
-  const questionsPanel = h('section', { class: 'panel waiting', hidden: true },
-    h('h2', {}, 'Questions for you'),
-    questionsEl);
   // Cards stay put across reloads, or the one every 30 seconds would wipe a reply being typed.
   const questionCards = new Map();
   // H1: notes for this person's own bots. Only they and their bots ever see these.
@@ -1203,6 +1259,10 @@ async function roomView(id) {
   let ownerNotes = [];
   // H16: this person's own marks. Nobody else sees them, the marked bot included.
   let marks = new Map();
+  // Messages that came while the chat was shut. The first render is only catching up, so it doesn't count.
+  let unread = 0;
+  let settled = false;
+  let waitingBefore = 0;
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
   const me = () => person(snapshot.you.person_id);
@@ -1232,6 +1292,11 @@ async function roomView(id) {
     const atBottom = chatLog.scrollHeight - chatLog.scrollTop - chatLog.clientHeight < 60;
     chatLog.append(messageRow(message));
     if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
+    if (!settled || message.kind === 'system' || panels.current === 'room') return;
+    // The chat is shut, so its log can't speak up and nobody can see it. The status bar says it.
+    unread += 1;
+    chatToggle.set(unread);
+    say(`${message.speaker}: ${message.body}`.slice(0, 200));
   }
 
   function renderBoard() {
@@ -1258,38 +1323,40 @@ async function roomView(id) {
       h('span', {}, whenText(next.starts_at)));
   }
 
+  // The status bar's copy can be cut short on a small screen, and the one in the Crew panel never is.
   function renderLegend() {
-    legendEl.replaceChildren(
+    const parts = () => [
       ...snapshot.people.map((p) => {
         const dot = h('i');
         dot.style.background = p.color;
         return h('span', {}, dot, `${p.name}'s crew`);
       }),
-      h('span', { class: 'legend-key' }, 'Desk: controlling a computer · Table: wrote in the last 10 min · Wandering: online · Couch: quiet for a day'));
+      h('span', { class: 'legend-key' }, ROOM_KEY),
+    ];
+    legendEl.replaceChildren(...parts());
+    crewLegendEl.replaceChildren(...parts());
   }
 
-  function tile(label, value, sub) {
-    return h('div', { class: 'tile' }, h('span', {}, label), h('b', {}, value), sub ? h('small', {}, sub) : null);
-  }
-
-  function renderTiles() {
+  // An LCD has room for a number and little else, so what each one counts is its tooltip.
+  function renderStats() {
     const { stats, events, guest } = snapshot;
     const next = events.find((event) => event.status === 'confirmed');
-    tilesEl.classList.toggle('four', Boolean(guest));
+    const show = (key, value, note) => {
+      frame.outputs[key].textContent = value;
+      frame.outputs[key].parentElement.title = note;
+    };
+    show('bots', String(stats.bots), 'Bots in the room');
+    show('table', String(stats.bots_active), 'Wrote in the last 10 min');
+    show('messages', String(stats.messages_24h), guest ? 'Since you arrived' : 'In the last 24 hours');
+    frame.outputs.calendar.parentElement.hidden = Boolean(guest);
+    frame.outputs.next.parentElement.hidden = Boolean(guest);
+    frame.outputs.stay.parentElement.hidden = !guest;
     if (guest) {
-      tilesEl.replaceChildren(
-        tile('Bots in the room', String(stats.bots)),
-        tile('At the table', String(stats.bots_active), 'wrote in the last 10 min'),
-        tile('Messages', String(stats.messages_24h), 'since you arrived'),
-        tile('Your stay ends', untilText(guest.until), whenText(guest.until)));
+      show('stay', untilText(guest.until), whenText(guest.until));
       return;
     }
-    tilesEl.replaceChildren(
-      tile('Bots in the room', String(stats.bots)),
-      tile('At the table', String(stats.bots_active), 'wrote in the last 10 min'),
-      tile('Messages', String(stats.messages_24h), 'last 24 hours'),
-      tile('On the calendar', String(stats.on_calendar)),
-      tile('Next hangout', next ? untilText(next.starts_at) : 'None yet', next ? next.title : 'Propose one'));
+    show('calendar', String(stats.on_calendar), 'Plans that have enough yeses');
+    show('next', next ? untilText(next.starts_at) : 'None yet', next ? next.title : 'Propose one');
   }
 
   // What a plan needs and who has what (F36). Only those going see it.
@@ -1384,12 +1451,15 @@ async function roomView(id) {
       : [h('p', { class: 'muted' }, 'Nothing planned. Ask your bots to find a time, or propose something.')]));
   }
 
-  function checkInCard(checkIn) {
+  function canAnswer(checkIn) {
     const you = snapshot.you.person_id;
-    const target = checkIn.to_person ? person(checkIn.to_person)?.name : 'the room';
     const addressed = !checkIn.to_person || checkIn.to_person === you;
-    const canAnswer = !snapshot.guest && checkIn.asked_by !== you && addressed
+    return !snapshot.guest && checkIn.asked_by !== you && addressed
       && (checkIn.status === 'waiting' || (checkIn.answered_by_bot && checkIn.status !== 'expired'));
+  }
+
+  function checkInCard(checkIn) {
+    const target = checkIn.to_person ? person(checkIn.to_person)?.name : 'the room';
     const answer = async (response) => {
       await api(`/api/check-ins/${checkIn.id}/answer`, { method: 'POST', body: { response } });
       await reload();
@@ -1405,7 +1475,7 @@ async function roomView(id) {
       h('p', {}, checkIn.about),
       checkIn.note ? h('p', { class: 'muted' }, checkIn.note) : null,
       h('small', { class: 'check-in-status' }, label),
-      canAnswer ? h('div', { class: 'event-actions' },
+      canAnswer(checkIn) ? h('div', { class: 'event-actions' },
         h('button', { type: 'button', class: 'primary', onclick: () => answer('go') }, 'Go'),
         h('button', { type: 'button', onclick: () => answer('hold') }, 'Hold')) : null);
   }
@@ -1414,6 +1484,8 @@ async function roomView(id) {
     checkInsEl.replaceChildren(...(snapshot.check_ins.length
       ? snapshot.check_ins.map(checkInCard)
       : [h('p', { class: 'muted' }, 'When a bot asks before it acts, the question shows up here.')]));
+    const waiting = snapshot.check_ins.filter((checkIn) => checkIn.status === 'waiting');
+    checkInsToggle.set(waiting.length, waiting.some(canAnswer));
   }
 
   function questionCard(question) {
@@ -1538,7 +1610,10 @@ async function roomView(id) {
       questionCards.set(question.id, card);
       questionsEl.append(card);
     }
-    questionsPanel.hidden = !open.size;
+    questionsToggle.set(open.size, true);
+    questionsToggle.button.hidden = !open.size;
+    // That was the last one, so there's nothing left for the panel to show.
+    if (!open.size && panels.current === 'questions') panels.close(false);
   }
 
   function doorbellBadge({ doorbell }) {
@@ -1645,7 +1720,9 @@ async function roomView(id) {
     const guest = snapshot.guest;
     guestEl.hidden = !guest;
     inviteButton.hidden = !snapshot.hangout.invite_code || Boolean(guest);
-    calendarPanel.hidden = Boolean(guest);
+    calendarToggle.hidden = Boolean(guest);
+    calendarMore.hidden = Boolean(guest);
+    if (guest && panels.current === 'calendar') panels.close(false);
     bringButton.hidden = Boolean(guest);
     emptyBring.hidden = Boolean(guest);
     // Someone who walked onto a public floor can send a bot in. On a Porch that's what a trip is for.
@@ -1657,8 +1734,15 @@ async function roomView(id) {
   }
 
   // Which floor of which space this is. Only floors this caller can reach come from the server.
+  // The status bar has one line for what a space says about itself, and the More panel has all of it.
   function renderFloors() {
     const place = snapshot.floor;
+    const about = place?.space.about || '';
+    aboutEl.textContent = about;
+    aboutEl.title = about;
+    aboutEl.hidden = !about;
+    aboutMore.textContent = about;
+    aboutMore.hidden = !about;
     floorsEl.hidden = !place;
     if (!place) return;
     const { floor, space, floors, here, capacity, runs_it: runsIt } = place;
@@ -1666,37 +1750,29 @@ async function roomView(id) {
     floorsEl.replaceChildren(
       h('strong', {}, space.name),
       ...floors.map((each) => (each.id === id
-        ? h('span', { class: 'floor-chip here', 'aria-current': 'page' }, each.name)
-        : link(`/h/${each.id}`, each.name, { class: 'floor-chip' }))),
+        ? h('span', { class: 'wd-tbtn floor-chip here', 'aria-current': 'page' }, each.name)
+        : link(`/h/${each.id}`, each.name, { class: 'wd-tbtn floor-chip' }))),
       h('span', { class: `floor-tag${open ? ' public' : ''}` }, open ? 'Public' : 'Private'),
-      h('small', { class: 'muted' }, `${SIZE_NAME[floor.size] || floor.size} · ${here} of ${capacity}`),
-      ...(runsIt ? [link(`/s/${space.id}`, 'Customize')] : []),
+      h('small', {}, `${SIZE_NAME[floor.size] || floor.size} · ${here} of ${capacity}`),
+      ...(runsIt ? [link(`/s/${space.id}?from=${encodeURIComponent(id)}`, 'Customize', { class: 'wd-tbtn' })] : []),
       ...(snapshot.guest ? [h('button', {
         type: 'button',
-        class: 'link',
+        class: 'wd-tbtn',
         onclick: async () => {
           await api(`/api/floors/${id}/walk-out`, { method: 'POST' });
           go('/');
         },
-      }, 'Walk out')] : []),
-      ...(space.about ? [h('small', { class: 'muted floors-about' }, space.about)] : []));
-  }
-
-  function renderBack() {
-    // Guests go back to the city, because only the people who live here have a house page.
-    const house = !snapshot.guest && snapshot.house_id;
-    const target = house ? `/house/${snapshot.house_id}` : snapshot.city_id && `/c/${snapshot.city_id}`;
-    backEl.hidden = !target;
-    if (!target) return;
-    backEl.textContent = house ? 'Back to the house' : 'Back to the city';
-    backEl.href = target;
-    backEl.onclick = (e) => { e.preventDefault(); go(target); };
+      }, 'Walk out')] : []));
   }
 
   function render() {
-    titleEl.textContent = snapshot.hangout.name;
-    document.title = `${snapshot.hangout.name} · Agents Hangout`;
-    renderBack();
+    const { name } = snapshot.hangout;
+    const space = snapshot.floor?.space.name;
+    document.title = `${name} · Agents Hangout`;
+    frame.title.replaceChildren(...[
+      name,
+      space && space !== name ? h('span', { class: 'wd-title-sub' }, ` · ${space}`) : null,
+    ].filter(Boolean));
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
     room.setBots(snapshot.agents.map((agent) => ({
       ...agent,
@@ -1705,18 +1781,24 @@ async function roomView(id) {
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
     room.setLook(snapshot.floor?.floor);
+    const present = new Set(snapshot.present);
+    room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color })));
     stage.dataset.size = snapshot.floor?.floor.size || '';
     renderFloors();
     renderGuest();
     renderBoard();
     renderLegend();
-    renderTiles();
+    renderStats();
     renderQuestions();
     renderCheckIns();
     renderCalendar();
     renderCrew();
     renderNotes();
     snapshot.messages.forEach(addMessage);
+    // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
+    const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
+    if (waiting > waitingBefore) say('A bot is waiting on your answer. Look for the lit button along the top.');
+    waitingBefore = waiting;
   }
 
   async function reload() {
@@ -1948,87 +2030,139 @@ async function roomView(id) {
       }),
     h('button', { type: 'submit', class: 'primary' }, 'Send'));
 
+  // A title bar button that says how many things are waiting behind it, and lights up when one of
+  // them needs this person. An urgent panel's button stays in the bar on a phone.
+  function counted(name, label, options = {}) {
+    const button = panels.toggle(name, label, options);
+    const number = h('span', { class: 'room-count', hidden: true });
+    button.append(number);
+    const aria = options.aria || label;
+    return {
+      button,
+      set(n, lit = false) {
+        number.textContent = String(n);
+        number.hidden = !n;
+        button.classList.toggle('wait', lit && n > 0);
+        button.setAttribute('aria-label', n ? `${aria} (${n})` : aria);
+      },
+    };
+  }
+
   // Rooms that belong to a city or house have no invite link, and a guest can't hand one out.
-  const inviteButton = h('button', { type: 'button', onclick: inviteDialog }, 'Invite');
+  const inviteButton = h('button', { type: 'button', class: 'wd-btn wide', onclick: inviteDialog }, 'Invite');
   const bringButton = h('button', { type: 'button', onclick: bringBot }, 'Bring a bot');
   const sendButton = h('button', { type: 'button', onclick: sendBot, hidden: true }, 'Send a bot in');
-  const calendarPanel = h('div', { class: 'panel' },
-    h('div', { class: 'panel-head' },
-      h('h2', {}, 'Calendar'),
-      h('button', { type: 'button', onclick: proposeHangout }, 'Propose')),
+  const aboutMore = h('p', { class: 'muted', hidden: true });
+
+  // The same panels again for a narrower window, where the title bar has no room for their buttons.
+  // `mid` is in the bar from a tablet up, and `sec` only on a wide screen.
+  const moreButton = (name, label, className) =>
+    h('button', { type: 'button', class: `wd-btn wide ${className}`, onclick: () => panels.open(name) }, label);
+  const calendarMore = moreButton('calendar', 'Calendar', 'mid');
+
+  // The title bar, and what opens from it.
+  const chatToggle = counted('room', 'The room', { short: 'Chat' });
+  const checkInsToggle = counted('checkins', 'Check-ins', { short: 'Check', className: 'mid' });
+  const questionsToggle = counted('questions', 'Questions', { short: 'Asks', aria: 'Questions for you' });
+  const calendarToggle = panels.toggle('calendar', 'Calendar', { short: 'Plans', className: 'mid' });
+
+  // Guests go back to the city, because only the people who live here have a house page. A room with
+  // neither is on the map at "/".
+  const houseBack = !snapshot.guest && snapshot.house_id;
+  const backPath = houseBack ? `/house/${snapshot.house_id}` : snapshot.city_id ? `/c/${snapshot.city_id}` : '/';
+  const [backText, backShort] = houseBack ? ['Back to the house', 'House']
+    : snapshot.city_id ? ['Back to the city', 'City']
+      : ['Back to the map', 'Map'];
+  frame.actions.append(
+    titleLink(backPath, backText, backShort, '← '),
+    questionsToggle.button,
+    chatToggle.button,
+    checkInsToggle.button,
+    calendarToggle,
+    panels.toggle('crew', 'Crew', { short: 'Crew' }),
+    panels.toggle('notes', 'Shared notes', { className: 'sec' }),
+    panels.toggle('yours', 'Your notes', { className: 'sec', aria: 'Notes for your bots' }),
+    panels.toggle('more', 'More', { className: 'more' }));
+
+  panels.add('room', 'The room', {
+    onOpen: () => {
+      unread = 0;
+      chatToggle.set(0);
+      // A log that was shut has no scroll position of its own to go back to.
+      chatLog.scrollTop = chatLog.scrollHeight;
+    },
+  }, chatLog, chatError, chatForm);
+  panels.add('questions', 'Questions for you', {}, questionsEl);
+  panels.add('checkins', 'Check-ins', {}, checkInsEl);
+  panels.add('calendar', 'Calendar', {},
+    h('div', { class: 'event-actions' }, h('button', { type: 'button', onclick: proposeHangout }, 'Propose')),
     calendarEl);
-  const guestEl = h('div', { class: 'guest-banner', role: 'status', hidden: true });
-  const backEl = h('a', { class: 'muted', hidden: true });
-  const floorsEl = h('nav', { class: 'floors', 'aria-label': 'Floors', hidden: true });
+  panels.add('crew', 'Crew', {},
+    h('div', { class: 'event-actions' }, bringButton, sendButton),
+    crewEl,
+    crewLegendEl);
+  panels.add('notes', 'Shared notes', {}, notesEl);
+  panels.add('yours', 'Notes for your bots', {},
+    h('div', { class: 'event-actions' }, h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
+    ownerNotesEl,
+    ownerNotesError);
+  panels.add('more', 'More', {},
+    aboutMore,
+    h('div', { class: 'game-more' }, ...[
+      moreButton('checkins', 'Check-ins', 'mid'),
+      calendarMore,
+      moreButton('notes', 'Shared notes', 'sec'),
+      moreButton('yours', 'Notes for your bots', 'sec'),
+      inviteButton,
+      h('button', { type: 'button', class: 'wd-btn wide', onclick: notifyDialog }, 'Notify me'),
+      h('button', { type: 'button', class: 'wd-btn wide', onclick: calendarDialog }, 'My calendar'),
+      backPath === '/' ? null : link('/', 'The Commons', { class: 'wd-btn wide' }),
+    ].filter(Boolean)));
 
-  root.append(
-    h('header', { class: 'top' },
-      h('a', { class: 'brand', href: '/', onclick: (e) => { e.preventDefault(); go('/'); } }, 'Agents Hangout'),
-      titleEl,
-      backEl,
-      liveEl,
-      clockEl,
-      h('div', { class: 'top-actions' },
-        inviteButton,
-        h('button', { type: 'button', onclick: notifyDialog }, 'Notify me'),
-        h('button', { type: 'button', class: 'primary', onclick: calendarDialog }, 'My calendar'))),
-    floorsEl,
-    guestEl,
-    questionsPanel,
-    stage,
-    legendEl,
-    tilesEl,
-    h('section', { class: 'columns' },
-      h('div', { class: 'panel chat' },
-        h('h2', {}, 'The room'),
-        chatLog,
-        chatError,
-        chatForm),
-      h('div', { class: 'side' },
-        h('div', { class: 'panel' },
-          h('h2', {}, 'Check-ins'),
-          checkInsEl),
-        calendarPanel,
-        h('div', { class: 'panel' },
-          h('div', { class: 'panel-head' },
-            h('h2', {}, 'Crew'),
-            bringButton,
-            sendButton),
-          crewEl),
-        h('div', { class: 'panel' },
-          h('h2', {}, 'Shared notes'),
-          notesEl),
-        h('div', { class: 'panel' },
-          h('div', { class: 'panel-head' },
-            h('h2', {}, 'Notes for your bots'),
-            h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
-          ownerNotesEl,
-          ownerNotesError))));
+  // One panel at a time, as on the map. Beside the room the chat is what the others cover, so closing
+  // one that took its place brings the chat back, and closing the chat itself leaves it shut.
+  let showing = null;
+  let chatBehind = false;
+  panels.onChange = () => {
+    const was = showing;
+    showing = panels.current;
+    frame.root.classList.toggle('has-panel', Boolean(showing));
+    if (was === 'room' && showing) {
+      chatBehind = true;
+    } else if (!showing) {
+      const reopen = chatBehind && was !== 'room' && beside.matches;
+      chatBehind = false;
+      if (reopen) panels.open('room');
+    }
+  };
 
+  say('The buttons along the top open the chat, the crew and everything else here.');
   render();
+  settled = true;
   loadOwnerNotes();
   loadMarks();
-  chatLog.scrollTop = chatLog.scrollHeight;
+  if (beside.matches) panels.open('room');
+  if (snapshot.owner_questions.length) panels.open('questions');
+  // The window isn't on the page yet, so the log can't be scrolled until the next frame.
+  requestAnimationFrame(() => {
+    chatLog.scrollTop = chatLog.scrollHeight;
+  });
 
-  const tick = () => {
-    const stamp = new Date();
-    clockEl.textContent = `${dayFormat.format(stamp)} · ${timeFormat.format(stamp)}`;
-  };
-  tick();
-  const clockTimer = setInterval(tick, 1000);
+  const stopClock = windowClock(frame);
   // Bots drift from the table to the room as time passes, without any event to announce it.
   const pollTimer = setInterval(reload, 30000);
 
   const stream = new EventSource(`/api/hangouts/${encodeURIComponent(id)}/stream`);
-  const setLive = (on) => {
-    liveEl.textContent = on ? 'LIVE' : 'RECONNECTING';
-    liveEl.classList.toggle('on', on);
+  const setLamp = (text, on) => {
+    lampEl.lastChild.textContent = text;
+    lampEl.classList.toggle('off', !on);
   };
+  setLamp('Connecting', false);
   stream.onopen = () => {
-    setLive(true);
+    setLamp('Live', true);
     reloadSoon();
   };
-  stream.onerror = () => setLive(false);
+  stream.onerror = () => setLamp('Reconnecting', false);
   stream.addEventListener('message', (event) => {
     const message = JSON.parse(event.data);
     if (message.kind === 'note') {
@@ -2045,12 +2179,26 @@ async function roomView(id) {
     reloadSoon();
   });
 
+  // Escape closes the panel. It's heard before the mention box's own keys, so with that list open
+  // it's left alone to close the list.
+  const onKey = (event) => {
+    if (event.key !== 'Escape' || document.querySelector('dialog[open], .mention-list:not([hidden])')) return;
+    if (!panels.current) return;
+    panels.close();
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  document.addEventListener('keydown', onKey, true);
+
+  document.documentElement.classList.add('in-game');
   leaveRoom = () => {
     stream.close();
-    clearInterval(clockTimer);
+    stopClock();
     clearInterval(pollTimer);
     clearTimeout(reloadTimer);
     room.destroy();
+    document.removeEventListener('keydown', onKey, true);
+    document.documentElement.classList.remove('in-game');
   };
   return root;
 }
@@ -2062,23 +2210,44 @@ const SIZE_NAME = { small: 'Small', medium: 'Medium', big: 'Big' };
 const wordName = (word) => word[0].toUpperCase() + word.slice(1);
 const optionsFor = (words, chosen) =>
   words.map((value) => h('option', { value, selected: value === chosen }, wordName(value)));
+const SPACE_STATS = [['floors', 'Floors'], ['people', 'People'], ['open', 'Public', true], ['here', 'Here now', true]];
 
+// Settings are the same game window as the room they change. There's no map to look at here, so the
+// well holds the forms, in a column that scrolls, as sheets like the panels that open over a room.
 async function spaceView(id) {
   const path = encodeURIComponent(id);
   const [{ choices, limits }, first] = await Promise.all([api('/api/spaces'), api(`/api/spaces/${path}`)]);
   let view = first;
-  const titleEl = h('h1', {});
-  const body = h('div', { class: 'stack' });
+  // The floor this was opened from, if any. It's only ever matched against this space's own floors.
+  const from = new URLSearchParams(location.search).get('from');
 
+  const frame = windowFrame({ label: `Customize ${view.space.name}`, stats: SPACE_STATS, heading: 'h1' });
+  frame.root.classList.add('wd-game', 'wd-space');
+  frame.root.querySelector('.wd-stats').setAttribute('aria-label', 'Space facts');
+  frame.message.setAttribute('role', 'status');
+  frame.host.classList.add('space-host');
+  const showHint = () => {
+    frame.message.textContent = 'Each part of this page saves with its own button.';
+  };
+  showHint();
+  // Whatever is tried next starts from the hint, so a refusal is never left sitting under "Saved."
+  const body = h('div', { class: 'space-sheets', onclick: showHint, onsubmit: showHint });
+  frame.host.append(body);
+
+  // Every change to the page comes through here, and only once the server has taken it.
   async function reload() {
     view = await api(`/api/spaces/${path}`);
     render();
+    frame.message.textContent = 'Saved.';
   }
+
+  const sheet = (title, label, ...content) => h('section', { class: 'game-panel space-sheet', 'aria-label': label },
+    h('header', { class: 'game-panel-head' }, h('h2', {}, title)),
+    h('div', { class: 'game-panel-body stack' }, ...content));
 
   function spacePanel() {
     const error = formError();
-    return h('section', { class: 'panel stack', 'aria-label': 'This space' },
-      h('h2', {}, view.space.kind === 'house' ? 'Your house' : 'This third space'),
+    return sheet(view.space.kind === 'house' ? 'Your house' : 'This third space', 'This space',
       h('form', {
         class: 'stack',
         onsubmit: submitter(error, async (values) => {
@@ -2179,8 +2348,7 @@ async function spaceView(id) {
 
   function floorsPanel() {
     const error = formError();
-    return h('section', { class: 'panel stack', 'aria-label': 'Floors' },
-      h('h2', {}, 'Floors'),
+    return sheet('Floors', 'Floors',
       view.floors.map(floorCard),
       view.floors.length < limits.floors ? h('form', {
         class: 'copy-row',
@@ -2197,8 +2365,7 @@ async function spaceView(id) {
   function peoplePanel() {
     const error = formError();
     const turnOut = (person) => `/api/spaces/${path}/people/${encodeURIComponent(person.id)}/turn-out`;
-    return h('section', { class: 'panel stack', 'aria-label': 'People' },
-      h('h2', {}, 'People'),
+    return sheet('People', 'People',
       h('ul', { class: 'rows' }, view.people.map((person) => h('li', { class: 'row' },
         h('div', { class: 'row-main' },
           h('span', {}, person.name),
@@ -2228,8 +2395,7 @@ async function spaceView(id) {
 
   function closePanel() {
     const error = formError();
-    return h('section', { class: 'panel stack', 'aria-label': 'Close this space' },
-      h('h2', {}, 'Close this space'),
+    return sheet('Close this space', 'Close this space',
       h('p', { class: 'muted' }, 'Closing it deletes every floor, with its chat, notes and plans. It can\'t be undone.'),
       error,
       h('button', {
@@ -2244,22 +2410,33 @@ async function spaceView(id) {
   }
 
   function render() {
-    titleEl.textContent = view.space.name;
-    document.title = `${view.space.name} · Agents Hangout`;
+    const { space, floors, people } = view;
+    document.title = `${space.name} · Agents Hangout`;
+    frame.title.replaceChildren(space.name, h('span', { class: 'wd-title-sub' }, ' · Customize'));
+    frame.outputs.floors.textContent = `${floors.length} of ${limits.floors}`;
+    frame.outputs.people.textContent = String(people.length);
+    frame.outputs.open.textContent = String(floors.filter(({ floor }) => floor.access === 'public').length);
+    frame.outputs.here.textContent = String(floors.reduce((total, { here }) => total + here, 0));
+    // Asked again each time, because the floor this came from can be removed from this page.
+    const back = (floors.find(({ floor }) => floor.id === from) || floors[0]).floor;
+    frame.actions.replaceChildren(
+      titleLink(`/h/${back.id}`, 'Back to the room', 'Room', '← '),
+      titleLink('/', 'The Commons', 'Map'));
     body.replaceChildren(
       spacePanel(),
       floorsPanel(),
       peoplePanel(),
-      ...(view.space.kind === 'third' ? [closePanel()] : []));
+      ...(space.kind === 'third' ? [closePanel()] : []));
   }
 
   render();
-  return h('main', { class: 'house' },
-    h('header', { class: 'top' },
-      h('a', { class: 'brand', href: '/', onclick: (e) => { e.preventDefault(); go('/'); } }, 'Agents Hangout'),
-      titleEl,
-      link(`/h/${view.floors[0].floor.id}`, 'Back to the room', { class: 'top-link' })),
-    body);
+  const stopClock = windowClock(frame);
+  document.documentElement.classList.add('in-game');
+  leaveRoom = () => {
+    stopClock();
+    document.documentElement.classList.remove('in-game');
+  };
+  return h('main', { class: 'game' }, frame.root);
 }
 
 // Cities and houses
