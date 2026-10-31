@@ -390,6 +390,20 @@ CREATE TABLE IF NOT EXISTS plan_items (
     created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_at);
+CREATE TABLE IF NOT EXISTS house_notes (
+    id          TEXT PRIMARY KEY,
+    house_id    TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+    topic       TEXT NOT NULL COLLATE NOCASE,
+    body        TEXT NOT NULL,
+    written_by  TEXT NOT NULL REFERENCES people(id),
+    via_agent   TEXT,
+    updated_at  INTEGER NOT NULL,
+    UNIQUE (house_id, topic)
+);
+CREATE TABLE IF NOT EXISTS house_plan_sharing (
+    person_id   TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    updated_at  INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS friend_invites (
     id           TEXT PRIMARY KEY,
     kind         TEXT NOT NULL,
@@ -630,6 +644,49 @@ pub struct NewPlanItem<'a> {
     pub added_by: &'a str,
     pub adder: &'a str,
     pub now: i64,
+}
+
+/// Something a household wants remembered (F45).
+#[derive(Clone, Debug, Serialize)]
+pub struct HouseNote {
+    pub topic: String,
+    pub text: String,
+    /// The person it was written by or for.
+    pub writer: String,
+    /// The bot that wrote it, if a person didn't.
+    pub via_agent: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NewHouseNote<'a> {
+    pub id: &'a str,
+    pub house_id: &'a str,
+    pub topic: &'a str,
+    pub text: &'a str,
+    pub written_by: &'a str,
+    pub via_agent: Option<&'a str>,
+    pub now: i64,
+}
+
+/// What came of writing a house note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteWrite {
+    Saved,
+    Full,
+    /// A bot tried to write over what a person wrote (F47).
+    PersonsWord,
+}
+
+/// A plan on a house's calendar. This is all of it, because anything here is shown (F53).
+#[derive(Clone, Debug, Serialize)]
+pub struct HousePlan {
+    pub title: String,
+    pub location: String,
+    pub starts_at: i64,
+    pub ends_at: i64,
+    pub on_calendar: bool,
+    pub going: Vec<String>,
 }
 
 /// An event as one person's calendar feed should show it.
@@ -3757,6 +3814,164 @@ impl Db {
     pub fn remove_plan_item(&self, id: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM plan_items WHERE id = ?", [id])?;
         Ok(())
+    }
+
+    // A house's notes and calendar
+
+    pub fn house_notes(&self, house_id: &str) -> rusqlite::Result<Vec<HouseNote>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT n.topic, n.body, p.name, n.via_agent, n.updated_at FROM house_notes n
+             JOIN people p ON p.id = n.written_by
+             WHERE n.house_id = ? ORDER BY n.topic",
+        )?;
+        let rows = stmt.query_map([house_id], |row| {
+            Ok(HouseNote {
+                topic: row.get(0)?,
+                text: row.get(1)?,
+                writer: row.get(2)?,
+                via_agent: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Writes under a topic, replacing what's there. The lock is held throughout, so two writers
+    /// can't both pass these checks.
+    pub fn set_house_note(&self, note: &NewHouseNote, max: i64) -> rusqlite::Result<NoteWrite> {
+        let conn = self.conn();
+        let existing: Option<Option<String>> = conn
+            .query_row(
+                "SELECT via_agent FROM house_notes WHERE house_id = ? AND topic = ?",
+                params![note.house_id, note.topic],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match existing {
+            Some(None) if note.via_agent.is_some() => return Ok(NoteWrite::PersonsWord),
+            Some(_) => {}
+            None => {
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM house_notes WHERE house_id = ?",
+                    [note.house_id],
+                    |row| row.get(0),
+                )?;
+                if count >= max {
+                    return Ok(NoteWrite::Full);
+                }
+            }
+        }
+        conn.execute(
+            "INSERT INTO house_notes (id, house_id, topic, body, written_by, via_agent, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (house_id, topic) DO UPDATE SET
+                topic = excluded.topic, body = excluded.body, written_by = excluded.written_by,
+                via_agent = excluded.via_agent, updated_at = excluded.updated_at",
+            params![
+                note.id,
+                note.house_id,
+                note.topic,
+                note.text,
+                note.written_by,
+                note.via_agent,
+                note.now
+            ],
+        )?;
+        Ok(NoteWrite::Saved)
+    }
+
+    /// Whether a bot wrote this note, if there is one.
+    pub fn house_note_by_bot(&self, house_id: &str, topic: &str) -> rusqlite::Result<Option<bool>> {
+        self.conn()
+            .query_row(
+                "SELECT via_agent IS NOT NULL FROM house_notes WHERE house_id = ? AND topic = ?",
+                params![house_id, topic],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn remove_house_note(&self, house_id: &str, topic: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM house_notes WHERE house_id = ? AND topic = ?",
+            params![house_id, topic],
+        )?;
+        Ok(())
+    }
+
+    /// F51: whether this person's plans show on their house's calendar.
+    pub fn shows_plans_to_house(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM house_plan_sharing WHERE person_id = ?",
+            [person_id],
+        )
+    }
+
+    pub fn set_shows_plans_to_house(
+        &self,
+        person_id: &str,
+        on: bool,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        if on {
+            self.conn().execute(
+                "INSERT INTO house_plan_sharing (person_id, updated_at) VALUES (?, ?)
+                 ON CONFLICT (person_id) DO UPDATE SET updated_at = excluded.updated_at",
+                params![person_id, now],
+            )?;
+        } else {
+            self.conn()
+                .execute("DELETE FROM house_plan_sharing WHERE person_id = ?", [person_id])?;
+        }
+        Ok(())
+    }
+
+    /// F52 to F54: the house's calendar between two times, soonest first.
+    pub fn house_calendar(
+        &self,
+        house_id: &str,
+        from: i64,
+        to: i64,
+    ) -> rusqlite::Result<Vec<HousePlan>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT e.id, e.title, e.location, e.starts_at, e.ends_at, e.status, p.name
+             FROM houses h
+             JOIN residents res ON res.house_id = h.id
+             JOIN people p ON p.id = res.person_id
+             JOIN rsvps r ON r.person_id = res.person_id AND r.response IN ('yes', 'maybe')
+             JOIN events e ON e.id = r.event_id
+             WHERE h.id = ?1 AND e.status != 'cancelled' AND e.ends_at >= ?2 AND e.starts_at <= ?3
+               AND (e.hangout_id = h.living_room
+                    OR EXISTS (SELECT 1 FROM house_plan_sharing s WHERE s.person_id = res.person_id))
+             ORDER BY e.starts_at, e.id, p.name, p.id",
+        )?;
+        let mut rows = stmt.query(params![house_id, from, to])?;
+        let mut plans: Vec<(String, HousePlan)> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let name: String = row.get(6)?;
+            match plans.last_mut() {
+                Some((last, plan)) if *last == id => plan.going.push(name),
+                _ => {
+                    let status: String = row.get(5)?;
+                    plans.push((
+                        id,
+                        HousePlan {
+                            title: row.get(1)?,
+                            location: row.get(2)?,
+                            starts_at: row.get(3)?,
+                            ends_at: row.get(4)?,
+                            on_calendar: status == "confirmed",
+                            going: vec![name],
+                        },
+                    ));
+                }
+            }
+        }
+        Ok(plans.into_iter().map(|(_, plan)| plan).collect())
     }
 
     // Growth. Counted from what happened, on read. Nothing is stored.

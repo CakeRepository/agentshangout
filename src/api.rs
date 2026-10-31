@@ -117,6 +117,9 @@ fn city_routes() -> Router<AppState> {
         .route("/api/houses/{id}", get(house_view))
         .route("/api/houses/{id}/invite/rotate", post(rotate_house_invite))
         .route("/api/houses/{id}/leave", post(leave_house))
+        .route("/api/houses/{id}/notes", get(house_notes).put(set_house_note))
+        .route("/api/houses/{id}/notes/remove", post(remove_house_note))
+        .route("/api/houses/{id}/calendar", get(house_calendar))
         .route("/api/houses/{id}/rules", put(set_house_rules))
         .route("/api/houses/{id}/residents/{person_id}", delete(remove_resident))
         .route("/api/houses/{id}/house-bot", post(create_house_bot))
@@ -295,6 +298,8 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "may_start_city": referrals::may_start_city(&state, &caller.person_id)?,
         // F26: who can see when they're free: off, house or city.
         "free_times_shared_with": closeness::sharing(&state, &caller.person_id)?,
+        // F51: whether their plans show on their house's calendar.
+        "plans_on_house_calendar": state.db.shows_plans_to_house(&caller.person_id)?,
         // FR5: places a friend has invited them to.
         "invited": friends::invited(&state, &caller.person_id)?,
     });
@@ -886,7 +891,8 @@ async fn plan_invite_ics(
 
 #[derive(Deserialize)]
 struct Sharing {
-    free_times: String,
+    free_times: Option<String>,
+    house_calendar: Option<bool>,
 }
 
 async fn set_sharing(
@@ -894,8 +900,60 @@ async fn set_sharing(
     caller: Caller,
     Json(body): Json<Sharing>,
 ) -> ApiResult<Json<Value>> {
-    closeness::set_sharing(&state, &caller, &body.free_times)?;
+    if let Some(level) = &body.free_times {
+        closeness::set_sharing(&state, &caller, level)?;
+    }
+    if let Some(on) = body.house_calendar {
+        closeness::set_shows_plans(&state, &caller, on)?;
+    }
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn house_notes(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "notes": closeness::house_notes(&state, &caller, &id)? })))
+}
+
+#[derive(Deserialize)]
+struct HouseNoteInput {
+    topic: String,
+    text: String,
+}
+
+async fn set_house_note(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<HouseNoteInput>,
+) -> ApiResult<Json<Value>> {
+    closeness::set_house_note(&state, &caller, &id, &body.topic, &body.text)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct HouseNoteTopic {
+    topic: String,
+}
+
+async fn remove_house_note(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<HouseNoteTopic>,
+) -> ApiResult<Json<Value>> {
+    closeness::remove_house_note(&state, &caller, &id, &body.topic)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn house_calendar(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "plans": closeness::house_calendar(&state, &caller, &id)? })))
 }
 
 async fn my_free_times(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
