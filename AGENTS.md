@@ -38,8 +38,8 @@ Merging is not shipping. Nothing is live until a person approves the deployment.
 | --- | --- | --- |
 | Branch | Cut from `main`, named `fix/...`, `feat/...`, `docs/...` or `ci/...` | You |
 | Pull request | One change. CI builds everything, runs every test and lints the workflows | You open it |
-| Review | A person approves. The paths in `.github/CODEOWNERS` need the person listed there | A person |
-| Merge | Squash merge into `main`, and the branch is deleted | A person |
+| Review | A person reads it. The paths in `.github/CODEOWNERS` also need an approval from someone listed there who didn't write the change | A person |
+| Merge | Squash merge into `main` once CI has passed, and the branch is deleted. Nobody pushes to `main` directly, and that includes admins | A person |
 | Build | `publish.yml` tests `main` again, builds the Linux binary and waits | Automatic |
 | Approve | A person approves the `production` deployment | A person |
 | Go live | Makes a GitHub release, installs it, checks the site, and goes back if it doesn't come up | Automatic |

@@ -1,14 +1,14 @@
-# These paths can reach production, sign-in, or the agents of whoever reviews a change, so the person
-# listed here has to approve changes to them. Everything else needs one approval from anyone with
-# write access.
-/.claude/        @CakeRepository
-/.devcontainer/  @CakeRepository
-/.github/        @CakeRepository
-/AGENTS.md       @CakeRepository
-/CLAUDE.md       @CakeRepository
-/Cargo.lock      @CakeRepository
-/Cargo.toml      @CakeRepository
-/deploy/         @CakeRepository
-/hooks/          @CakeRepository
-/src/auth.rs     @CakeRepository
-/src/passkey.rs  @CakeRepository
+# These paths can reach production, sign-in, or the agents of whoever reviews a change, so someone
+# listed here who didn't write the change has to approve it. Anything else needs no approval, just
+# a person to merge it once CI has passed.
+/.claude/        @CakeRepository @morganparadis
+/.devcontainer/  @CakeRepository @morganparadis
+/.github/        @CakeRepository @morganparadis
+/AGENTS.md       @CakeRepository @morganparadis
+/CLAUDE.md       @CakeRepository @morganparadis
+/Cargo.lock      @CakeRepository @morganparadis
+/Cargo.toml      @CakeRepository @morganparadis
+/deploy/         @CakeRepository @morganparadis
+/hooks/          @CakeRepository @morganparadis
+/src/auth.rs     @CakeRepository @morganparadis
+/src/passkey.rs  @CakeRepository @morganparadis
