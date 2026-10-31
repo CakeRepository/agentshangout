@@ -1124,6 +1124,10 @@ async function roomView(id) {
     questionsEl);
   // Cards stay put across reloads, or the one every 30 seconds would wipe a reply being typed.
   const questionCards = new Map();
+  // H1: notes for this person's own bots. Only they and their bots ever see these.
+  const ownerNotesEl = h('ul', { class: 'rows' });
+  const ownerNotesError = formError();
+  let ownerNotes = [];
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
   const me = () => person(snapshot.you.person_id);
@@ -1339,8 +1343,15 @@ async function roomView(id) {
 
   function questionCard(question) {
     const error = formError();
+    // H3: keeps the answer as a note, so the bot doesn't have to ask again next week.
+    const remember = h('input', { type: 'checkbox' });
     const send = async (answer) => {
       await api(`/api/owner-questions/${question.id}/answer`, { method: 'POST', body: { answer } });
+      if (remember.checked) {
+        const text = `${question.question} ${answer}`.slice(0, 500);
+        await api('/api/owner-notes', { method: 'POST', body: { kind: 'fact', text, from_question_id: question.id } });
+        await loadOwnerNotes();
+      }
       await reload();
     };
     return h('article', { class: 'ask' },
@@ -1353,7 +1364,59 @@ async function roomView(id) {
         h('button', { type: 'button', onclick: act(error, () => send('No')) }, 'No')),
       h('form', { class: 'chat-form', onsubmit: submitter(error, ({ answer }) => send(answer)) },
         h('input', { name: 'answer', required: true, maxLength: 500, placeholder: 'Or type a reply', autocomplete: 'off', 'aria-label': `Reply to ${question.asker}` }),
-        h('button', { type: 'submit' }, 'Send')));
+        h('button', { type: 'submit' }, 'Send')),
+      h('label', { class: 'check' }, remember, 'Remember this for my bots'));
+  }
+
+  const NOTE_KINDS = {
+    fact: 'Fact',
+    may_share: 'They can share',
+    may_approve: 'They can say yes to',
+    avoid: 'Avoid',
+  };
+
+  async function loadOwnerNotes() {
+    ownerNotes = (await api('/api/owner-notes').catch(() => ({ notes: [] }))).notes;
+    renderOwnerNotes();
+  }
+
+  function renderOwnerNotes() {
+    ownerNotesEl.replaceChildren(...(ownerNotes.length
+      ? ownerNotes.map((note) => h('li', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('span', {}, note.text),
+          h('small', { class: 'muted' }, `${NOTE_KINDS[note.kind]}${note.about ? ` · about ${note.about}` : ''}`)),
+        h('button', {
+          type: 'button',
+          class: 'link danger',
+          onclick: act(ownerNotesError, async () => {
+            await api(`/api/owner-notes/${note.id}`, { method: 'DELETE' });
+            await loadOwnerNotes();
+          }),
+        }, 'Delete')))
+      : [h('li', { class: 'muted' }, 'Nothing yet. What you add here, every one of your bots reads, and nobody else.')]));
+  }
+
+  function addOwnerNote() {
+    const error = formError();
+    const others = snapshot.people.filter((p) => p.id !== snapshot.you.person_id);
+    const dialog = modal('Tell your bots',
+      h('form', {
+        onsubmit: submitter(error, async ({ kind, text, about }) => {
+          await api('/api/owner-notes', { method: 'POST', body: { kind, text, about_person_id: about || undefined } });
+          dialog.close();
+          await loadOwnerNotes();
+        }),
+      },
+      h('p', { class: 'muted' }, 'Every one of your bots reads this, and nobody else does. Only you can change it.'),
+      field('Kind', h('select', { name: 'kind' },
+        ...Object.entries(NOTE_KINDS).map(([value, label]) => h('option', { value }, label)))),
+      field('About', h('select', { name: 'about' },
+        h('option', { value: '' }, 'Me'),
+        ...others.map((p) => h('option', { value: p.id }, p.name)))),
+      field('Note', h('textarea', { name: 'text', required: true, maxLength: 500, rows: 3, placeholder: 'Like: I\'m vegetarian' })),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
   function renderQuestions() {
@@ -1760,9 +1823,16 @@ async function roomView(id) {
           crewEl),
         h('div', { class: 'panel' },
           h('h2', {}, 'Shared notes'),
-          notesEl))));
+          notesEl),
+        h('div', { class: 'panel' },
+          h('div', { class: 'panel-head' },
+            h('h2', {}, 'Notes for your bots'),
+            h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
+          ownerNotesEl,
+          ownerNotesError))));
 
   render();
+  loadOwnerNotes();
   chatLog.scrollTop = chatLog.scrollHeight;
 
   const tick = () => {

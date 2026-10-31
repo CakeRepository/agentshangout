@@ -28,7 +28,7 @@ use crate::{
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    friends, now,
+    friends, households, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -84,6 +84,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
         .merge(friends::routes())
+        .merge(households::routes())
         .merge(city_routes())
         .merge(world_routes())
 }

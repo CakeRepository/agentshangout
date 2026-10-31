@@ -408,6 +408,17 @@ CREATE TABLE IF NOT EXISTS person_clocks (
     utc_offset_min  INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS owner_notes (
+    id             TEXT PRIMARY KEY,
+    owner_id       TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    kind           TEXT NOT NULL CHECK (kind IN ('fact', 'may_share', 'may_approve', 'avoid')),
+    about_person   TEXT REFERENCES people(id) ON DELETE CASCADE,
+    body           TEXT NOT NULL,
+    from_question  TEXT REFERENCES owner_questions(id) ON DELETE SET NULL,
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS owner_notes_by_owner ON owner_notes (owner_id, created_at);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -572,6 +583,41 @@ pub struct NewCheckIn<'a> {
     pub needs_human: bool,
     pub expires_at: i64,
     pub now: i64,
+}
+
+/// H1: something a person told their own bots. Only that person's bots ever read it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OwnerNote {
+    pub id: String,
+    #[serde(skip)]
+    pub owner_id: String,
+    pub kind: String,
+    pub text: String,
+    pub about_person_id: Option<String>,
+    /// The name of the person it's about, as it is now.
+    pub about: Option<String>,
+    pub from_question_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+pub struct NewOwnerNote<'a> {
+    pub id: &'a str,
+    pub owner_id: &'a str,
+    pub kind: &'a str,
+    pub about_person: Option<&'a str>,
+    pub body: &'a str,
+    pub from_question: Option<&'a str>,
+    pub now: i64,
+}
+
+/// H6: how a bot's owner knows someone, worked out on read.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Relation {
+    pub lives_with: bool,
+    pub shares_a_city: bool,
+    /// Plans on the calendar that are over, where both said yes.
+    pub plans_together: i64,
 }
 
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
@@ -1073,6 +1119,9 @@ const AGENT_COLS: &str = "a.id, a.owner_id, a.name, a.status, a.last_active_at, 
      x.kind, x.via, x.until_at, d.paused, d.checked_at";
 const AGENTS: &str = "agents a LEFT JOIN agent_activity x ON x.agent_id = a.id \
      LEFT JOIN agent_doorbell d ON d.agent_id = a.id";
+const OWNER_NOTE_COLS: &str = "n.id, n.owner_id, n.kind, n.body, n.about_person, p.name, \
+     n.from_question, n.created_at, n.updated_at";
+const OWNER_NOTES: &str = "FROM owner_notes n LEFT JOIN people p ON p.id = n.about_person";
 const MESSAGE_COLS: &str = "id, hangout_id, person_id, agent_id, speaker, kind, body, created_at";
 const EVENT_COLS: &str = "e.id, e.hangout_id, e.title, e.location, e.notes, e.starts_at, e.ends_at, \
      e.status, e.min_yes, e.sequence, e.proposed_by, e.proposer, e.updated_at, e.created_at";
@@ -2228,6 +2277,88 @@ impl Db {
     }
 
     // Notification targets. An owner is a person or a bot; their ids can't collide.
+
+    // Notes a person keeps for their own bots (H1 to H5)
+
+    /// Adds a note. False, and nothing changes, if the person already has `max` of them.
+    pub fn insert_owner_note(&self, note: &NewOwnerNote, max: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "INSERT INTO owner_notes
+                 (id, owner_id, kind, about_person, body, from_question, created_at, updated_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7
+             WHERE (SELECT COUNT(*) FROM owner_notes WHERE owner_id = ?2) < ?8",
+            params![
+                note.id,
+                note.owner_id,
+                note.kind,
+                note.about_person,
+                note.body,
+                note.from_question,
+                note.now,
+                max
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// A person's notes, oldest first.
+    pub fn owner_notes(&self, owner_id: &str) -> rusqlite::Result<Vec<OwnerNote>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {OWNER_NOTE_COLS} {OWNER_NOTES} WHERE n.owner_id = ? ORDER BY n.created_at, n.rowid"
+        ))?;
+        let rows = stmt.query_map([owner_id], owner_note_from_row)?;
+        rows.collect()
+    }
+
+    pub fn owner_note(&self, id: &str) -> rusqlite::Result<Option<OwnerNote>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {OWNER_NOTE_COLS} {OWNER_NOTES} WHERE n.id = ?"),
+                [id],
+                owner_note_from_row,
+            )
+            .optional()
+    }
+
+    pub fn update_owner_note(&self, id: &str, kind: &str, body: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE owner_notes SET kind = ?, body = ?, updated_at = ? WHERE id = ?",
+            params![kind, body, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_owner_note(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM owner_notes WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    /// H6: what the server knows about how `owner` and `other` know each other.
+    pub fn relation(&self, owner: &str, other: &str, now: i64) -> rusqlite::Result<Relation> {
+        let conn = self.conn();
+        let lives_with = exists(
+            &conn,
+            "SELECT 1 FROM residents a JOIN residents b ON b.house_id = a.house_id
+             WHERE a.person_id = ?1 AND b.person_id = ?2",
+            params![owner, other],
+        )?;
+        let shares_a_city = exists(
+            &conn,
+            "SELECT 1 FROM city_members a JOIN city_members b ON b.city_id = a.city_id
+             WHERE a.person_id = ?1 AND b.person_id = ?2",
+            params![owner, other],
+        )?;
+        let plans_together = conn.query_row(
+            "SELECT COUNT(*) FROM events e
+             JOIN rsvps a ON a.event_id = e.id AND a.person_id = ?1 AND a.response = 'yes'
+             JOIN rsvps b ON b.event_id = e.id AND b.person_id = ?2 AND b.response = 'yes'
+             WHERE e.status = 'confirmed' AND e.ends_at <= ?3",
+            params![owner, other, now],
+            |row| row.get(0),
+        )?;
+        Ok(Relation { lives_with, shares_a_city, plans_together })
+    }
 
     /// B2: replaces a person's saved clock.
     pub fn set_person_clock(
@@ -4222,6 +4353,20 @@ fn entry_rules_at(row: &Row, first: usize) -> rusqlite::Result<EntryRules> {
     })
 }
 
+fn owner_note_from_row(row: &Row) -> rusqlite::Result<OwnerNote> {
+    Ok(OwnerNote {
+        id: row.get(0)?,
+        owner_id: row.get(1)?,
+        kind: row.get(2)?,
+        text: row.get(3)?,
+        about_person_id: row.get(4)?,
+        about: row.get(5)?,
+        from_question_id: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
 fn person_from_row(row: &Row) -> rusqlite::Result<Person> {
     Ok(Person {
         id: row.get(0)?,
@@ -5537,6 +5682,28 @@ mod tests {
         if status != "proposed" {
             db.set_event_status(id, status, 0).unwrap();
         }
+    }
+
+    #[test]
+    fn plans_together_counts_only_plans_on_the_calendar_that_are_over() {
+        let db = Db::open(":memory:").unwrap();
+        two_houses(&db);
+        // Both said yes to each of these, and each ends at 100.
+        plan(&db, "over", "sq", 100, "confirmed");
+        plan(&db, "never_confirmed", "sq", 100, "proposed");
+        plan(&db, "cancelled", "sq", 100, "cancelled");
+        plan(&db, "still_on", "sq", 500, "confirmed");
+        db.upsert_rsvp("still_on", "p2", "yes", None, "", 0).unwrap();
+        plan(&db, "said_no", "sq", 100, "confirmed");
+        db.upsert_rsvp("said_no", "p2", "no", None, "", 0).unwrap();
+
+        let relation = db.relation("p1", "p2", 200).unwrap();
+        assert_eq!(relation.plans_together, 1);
+        assert!(relation.shares_a_city);
+        assert!(!relation.lives_with);
+        assert_eq!(db.relation("p1", "p2", 500).unwrap().plans_together, 2);
+        db.add_resident("hz", "p2", 0).unwrap();
+        assert!(db.relation("p1", "p2", 200).unwrap().lives_with);
     }
 
     fn room_ids(db: &Db, agent_id: &str, now: i64) -> Vec<String> {
