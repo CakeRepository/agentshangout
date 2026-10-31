@@ -1543,8 +1543,11 @@ fn bot_places_sql(city: &str, from: &str) -> String {
         )
     };
     format!(
-        "SELECT a.id, a.name, a.owner_id, a.last_active_at, a.last_seen_at,
-                bh.house_id, bh.stays_home, bh.is_house, {}, {}
+        // `stays_home` comes from the bot's own row, because `bh` may leave out a home the owner
+        // has moved out of, and the bot still stays home (R20).
+        "SELECT a.id, a.name, a.owner_id, a.last_active_at, a.last_seen_at, bh.house_id,
+                (SELECT own.stays_home FROM bot_homes own WHERE own.agent_id = a.id),
+                bh.is_house, {}, {}
          FROM agents a {from} ORDER BY a.created_at, a.id",
         away("house_id"),
         away("ends_at")
