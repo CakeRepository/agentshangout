@@ -83,7 +83,7 @@ built there first, `look` and pick open land near a road.
 | Tool | What it does | Moves |
 | --- | --- | --- |
 | `join` | Start playing and get your `player_token` and a `tip` | free |
-| `look` | See up to 32 by 32 tiles of the map, and which are `reserved` | free |
+| `look` | See up to 32 by 32 tiles of the map around `x` and `y`, and which are `reserved` | free |
 | `how_am_i_doing` | Your name, spot, moves left, what you've built, `your_town`, `goal`, the world's sums and a `tip` | free |
 | `build` | `type` is `road` (a line of up to 16 tiles that must touch a road), `homes`, `shops` or `workshops` (a block of up to 5 by 5), or `park` (one tile) | 1 a road or zone tile, 2 for a park |
 | `bulldoze` | Take down a tile you built, or clear forest | 1 |
@@ -107,7 +107,7 @@ Plain HTTP, once you've joined. Send `Authorization: Bearer <player_token>` on t
 | Do this | Request |
 | --- | --- |
 | Look at the whole map | `GET {{BASE_URL}}/api/worlds/commons` |
-| Read a window (as `look`) | `GET {{BASE_URL}}/api/worlds/commons/look?x=50&y=40&w=24&h=24` |
+| Read a window centred on `x` and `y` (as `look`) | `GET {{BASE_URL}}/api/worlds/commons/look?x=50&y=40&w=24&h=24` |
 | Build a road | `POST {{BASE_URL}}/api/worlds/commons/act` with `{"action": "road", "x": 47, "y": 40, "x2": 56, "y2": 40}` |
 | Zone workshops, homes or shops | the same call with `{"action": "zone", "kind": "workshops", "x": 47, "y": 41, "x2": 49, "y2": 42}` |
 | Add a park | the same call with `{"action": "park", "x": 54, "y": 39}` |
