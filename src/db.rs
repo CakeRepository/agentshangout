@@ -366,6 +366,42 @@ CREATE TABLE IF NOT EXISTS plan_invitees (
     PRIMARY KEY (event_id, person_id)
 );
 CREATE INDEX IF NOT EXISTS plan_invitees_by_person ON plan_invitees (person_id);
+CREATE TABLE IF NOT EXISTS free_sharing (
+    person_id   TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    level       TEXT NOT NULL CHECK (level IN ('house', 'city')),
+    updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS free_windows (
+    person_id  TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    starts_at  INTEGER NOT NULL,
+    ends_at    INTEGER NOT NULL,
+    set_at     INTEGER NOT NULL,
+    PRIMARY KEY (person_id, starts_at)
+);
+CREATE TABLE IF NOT EXISTS plan_items (
+    id           TEXT PRIMARY KEY,
+    event_id     TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    body         TEXT NOT NULL,
+    added_by     TEXT NOT NULL REFERENCES people(id),
+    adder        TEXT NOT NULL,
+    claimed_by   TEXT REFERENCES people(id),
+    claimed_via  TEXT,
+    done         INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_at);
+CREATE TABLE IF NOT EXISTS friend_invites (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,
+    place_id     TEXT NOT NULL,
+    from_person  TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    to_person    TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    created_at   INTEGER NOT NULL,
+    declined_at  INTEGER,
+    UNIQUE (kind, place_id, to_person)
+);
+CREATE INDEX IF NOT EXISTS friend_invites_to_person ON friend_invites (to_person);
+CREATE INDEX IF NOT EXISTS friend_invites_by_sender ON friend_invites (from_person, created_at);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -570,6 +606,30 @@ pub enum Invited {
     New,
     Already,
     Full,
+}
+
+/// One thing a plan needs. A claim only counts while whoever made it is still going (F40).
+#[derive(Clone, Debug, Serialize)]
+pub struct PlanItem {
+    pub id: String,
+    pub event_id: String,
+    pub text: String,
+    pub added_by: String,
+    pub adder: String,
+    pub claimed_by: Option<String>,
+    pub claimer: Option<String>,
+    pub claimed_via: Option<String>,
+    pub done: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NewPlanItem<'a> {
+    pub id: &'a str,
+    pub event_id: &'a str,
+    pub text: &'a str,
+    pub added_by: &'a str,
+    pub adder: &'a str,
+    pub now: i64,
 }
 
 /// An event as one person's calendar feed should show it.
@@ -1023,6 +1083,30 @@ const GATHERINGS: &str = "FROM events e JOIN cities c ON c.square_id = e.hangout
 /// left stays in the table but doesn't count, and counts again if they come back.
 const VOUCHERS_IN_CITY: &str = "FROM vouches v
      JOIN city_members cm ON cm.city_id = v.city_id AND cm.person_id = v.by_person";
+
+const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
+     CASE WHEN r.person_id IS NOT NULL THEN i.claimed_by END,
+     CASE WHEN r.person_id IS NOT NULL THEN p.name END,
+     CASE WHEN r.person_id IS NOT NULL THEN i.claimed_via END,
+     i.done";
+const PLAN_ITEM_FROM: &str = "FROM plan_items i
+     LEFT JOIN rsvps r ON r.event_id = i.event_id AND r.person_id = i.claimed_by
+                      AND r.response IN ('yes', 'maybe')
+     LEFT JOIN people p ON p.id = i.claimed_by";
+
+fn plan_item_from_row(row: &Row) -> rusqlite::Result<PlanItem> {
+    Ok(PlanItem {
+        id: row.get(0)?,
+        event_id: row.get(1)?,
+        text: row.get(2)?,
+        added_by: row.get(3)?,
+        adder: row.get(4)?,
+        claimed_by: row.get(5)?,
+        claimer: row.get(6)?,
+        claimed_via: row.get(7)?,
+        done: row.get(8)?,
+    })
+}
 
 fn city_from_row(row: &Row) -> rusqlite::Result<City> {
     Ok(City {
@@ -3507,6 +3591,174 @@ impl Db {
         rows.collect()
     }
 
+    // Closeness
+
+    /// Who can see when this person is free: `house`, `city`, or nobody.
+    pub fn free_sharing(&self, person_id: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row("SELECT level FROM free_sharing WHERE person_id = ?", [person_id], |row| {
+                row.get(0)
+            })
+            .optional()
+    }
+
+    /// F26, F28: no level turns sharing off and deletes what was posted.
+    pub fn set_free_sharing(
+        &self,
+        person_id: &str,
+        level: Option<&str>,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        match level {
+            Some(level) => {
+                tx.execute(
+                    "INSERT INTO free_sharing (person_id, level, updated_at) VALUES (?, ?, ?)
+                     ON CONFLICT (person_id) DO UPDATE SET
+                        level = excluded.level, updated_at = excluded.updated_at",
+                    params![person_id, level, now],
+                )?;
+            }
+            None => {
+                tx.execute("DELETE FROM free_sharing WHERE person_id = ?", [person_id])?;
+                tx.execute("DELETE FROM free_windows WHERE person_id = ?", [person_id])?;
+            }
+        }
+        tx.commit()
+    }
+
+    pub fn replace_free_windows(
+        &self,
+        person_id: &str,
+        windows: &[(i64, i64)],
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM free_windows WHERE person_id = ?", [person_id])?;
+        for (start, end) in windows {
+            tx.execute(
+                "INSERT INTO free_windows (person_id, starts_at, ends_at, set_at) VALUES (?, ?, ?, ?)",
+                params![person_id, start, end, now],
+            )?;
+        }
+        tx.commit()
+    }
+
+    /// Windows still ahead that were posted since `posted_since`, in order.
+    pub fn free_windows(
+        &self,
+        person_id: &str,
+        now: i64,
+        posted_since: i64,
+    ) -> rusqlite::Result<Vec<(i64, i64)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT starts_at, ends_at FROM free_windows
+             WHERE person_id = ? AND ends_at > ? AND set_at >= ? ORDER BY starts_at",
+        )?;
+        let rows = stmt.query_map(params![person_id, now, posted_since], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// F32: when this person is taken: plans on the calendar that they said yes to.
+    pub fn busy_spans(&self, person_id: &str, now: i64) -> rusqlite::Result<Vec<(i64, i64)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT e.starts_at, e.ends_at FROM events e
+             JOIN rsvps r ON r.event_id = e.id AND r.person_id = ?
+             WHERE r.response = 'yes' AND e.status = 'confirmed' AND e.ends_at > ?",
+        )?;
+        let rows = stmt.query_map(params![person_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    pub fn share_a_house(&self, one: &str, other: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM residents a JOIN residents b ON a.house_id = b.house_id
+             WHERE a.person_id = ? AND b.person_id = ?",
+            params![one, other],
+        )
+    }
+
+    pub fn plan_items(&self, event_id: &str) -> rusqlite::Result<Vec<PlanItem>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {PLAN_ITEM_COLS} {PLAN_ITEM_FROM} WHERE i.event_id = ? ORDER BY i.created_at, i.rowid"
+        ))?;
+        let rows = stmt.query_map([event_id], plan_item_from_row)?;
+        rows.collect()
+    }
+
+    pub fn plan_item(&self, id: &str) -> rusqlite::Result<Option<PlanItem>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {PLAN_ITEM_COLS} {PLAN_ITEM_FROM} WHERE i.id = ?"),
+                [id],
+                plan_item_from_row,
+            )
+            .optional()
+    }
+
+    /// False if the plan's list is full.
+    pub fn add_plan_item(&self, item: &NewPlanItem, max: i64) -> rusqlite::Result<bool> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM plan_items WHERE event_id = ?",
+            [item.event_id],
+            |row| row.get(0),
+        )?;
+        if count >= max {
+            return Ok(false);
+        }
+        conn.execute(
+            "INSERT INTO plan_items (id, event_id, body, added_by, adder, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![item.id, item.event_id, item.text, item.added_by, item.adder, item.now],
+        )?;
+        Ok(true)
+    }
+
+    /// F38, F40: false if someone who's still going already has it.
+    pub fn claim_plan_item(
+        &self,
+        id: &str,
+        person_id: &str,
+        via: Option<&str>,
+    ) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE plan_items SET claimed_by = ?2, claimed_via = ?3
+             WHERE id = ?1 AND (claimed_by IS NULL OR NOT EXISTS (
+                SELECT 1 FROM rsvps r
+                WHERE r.event_id = plan_items.event_id AND r.person_id = plan_items.claimed_by
+                  AND r.response IN ('yes', 'maybe')))",
+            params![id, person_id, via],
+        )?;
+        Ok(changed == 1)
+    }
+
+    pub fn release_plan_item(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE plan_items SET claimed_by = NULL, claimed_via = NULL, done = 0 WHERE id = ?",
+            [id],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_plan_item(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("UPDATE plan_items SET done = 1 WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    pub fn remove_plan_item(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM plan_items WHERE id = ?", [id])?;
+        Ok(())
+    }
+
     // Growth. Counted from what happened, on read. Nothing is stored.
 
     /// Confirmed Town Square plans that have finished, with a yes from at least two people. A
@@ -4037,6 +4289,16 @@ impl PlayerRow {
     }
 }
 
+/// An invite from a friend, with what the person invited sees (FR5).
+#[derive(Clone, Debug)]
+pub struct FriendInvite {
+    pub id: String,
+    pub kind: String,
+    pub from_name: String,
+    pub place_name: String,
+    pub code: String,
+}
+
 /// A player standing in a world.
 #[derive(Clone, Debug)]
 pub struct WorldPlayer {
@@ -4237,6 +4499,17 @@ fn q_world_player(
     )
     .optional()
 }
+
+/// FR1: the ids of a person's friends: everyone in a room or city with them, and everyone who
+/// answered a plan in one of their rooms through its link. It is one way for a plan's link, because
+/// someone who answered one can't see who is in its room (F11). Takes the person as ?1.
+const FRIENDS_OF: &str = "(
+    SELECT b.person_id FROM members a JOIN members b ON b.hangout_id = a.hangout_id
+      WHERE a.person_id = ?1
+    UNION SELECT b.person_id FROM city_members a JOIN city_members b ON b.city_id = a.city_id
+      WHERE a.person_id = ?1
+    UNION SELECT i.person_id FROM members a JOIN events e ON e.hangout_id = a.hangout_id
+      JOIN plan_invitees i ON i.event_id = e.id WHERE a.person_id = ?1)";
 
 /// What `world_player_from_row` reads. A person's own player has a person and no token or bot.
 const WORLD_PLAYER_COLS: &str = "p.id, p.name_seed, w.x, w.y, w.emote,
@@ -4575,6 +4848,103 @@ impl Db {
         player_id: i64,
     ) -> rusqlite::Result<Option<(Pos, Option<String>)>> {
         q_world_player(&self.conn(), world_id, player_id)
+    }
+
+    /// FR1: a person's friends by name, worked out from what they share right now.
+    pub fn friends_of(&self, person_id: &str, limit: i64) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, name, color FROM people
+             WHERE id != ?1 AND id IN {FRIENDS_OF}
+             ORDER BY name, id LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![person_id, limit], person_from_row)?;
+        rows.collect()
+    }
+
+    pub fn is_friend(&self, person_id: &str, other_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            &format!("SELECT 1 FROM people WHERE id = ?2 AND id != ?1 AND id IN {FRIENDS_OF}"),
+            params![person_id, other_id],
+        )
+    }
+
+    /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as
+    /// when one is already waiting or they said no.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_friend_invite(
+        &self,
+        id: &str,
+        kind: &str,
+        place_id: &str,
+        from_person: &str,
+        to_person: &str,
+        now: i64,
+        lapsed: i64,
+    ) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "INSERT INTO friend_invites (id, kind, place_id, from_person, to_person, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (kind, place_id, to_person) DO UPDATE
+               SET from_person = excluded.from_person, created_at = excluded.created_at
+               WHERE declined_at IS NULL AND created_at <= ?7",
+            params![id, kind, place_id, from_person, to_person, now, lapsed],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn friend_invites_sent_since(&self, person_id: &str, since: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM friend_invites WHERE from_person = ? AND created_at > ?",
+            params![person_id, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// FR5: invites still waiting: not turned down, not lapsed, to a place the sender is still in
+    /// and the person isn't, with that place's link as it is now.
+    pub fn friend_invites_for(
+        &self,
+        person_id: &str,
+        since: i64,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<FriendInvite>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.kind, p.name, COALESCE(h.name, c.name), COALESCE(h.invite_code, c.invite_code)
+             FROM friend_invites f
+             JOIN people p ON p.id = f.from_person
+             LEFT JOIN hangouts h ON f.kind = 'room' AND h.id = f.place_id
+             LEFT JOIN cities c ON f.kind = 'city' AND c.id = f.place_id
+             WHERE f.to_person = ?1 AND f.declined_at IS NULL AND f.created_at > ?2
+               AND (h.id IS NOT NULL OR c.id IS NOT NULL)
+               AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = f.place_id AND m.person_id = ?1)
+               AND NOT EXISTS (SELECT 1 FROM city_members m WHERE m.city_id = f.place_id AND m.person_id = ?1)
+               AND (EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = f.place_id AND m.person_id = f.from_person)
+                    OR EXISTS (SELECT 1 FROM city_members m WHERE m.city_id = f.place_id AND m.person_id = f.from_person))
+             ORDER BY f.created_at DESC, f.id LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(params![person_id, since, limit], |row| {
+            Ok(FriendInvite {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                from_name: row.get(2)?,
+                place_name: row.get(3)?,
+                code: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// True if there was an invite to this person, not already turned down.
+    pub fn decline_friend_invite(&self, id: &str, person_id: &str, now: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE friend_invites SET declined_at = ?
+             WHERE id = ? AND to_person = ? AND declined_at IS NULL",
+            params![now, id, person_id],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Whether a person's own player has moved in a world since `since`.

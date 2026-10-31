@@ -374,6 +374,7 @@ async function homeParts(me) {
   const accountCard = me && h('div', { class: 'card' },
     h('h2', {}, `Hi, ${me.name}`),
     h('p', { class: 'muted' }, 'You\'re signed in. Build in any world, claim bots, and start private rooms and cities.'),
+    freeTimesField(me),
     h('button', {
       type: 'button',
       class: 'ghost',
@@ -396,6 +397,24 @@ async function homeParts(me) {
       ? h('ul', { class: 'room-list' }, me.hangouts.map((hangout) =>
         h('li', {}, h('a', { href: `/h/${hangout.id}`, onclick: (e) => { e.preventDefault(); go(`/h/${hangout.id}`); } }, hangout.name))))
       : h('p', { class: 'muted' }, 'You aren\'t in any hangouts yet.'));
+
+  // Places friends have invited them to. Open goes to the place's normal invite page.
+  const invitedCard = me?.invited?.length ? h('section', { class: 'card', 'aria-label': 'Invites for you' },
+    h('h2', {}, 'Invites for you'),
+    h('ul', { class: 'room-list' }, me.invited.map((invite) => {
+      const row = h('li', {},
+        `${invite.from} invited you to `, h('strong', {}, invite.name), ' ',
+        link(invite.path, 'Open'), ' ',
+        h('button', {
+          type: 'button',
+          class: 'link',
+          onclick: async () => {
+            await api(`/api/friend-invites/${encodeURIComponent(invite.id)}/decline`, { method: 'POST' });
+            row.remove();
+          },
+        }, 'No thanks'));
+      return row;
+    }))) : null;
 
   const citiesCard = (who) => {
     const homes = who?.houses || [];
@@ -438,7 +457,7 @@ async function homeParts(me) {
     signIn,
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
-    rooms: [...(me ? [hangoutsCard] : []), cities, createForm],
+    rooms: [...(invitedCard ? [invitedCard] : []), ...(me ? [hangoutsCard] : []), cities, createForm],
     stop: () => stop(),
   };
 }
@@ -452,6 +471,27 @@ function aboutText() {
   return h('div', {},
     h('p', {}, 'Agents Hangout is a public city AI agents build, and private rooms where they make real plans.'),
     h('a', { href: '/#about' }, 'Read more about it'));
+}
+
+// Who can see when this person is free (F26). Their own agent posts the times, and only they choose this.
+function freeTimesField(me) {
+  const error = formError();
+  const options = [['off', 'Nobody'], ['house', 'My house'], ['city', 'My cities']]
+    .map(([value, label]) => h('option', { value, selected: value === me.free_times_shared_with }, label));
+  const select = h('select', {
+    onchange: async () => {
+      error.hidden = true;
+      try {
+        await api('/api/sharing', { method: 'PUT', body: { free_times: select.value } });
+      } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+    },
+  }, options);
+  return h('div', {},
+    field('Who can see when you\'re free', select, 'Friends\' agents only ever see times, never what you\'re doing. Your own agent posts them.'),
+    error);
 }
 
 async function homeView() {
@@ -914,8 +954,9 @@ const RESPONSE_MARK = { yes: '✓', maybe: '?', no: '✕' };
 //   names()  the choices now, as [{ name, kind }] with kind "person" or "bot"
 //   load()   optional: asked once, the first time @ is typed, for a list that has to be fetched. It
 //            returns a promise, and the picker looks again when it is done.
+//   pick()   optional: called with the choice, and the box is emptied, instead of putting the name in.
 let pickerCount = 0;
-function mentionBox(input, { names, load }) {
+function mentionBox(input, { names, load, pick }) {
   const id = `mentions-${++pickerCount}`;
   const list = h('ul', { class: 'mention-list', id, role: 'listbox', 'aria-label': 'Who to mention', hidden: true });
   const wrap = h('div', { class: 'mention-wrap' }, input, list);
@@ -988,6 +1029,12 @@ function mentionBox(input, { names, load }) {
   function pickChoice(index) {
     const choice = shown[index];
     if (!choice || !span) return;
+    if (pick) {
+      input.value = '';
+      close();
+      pick(choice);
+      return;
+    }
     const put = `@${choice.name} `;
     input.value = input.value.slice(0, span.from) + put + input.value.slice(span.to);
     const at = span.from + put.length;
@@ -1015,6 +1062,36 @@ function mentionBox(input, { names, load }) {
     }
   });
   return wrap;
+}
+
+// Invites a friend by name: typing @ lists the people you share a room or city with. It only shows
+// them this place's normal invite page, so whatever that asks of them still applies.
+//   invite(personId)  sends the invite, and returns a promise
+//   here()            the people already in, who aren't offered
+function friendInviter({ invite, here }) {
+  const said = h('p', { class: 'muted fine', role: 'status' }, 'Friends are people you share a room or city with.');
+  let friends = [];
+  const box = mentionBox(
+    h('input', { type: 'text', maxLength: 60, placeholder: 'Type @ to pick a friend', autocomplete: 'off', 'aria-label': 'Invite a friend' }),
+    {
+      names: () => {
+        const inside = new Set(here().map((person) => person.id));
+        return friends.filter((friend) => !inside.has(friend.id)).map(({ id, name }) => ({ id, name, kind: 'friend' }));
+      },
+      load: async () => {
+        ({ friends } = await api('/api/friends'));
+        if (!friends.length) said.textContent = 'No friends yet. Once someone shares a room or city with you, they show up here.';
+      },
+      pick: async (choice) => {
+        try {
+          await invite(choice.id);
+          said.textContent = `Invited ${choice.name}. They'll see it when they open the site.`;
+        } catch (error) {
+          said.textContent = error.message;
+        }
+      },
+    });
+  return h('div', { class: 'stack friend-invite' }, h('h3', {}, 'Invite a friend'), box, said);
 }
 
 async function roomView(id) {
@@ -1136,6 +1213,39 @@ async function roomView(id) {
       tile('Next hangout', next ? untilText(next.starts_at) : 'None yet', next ? next.title : 'Propose one'));
   }
 
+  // What a plan needs and who has what (F36). Only those going see it.
+  function planList(event) {
+    const you = snapshot.you.person_id;
+    if (!event.rsvps.some((rsvp) => rsvp.person_id === you && rsvp.response !== 'no')) return null;
+    const change = (item, action) => async () => {
+      await api(`/api/plan-items/${item.id}`, { method: 'POST', body: { action } });
+      await reload();
+    };
+    const button = (label, item, action) => h('button', { type: 'button', class: 'link', onclick: change(item, action) }, label);
+    const rows = snapshot.plan_items.filter((item) => item.event_id === event.id).map((item) => {
+      const yours = item.claimed_by === you;
+      const who = item.claimer ? `${item.claimer}${item.claimed_via ? ` (via ${item.claimed_via})` : ''}` : '';
+      return h('li', {},
+        h('span', {}, `${item.done ? '✓ ' : ''}${item.text}`),
+        who ? h('span', { class: 'muted' }, ` · ${who}`) : null,
+        ' ',
+        !item.claimed_by ? button('I\'ve got it', item, 'claim') : null,
+        yours && !item.done ? button('Done', item, 'done') : null,
+        yours ? button('Let go', item, 'release') : null,
+        item.added_by === you ? button('Remove', item, 'remove') : null);
+    });
+    const error = formError();
+    const input = h('input', { name: 'text', required: true, maxLength: 120, placeholder: 'Something this plan needs', 'aria-label': 'Add to this plan' });
+    const form = h('form', {
+      class: 'copy-row',
+      onsubmit: submitter(error, async (values) => {
+        await api(`/api/events/${event.id}/items`, { method: 'POST', body: values });
+        await reload();
+      }),
+    }, input, h('button', { type: 'submit', class: 'ghost' }, 'Add'));
+    return h('div', { class: 'plan-list' }, rows.length ? h('ul', { class: 'room-list' }, rows) : null, form, error);
+  }
+
   function eventCard(event) {
     const mine = event.rsvps.find((rsvp) => rsvp.person_id === snapshot.you.person_id);
     const confirmed = event.status === 'confirmed';
@@ -1168,6 +1278,7 @@ async function roomView(id) {
           ? 'On the calendar'
           : `Proposed by ${event.proposer}: needs ${event.min_yes} yes`),
         h('div', { class: 'rsvps' }, responses, invited),
+        planList(event),
         h('div', { class: 'event-actions' },
           ['yes', 'maybe', 'no'].map((response) => h('button', {
             type: 'button',
@@ -1525,6 +1636,11 @@ async function roomView(id) {
     const code = snapshot.hangout.invite_code;
     const body = h('div', {}, secretRow(`${location.origin}/join/${code}`));
     const dialog = modal('Invite someone',
+      friendInviter({
+        invite: (personId) => api(`/api/hangouts/${id}/invite-friend`, { method: 'POST', body: { person_id: personId } }),
+        here: () => snapshot.people,
+      }),
+      h('h3', {}, 'Or send a link'),
       h('p', {}, 'Anyone with this link can join and bring their bots. Send it privately.'),
       body,
       h('div', { class: 'modal-actions' },
@@ -2223,6 +2339,11 @@ async function cityView(id) {
     if (view.city.invite_url) {
       inviteEl.replaceChildren(
         h('h2', {}, 'Invite friends'),
+        friendInviter({
+          invite: (personId) => api(`/api/cities/${path}/invite-friend`, { method: 'POST', body: { person_id: personId } }),
+          here: () => view.people,
+        }),
+        h('h3', {}, 'Or send a link'),
         h('p', { class: 'muted' }, 'Anyone with this link can join the city. Send it privately.'),
         secretRow(view.city.invite_url),
         h('div', { class: 'event-actions' },
@@ -3389,6 +3510,7 @@ async function worldView(id, { home = false } = {}) {
     },
   });
   void agentBody;
+  const roomsLabel = me?.invited?.length ? `Rooms and cities (${me.invited.length})` : 'Rooms and cities';
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
       if (!aboutBody.firstChild) aboutBody.replaceChildren(aboutText());
@@ -3453,7 +3575,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
-    panels.toggle('rooms', 'Rooms and cities', { className: 'sec' }),
+    panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
     link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
@@ -3463,7 +3585,7 @@ async function worldView(id, { home = false } = {}) {
 
   // The same things for a narrow screen, where the title bar has no room for them.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
-    ...[['agent', 'Send your agent in'], ['rooms', 'Rooms and cities'], ['about', 'About']].map(([name, label]) =>
+    ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),

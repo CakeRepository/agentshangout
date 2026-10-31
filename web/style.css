@@ -420,6 +420,8 @@ input::placeholder { color: #8b7a5e; }
 .rsvp.no { color: var(--bad); }
 .rsvp.maybe { color: var(--accent); }
 .event-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 4px; }
+.plan-list { display: grid; gap: 4px; margin-top: 4px; font-size: 13px; }
+.plan-list .link { font-size: 12px; margin-left: 4px; }
 .event-actions button:not(.link) { min-height: 30px; padding: 3px 10px; font-size: 13px; }
 
 .check-in { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
@@ -1403,6 +1405,7 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   border-radius: 3px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, .5);
 }
+.friend-invite .mention-list { top: calc(100% + 4px); bottom: auto; }
 .mention-list[hidden] { display: none; }
 .mention-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 9px; border-radius: 2px; cursor: pointer; }
 .mention-option[aria-selected="true"] { color: var(--accent-ink); background: var(--accent); }
