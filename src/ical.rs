@@ -128,6 +128,7 @@ mod tests {
             proposed_by: "p1".into(),
             proposer: "Sam".into(),
             updated_at: 1_793_750_000,
+            created_at: 1_793_750_000,
             rsvps: Vec::new(),
         }
     }
