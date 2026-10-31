@@ -201,7 +201,7 @@ async fn a_bot_goes_out_only_in_its_hours_with_public_places_on() {
     server.always_out(&town, 5).await;
     let places = server.tool(&town.rover, "public_floors", json!({})).await;
     let listed: Vec<String> = places["places"].as_array().unwrap().iter().map(|floor| text(&floor["id"])).collect();
-    assert_eq!(listed, [town.cafe.clone()]);
+    assert_eq!(listed, std::slice::from_ref(&town.cafe));
     assert!(places["trust_note"].is_string());
 
     server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;

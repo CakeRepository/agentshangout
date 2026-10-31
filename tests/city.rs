@@ -2251,7 +2251,7 @@ fn house_bot_probes(set: &GuestSet, casa: &Bot) -> Vec<(Method, String, Option<V
     for (method, path, body) in more {
         calls.push((method, path.to_string(), body));
     }
-    calls.push((Method::POST, format!("/api/notify/test"), Some(json!({ "hangout_id": set.porch() }))));
+    calls.push((Method::POST, "/api/notify/test".to_string(), Some(json!({ "hangout_id": set.porch() }))));
     calls
 }
 
@@ -2467,7 +2467,7 @@ async fn scene_names_are_letters_numbers_and_spaces_and_none_of_the_banned_words
         for name in [
             word.to_string(),
             word.to_uppercase(),
-            format!("{}{}", &word[..1].to_uppercase(), &word[1..]),
+            format!("{}{}", word[..1].to_uppercase(), &word[1..]),
             format!("Movie {word} Night"),
             format!("{word} the house"),
             format!("close   the   {word}"),

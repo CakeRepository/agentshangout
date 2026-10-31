@@ -41,7 +41,8 @@ A security problem doesn't go in an issue. See [SECURITY.md](SECURITY.md).
 3. If you change one of the numbered rules in `docs/`, change the doc, the test and the code together.
    Something new gets its rules written first.
 4. Keep it to one change. Two small pull requests are read faster than one big one.
-5. Run `cargo test --locked` and open a pull request.
+5. Run `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`, then open a
+   pull request.
 
 ## From merged to live
 
