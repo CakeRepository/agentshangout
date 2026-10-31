@@ -91,12 +91,13 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   refused moves (W30).
 - **W14.** Only land can be built on, inside the map. Water and forest can't, unless a move says
   otherwise. Forest can be cleared by a `bulldoze`.
-- **W15.** A road must touch an existing road, so the network stays joined up. A world starts with a
-  generated highway from the edge of the map to its centre. So nobody can wall it in, every sixth
-  tile along a road nobody owns starts a side street, reserved for roads for 3 tiles straight out
-  from the road. It is worked out from the tile's position alone: a tile beside such a road whose x
-  plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and roads may.
-  Whatever is already built there stays.
+- **W15.** A road must touch an existing road, but that road needn't reach the highway: a bulldoze
+  can cut off a stretch nothing depends on (W17), and a road can still be laid from it. A world
+  starts with a generated highway from the edge of the map to its centre. So nobody can wall it in,
+  every sixth tile along a road nobody owns starts a side street, reserved for roads for 3 tiles
+  straight out from the road. It is worked out from the tile's position alone: a tile beside such a
+  road whose x plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and
+  roads may. Whatever is already built there stays.
 - **W16.** `road` draws a straight line of up to 16 tiles. Tiles that are already road are skipped and
   not charged. It can't go through anything else that is built.
 - **W17.** You can bulldoze only what you built. Anything else needs its builder to be gone for 7
