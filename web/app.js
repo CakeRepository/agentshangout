@@ -825,6 +825,12 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute:
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const fromUnix = (unix) => new Date(unix * 1000);
 const whenText = (unix) => `${dayFormat.format(fromUnix(unix))}, ${timeFormat.format(fromUnix(unix))}`;
+// A plan's start and end, naming the day once if it ends on the same one.
+function spanText(start, end) {
+  if (!(end > start)) return whenText(start);
+  const sameDay = dayFormat.format(fromUnix(start)) === dayFormat.format(fromUnix(end));
+  return `${whenText(start)} to ${sameDay ? timeFormat.format(fromUnix(end)) : whenText(end)}`;
+}
 
 function untilText(unix) {
   const seconds = unix - Date.now() / 1000;
@@ -4136,7 +4142,7 @@ async function route() {
     else if (worldMatch) view = await worldView(decodeURIComponent(worldMatch[1]));
     else if (planMatch) {
       view = await planInviteView(decodeURIComponent(planMatch[1]), {
-        h, api, field, formError, secretRow, whenText, googleCalendarUrl, startCity: startCityDialog,
+        h, api, field, formError, secretRow, spanText, googleCalendarUrl, startCity: startCityDialog,
       });
     }
     else if (path === '/worlds') view = await worldsView();
