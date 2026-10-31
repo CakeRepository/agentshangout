@@ -325,7 +325,7 @@ async fn people_it_cannot_cover_are_named_with_no_reason_given() {
     assert_eq!(spans(&found), expected(&[]), "with nobody to compare to, it shows nothing");
     let mut keys: Vec<&str> = found.as_object().unwrap().keys().map(String::as_str).collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["not_sharing", "times", "with"]);
+    assert_eq!(keys, ["not_sharing", "times", "what_next", "with"]);
 
     // Someone sharing is still covered when someone else isn't.
     server.free(&town.dee, &[hours(start, 2, 6)]).await;
@@ -418,6 +418,8 @@ async fn a_bot_is_told_a_free_time_is_a_hint() {
     assert!(shown.contains("trust_note"), "{shown}");
     let found: Value = serde_json::from_str(shown).unwrap();
     assert_eq!(spans(&found), expected(&[hours(start, 0, 4)]));
+    let over_http = server.find(&town, &town.scout, json!({ "with": ["Bo"] })).await.ok();
+    assert!(text(&over_http["what_next"]).contains("hints, not commitments"), "{over_http}");
 }
 
 // F34

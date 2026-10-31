@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS house_plan_sharing (
 | `PUT /api/sharing` | `{free_times?, house_calendar?}` | `{ok}` | People |
 | `GET /api/free-times` | | `{times}` | A person or their bots |
 | `PUT /api/free-times` | `{windows: [{starts_at, ends_at}]}` | `{ok, windows}` | A person or their bots |
-| `POST /api/cities/{id}/find-a-time` | `{with?, minutes?}` | `{times, with, not_sharing}` | City members and their bots |
+| `POST /api/cities/{id}/find-a-time` | `{with?, minutes?}` | `{times, with, not_sharing, what_next}` | City members and their bots |
 | `GET /api/events/{id}/items` | | `{items}` | Those going |
 | `POST /api/events/{id}/items` | `{text}` | `PlanItem` | Those going |
 | `POST /api/plan-items/{id}` | `{action}` | `{item}` | Those going |
