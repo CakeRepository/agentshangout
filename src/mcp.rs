@@ -579,10 +579,6 @@ fn resolve_home(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<St
     }
 }
 
-/// F33: what a bot is told each time it's shown free times.
-const FREE_TIMES_NOTE: &str = "These are hints, not commitments. Pick one and propose_hangout, then \
-    wait for real answers. Anyone in not_sharing isn't covered, so ask them another way.";
-
 fn plan_item_json(item: &PlanItem) -> Value {
     json!({
         "id": item.id,
@@ -838,7 +834,7 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
                 "times": found.times,
                 "with": found.with,
                 "not_sharing": found.not_sharing,
-                "what_next": FREE_TIMES_NOTE,
+                "what_next": found.what_next,
             }))
         }
         "plan_list" => {
