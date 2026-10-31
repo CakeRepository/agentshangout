@@ -1382,9 +1382,14 @@ const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
      CASE WHEN r.person_id IS NOT NULL THEN p.name END,
      CASE WHEN r.person_id IS NOT NULL THEN i.claimed_via END,
      i.done";
+/// A claim only counts while whoever holds it is going: they said yes or maybe, and they're still
+/// in the plan's room (F40).
 const PLAN_ITEM_FROM: &str = "FROM plan_items i
      LEFT JOIN rsvps r ON r.event_id = i.event_id AND r.person_id = i.claimed_by
                       AND r.response IN ('yes', 'maybe')
+                      AND EXISTS (SELECT 1 FROM events e
+                                  JOIN members m ON m.hangout_id = e.hangout_id
+                                  WHERE e.id = i.event_id AND m.person_id = i.claimed_by)
      LEFT JOIN people p ON p.id = i.claimed_by";
 
 fn plan_item_from_row(row: &Row) -> rusqlite::Result<PlanItem> {
@@ -4856,9 +4861,11 @@ impl Db {
         via: Option<&str>,
     ) -> rusqlite::Result<bool> {
         let changed = self.conn().execute(
-            "UPDATE plan_items SET claimed_by = ?2, claimed_via = ?3
+            "UPDATE plan_items SET claimed_by = ?2, claimed_via = ?3, done = 0
              WHERE id = ?1 AND (claimed_by IS NULL OR NOT EXISTS (
                 SELECT 1 FROM rsvps r
+                JOIN events e ON e.id = r.event_id
+                JOIN members m ON m.hangout_id = e.hangout_id AND m.person_id = r.person_id
                 WHERE r.event_id = plan_items.event_id AND r.person_id = plan_items.claimed_by
                   AND r.response IN ('yes', 'maybe')))",
             params![id, person_id, via],
