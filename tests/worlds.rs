@@ -1,4 +1,4 @@
-//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W70). They
+//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W71). They
 //! drive a real server over HTTP. A comment such as `// W13` above a test names the rule it
 //! covers, so coverage can be checked by searching for it.
 //!
@@ -2932,7 +2932,7 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out"])
+        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners"])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];
@@ -3891,9 +3891,9 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
     assert_eq!(tile_kind(&server, first), Some(Kind::Road));
 }
 
-// W59
+// W59, W71
 #[tokio::test]
-async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
+async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     let server = Server::start().await;
     let map = Map::from_db(&server, COMMONS);
     let spots = building_spots(&map, 2);
@@ -3910,8 +3910,16 @@ async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
     let path = format!("/api/worlds/{COMMONS}/look?x={}&y={}&w=8&h=8", spot.0, spot.1);
     let look = server.get(&path).send().await.ok();
     assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
+    // W71: the view names the owner in `owners`, and only there. Nothing says which account it is, and
+    // `look` names nobody.
+    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold"])), "{view}");
+    let mut rest = view.clone();
+    rest.as_object_mut().unwrap().remove("owners");
+    for text in [rest.to_string(), look.to_string()] {
+        assert!(!text.contains("Marigold"), "{text}");
+    }
     for text in [view.to_string(), look.to_string()] {
-        assert!(!text.contains("Marigold") && !text.contains(&ann.id), "{text}");
+        assert!(!text.contains(&ann.id), "{text}");
     }
 
     // There is no tool for it, and the build tool doesn't take one.
@@ -3967,4 +3975,21 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     assert!(again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES), "tokens still work");
     again.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
     let _ = std::fs::remove_file(&path);
+}
+
+// W71
+#[test]
+fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
+    // Sizing a canvas wipes it, and a resize is heard after the frame is drawn, so the browser shows
+    // whatever is there. The sky is a canvas of its own behind the map, so a map that waits for the
+    // next frame shows as clouds, and it did every time one opened. Nothing here runs a browser, so
+    // this reads the page, as tests/rooms.rs does for the nap spots.
+    let page = include_str!("../web/world.js");
+    let (_, rest) = page.split_once("\n  resize() {").expect("the map has a resize");
+    let (resize, _) = rest.split_once("\n  }").expect("resize ends");
+    let wiped = resize.find("this.canvas.width = cw").expect("resize sizes the canvas");
+    let camera = resize.find("this.clampCam()").expect("resize settles the camera");
+    let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
+    assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
+    assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
 }

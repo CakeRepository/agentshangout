@@ -263,6 +263,7 @@ export class City {
     this.card.setAttribute('aria-hidden', 'true');
     this.frame.host.parentElement.append(this.card);
     this.pointer = null;
+    this.hoverTarget = null;
 
     this.targets = new Map();
     this.houses = [];
@@ -285,10 +286,13 @@ export class City {
     };
     this.onMove = (event) => {
       this.pointer = { x: event.clientX, y: event.clientY };
-      if (!this.card.hidden) this.placeCard();
+      // The map can say what's under the pointer before this hears where the pointer is.
+      if (this.card.hidden && this.hoverTarget) this.showCard(this.hoverTarget);
+      else if (!this.card.hidden) this.placeCard();
     };
     this.onLeave = () => {
       this.pointer = null;
+      this.hoverTarget = null;
       this.card.hidden = true;
     };
     canvas.addEventListener('pointermove', this.onMove);
@@ -434,17 +438,14 @@ export class City {
 
   hovered(hover) {
     const { message, where } = this.frame;
-    let target = null;
-    if (hover && hover.player) {
-      where.textContent = hover.player.name;
-    } else if (hover && hover.x !== null) {
-      target = this.targetAt(hover.x, hover.y);
-      where.textContent = target ? this.nameOf(target) : '';
-    } else {
-      where.textContent = '';
-    }
+    // Bots stand in a house's yard, so the pointer over a house is often over a bot too. The house
+    // under the pointer still counts: the bot's name goes in the corner and the house gets its card.
+    const target = hover && hover.x !== null ? this.targetAt(hover.x, hover.y) : null;
+    if (hover && hover.player) where.textContent = hover.player.name;
+    else where.textContent = target ? this.nameOf(target) : '';
     this.frame.host.classList.toggle('city-over', Boolean(target));
     message.textContent = target ? this.hintFor(target) : HINT;
+    this.hoverTarget = target;
     this.showCard(target);
   }
 

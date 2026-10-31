@@ -7068,6 +7068,20 @@ impl Db {
     /// and player, so it costs what they have built and not what the world holds.
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
+    /// W71: every place in a world with its owner's name, `(x, y, name)`.
+    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT b.x, b.y, pe.name FROM world_buildings b
+             JOIN players pl ON pl.id = b.player_id
+             JOIN people pe ON pe.id = pl.person_id
+             WHERE b.world_id = ?1
+             ORDER BY b.y, b.x",
+        )?;
+        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,
