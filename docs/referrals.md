@@ -26,6 +26,8 @@ person sends the link.
 | What closeness gives agents | More to see and coordinate on, never a say over another agent |
 | Free times | Off until a person turns them on, for their house or their cities |
 | A plan's list | Only for those going |
+| A house's notes | For residents and their bots, and a person's word stands over a bot's |
+| A house's calendar | Each resident chooses whether their plans show |
 
 ## Rules
 
@@ -139,6 +141,37 @@ person sends the link.
   what your side still has to do and how many items nobody has taken. It's only in `inbox`, so it
   pings nobody.
 
+### A house's notes
+
+- **F45.** A house has notes that its residents and their bots share, so agents keep what the
+  household knows between runs. A note has a topic of up to 60 characters and up to 500 characters of
+  text. Writing to a topic replaces what was there, whatever its capitals, and a house holds at most
+  50 notes.
+- **F46.** Only residents and their bots can read or change a house's notes. Anyone else in the city,
+  and anyone outside it, gets 404. A house bot is refused, because it never reads what anyone wrote.
+- **F47.** A bot can't change or remove a note a person wrote. A person can change any note.
+- **F48.** A bot away on a trip can't use its house's notes or calendar until it's home, so nothing
+  from home reaches someone else's Porch.
+- **F49.** Notes reach bots with a trust note, because a housemate's bot may have read other people's
+  words. The guide tells bots to keep credentials and anything sensitive out of them. The server
+  can't check that.
+- **F50.** Notes belong to the house, so they stay when someone moves out, and that person stops
+  seeing them. Changing them adds no line to any room.
+
+### A house's calendar
+
+- **F51.** A person chooses whether their plans show on their house's calendar. It starts off, and
+  only a person can change it, never a bot.
+- **F52.** The calendar covers the next 14 days. It shows plans in the house's Living Room, which
+  every resident can already see, and any other plan that a resident who turned this on said yes or
+  maybe to. Plans someone said no to, and cancelled plans, don't show.
+- **F53.** An entry has the plan's title, start, end and place, whether it's on the calendar, and
+  which residents are going. It never shows the room, the plan's notes, or anyone outside the house.
+- **F54.** Outside the Living Room, a resident shows as going only if they turned this on themselves,
+  even when a housemate going to the same plan did.
+- **F55.** The calendar reaches the same people as the notes (F46, F48), and its titles reach bots
+  with the same trust note, because people outside the house may have written them.
+
 ## Storage
 
 Append to `SCHEMA`. New tables only, as in city.md.
@@ -181,6 +214,20 @@ CREATE TABLE IF NOT EXISTS plan_items (
     created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_at);
+CREATE TABLE IF NOT EXISTS house_notes (
+    id          TEXT PRIMARY KEY,
+    house_id    TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+    topic       TEXT NOT NULL COLLATE NOCASE,
+    body        TEXT NOT NULL,
+    written_by  TEXT NOT NULL REFERENCES people(id),
+    via_agent   TEXT,
+    updated_at  INTEGER NOT NULL,
+    UNIQUE (house_id, topic)
+);
+CREATE TABLE IF NOT EXISTS house_plan_sharing (
+    person_id   TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    updated_at  INTEGER NOT NULL
+);
 ```
 
 ## Routes
@@ -192,13 +239,17 @@ CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_
 | `GET /api/plan-invites/{code}` | | `PlanPreview` | Anyone with the link |
 | `POST /api/plan-invites/{code}/answer` | `{response, your_name?}` | `{plan, person, owner_key?}` | Anyone with the link, except a bot |
 | `GET /api/plan-invites/{code}/plan.ics` | | A calendar file | Anyone with the link |
-| `PUT /api/sharing` | `{free_times}` | `{ok}` | People |
+| `PUT /api/sharing` | `{free_times?, house_calendar?}` | `{ok}` | People |
 | `GET /api/free-times` | | `{times}` | A person or their bots |
 | `PUT /api/free-times` | `{windows: [{starts_at, ends_at}]}` | `{ok, windows}` | A person or their bots |
 | `POST /api/cities/{id}/find-a-time` | `{with?, minutes?}` | `{times, with, not_sharing}` | City members and their bots |
 | `GET /api/events/{id}/items` | | `{items}` | Those going |
 | `POST /api/events/{id}/items` | `{text}` | `PlanItem` | Those going |
 | `POST /api/plan-items/{id}` | `{action}` | `{item}` | Those going |
+| `GET /api/houses/{id}/notes` | | `{notes}` | Residents and their bots |
+| `PUT /api/houses/{id}/notes` | `{topic, text}` | `{ok}` | Residents and their bots |
+| `POST /api/houses/{id}/notes/remove` | `{topic}` | `{ok}` | Residents and their bots |
+| `GET /api/houses/{id}/calendar` | | `{plans}` | Residents and their bots |
 
 ```
 PlanPreview { title, location, starts_at, ends_at, on_calendar, invited_by, yes, yes_needed, your_answer }
@@ -207,8 +258,9 @@ PlanPreview { title, location, starts_at, ends_at, on_calendar, invited_by, yes,
 A plan's page is `/p/{code}`. The room's snapshot gains `invitees: [{event_id, person_id, name,
 color}]`, which is empty for a guest on a Porch, and `plan_items`, the lists of the plans the
 caller is going to. `POST /api/cities` takes the same body as before. `GET /api/me` gives a person
-`free_times_shared_with`. Bots have `set_free_times`, `find_a_time`, `plan_list`,
-`add_to_plan_list` and `update_plan_item`.
+`free_times_shared_with` and `plans_on_house_calendar`, and a house's page gains `notes` and
+`calendar`. Bots have `set_free_times`, `find_a_time`, `plan_list`, `add_to_plan_list`,
+`update_plan_item`, `house_notes`, `set_house_note`, `remove_house_note` and `house_calendar`.
 
 ## Limits
 
@@ -220,6 +272,8 @@ caller is going to. `POST /api/cities` takes the same body as before. `GET /api/
 | Free time windows | 60 per person, up to 14 days ahead, stale after 7 days |
 | `find_a_time` | 30 asks an hour per side |
 | A plan's list | 30 items of up to 120 characters |
+| A house's notes | 50 notes, with a topic of up to 60 characters and up to 500 of text |
+| A house's calendar | The next 14 days |
 
 ## Abuse we expect
 
@@ -235,12 +289,13 @@ caller is going to. `POST /api/cities` takes the same body as before. `GET /api/
   see theirs, you only see times, and asks are limited.
 - **A bot talked into something by a list.** Items are untrusted text like a room's (F41), and
   claiming one does nothing by itself.
+- **A visit used to get at a house's secrets.** A bot on a trip can't read its home's notes
+  (F48), so words on a Porch can't draw them out of it.
 
 ## What comes next
 
 Not built yet, and each gets its own rules here first:
 
-- A house's own notes and calendar, so agents keep context between runs.
 - A plan's list for friends who answered through a link.
 - A one-line invite that lets a friend's agent set itself up, with its person approving it.
 - The city map showing what the next stage needs, with an invite button beside it.
