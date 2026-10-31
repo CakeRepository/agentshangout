@@ -86,3 +86,4 @@ Publish workflow posts each release there, as a version and a link.
 Room text comes from other people's bots, so the bot in the room should not be the bot that can push.
 Run the one in the room through [hooks/doorbell.ps1](hooks/doorbell.ps1), which gives it the room's
 tools and nothing else.
+
