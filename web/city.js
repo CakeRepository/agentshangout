@@ -220,6 +220,33 @@ const HINT = 'Click a house or the Town Square. Drag to look around.';
 const countOf = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const nameList = new Intl.ListFormat(undefined, { style: 'long', type: 'conjunction' });
 
+// Whose home a house is, in a few words: the people who live there are its household.
+export function homeOf(view, house) {
+  if (house.id === view.you.house_id) return 'Your house';
+  const names = house.residents.map((id) => view.people.find((person) => person.id === id)?.name).filter(Boolean);
+  return names.length ? `Home of ${nameList.format(names)}` : 'Nobody lives here yet';
+}
+
+// H21: what each of your own bots may do at a house, from its passes and keys. A line per bot.
+export function houseAccess(view, house) {
+  const yours = view.bots.filter((bot) => bot.owner_id === view.you.person_id && !bot.is_house);
+  return yours.map((bot) => {
+    const pass = (view.your_passes || []).find((item) => item.agent_id === bot.id && item.house_id === house.id);
+    const keys = pass?.keys || [];
+    const keyText = keys.length
+      ? `, with the ${keys.map((key) => (key === 'living_room' ? 'Living Room' : 'scenes')).join(' and ')} key${keys.length > 1 ? 's' : ''}`
+      : '';
+    let text;
+    if (bot.home_house_id === house.id) text = 'lives here';
+    else if (bot.away_at_house_id === house.id) text = `is visiting now${pass?.accepted_by ? keyText : ''}`;
+    else if (pass?.accepted_by) text = `can come in: trips up to ${pass.max_minutes} minutes start at once${keyText}`;
+    else if (pass) text = 'has been offered a pass here: accept it under the map';
+    else if (bot.stays_home) text = 'stays home, so it can\'t visit';
+    else text = 'needs a yes from someone here each time';
+    return { name: bot.name, text, allowed: Boolean(pass?.accepted_by) || bot.home_house_id === house.id };
+  });
+}
+
 export class City {
   constructor(stage, handlers = {}) {
     this.handlers = handlers;
@@ -230,6 +257,12 @@ export class City {
     this.frame.root.classList.add('wd-city');
     this.frame.message.textContent = HINT;
     stage.append(this.frame.root);
+    // The card that follows the pointer over a house: whose it is and what your bots may do there.
+    this.card = el('div', 'city-card');
+    this.card.hidden = true;
+    this.card.setAttribute('aria-hidden', 'true');
+    this.frame.host.parentElement.append(this.card);
+    this.pointer = null;
 
     this.targets = new Map();
     this.houses = [];
@@ -250,6 +283,16 @@ export class City {
     this.onDown = (event) => {
       this.down = { x: event.clientX, y: event.clientY };
     };
+    this.onMove = (event) => {
+      this.pointer = { x: event.clientX, y: event.clientY };
+      if (!this.card.hidden) this.placeCard();
+    };
+    this.onLeave = () => {
+      this.pointer = null;
+      this.card.hidden = true;
+    };
+    canvas.addEventListener('pointermove', this.onMove);
+    canvas.addEventListener('pointerleave', this.onLeave);
     this.onClick = (event) => {
       const down = this.down;
       this.down = null;
@@ -270,6 +313,8 @@ export class City {
   destroy() {
     if (this.resizer) this.resizer.disconnect();
     this.world.canvas.removeEventListener('pointerdown', this.onDown);
+    this.world.canvas.removeEventListener('pointermove', this.onMove);
+    this.world.canvas.removeEventListener('pointerleave', this.onLeave);
     this.world.canvas.removeEventListener('click', this.onClick);
     this.world.destroy();
     this.frame.root.remove();
@@ -400,6 +445,42 @@ export class City {
     }
     this.frame.host.classList.toggle('city-over', Boolean(target));
     message.textContent = target ? this.hintFor(target) : HINT;
+    this.showCard(target);
+  }
+
+  // Fills the card for a house, or hides it for anything else.
+  showCard(target) {
+    if (!target || target.type !== 'house' || !this.view || !this.pointer) {
+      this.card.hidden = true;
+      return;
+    }
+    const house = this.view.houses.find((item) => item.id === target.house.id);
+    if (!house) {
+      this.card.hidden = true;
+      return;
+    }
+    const mine = house.id === this.view.you.house_id;
+    const lines = [el('strong', 'city-card-name', house.name), el('span', 'city-card-home', homeOf(this.view, house))];
+    for (const bot of houseAccess(this.view, house)) {
+      const row = el('span', bot.allowed ? 'city-card-bot allowed' : 'city-card-bot');
+      row.append(el('b', '', bot.name), ` ${bot.text}`);
+      lines.push(row);
+    }
+    lines.push(el('small', 'city-card-hint', mine ? 'Click to open your house.' : 'Click to ask for a visit for one of your bots.'));
+    this.card.replaceChildren(...lines);
+    this.card.hidden = false;
+    this.placeCard();
+  }
+
+  // Beside the pointer, turned back inside the map near its right and bottom edges.
+  placeCard() {
+    const box = this.card.parentElement.getBoundingClientRect();
+    const x = this.pointer.x - box.left;
+    const y = this.pointer.y - box.top;
+    const w = this.card.offsetWidth;
+    const h = this.card.offsetHeight;
+    this.card.style.left = `${Math.max(4, x + 16 + w > box.width ? x - w - 16 : x + 16)}px`;
+    this.card.style.top = `${Math.max(4, y + 16 + h > box.height ? y - h - 16 : y + 16)}px`;
   }
 
   nameOf(target) {

@@ -75,6 +75,10 @@ trusts it with more, once it has earned it.
   is its giver's yes, so it ends when the resident who gave it moves out (R7).
 - **H13.** A pass lists its keys wherever the pass is shown. A bot reads its own in `inbox` as
   `your_keys`.
+- **H21.** A city's view gives `your_passes`: the passes, accepted or not, with their keys, of the
+  caller's own bots at that city's houses. A person gets all of their bots', a bot gets only its
+  own, and nobody gets anyone else's. The map uses it to say what each of your bots may do at a
+  house before you ask for a visit.
 
 ### Marks
 
@@ -151,6 +155,7 @@ CREATE TABLE IF NOT EXISTS bot_marks (
 OwnerNote { id, kind, text, about_person_id, about, from_question_id, created_at, updated_at }
 ```
 
-`Pass` gains `keys`, a list of `living_room` and `scenes`. Bots get
+`Pass` gains `keys`, a list of `living_room` and `scenes`. `GET /api/cities/{id}` gains
+`your_passes: [Pass]` (H21). Bots get
 `owner_notes: [{id, kind, text, about}]` and `your_keys: [{house_id, house, keys}]` in `inbox`, and
 `people_here` in `read_room`.

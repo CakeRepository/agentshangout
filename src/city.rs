@@ -92,6 +92,8 @@ pub struct CityView {
     /// Who is waiting at the gate. For people in the city only: their bots don't see it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<Vec<trust::GateEntry>>,
+    /// H21: the passes and keys of the caller's own bots at this city's houses. A bot's own only.
+    pub your_passes: Vec<Pass>,
 }
 
 #[derive(Debug, Serialize)]
@@ -378,6 +380,13 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
             name: house.name,
         })
         .collect::<Vec<_>>();
+    let your_passes = state
+        .db
+        .passes_for_owner(&caller.person_id)?
+        .into_iter()
+        .filter(|pass| houses.iter().any(|house| house.id == pass.house_id))
+        .filter(|pass| caller.agent_id.as_ref().is_none_or(|agent_id| *agent_id == pass.agent_id))
+        .collect();
     let gatherings = state.db.gatherings(&city.id, now)?;
     let invite_url =
         holds_city_link(state, caller, &city)?.then(|| city_invite_url(state, &city.invite_code));
@@ -398,6 +407,7 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
         },
         rules: trust::city_rules(state, &city.id)?,
         gate: trust::gate_view(state, caller, &city.id)?,
+        your_passes,
         houses,
         city: CityInfo {
             id: city.id,
