@@ -3541,7 +3541,7 @@ async function worldView(id, { home = false } = {}) {
   const buttons = new Map();
   const idle = me
     ? 'Pick a tool, then click or drag on the map. Right-click, or press and hold, for a menu.'
-    : 'You\'re looking around. Click a figure, or right-click, for a menu. Pick a tool and you\'ll be asked to sign in to build.';
+    : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
 
   const hintNow = () => (tool ? BUILD_TOOLS.find(([key]) => key === tool)[2] : idle);
 
