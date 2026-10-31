@@ -443,13 +443,30 @@ fn resolve_hangout(state: &AppState, caller: &Caller, args: &Value) -> ApiResult
     }
 }
 
+/// A list of names from the arguments, or nothing if it's left out. Anything else is refused, so a
+/// bad list can't quietly turn into asking about the wrong people.
+fn names_arg(args: &Value, name: &str) -> ApiResult<Option<Vec<String>>> {
+    let refused = || ApiError::bad_request(format!("{name} has to be a list of names"));
+    match &args[name] {
+        Value::Null => Ok(None),
+        Value::Array(names) => names
+            .iter()
+            .map(|entry| entry.as_str().map(str::to_string).ok_or_else(refused))
+            .collect::<ApiResult<Vec<_>>>()
+            .map(Some),
+        _ => Err(refused()),
+    }
+}
+
 fn calendar_json(snapshot: &ops::Snapshot) -> Vec<Value> {
     let person_name = |id: &str| {
-        snapshot
-            .people
-            .iter()
-            .find(|person| person.id == id)
-            .map_or("someone", |person| person.name.as_str())
+        let member = snapshot.people.iter().find(|person| person.id == id);
+        // A friend who answered through a plan's link isn't in the room (F19).
+        let invitee = snapshot.invitees.iter().find(|invitee| invitee.person_id == id);
+        member
+            .map(|person| person.name.as_str())
+            .or_else(|| invitee.map(|invitee| invitee.name.as_str()))
+            .unwrap_or("someone")
             .to_string()
     };
     snapshot
@@ -468,6 +485,9 @@ fn calendar_json(snapshot: &ops::Snapshot) -> Vec<Value> {
                 "proposed_by": event.proposer,
                 "responses": event.rsvps.iter().map(|rsvp| json!({
                     "person": person_name(&rsvp.person_id),
+                    "invited": snapshot.invitees.iter().any(|invitee| {
+                        invitee.event_id == event.id && invitee.person_id == rsvp.person_id
+                    }),
                     "response": rsvp.response,
                     "answered_by": rsvp.via_agent,
                     "note": rsvp.note,
@@ -655,6 +675,10 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         "messages": messages,
         "notes": snapshot.notes.iter().map(message_json).collect::<Vec<_>>(),
         "calendar": calendar_json(&snapshot),
+        "invitees": snapshot.invitees.iter().map(|invitee| json!({
+            "event_id": invitee.event_id,
+            "name": invitee.name,
+        })).collect::<Vec<_>>(),
         "last_message_id": snapshot.messages.last().map_or(0, |message| message.id),
     }))
 }
@@ -809,12 +833,7 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         }
         "find_a_time" => {
             let city_id = resolve_city(state, caller, args)?;
-            let input = FindTime {
-                with: args["with"].as_array().map(|names| {
-                    names.iter().filter_map(Value::as_str).map(str::to_string).collect()
-                }),
-                minutes: args["minutes"].as_i64(),
-            };
+            let input = FindTime { with: names_arg(args, "with")?, minutes: args["minutes"].as_i64() };
             let found = closeness::find_a_time(state, caller, &city_id, &input)?;
             Ok(json!({
                 "trust_note": CITY_TRUST_NOTE,
@@ -834,7 +853,12 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         }
         "update_plan_item" => {
             let item = closeness::change_item(state, caller, text_arg(args, "item_id")?, text_arg(args, "action")?)?;
-            Ok(item.as_ref().map_or_else(|| json!({ "removed": true }), plan_item_json))
+            // The item's words are someone else's, whatever was done to it (F41).
+            Ok(item.as_ref().map_or_else(|| json!({ "removed": true }), |item| {
+                let mut reply = plan_item_json(item);
+                reply["trust_note"] = json!(TRUST_NOTE);
+                reply
+            }))
         }
         "house_notes" => {
             let house_id = resolve_home(state, caller, args)?;

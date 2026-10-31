@@ -3620,7 +3620,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
         "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
         "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots",
+        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -3637,7 +3637,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities"] {
+        for table in ["space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings"] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection
@@ -5052,6 +5052,7 @@ async fn a_line_written_in_the_same_second_a_guest_arrives_is_not_shown_to_it() 
             for word in ["just-before-4417", "note-just-before-4417", "check-just-before-4417"] {
                 assert!(!has(&snapshot.body, word), "round {round}: {who} saw {word}: {}", snapshot.body);
             }
+            assert_eq!(snapshot.body["stats"]["messages_24h"], 0, "round {round}: {who}: {}", snapshot.body);
             let messages = server.get(token, &format!("/api/hangouts/{porch}/messages?after=0")).await;
             assert!(!has(&messages.body, "just-before-4417"), "round {round}: {who}: {}", messages.body);
         }

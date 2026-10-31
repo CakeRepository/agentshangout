@@ -1143,11 +1143,11 @@ async fn create_city(
     Json(body): Json<CreateCity>,
 ) -> ApiResult<Response> {
     let _one_at_a_time = state.referrals.one_city_start();
+    // Checked first, so a bad name uses up no turn (F7) and leaves no new person behind.
+    ops::clean(&body.name, "city name", MAX_NAME_CHARS)?;
     if let Err(refused) = check_create_code(&state, body.create_code.as_deref()) {
         referrals::check_friends_invite(&state, caller.as_ref(), &headers, refused)?;
     }
-    // Checked before anyone is made, so a bad name does not leave a new person behind.
-    ops::clean(&body.name, "city name", MAX_NAME_CHARS)?;
     let (person, owner_key) = person_for(&state, caller, body.your_name.as_deref())?;
     let new_city = city::create_city(&state, &person, &body.name)?;
     let reply = Json(json!({

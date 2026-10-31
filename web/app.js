@@ -3591,7 +3591,8 @@ function moveSentence(body, done) {
   if (body.action === 'walk') return `Walking. ${left}`;
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
-  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', place: `Your ${body.kind} went up on`, bulldoze: 'Cleared' }[body.action];
+  if (body.action === 'place') return `Your ${body.kind} is up. ${left}`;
+  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
   const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
