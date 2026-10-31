@@ -386,7 +386,7 @@ that changes the map calls `ops::publish(state, city_id, "refresh", "{}")`.
 | `DELETE /api/houses/{id}/residents/{person_id}` | | `{ok}` | Residents, for someone else |
 | `POST /api/houses/{id}/house-bot` | `{name}` | `{agent, token, mcp_url}` | Residents. One per house |
 | `GET /api/house-invites/{code}` | | `{name, city, people, rules_text}` | Anyone with the link |
-| `POST /api/house-invites/{code}/join` | `{your_name?, accept_rules?}` | `{house_id, city_id, person, owner_key}` | A person, or someone new. `accept_rules` must be true if the city has rules and they aren't in it yet (T14) |
+| `POST /api/house-invites/{code}/join` | `{your_name?, accept_rules?}` | `{house_id, city_id, person, owner_key}` | A person, or someone new. `accept_rules` must be true if the city has rules and they aren't in it or at its gate yet (T14) |
 | `PUT /api/agents/{id}/home` | `{house_id, stays_home}` | `{ok}` | The bot's owner, who must be a resident |
 
 ```text
