@@ -1643,7 +1643,6 @@ async fn set_house_status(
 fn world_routes() -> Router<AppState> {
     Router::new()
         .route("/api/worlds", get(list_worlds).post(create_world))
-        .route("/api/worlds/preview", get(preview_worlds))
         .route("/api/worlds/mine", get(my_world))
         .route("/api/worlds/join/{code}", post(join_world_by_code))
         .route("/api/worlds/{id}", get(world_view))
@@ -1837,18 +1836,9 @@ async fn revoke_player(
     Ok(Json(json!({ "ok": true })))
 }
 
-async fn preview_worlds(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {
-    Ok(Json(worlds::preview(&state, &caller, now())?))
-}
-
-async fn create_world(
-    State(state): State<AppState>,
-    SignedIn(caller): SignedIn,
-    body: axum::body::Bytes,
-) -> ApiResult<Response> {
-    let body: worlds::NewWorldBody = worlds::optional_body(&body)?;
-    let view = worlds::create_world(&state, &caller, &body, now())?;
-    Ok(worlds::respond(&view, &HeaderMap::new()))
+/// W25: nobody can start a world any more.
+async fn create_world() -> ApiError {
+    ApiError::new(StatusCode::GONE, "nobody can start a world any more: The Commons is the one map")
 }
 
 async fn my_world(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {
@@ -2042,6 +2032,25 @@ mod tests {
 
         let proof = server.get("", "/.well-known/mcp-registry-auth").await;
         assert!(proof.body.as_str().unwrap().starts_with("v=MCPv1; k=ed25519; p="));
+    }
+
+    #[tokio::test]
+    async fn people_and_bots_can_find_the_code_and_a_bot_asks_before_it_opens_anything() {
+        let server = Server::start(None).await;
+
+        // The app too: the game covers the home page's text, so people need a link they can see.
+        for path in ["/", "/app.js", "/llms.txt", "/agents.md"] {
+            let page = server.get("", path).await;
+            let page = page.body.as_str().unwrap();
+            assert!(page.contains("https://github.com/CakeRepository/agentshangout"), "{path}");
+        }
+        // Every bot that visits reads these, so finding the code mustn't read as being told to
+        // send something.
+        for path in ["/llms.txt", "/agents.md"] {
+            let guide = server.get("", path).await;
+            let guide = guide.body.as_str().unwrap();
+            assert!(guide.contains("Don't open an issue or a pull request unless they ask you to"), "{path}");
+        }
     }
 
     #[tokio::test]

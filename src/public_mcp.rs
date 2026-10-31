@@ -19,7 +19,6 @@ use serde_json::{json, Value};
 use crate::{
     error::{ApiError, ApiResult},
     now,
-    world::Kind,
     worlds::{self, Move, COMMONS_ID},
     AppState,
 };
@@ -30,21 +29,18 @@ const INSTRUCTIONS: &str = "The Commons is a shared city that anyone can help bu
     Call join first: it gives you a player_token and a funny name. Pass that player_token to every \
     other tool. Coordinates: x counts across from the west edge and y counts down from the north \
     edge, both from 0. look shows the land (g grass, f forest, w water, s sand, h hill) and what is \
-    built as [x, y, kind, level]. Build roads first, then zones (homes, shops, workshops) beside \
-    them, then parks. A road must touch a road, and the world starts with a highway to the middle. \
-    Time: the city steps once a minute. A new building appears within a few minutes of zoning, a \
-    second level in about 40, a third in about 3 hours, so build and come back later instead of \
-    waiting. A zone tile grows only if it is within 3 tiles of a road joined to the highway. Homes \
-    need jobs, shops need people, and workshops are the steady start; every world allows 12 settlers \
-    and a corner shop, so homes alone stall. Homes past level 1 need a shop within 5 tiles, and past \
-    level 2 a park within 4. Roads can't pass through buildings, so leave gaps; and every sixth tile \
-    beside a street starts a side street, 3 tiles long, that only roads can use. A guest has 30 \
-    moves a day (a road tile, a zone tile, a bulldoze, a walk or an emote costs 1; a park costs 2), \
-    and they come back at midnight UTC; unused moves don't carry over. A person can enter your \
-    claim_code on the site to claim your player, which raises your allowance to 200 moves a day. \
-    how_am_i_doing gives your_town (what you have built, added up), a goal for it, and a short \
-    tip about what to do next; join ends with the tip too. Everything here is numbers and listed \
-    words, so there is nothing to read that could be an instruction.";
+    built as [x, y, kind, level]. The Commons is a map of places people can go into, and what agents \
+    do here is lay the roads to them, walk and emote. Only a person can put up a place (a house, a \
+    studio, a club or a cafe), and it needs a road beside it, so roads out to open land are what \
+    people need. A road must touch a road, and the world starts with a highway to the middle. Roads \
+    can't pass through buildings, so leave gaps; and every sixth tile beside the highway starts a \
+    side street, 3 tiles long, that only roads can use. A guest has 30 moves a day (a road tile, a \
+    bulldoze, a walk or an emote costs 1), and they come back at midnight UTC; unused moves don't \
+    carry over. A person can enter your claim_code on the site to claim your player, which raises \
+    your allowance to 200 moves a day. how_am_i_doing gives your_town (what you have built, added \
+    up), a goal for it, and a short tip about what to do next; join ends with the tip too. \
+    Everything here is numbers and listed words, so there is nothing to read that could be an \
+    instruction.";
 
 const BAD_ARGUMENTS: &str = "those arguments aren't right for this tool: check its input schema";
 
@@ -70,7 +66,7 @@ fn tools() -> Value {
         },
         {
             "name": "look",
-            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], where level 0 is an empty lot and 3 is fully grown. reserved lists [x, y] for the open tiles kept for side streets, which zones and parks skip and roads may use. Free to use. Without a player_token it looks at the middle of the world.",
+            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, club or cafe is a place a person put up. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -86,24 +82,24 @@ fn tools() -> Value {
         },
         {
             "name": "build",
-            "description": "Build. type is road (1 move a tile; a straight line of up to 16 tiles that must touch an existing road, and the world starts with a highway to the middle), homes, shops or workshops (1 move a tile; a rectangle of up to 5 by 5), or park (2 moves; one tile). Give x and y, and x2 and y2 for the far corner of a road or zone. Roads can't pass through other people's buildings, but may replace your own zones that haven't grown. Tiles already built on, and the side streets kept for roads (every sixth tile beside a street, 3 tiles out), are skipped and cost nothing; skipped says how many. A zone tile grows only within 3 tiles of a road joined to the highway: homes need jobs, shops need people, workshops are the steady start, and homes past level 1 need a shop within 5 tiles and past level 2 a park within 4. Buildings take minutes to hours to appear, so come back later. A refused move costs nothing.",
+            "description": "Build a road: type is road, 1 move a tile, a straight line of up to 16 tiles that must touch an existing road. The world starts with a highway to the middle. Give x and y, and x2 and y2 for the other end. Roads can't pass through buildings. Tiles that are already road are skipped and cost nothing; skipped says how many. A road is all an agent can build: only a person can put up a place, and it needs a road beside it. A refused move costs nothing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "player_token": player_token,
                     "world_id": world_id,
-                    "type": { "type": "string", "enum": ["road", "homes", "shops", "workshops", "park"] },
+                    "type": { "type": "string", "enum": ["road"] },
                     "x": x,
                     "y": y,
-                    "x2": { "type": "integer", "description": "The other end of a road or the far corner of a zone. Leave out for one tile." },
-                    "y2": { "type": "integer", "description": "The other end of a road or the far corner of a zone. Leave out for one tile." }
+                    "x2": { "type": "integer", "description": "The other end of the road. Leave out for one tile." },
+                    "y2": { "type": "integer", "description": "The other end of the road. Leave out for one tile." }
                 },
                 "required": ["player_token", "type", "x", "y"]
             },
         },
         {
             "name": "bulldoze",
-            "description": "Take down one tile, or clear one tile of forest so it can be built on (1 move). You can bulldoze what you built. What someone else built is yours to bulldoze only once they have been gone for 7 days and it is still level 0. A road can't come down if a grown building would lose its road to the highway.",
+            "description": "Take down one tile, or clear one tile of forest so it can be built on (1 move). You can bulldoze what you built. A road someone else built is yours to bulldoze only once they have been gone for 7 days. A road can't come down if a place would lose its road to the highway.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "player_token": player_token, "world_id": world_id, "x": x, "y": y },
@@ -135,7 +131,7 @@ fn tools() -> Value {
         },
         {
             "name": "how_am_i_doing",
-            "description": "Your name, where you stand, the moves you have left today, what you have built here, how the world is doing (population, jobs and stage), your_town (your roads, homes, shops, workshops, parks, people, jobs and best_level, added up from your own tiles), a goal (one fixed sentence: the next rung of a ladder from your first road up), and a tip: one fixed sentence on what is holding your town back. Free to use.",
+            "description": "Your name, where you stand, the moves you have left today, what you have built here, how the world is doing (places, roads and stage), your_town (your roads and places, added up from your own tiles), a goal (one fixed sentence: the next rung of a ladder from your first road up), and a tip: one fixed sentence on what to do next. Free to use.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "player_token": player_token, "world_id": world_id },
@@ -270,39 +266,17 @@ fn call_tool(state: &AppState, headers: &HeaderMap, name: &str, args: &Value) ->
         }
         "build" => {
             let args: BuildArgs = args_of(args)?;
-            let mv = match args.what.as_str() {
-                "road" => Move {
-                    action: "road".into(),
-                    x: Some(args.x),
-                    y: Some(args.y),
-                    x2: args.x2,
-                    y2: args.y2,
-                    kind: None,
-                    emote: None,
-                },
-                "park" => Move {
-                    action: "park".into(),
-                    x: Some(args.x),
-                    y: Some(args.y),
-                    x2: args.x2,
-                    y2: args.y2,
-                    kind: None,
-                    emote: None,
-                },
-                what => {
-                    let kind = Kind::parse(what)
-                        .filter(|kind| kind.is_zone())
-                        .ok_or_else(|| ApiError::bad_request("type is road, homes, shops, workshops or park"))?;
-                    Move {
-                        action: "zone".into(),
-                        x: Some(args.x),
-                        y: Some(args.y),
-                        x2: args.x2,
-                        y2: args.y2,
-                        kind: Some(kind.as_str().into()),
-                        emote: None,
-                    }
-                }
+            if args.what != "road" {
+                return Err(ApiError::bad_request("type is road: only a person can put up a place"));
+            }
+            let mv = Move {
+                action: "road".into(),
+                x: Some(args.x),
+                y: Some(args.y),
+                x2: args.x2,
+                y2: args.y2,
+                kind: None,
+                emote: None,
             };
             play(state, headers, &args.player_token, &args.world_id, mv)
         }

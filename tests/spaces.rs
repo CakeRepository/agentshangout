@@ -270,10 +270,46 @@ impl Server {
         self.post(&who.key, "/api/worlds/commons/act", body).await
     }
 
-    /// Puts up a building wherever the rules allow it. A move that's refused costs nothing.
-    async fn build(&self, who: &Who, kind: &str) -> (i64, i64) {
+    /// A person's house, if they don't have one, which starts the clock on their other places (W61).
+    async fn has_a_house(&self, who: &Who) {
         for spot in self.beside_roads().await {
-            if self.place(who, kind, spot).await.status == StatusCode::OK {
+            let status = self.place(who, "house", spot).await.status;
+            if status == StatusCode::OK || status == StatusCode::CONFLICT {
+                return;
+            }
+        }
+        panic!("nowhere to build a house");
+    }
+
+    /// A `place` move a week from now, when everything a person can place has come (W61).
+    fn place_in_time(&self, who: &Who, kind: &str, (x, y): (i64, i64)) -> bool {
+        let at = now() + 8 * 86_400;
+        let player = self.state.db.own_player(&who.id, at).unwrap();
+        let mv = worlds::Move {
+            action: "place".to_string(),
+            x: Some(x),
+            y: Some(y),
+            x2: None,
+            y2: None,
+            kind: Some(kind.to_string()),
+            emote: None,
+        };
+        worlds::act(&self.state, &player, "commons", &mv, at).is_ok()
+    }
+
+    /// Puts up a building wherever the rules allow it. A move that's refused costs nothing. Anything
+    /// but a house goes up a week after their house, because it comes with time.
+    async fn build(&self, who: &Who, kind: &str) -> (i64, i64) {
+        if kind != "house" {
+            self.has_a_house(who).await;
+        }
+        for spot in self.beside_roads().await {
+            let built = if kind == "house" {
+                self.place(who, kind, spot).await.status == StatusCode::OK
+            } else {
+                self.place_in_time(who, kind, spot)
+            };
+            if built {
                 return spot;
             }
         }
@@ -1509,12 +1545,12 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 22] = [
+const KEPT_BY_THE_WIPE: [&str; 24] = [
     "people", "passkey_users", "passkeys", "sessions", "person_clocks", "owner_notes", "bot_marks",
     "bots_without_moods",
     "agents", "agent_activity", "agent_doorbell", "notify_targets", "free_sharing", "free_windows",
     "house_plan_sharing", "worlds", "world_tiles", "world_buildings", "world_players", "world_members",
-    "players", "crawler_sightings",
+    "players", "crawler_sightings", "place_clocks", "world_ends",
 ];
 
 #[tokio::test]
@@ -1821,12 +1857,13 @@ async fn a_stale_row_opens_nothing_for_anyone_but_a_rightful_owner() {
     let server = Server::start().await;
     let (third, ann) = server.someone("Ann").await;
     let (_, bo) = server.someone("Bo").await;
+    server.has_a_house(&bo).await;
     let spot = server.build(&ann, "studio").await;
     assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], third.as_str());
 
     // As after a wipe: the row is still there, and a stranger's building stands on the tile.
     server.bulldoze(&ann, spot).await.ok();
-    server.place(&bo, "studio", spot).await.ok();
+    assert!(server.place_in_time(&bo, "studio", spot));
     assert_eq!(server.state.db.space_on_plot("commons", spot.0, spot.1).unwrap().unwrap().id, third);
     let (stranger_room, stranger) = server.someone("Stranger").await;
     server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);

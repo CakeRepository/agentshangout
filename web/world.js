@@ -2477,8 +2477,8 @@ function workThree(S, c) {
   lorry(S, 20, 30.5, true, S.pal + 5);
 }
 
-// The buildings people place by hand (W54). Each stands on one tile, and none looks like anything a
-// zone grows, so a person can find theirs on the map.
+// The buildings people place by hand (W54). Each stands on one tile, and none looks like the old
+// city's, so a person can find theirs on the map.
 function placedHouse(S, c) {
   const R = [7, 9, 25, 23];
   const H = 11;
@@ -3759,63 +3759,6 @@ export function toolIcon(tool, size = 32) {
     for (let a = 0; a < 40; a += 8) fp3(g, LANE, [a - 4, 15.5], [a, 15.5], [a, 16.5], [a - 4, 16.5]);
     for (let a = 0; a < 40; a += 8) fp3(g, LANE, [15.5, a - 4], [16.5, a - 4], [16.5, a], [15.5, a]);
     g.restore();
-  } else if (tool === 'homes') {
-    g.save();
-    g.scale(0.74, 0.74);
-    g.translate(-16, -16);
-    const R = [6, 8, 26, 24];
-    const mat = { k: 'siding', c: '#ecdcb4' };
-    box(S, R, 0, 12, mat, (side, len) => {
-      win(S, 3, 4, 4, 5, {});
-      if (side === 'L') door(S, len - 8, 4.4, 8, '#a83a30', { lamp: false });
-    });
-    gable(S, R, 12, 9, '#a5402f', 1.8, 'u', mat);
-    brickChimney(S, 18, 12, 17, 24, 3);
-    g.restore();
-  } else if (tool === 'shops') {
-    g.save();
-    g.scale(0.74, 0.74);
-    g.translate(-16, -18);
-    const R = [5, 8, 27, 25];
-    const mat = { k: 'siding', c: '#aec6d8' };
-    box(S, R, 0, 22, mat, (side, len) => {
-      if (side === 'L') {
-        shopFront(S, len, 2, 10, 3, 1, { door: '#7b4a2a', hue: 3 }, false);
-        win(S, 4, 14, 4.4, 6, {});
-        win(S, len - 9, 14, 4.4, 6, {});
-      }
-    });
-    awning(S, R, 14, 5, AWN[0]);
-    flatRoof(S, R, 22, mat);
-    g.restore();
-  } else if (tool === 'workshops') {
-    g.save();
-    g.scale(0.7, 0.7);
-    g.translate(-16, -16);
-    const R = [4, 8, 28, 26];
-    const mat = { k: 'brick', c: '#a9573f' };
-    box(S, R, 0, 18, mat, (side) => {
-      if (side === 'L') {
-        rr(g, '#2a2f3e', 3, -12, 9, 12);
-        rr(g, '#aab3c2', 3.6, -11.4, 7.8, 11.4);
-        win(S, 14, 5, 3, 7, { frame: '#46506a' });
-      }
-    });
-    for (let k = 0; k < 3; k++) {
-      const ua = 4 + k * 8;
-      slope(g, '#6f7c95', [[ua, 8, 26], [ua + 8, 8, 26]], [[ua, 26, 18], [ua + 8, 26, 18]], 6, 2.4);
-    }
-    brickChimney(S, 6, 10, 24, 40, 4, false);
-    g.restore();
-  } else if (tool === 'park') {
-    g.save();
-    g.scale(0.9, 0.9);
-    g.translate(-16, -10);
-    disc(g, '#74b042', 16, 16, 15);
-    drawTree(g, -4, 14, 'oak', 3);
-    drawTree(g, 12, 18, 'blossom', 5);
-    disc(g, '#e0d2a8', 16, 24, 4);
-    g.restore();
   } else if (tool === 'house') {
     g.save();
     g.scale(0.72, 0.72);
@@ -3827,6 +3770,33 @@ export function toolIcon(tool, size = 32) {
       if (side === 'L') door(S, len - 8, 4.4, 8, '#3f7a6b', { lamp: false });
     });
     gable(S, R, 11, 9, '#b4533c', 1.8, 'u', mat);
+    g.restore();
+  } else if (tool === 'cafe') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    const R = [6, 8, 26, 24];
+    const mat = { k: 'siding', c: '#e8d9b8' };
+    box(S, R, 0, 13, mat, (side, len) => {
+      if (side === 'L') {
+        door(S, len / 2 - 2.2, 4.4, 8.5, '#7b4a2a', { lamp: false });
+        win(S, 2.5, 4, 5, 6, {});
+        win(S, len - 7.5, 4, 5, 6, {});
+      }
+    });
+    flatRoof(S, R, 13, mat);
+    awning(S, R, 10, 5, AWN[0]);
+    g.restore();
+  } else if (tool === 'club') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    const R = [6, 7, 26, 25];
+    const mat = { k: 'brick', c: '#5a4668' };
+    box(S, R, 0, 17, mat, (side, len) => {
+      if (side === 'L') door(S, len / 2 - 2.2, 4.4, 8.5, '#2a2436', { lamp: false });
+    });
+    flatRoof(S, R, 17, mat);
     g.restore();
   } else if (tool === 'studio') {
     g.save();
@@ -3867,12 +3837,10 @@ export function toolIcon(tool, size = 32) {
 
 const TOOL_COLOR = {
   road: '#ffe27a',
-  homes: '#7ee07a',
-  shops: '#6cc1ff',
-  workshops: '#ffb04d',
-  park: '#b6f06a',
   house: '#ffd27a',
   studio: '#9ad0ff',
+  club: '#c9a6ff',
+  cafe: '#ffb04d',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));
@@ -3889,6 +3857,24 @@ const DRIVE_FACTOR = 3;
 
 const screenOf = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
+// How a disaster looks (W65). A step is a minute, so the art plays out over about that.
+const DOOM_STEP = 60;
+const DOOM_FALL = 1.4;
+const DOOM_HOP = 5;
+const DOOM_TRAIL = 180;
+const DOOM_LOOK = {
+  meteors: { tint: '#7a2a12', trail: 'rgba(40, 26, 20, 0.34)' },
+  flood: { tint: '#1f4f8a', trail: 'rgba(46, 112, 184, 0.34)' },
+  twister: { tint: '#4c5a4a', trail: 'rgba(92, 84, 66, 0.26)' },
+  frog: { tint: '#2f5e2a', trail: 'rgba(38, 52, 28, 0.26)' },
+};
+
+// Where a disaster's circle falls on the map. A circle of tiles is an ellipse on an isometric map.
+function doomSpot([x, y, r]) {
+  const [sx, sy] = screenOf(x + 0.5, y + 0.5);
+  return { sx, sy, rx: r * HW * Math.SQRT2, ry: r * HH * Math.SQRT2 };
+}
+
 export class World {
   constructor(container, options = {}) {
     this.container = container;
@@ -3899,9 +3885,15 @@ export class World {
     // Told when the camera stops following a figure, and why: 'moved', 'gone' or 'other'.
     this.onFollow = typeof options.onFollow === 'function' ? options.onFollow : null;
     this.interactive = options.interactive !== false;
-    this.limits = { road: 16, zone: 5, ...(options.limits || {}) };
+    this.limits = { road: 16, ...(options.limits || {}) };
     this.framing = options.framing || {};
     this.labels = [];
+    // The end of the old city, as the last view told it (W66, W67).
+    this.doom = null;
+    this.doomKey = '';
+    this.doomAt = 0;
+    this.doomTrail = [];
+    this.frogFrom = null;
 
     container.classList.add('world');
     if (this.interactive) container.classList.add('world-live');
@@ -4223,6 +4215,7 @@ export class World {
     this.applyCrawlers(view.crawlers, animate);
     this.applyPeople(view.people, animate);
     this.applyVisitors(view.visitors, animate);
+    this.applyDoom(view.disaster);
     this.describe(view);
     this.ensureCars();
     if (fresh) this.frameTown();
@@ -4535,7 +4528,11 @@ export class World {
 
   describe(view) {
     const stage = STAGE_WORD[view.stage] || 'a town';
-    const pop = Math.max(0, Math.floor(Number(view.population) || 0));
+    const whole = (value) => Math.max(0, Math.floor(Number(value) || 0));
+    // A private city counts its people, and a public world its places.
+    const size = view.places === undefined
+      ? `a population of ${whole(view.population)}`
+      : `${whole(view.places)} ${whole(view.places) === 1 ? 'place' : 'places'}`;
     const name = typeof view.name === 'string' && view.name ? view.name : 'This world';
     // Who is on the street: a person is a human, an agent is a robot, and a frog is a crawler.
     let people = [...this.people.values()].filter((p) => !p.leaving).length;
@@ -4551,7 +4548,7 @@ export class World {
     if (agents) parts.push(`${agents} ${agents === 1 ? 'agent' : 'agents'}`);
     if (frogs) parts.push(`${frogs} ${frogs === 1 ? 'frog' : 'frogs'}`);
     const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
-    let text = `${name}, ${stage} with a population of ${pop}.`;
+    let text = `${name}, ${stage} with ${size}.`;
     if (list) text += ` On the street: ${list}.`;
     if (text !== this.label) {
       this.label = text;
@@ -5722,9 +5719,203 @@ export class World {
       g.globalAlpha = 1;
       g.globalCompositeOperation = 'source-over';
     }
+    this.drawDoom(g, t, scale, tx, ty, cw, ch);
     this.drawOverlay(g, t);
     this.drawLabels(g);
     this.placeTip();
+  }
+
+  // --- The end of the old city ------------------------------------------------------------------
+
+  // W66, W67: a disaster is painted over the map from what the view says. Nothing here changes a tile:
+  // those come down in the next view, and a step takes a minute, so what's painted plays over that.
+  applyDoom(disaster) {
+    const next = disaster && typeof disaster === 'object' ? disaster : null;
+    const key = next ? `${next.stage}|${next.done ?? ''}` : '';
+    if (key === this.doomKey) {
+      this.doom = next;
+      return;
+    }
+    const was = this.doom;
+    if (was?.stage === 'striking' && Array.isArray(was.hits)) {
+      this.doomTrail.push(...was.hits.filter(Array.isArray));
+      this.doomTrail.splice(0, Math.max(0, this.doomTrail.length - DOOM_TRAIL));
+      this.frogFrom = was.hits[0] || null;
+    }
+    if (!next || next.stage !== 'striking') this.doomTrail = [];
+    this.doomKey = key;
+    this.doomAt = this.time;
+    this.doom = next;
+  }
+
+  drawDoom(bg, t, scale, tx, ty, cw, ch) {
+    const doom = this.doom;
+    if (!doom) return;
+    const look = DOOM_LOOK[doom.kind] || DOOM_LOOK.meteors;
+    const pulse = doom.stage === 'striking' ? 0.3 : doom.stage === 'omen' ? 0.16 + 0.06 * Math.sin(t * 0.9) : 0.08;
+    bg.setTransform(1, 0, 0, 1, 0, 0);
+    bg.globalCompositeOperation = 'source-atop';
+    bg.globalAlpha = pulse;
+    bg.fillStyle = look.tint;
+    bg.fillRect(0, 0, cw, ch);
+    bg.globalCompositeOperation = 'source-over';
+    bg.globalAlpha = 1;
+    bg.setTransform(scale, 0, 0, scale, tx, ty);
+    if (doom.stage === 'omen' && doom.kind === 'meteors') this.drawFallingStars(bg, t);
+    if (doom.stage !== 'striking' || !Array.isArray(doom.hits)) return;
+    const hits = doom.hits.filter(Array.isArray).map(doomSpot);
+    const age = this.calm ? DOOM_STEP / 2 : Math.max(0, t - this.doomAt);
+    // All in one path, so overlapping circles read as one mark and not as a pile of discs.
+    bg.fillStyle = look.trail;
+    bg.beginPath();
+    for (const mark of this.doomTrail.map(doomSpot)) {
+      bg.moveTo(mark.sx + mark.rx, mark.sy);
+      bg.ellipse(mark.sx, mark.sy, mark.rx, mark.ry, 0, 0, Math.PI * 2);
+    }
+    bg.fill();
+    if (doom.kind === 'flood') this.drawFlood(bg, hits, t);
+    else if (doom.kind === 'twister') this.drawTwister(bg, hits, age, t);
+    else if (doom.kind === 'frog') this.drawGiantFrog(bg, hits[0], age, t);
+    else this.drawMeteors(bg, hits, age);
+  }
+
+  // Omens of meteors: bright streaks high over wherever you're looking.
+  drawFallingStars(bg, t) {
+    const v = this.view;
+    const wide = v.x1 - v.x0;
+    const high = v.y1 - v.y0;
+    bg.lineCap = 'round';
+    for (let k = 0; k < 4; k++) {
+      const along = (t * (0.11 + k * 0.03) + k * 0.27) % 1;
+      const x = v.x0 + wide * ((k * 0.31 + along) % 1);
+      const y = v.y0 + high * (0.08 + 0.3 * along);
+      bg.strokeStyle = `rgba(255, 226, 170, ${0.7 * (1 - along)})`;
+      bg.lineWidth = 2;
+      bg.beginPath();
+      bg.moveTo(x, y);
+      bg.lineTo(x - 26, y - 13);
+      bg.stroke();
+    }
+  }
+
+  drawMeteors(bg, hits, age) {
+    hits.forEach((hit, k) => {
+      const land = 4 + (k * DOOM_STEP * 0.8) / hits.length;
+      const fall = (age - land + DOOM_FALL) / DOOM_FALL;
+      if (fall < 0) return;
+      if (fall < 1) {
+        const y = hit.sy - (1 - fall) * 460;
+        const x = hit.sx + (1 - fall) * 230;
+        bg.strokeStyle = 'rgba(255, 170, 70, 0.8)';
+        bg.lineWidth = 6;
+        bg.lineCap = 'round';
+        bg.beginPath();
+        bg.moveTo(x, y);
+        bg.lineTo(x + 70, y - 140);
+        bg.stroke();
+        bg.fillStyle = '#fff1c4';
+        bg.beginPath();
+        bg.arc(x, y, 8, 0, Math.PI * 2);
+        bg.fill();
+        return;
+      }
+      const after = age - land;
+      const blast = Math.min(1, after / 1.1);
+      bg.fillStyle = `rgba(255, 150, 50, ${0.7 * (1 - blast) + 0.1})`;
+      bg.beginPath();
+      bg.ellipse(hit.sx, hit.sy, hit.rx * blast, hit.ry * blast, 0, 0, Math.PI * 2);
+      bg.fill();
+      bg.strokeStyle = `rgba(255, 240, 200, ${1 - blast})`;
+      bg.lineWidth = 3;
+      bg.stroke();
+    });
+  }
+
+  // One wall of water: the foam goes on first, so the water covers all of it but the leading edge.
+  drawFlood(bg, hits, t) {
+    bg.beginPath();
+    for (const hit of hits) {
+      const swell = 1 + 0.06 * Math.sin(t * 2 + hit.sx * 0.01);
+      bg.moveTo(hit.sx + hit.rx * swell, hit.sy);
+      bg.ellipse(hit.sx, hit.sy, hit.rx * swell, hit.ry * swell, 0, 0, Math.PI * 2);
+    }
+    bg.strokeStyle = 'rgba(236, 246, 255, 0.85)';
+    bg.lineWidth = 12;
+    bg.stroke();
+    bg.fillStyle = 'rgba(46, 112, 184, 0.9)';
+    bg.fill();
+  }
+
+  drawTwister(bg, hits, age, t) {
+    if (hits.length < 2) return;
+    const along = clamp(age / DOOM_STEP, 0, 1) * (hits.length - 1);
+    const at = Math.min(hits.length - 2, Math.floor(along));
+    const x = lerp(hits[at].sx, hits[at + 1].sx, along - at);
+    const y = lerp(hits[at].sy, hits[at + 1].sy, along - at);
+    bg.fillStyle = 'rgba(40, 36, 30, 0.32)';
+    bg.beginPath();
+    bg.ellipse(x, y, hits[0].rx * 0.7, hits[0].ry * 0.7, 0, 0, Math.PI * 2);
+    bg.fill();
+    for (let k = 0; k < 16; k++) {
+      const up = k / 15;
+      const sway = Math.sin(t * 5 + k * 0.7) * (6 + 34 * up);
+      const wide = 10 + 96 * up * up + Math.sin(t * 9 + k) * 3;
+      bg.strokeStyle = `rgba(${74 + k * 5}, ${72 + k * 5}, ${64 + k * 5}, 0.78)`;
+      bg.lineWidth = 7;
+      bg.beginPath();
+      bg.ellipse(x + sway, y - up * 330, wide, wide * 0.34, 0, 0, Math.PI * 2);
+      bg.stroke();
+    }
+  }
+
+  // The frogs on the street are web crawlers. This one isn't.
+  drawGiantFrog(bg, hit, age, t) {
+    if (!hit) return;
+    const from = this.frogFrom ? doomSpot(this.frogFrom) : hit;
+    const hop = clamp(age / DOOM_HOP, 0, 1);
+    const x = lerp(from.sx, hit.sx, ease(hop));
+    const y = lerp(from.sy, hit.sy, ease(hop));
+    const lift = Math.sin(hop * Math.PI) * 340;
+    const size = hit.rx * 0.36;
+    const landed = hop >= 1;
+    const squash = landed ? 1 + Math.max(0, 0.28 - (age - DOOM_HOP) * 0.5) : 0.92;
+    bg.fillStyle = 'rgba(20, 30, 16, 0.38)';
+    bg.beginPath();
+    bg.ellipse(x, y, size * 1.15, size * 0.5, 0, 0, Math.PI * 2);
+    bg.fill();
+    if (landed && age - DOOM_HOP < 1.2) {
+      const ring = (age - DOOM_HOP) / 1.2;
+      bg.strokeStyle = `rgba(240, 232, 200, ${1 - ring})`;
+      bg.lineWidth = 5;
+      bg.beginPath();
+      bg.ellipse(x, y, hit.rx * ring, hit.ry * ring, 0, 0, Math.PI * 2);
+      bg.stroke();
+    }
+    const body = y - lift - size * 0.55;
+    const part = (color, ox, oy, rx, ry) => {
+      bg.fillStyle = color;
+      bg.beginPath();
+      bg.ellipse(x + ox * size, body + oy * size, rx * size, ry * size, 0, 0, Math.PI * 2);
+      bg.fill();
+    };
+    part('#3f8f3a', -0.82, 0.42, 0.42, 0.26);
+    part('#3f8f3a', 0.82, 0.42, 0.42, 0.26);
+    part('#58ad47', 0, 0.1, 0.95 * squash, 0.68 / squash);
+    part('#cfe8a2', 0, 0.36, 0.62 * squash, 0.34 / squash);
+    part('#58ad47', -0.46, -0.52, 0.28, 0.27);
+    part('#58ad47', 0.46, -0.52, 0.28, 0.27);
+    const blink = Math.sin(t * 1.3) > 0.97 ? 0.03 : 0.19;
+    part('#fbf6dc', -0.46, -0.56, 0.19, 0.19);
+    part('#fbf6dc', 0.46, -0.56, 0.19, 0.19);
+    part('#17201a', -0.46, -0.54, 0.1, blink * 0.6);
+    part('#17201a', 0.46, -0.54, 0.1, blink * 0.6);
+    bg.strokeStyle = '#2c6028';
+    bg.lineWidth = Math.max(2, size * 0.04);
+    bg.lineCap = 'round';
+    bg.beginPath();
+    bg.moveTo(x - size * 0.55, body - size * 0.04);
+    bg.quadraticCurveTo(x, body + size * 0.2, x + size * 0.55, body - size * 0.04);
+    bg.stroke();
   }
 
 
@@ -5986,10 +6177,6 @@ export class World {
         ex = sx;
         ey = sy + clamp(dy, -max, max);
       }
-    } else if (this.tool === 'homes' || this.tool === 'shops' || this.tool === 'workshops') {
-      const max = Math.max(1, this.limits.zone) - 1;
-      ex = sx + clamp(ex - sx, -max, max);
-      ey = sy + clamp(ey - sy, -max, max);
     } else {
       sx = ex;
       sy = ey;

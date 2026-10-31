@@ -30,7 +30,8 @@ the moment they arrive, so making a floor public can never show what was said on
 | How many floors | 5 to a space, counting the first |
 | What is private or public | Each floor. A space has no setting of its own |
 | What public means | Anyone signed in. There is no looking in without an account |
-| What a house costs | Nothing. Third spaces and opening a floor to the public need the server's code, if it has one |
+| What a house costs | Nothing. Third spaces and opening a floor to the public need the server's code, if it has one, unless the place was built on the map |
+| What's shared | A café, from the start. Everything else is private unless you're invited |
 | Cities | Untouched. They stay invite-only, for the reason in [city.md](city.md) |
 
 ## Places
@@ -100,10 +101,11 @@ Public means free text from strangers, so this is the risky part of spaces. A pu
 place in the private side of the site where a stranger can write. The rest of these rules exist for
 that reason.
 
-- **S15.** Every floor starts private. Only the owner can open one, and only a floor: the private
-  floors of the same space stay as they were.
+- **S15.** Every floor starts private, but for the first floor of a café (S47). Only the owner can open
+  one, and only a floor: the private floors of the same space stay as they were.
 - **S16.** Opening a floor needs the server's code, if it has one, so a server that keeps strangers
-  from starting hangouts keeps them from starting public rooms.
+  from starting hangouts keeps them from starting public rooms. A café is the exception (S48): the
+  week it takes to unlock one (W61) stands in for the code.
 - **S17.** Public means anyone signed in. With no account you get a 401, as for any room. Room pages
   stay out of search.
 - **S18.** Anyone signed in can walk in. A walk-in has no membership, so they aren't anyone's friend
@@ -309,9 +311,9 @@ nothing about who has a floor open.
 
 Each space is a building on The Commons, put there by the person who owns it, and going through its
 door opens the space's rooms. The map has no words in it and rooms are full of them, so the two stay
-apart. What a building is, where it can stand and how many a person can have are W54 to W59 in
-[public-city.md](public-city.md). These rules are the door, which is W60 there, the one exception to
-W1.
+apart. What a building is, where it can stand, how many a person can have and when they come are W54
+to W63 in [public-city.md](public-city.md). These rules are the door, which is W60 there, the one
+exception to W1.
 
 Placing a building makes no room, because a move in a world can't touch a hangout (W1). The room
 comes from the person, the first time they go through their own door, on a route of theirs.
@@ -341,6 +343,15 @@ comes from the person, the first time they go through their own door, on a route
   and a world's view shows a building as a tile and nothing else (W59).
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
+- **S47.** A café is a shared place. When a café's door makes a new space (S34), that space's first
+  floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
+  A club, a studio and a house start private. A room that comes back through S34 stays as its owner
+  left it: placing a café never opens a room someone already has.
+- **S48.** While a third space's building is a café, its owner opens and closes its floors with no
+  server code. Nobody else gets that: whoever runs it once the owner has left (S8) needs the code,
+  because they didn't wait for it. The keeper can still close a floor (S29), and removing the owner
+  from The Commons (W18) takes the café down, so opening a floor needs the code again. A café that's
+  gone from the map is any other third space.
 
 ## Who is in the room
 
@@ -371,7 +382,8 @@ else, so there's no table for it and a restart forgets it.
 Every hangout is being deleted, so that everything on the site from then on is a space someone built.
 Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
 database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
-it, because only a person touches the server.
+it, because only a person touches the server. The end of the old city (W64) is the one thing that
+wipes by itself, and it only ever takes tiles on the map, minutes after a release.
 
 [wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
 checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much
@@ -398,8 +410,9 @@ through the real routes, and requires every table to be on the list below or lef
   (W3), until a city's house marks it again. The first run says how many there are.
 - **Every bot ends up in no room,** until its owner brings it into one. A room that a workflow posts
   to goes too, and that post then fails quietly, because it's allowed to.
-- **Buildings stay,** because they belong to the world and [wiping The Commons](public-city.md) is a
-  separate step. A building that outlives its rooms gets new ones when its owner next goes in (S34).
+- **Buildings stay,** because they belong to the world, and what ends them is the end of the old city
+  (W64 in [public-city.md](public-city.md)). A building that outlives its rooms gets new ones when its
+  owner next goes in (S34).
 - **It takes spaces too.** Anything built between a release and running this is lost, so run it right
   after the release, before anyone is told.
 

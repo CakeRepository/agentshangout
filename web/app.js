@@ -1,4 +1,4 @@
-import { Room } from './room.js';
+import { Room, itemPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
@@ -562,7 +562,7 @@ async function homeView() {
 // The strip across the top of a page outside a room: the town's emblem, its name, and a few links.
 function masthead(nav) {
   return h('header', { class: 'masthead' },
-    h('span', { class: 'masthead-logo', 'aria-hidden': 'true' }, toolIcon('homes', 44)),
+    h('span', { class: 'masthead-logo', 'aria-hidden': 'true' }, toolIcon('house', 44)),
     link('/', 'Agents Hangout', { class: 'brand' }),
     nav);
 }
@@ -1161,6 +1161,610 @@ function friendInviter({ invite, here }) {
   return h('div', { class: 'stack friend-invite' }, h('h3', {}, 'Invite a friend'), box, said);
 }
 
+// Build mode: furnishing a floor from the room page. The rules are in docs/rooms.md and the server
+// keeps them. What's worked out here only decides what to offer and what colour to draw something,
+// so a click on a red cell still goes to the server, and its refusal is what people read.
+
+// A catalog grouped by what an item does. An item that holds notes goes with those, mood or not.
+const ITEM_GROUPS = [
+  ['Furniture', (kind) => !kind.sign && !kind.holds_notes && !kind.mood],
+  ['Mood items', (kind) => !kind.sign && !kind.holds_notes && kind.mood],
+  ['Things that hold notes', (kind) => kind.holds_notes],
+  ['Signs', (kind) => kind.sign],
+];
+const NUDGES = [['←', 'left', -1, 0], ['↑', 'back', 0, -1], ['↓', 'forward', 0, 1], ['→', 'right', 1, 0]];
+const NUDGE_KEYS = { ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowRight: [1, 0] };
+const PIC_WIDTH = 72;
+
+const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+const friendsText = (count) => `needs ${count} ${count === 1 ? 'friend' : 'friends'}`;
+
+//   view()            the room's latest snapshot
+//   reload()          fetches it again
+//   say(text)         the status bar
+function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }) {
+  const coarse = matchMedia('(pointer: coarse)');
+  const menu = popupMenu(frame.root, { refocus: () => doneButton.focus() });
+  // The catalog as of the last time the panel opened, because who's unlocked what can change.
+  let catalog = null;
+  let catalogKey = null;
+  let placedKey = null;
+  let tiles = new Map();
+  // Whether build mode is on. The panel can be out of the way of the room while it is.
+  let building = false;
+  // True while this code closes the panel to clear the room, which doesn't end build mode.
+  let aside = false;
+  // What's being put down: { kind, label, x, y, w, h, facing, and `item` if it's already placed }.
+  // `w` and `h` are in cells as it's turned now.
+  let hand = null;
+  let chosen = null;
+  let busy = false;
+  let press = { touch: false, onHand: false };
+  let notesOf = null;
+  let notesKey = null;
+
+  const kindOf = (word) => catalog?.items.find((each) => each.kind === word);
+  const labelOf = (word) => kindOf(word)?.label || wordName(word.replaceAll('_', ' '));
+
+  // I2, I16, S6, S19: members of a floor, as people. A Town Square, Living Room or Porch isn't a
+  // floor. Someone who runs the space but isn't on this floor can walk in and still see to its signs.
+  const mayBuild = () => {
+    const { floor, guest, you } = view();
+    return Boolean(floor) && !you.agent_id && (!guest || floor.runs_it);
+  };
+  const mayChange = (item) => {
+    if (!mayBuild()) return false;
+    const { floor, guest, you } = view();
+    return floor.runs_it || (!guest && !item.sign && item.placed_by === you.person_id);
+  };
+
+  // The dock under the room says what's going on and holds what's needed for it. It takes a row of
+  // the window, so the room is never behind it.
+  const sayHere = h('span', { class: 'build-say', role: 'status' });
+  const tell = (text) => {
+    sayHere.textContent = text;
+  };
+  const dockButton = (label, onclick) => h('button', { type: 'button', class: 'wd-btn wide', onclick }, label);
+  const turnButton = dockButton('Turn', () => turnHand());
+  const putButton = dockButton('Put it here', () => putDown());
+  const cancelButton = dockButton('Cancel', () => letGo());
+  const catalogButton = dockButton('Catalog', () => panels.open('build'));
+  const roomButton = dockButton('See the room', () => clearRoom());
+  const doneButton = dockButton('Done', () => {
+    if (panels.current === 'build') panels.close(false);
+    else end();
+  });
+  const nudges = h('span', { class: 'build-nudge', role: 'group', 'aria-label': 'Move it one cell' },
+    NUDGES.map(([glyph, word, dx, dy]) => h('button', {
+      type: 'button',
+      class: 'wd-btn',
+      'aria-label': `Move it ${word}`,
+      onclick: () => nudge(dx, dy),
+    }, glyph)));
+  const dock = h('div', { class: 'wd-bar build-dock', role: 'toolbar', 'aria-label': 'Build', hidden: true },
+    sayHere,
+    h('span', { class: 'build-dock-buttons' }, nudges, turnButton, putButton, cancelButton, catalogButton, roomButton, doneButton));
+  frame.root.append(dock);
+
+  const figures = h('p', { class: 'build-figures' });
+  const buildError = formError();
+  const catalogEl = h('div', { class: 'build-catalog' }, h('p', { class: 'muted' }, 'Opening the catalog…'));
+  const placedEl = h('ul', { class: 'rows build-placed', hidden: true });
+  const tab = (label, shows, pressed) => h('button', {
+    type: 'button',
+    class: 'wd-btn wide',
+    'aria-pressed': String(pressed),
+    onclick: () => showTab(shows),
+  }, label);
+  const catalogTab = tab('Catalog', catalogEl, true);
+  const placedTab = tab('In this room', placedEl, false);
+  panels.add('build', 'Build', { onOpen: () => openCatalog() },
+    figures,
+    h('div', { class: 'build-tabs' }, catalogTab, placedTab),
+    buildError,
+    catalogEl,
+    placedEl);
+  // Back in the title bar, so it's there from the start. render() hides it from anyone who can't build.
+  const toggle = panels.toggle('build', 'Build', { short: 'Build' });
+  toggle.hidden = true;
+
+  function showTab(shows) {
+    catalogEl.hidden = shows !== catalogEl;
+    placedEl.hidden = shows !== placedEl;
+    catalogTab.setAttribute('aria-pressed', String(shows === catalogEl));
+    placedTab.setAttribute('aria-pressed', String(shows === placedEl));
+  }
+
+  function renderDock() {
+    const holding = Boolean(hand);
+    dock.hidden = !building;
+    frame.root.classList.toggle('has-dock', building);
+    stage.classList.toggle('building', building);
+    stage.classList.toggle('holding', holding);
+    for (const button of [nudges, turnButton, putButton, cancelButton]) button.hidden = !holding;
+    catalogButton.hidden = holding || panels.current === 'build';
+    roomButton.hidden = holding || panels.current !== 'build' || beside.matches;
+    doneButton.hidden = holding;
+    for (const [word, button] of tiles) button.setAttribute('aria-pressed', String(word === hand?.kind && !hand.item));
+  }
+
+  // Green where the server would take it and red where it wouldn't, as far as this page can tell.
+  function fits(spot) {
+    const { floor, fixed } = catalog;
+    return spot.x >= 0 && spot.y >= 0 && spot.x + spot.w <= floor.w && spot.y + spot.h <= floor.h
+      && !fixed.some((cells) => overlaps(spot, cells))
+      && !view().items.some((item) => item.id !== spot.item && overlaps(spot, item));
+  }
+
+  // The first place something fits, so a finger has something to start from, or else the top corner.
+  function firstSpot(w, h) {
+    const { floor } = catalog;
+    for (let y = 0; y + h <= floor.h; y++) {
+      for (let x = 0; x + w <= floor.w; x++) {
+        if (fits({ x, y, w, h })) return { x, y };
+      }
+    }
+    return { x: 0, y: 0 };
+  }
+
+  function showHand() {
+    room.setGhost(hand && {
+      item: hand.kind,
+      x: hand.x,
+      y: hand.y,
+      w: hand.w,
+      h: hand.h,
+      facing: hand.facing,
+      ok: fits(hand),
+      lifted: hand.item,
+    }, catalog?.fixed);
+    renderDock();
+  }
+
+  // Keeps it on the floor. Refusals for being off the floor are for callers that don't draw one.
+  function moveHand(x, y) {
+    const { floor } = catalog;
+    hand.x = clamp(x, 0, floor.w - hand.w);
+    hand.y = clamp(y, 0, floor.h - hand.h);
+    showHand();
+  }
+
+  // The middle of it goes where the pointer is, with the cell under the pointer as the one to go by.
+  const handTo = (cell) => moveHand(cell.x - Math.floor((hand.w - 1) / 2), cell.y - Math.floor((hand.h - 1) / 2));
+  const nudge = (dx, dy) => moveHand(hand.x + dx, hand.y + dy);
+
+  // Below BESIDE a panel covers the room, so it goes before anyone's asked to touch the room.
+  function clearRoom() {
+    if (beside.matches || !panels.current) return;
+    aside = true;
+    panels.close(false);
+    aside = false;
+  }
+
+  function hold(next) {
+    if (!catalog) return;
+    hand = next;
+    choose(null);
+    clearRoom();
+    showHand();
+    putButton.focus({ preventScroll: true });
+    tell(coarse.matches
+      ? `${next.label}: tap the room to choose a spot, then Put it here.`
+      : `${next.label}: move over the room and click to put it down.`);
+  }
+
+  function pickUp(item) {
+    hold({
+      item: item.id,
+      kind: item.kind,
+      label: labelOf(item.kind),
+      x: item.x,
+      y: item.y,
+      w: item.w,
+      h: item.h,
+      facing: item.facing,
+    });
+  }
+
+  function turnHand() {
+    hand.facing = (hand.facing + 1) % 4;
+    [hand.w, hand.h] = [hand.h, hand.w];
+    moveHand(hand.x, hand.y);
+  }
+
+  function letGo() {
+    hand = null;
+    showHand();
+    tell(idleHint());
+  }
+
+  const idleHint = () => (coarse.matches
+    ? 'Tap something in the room to change it, or open the catalog.'
+    : 'Pick from the catalog, or click something in the room to change it.');
+
+  // Only the server's word counts, so what's in hand stays in hand until it has said yes.
+  async function putDown() {
+    if (!hand || busy) return;
+    const { item, kind, label, x, y, facing } = hand;
+    busy = true;
+    try {
+      if (item) await api(`/api/items/${encodeURIComponent(item)}`, { method: 'PUT', body: { x, y, facing } });
+      else await api(`/api/floors/${encodeURIComponent(id)}/items`, { method: 'POST', body: { kind, x, y, facing } });
+      hand = null;
+      await reload();
+      showHand();
+      tell(`${label} ${item ? 'moved' : 'placed'}.`);
+      (tiles.get(kind)?.offsetParent ? tiles.get(kind) : catalogButton).focus({ preventScroll: true });
+    } catch (error) {
+      tell(error.message);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function turn(item) {
+    try {
+      await api(`/api/items/${encodeURIComponent(item.id)}`, { method: 'PUT', body: { facing: (item.facing + 1) % 4 } });
+      await reload();
+      tell(`${labelOf(item.kind)} turned.`);
+    } catch (error) {
+      tell(error.message);
+    }
+  }
+
+  async function take(item) {
+    try {
+      await api(`/api/items/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      choose(null);
+      await reload();
+      tell(`${labelOf(item.kind)} removed.`);
+    } catch (error) {
+      tell(error.message);
+    }
+  }
+
+  // I15: its notes go with it. Someone who walked in can't count the notes from before they did.
+  function remove(item) {
+    if (!item.notes && !(item.holds_notes && view().guest)) {
+      take(item);
+      return;
+    }
+    const label = labelOf(item.kind);
+    const dialog = modal(`Remove the ${label.toLowerCase()}?`,
+      h('p', {}, 'Every note on it goes with it, and they can\'t be brought back.'),
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', onclick: () => dialog.close() }, 'Keep it'),
+        h('button', {
+          type: 'button',
+          class: 'primary',
+          onclick: () => {
+            dialog.close();
+            take(item);
+          },
+        }, 'Remove it')));
+  }
+
+  // In build mode a click on something selects it and offers what this person can do with it.
+  function choose(item, event) {
+    chosen = item?.id ?? null;
+    room.setChosen(chosen);
+    if (!item) return;
+    const can = mayChange(item);
+    const items = [
+      ...(can ? [
+        { label: 'Move', run: () => pickUp(item) },
+        { label: 'Turn', run: () => turn(item) },
+        { label: 'Remove', danger: true, run: () => remove(item) },
+      ] : []),
+      ...(item.holds_notes ? [
+        ...(can ? [null] : []),
+        { label: 'Notes', cost: String(item.notes), run: () => openNotes(item) },
+      ] : []),
+    ];
+    if (!can) {
+      tell(item.sign
+        ? 'Only whoever runs the space can change a sign.'
+        : `${item.placed_by_name} placed this, so only they or whoever runs the space can change it.`);
+    }
+    if (items.length) {
+      menu.open({ title: labelOf(item.kind), sub: `Placed by ${item.placed_by_name}`, items },
+        event.clientX, event.clientY, press.touch ? 'press' : 'click');
+    }
+  }
+
+  const under = (event) => {
+    const itemId = room.itemAt(event.clientX, event.clientY);
+    return view().items.find((item) => item.id === itemId);
+  };
+
+  // Listening on the stage, not the canvas: the room's tags and its empty state lie over the canvas.
+  stage.addEventListener('pointerdown', (event) => {
+    const cell = room.cellAt(event.clientX, event.clientY);
+    press = {
+      touch: event.pointerType === 'touch',
+      onHand: Boolean(hand && cell && overlaps({ x: cell.x - 1, y: cell.y - 1, w: 3, h: 3 }, hand)),
+    };
+  });
+  stage.addEventListener('pointermove', (event) => {
+    if (!hand) {
+      const item = under(event);
+      stage.classList.toggle('over-item', Boolean(item && (building || item.holds_notes)));
+      return;
+    }
+    const cell = room.cellAt(event.clientX, event.clientY);
+    if (cell) handTo(cell);
+  });
+  stage.addEventListener('click', (event) => {
+    if (event.target.closest('button, a')) return;
+    if (hand) {
+      const cell = room.cellAt(event.clientX, event.clientY);
+      if (!cell) return;
+      // A finger can't hover, so its first tap shows the spot. Pressing what's in hand puts it down.
+      if (press.touch && !press.onHand) {
+        handTo(cell);
+        return;
+      }
+      if (!press.touch) handTo(cell);
+      putDown();
+      return;
+    }
+    const item = under(event);
+    if (building) choose(item, event);
+    else if (item?.holds_notes) openNotes(item);
+  });
+
+  // The Build panel
+
+  async function openCatalog() {
+    buildError.hidden = true;
+    try {
+      catalog = await api('/api/items');
+      // The list of what's placed takes its names from the catalog too.
+      catalogKey = null;
+      placedKey = null;
+      render();
+    } catch (error) {
+      buildError.textContent = error.message;
+      buildError.hidden = false;
+    }
+  }
+
+  function tile(kind, { isPublic, full }) {
+    const why = !kind.unlocked ? friendsText(kind.friends_needed)
+      : kind.mood === 'flirty' && isPublic ? 'private floors only'
+        : full ? 'this floor is full'
+          : null;
+    const picture = itemPicture(kind.kind, kind.w, kind.h);
+    if (picture) {
+      // Whole steps, because anything else breaks up the pixels.
+      const zoom = clamp(Math.floor(PIC_WIDTH / picture.width), 1, 3);
+      picture.style.width = `${picture.width * zoom}px`;
+      picture.style.height = `${picture.height * zoom}px`;
+    }
+    const button = h('button', {
+      type: 'button',
+      class: `wd-btn build-tile${why ? ' locked' : ''}`,
+      'aria-pressed': 'false',
+      disabled: Boolean(why),
+      onclick: () => {
+        const { x, y } = firstSpot(kind.w, kind.h);
+        hold({ kind: kind.kind, label: kind.label, x, y, w: kind.w, h: kind.h, facing: 0 });
+      },
+    },
+    h('span', { class: 'build-pic', 'aria-hidden': 'true' }, picture),
+    h('span', { class: 'build-name' }, kind.label),
+    h('small', {}, `Beauty ${kind.beauty}`),
+    h('small', {}, kind.mood ? wordName(kind.mood) : 'No mood'),
+    why ? h('small', { class: 'build-why' }, why) : null);
+    tiles.set(kind.kind, button);
+    return button;
+  }
+
+  // I16: a sign is for whoever runs the space, and someone who walked in to see to one has nothing
+  // else to put here. I11: flirty items wait for a private floor.
+  function renderCatalog() {
+    if (!catalog) return;
+    const { floor, guest, items } = view();
+    const shape = { isPublic: floor.floor.access === 'public', full: items.length >= catalog.max_items };
+    const key = JSON.stringify([shape, floor.runs_it, Boolean(guest)]);
+    if (key === catalogKey) return;
+    catalogKey = key;
+    const offered = catalog.items.filter((kind) => (kind.sign ? floor.runs_it : !guest));
+    tiles = new Map();
+    catalogEl.replaceChildren(...ITEM_GROUPS.flatMap(([title, belongs]) => {
+      const kinds = offered.filter(belongs);
+      return kinds.length ? [h('section', { class: 'build-group', 'aria-label': title },
+        h('h3', {}, title),
+        h('div', { class: 'build-tiles' }, kinds.map((kind) => tile(kind, shape))))] : [];
+    }));
+  }
+
+  function placedRow(item) {
+    const can = mayChange(item);
+    const action = (label, run, className = 'link') => h('button', { type: 'button', class: className, onclick: run }, label);
+    return h('li', { class: 'row' },
+      h('span', { class: 'row-main' },
+        h('span', {}, labelOf(item.kind)),
+        h('small', { class: 'muted' }, `Placed by ${item.placed_by_name}`)),
+      h('span', { class: 'row-actions' },
+        can ? action('Move', () => pickUp(item)) : null,
+        can ? action('Turn', () => turn(item)) : null,
+        can ? action('Remove', () => remove(item), 'link danger') : null,
+        item.holds_notes ? action(`Notes (${item.notes})`, () => openNotes(item)) : null));
+  }
+
+  function renderPlaced() {
+    const { items } = view();
+    placedTab.textContent = `In this room (${items.length})`;
+    const key = JSON.stringify(items.map((item) => [item.id, item.x, item.y, item.facing, item.notes, item.placed_by_name, mayChange(item)]));
+    if (key === placedKey) return;
+    placedKey = key;
+    placedEl.replaceChildren(...(items.length
+      ? items.map(placedRow)
+      : [h('li', { class: 'muted' }, 'Nothing here yet. Pick something from the catalog.')]));
+  }
+
+  // On every refresh, so people furnishing together see each other's changes as they happen (I6).
+  function render() {
+    const { floor, items, room_beauty: beauty, room_beauty_word: word, room_mood: mood } = view();
+    const may = mayBuild();
+    toggle.hidden = !may;
+    if (!may) {
+      if (panels.current === 'build') panels.close(false);
+      if (building) end();
+    }
+    if (hand?.item && !items.some((item) => item.id === hand.item)) {
+      hand = null;
+      tell('Someone else just removed that.');
+    }
+    if (chosen && !items.some((item) => item.id === chosen)) choose(null);
+    if (notesOf && !items.some((item) => item.id === notesOf)) {
+      notesOf = null;
+      if (panels.current === 'itemnotes') panels.close(false);
+      say('Someone just removed that, and its notes went with it.');
+    } else if (notesOf) {
+      loadNotes();
+    }
+    if (!floor) return;
+    const count = catalog ? `${items.length} of ${catalog.max_items} items` : `${items.length} items`;
+    figures.textContent = `Beauty ${beauty}, ${word}. Mood: ${mood || 'none'}. ${count}.`;
+    renderCatalog();
+    renderPlaced();
+    showHand();
+  }
+
+  function begin() {
+    if (!building) tell(idleHint());
+    building = true;
+    renderDock();
+  }
+
+  function end() {
+    building = false;
+    hand = null;
+    menu.close();
+    choose(null);
+    showHand();
+    say('Build mode is off.');
+  }
+
+  // The panels are one at a time. Opening another one ends build mode, except an item's notes, and
+  // closing those comes back to what was there.
+  function panelChanged(was, now) {
+    if (was === 'itemnotes' && now !== 'itemnotes') notesOf = null;
+    if (now === 'build') begin();
+    else if (building && !aside && now !== 'itemnotes' && was !== 'itemnotes') end();
+    else renderDock();
+  }
+
+  // Keys while something's in hand. Says whether it took the key.
+  function key(event) {
+    if (document.querySelector('dialog[open]')) return false;
+    if (menu.isOpen) {
+      if (event.key !== 'Escape') return false;
+      menu.close(true);
+      return true;
+    }
+    if (!hand) return false;
+    if (event.key === 'Escape') {
+      letGo();
+      return true;
+    }
+    if (event.target.closest?.('input, textarea, select')) return false;
+    const step = NUDGE_KEYS[event.key];
+    if (step) {
+      nudge(...step);
+      return true;
+    }
+    if (event.key === 'Enter' && !event.target.closest?.('button, a')) {
+      putDown();
+      return true;
+    }
+    return false;
+  }
+
+  // An item's notes (I12 to I15). Everything anyone wrote goes in as text.
+
+  const noteList = h('div', { class: 'list' });
+  const noteCount = h('p', { class: 'muted' });
+  const noteError = formError();
+  const noteForm = h('form', {
+    class: 'stack',
+    onsubmit: submitter(noteError, async ({ text }) => {
+      await api(`/api/items/${encodeURIComponent(notesOf)}/notes`, { method: 'POST', body: { text } });
+      noteForm.reset();
+      await loadNotes();
+    }),
+  },
+  h('textarea', { name: 'text', required: true, maxLength: 500, rows: 3, placeholder: 'Add a note', 'aria-label': 'Add a note' }),
+  h('div', { class: 'event-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Add note')));
+  const notesBody = panels.add('itemnotes', 'Notes', {}, noteCount, noteList, noteError, noteForm);
+  const notesTitle = notesBody.parentElement.querySelector('h2');
+
+  function noteRow(note) {
+    return h('div', { class: 'note' },
+      h('p', {}, note.text),
+      h('small', { class: 'muted' }, `${note.via_bot ? `${note.written_by}, by ${note.via_bot}` : note.written_by} · ${whenText(note.created_at)}`),
+      note.can_remove ? h('button', {
+        type: 'button',
+        class: 'link danger',
+        onclick: act(noteError, async () => {
+          await api(`/api/item-notes/${encodeURIComponent(note.id)}`, { method: 'DELETE' });
+          await loadNotes();
+        }),
+      }, 'Remove') : null);
+  }
+
+  async function loadNotes() {
+    const asked = notesOf;
+    if (!asked) return;
+    try {
+      const { item, notes, max_notes: most } = await api(`/api/items/${encodeURIComponent(asked)}/notes`);
+      if (asked !== notesOf) return;
+      notesTitle.textContent = `${item.label}: notes`;
+      noteCount.textContent = `${notes.length} of ${most} notes`;
+      const { guest } = view();
+      noteForm.hidden = Boolean(guest);
+      // Refreshes come often, and a list that's rebuilt can drop the click that was on its way.
+      const key = JSON.stringify(notes);
+      if (key === notesKey) return;
+      notesKey = key;
+      noteList.replaceChildren(...(notes.length
+        ? notes.map(noteRow)
+        : [h('p', { class: 'muted' }, guest ? 'Nothing written here since you arrived.' : 'Nothing written here yet.')]));
+    } catch (error) {
+      noteError.textContent = error.message;
+      noteError.hidden = false;
+    }
+  }
+
+  function openNotes(item) {
+    notesOf = item.id;
+    notesKey = null;
+    noteError.hidden = true;
+    noteForm.reset();
+    noteList.replaceChildren();
+    noteCount.textContent = '';
+    notesTitle.textContent = `${labelOf(item.kind)}: notes`;
+    noteForm.hidden = Boolean(view().guest);
+    panels.open('itemnotes');
+    loadNotes();
+  }
+
+  return {
+    toggle,
+    render,
+    panelChanged,
+    key,
+    openNotes,
+    labelOf,
+    // Closing an item's notes beside the room goes back to the catalog they were opened from.
+    backToCatalog: (was) => building && was === 'itemnotes' && beside.matches,
+    leave: () => menu.close(),
+  };
+}
+
 // The readouts along the top of a room: key, label, amber, and the word for a narrow window. A guest
 // sees when their stay ends instead of the calendar and the next hangout, which they can't see.
 const ROOM_STATS = [
@@ -1170,6 +1774,8 @@ const ROOM_STATS = [
   ['calendar', 'On the calendar', false, 'Plans'],
   ['next', 'Next hangout', true, 'Next'],
   ['stay', 'Your stay ends', true, 'Stay ends'],
+  ['beauty', 'Beauty', false, 'Beauty'],
+  ['mood', 'Mood', true, 'Mood'],
 ];
 const ROOM_KEY = 'Desk: controlling a computer · Table: wrote in the last 10 min · Wandering: online · Couch: quiet for a day';
 // Wide enough for a panel to stand beside the room. Narrower, a panel stands over it, as on the map.
@@ -1215,6 +1821,8 @@ async function roomView(id) {
     const label = frame.outputs[key].previousElementSibling;
     label.replaceChildren(h('span', { class: 'long' }, label.textContent), h('span', { class: 'short' }, short));
   }
+  frame.outputs.beauty.parentElement.classList.add('room-feel');
+  frame.outputs.mood.parentElement.classList.add('room-feel');
   frame.message.classList.add('room-note');
   frame.message.setAttribute('role', 'status');
   frame.host.classList.add('room-host');
@@ -1235,13 +1843,16 @@ async function roomView(id) {
     h('p', {}, 'No bots in here yet.'),
     emptyBring);
   stage.append(boardEl, emptyEl);
+  const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
 
   // The running notes along the bottom, around the status bar's own message and clock.
   const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
+  // I17: a rule nobody can see isn't fair on anyone, so this stays up at every width.
+  const quietEl = h('span', { class: 'wd-seg wd-teal room-quiet', role: 'status', hidden: true }, 'Quiet sign up: bots can\'t post in this room.');
   const floorsEl = h('nav', { class: 'wd-seg floors', 'aria-label': 'Floors', hidden: true });
   const aboutEl = h('span', { class: 'wd-seg room-about', hidden: true });
   const legendEl = h('div', { class: 'wd-seg legend room-legend' });
-  frame.status.prepend(guestEl, floorsEl, aboutEl);
+  frame.status.prepend(guestEl, quietEl, floorsEl, aboutEl);
   frame.status.append(legendEl);
 
   const chatLog = h('div', { class: 'chat-log', 'aria-live': 'polite' });
@@ -1250,6 +1861,7 @@ async function roomView(id) {
   const crewEl = h('div', { class: 'list' });
   const crewLegendEl = h('div', { class: 'legend' });
   const notesEl = h('div', { class: 'list' });
+  const heldEl = h('div', { class: 'stack', hidden: true });
   const questionsEl = h('div', { class: 'list', 'aria-live': 'polite' });
   // Cards stay put across reloads, or the one every 30 seconds would wipe a reply being typed.
   const questionCards = new Map();
@@ -1348,6 +1960,15 @@ async function roomView(id) {
     show('bots', String(stats.bots), 'Bots in the room');
     show('table', String(stats.bots_active), 'Wrote in the last 10 min');
     show('messages', String(stats.messages_24h), guest ? 'Since you arrived' : 'In the last 24 hours');
+    // I24, I8: a floor's own. Worked out by the server each time, so these change as the room does.
+    frame.root.classList.toggle('on-floor', Boolean(snapshot.floor));
+    frame.outputs.beauty.parentElement.hidden = !snapshot.floor;
+    frame.outputs.mood.parentElement.hidden = !snapshot.floor;
+    if (snapshot.floor) {
+      show('beauty', `${snapshot.room_beauty} ${snapshot.room_beauty_word}`, 'What the things in this room add up to');
+      show('mood', snapshot.room_mood ? wordName(snapshot.room_mood) : 'None',
+        snapshot.room_mood_note || 'A room has a mood once at least 2 things feel the same, and more of them than any other');
+    }
     frame.outputs.calendar.parentElement.hidden = Boolean(guest);
     frame.outputs.next.parentElement.hidden = Boolean(guest);
     frame.outputs.stay.parentElement.hidden = !guest;
@@ -1637,6 +2258,8 @@ async function roomView(id) {
       // A bot on a trip here: tagged, with how long it has left.
       const guest = Boolean(agent.visitor_until);
       const mark = marks.get(agent.id);
+      // I10: only its owner sees this, and the server says which of their bots are without.
+      const moodless = snapshot.bots_without_moods.includes(agent.id);
       return h('div', { class: 'crew-row' },
         dot,
         h('div', { class: 'crew-main' },
@@ -1656,6 +2279,21 @@ async function roomView(id) {
               await reload();
             },
           }, agent.doorbell.paused ? 'Resume' : 'Pause') : null,
+          h('button', {
+            type: 'button',
+            class: 'link',
+            role: 'switch',
+            'aria-checked': String(!moodless),
+            title: moodless ? 'Tell this bot how rooms feel again' : 'Stop telling this bot how rooms feel',
+            onclick: async () => {
+              try {
+                await api(`/api/agents/${agent.id}/moods`, { method: 'PUT', body: { moods: moodless } });
+                await reload();
+              } catch (error) {
+                say(error.message);
+              }
+            },
+          }, moodless ? 'Moods off' : 'Moods on'),
           h('button', {
             type: 'button',
             class: 'link',
@@ -1713,6 +2351,15 @@ async function roomView(id) {
         h('p', {}, note.body),
         h('small', { class: 'muted' }, `${note.speaker} · ${whenText(note.created_at)}`)))
       : [h('p', { class: 'muted' }, 'Facts your bots pin for the room show up here.')]));
+    const holders = snapshot.items.filter((item) => item.holds_notes);
+    heldEl.hidden = !holders.length;
+    heldEl.replaceChildren(
+      h('h3', {}, 'On things in this room'),
+      h('div', { class: 'event-actions' }, holders.map((item) => h('button', {
+        type: 'button',
+        class: 'ghost',
+        onclick: () => builder.openNotes(item),
+      }, `${builder.labelOf(item.kind)} (${item.notes})`))));
   }
 
   // A guest is a visiting bot or its owner. They see the Porch from the moment they arrived, and
@@ -1782,6 +2429,8 @@ async function roomView(id) {
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
     room.setLook(snapshot.floor?.floor);
+    room.setItems(snapshot.items);
+    quietEl.hidden = !snapshot.items.some((item) => item.sign);
     const present = new Set(snapshot.present);
     room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color })));
     stage.dataset.size = snapshot.floor?.floor.size || '';
@@ -1795,6 +2444,7 @@ async function roomView(id) {
     renderCalendar();
     renderCrew();
     renderNotes();
+    builder.render();
     snapshot.messages.forEach(addMessage);
     // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
     const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
@@ -2114,6 +2764,7 @@ async function roomView(id) {
   frame.actions.append(
     questionsToggle.button,
     chatToggle.button,
+    builder.toggle,
     checkInsToggle.button,
     calendarToggle,
     panels.toggle('crew', 'Crew', { short: 'Crew' }),
@@ -2138,7 +2789,7 @@ async function roomView(id) {
     h('div', { class: 'event-actions' }, bringButton, sendButton),
     crewEl,
     crewLegendEl);
-  panels.add('notes', 'Shared notes', {}, notesEl);
+  panels.add('notes', 'Shared notes', {}, notesEl, heldEl);
   panels.add('yours', 'Notes for your bots', {},
     h('div', { class: 'event-actions' }, h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
     ownerNotesEl,
@@ -2164,8 +2815,11 @@ async function roomView(id) {
     const was = showing;
     showing = panels.current;
     frame.root.classList.toggle('has-panel', Boolean(showing));
+    builder.panelChanged(was, showing);
     if (was === 'room' && showing) {
       chatBehind = true;
+    } else if (!showing && builder.backToCatalog(was)) {
+      panels.open('build');
     } else if (!showing) {
       const reopen = chatBehind && was !== 'room' && beside.matches;
       chatBehind = false;
@@ -2219,6 +2873,11 @@ async function roomView(id) {
   // Escape closes the panel. It's heard before the mention box's own keys, so with that list open
   // it's left alone to close the list.
   const onKey = (event) => {
+    if (builder.key(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.key !== 'Escape' || document.querySelector('dialog[open], .mention-list:not([hidden])')) return;
     if (!panels.current) return;
     panels.close();
@@ -2234,6 +2893,7 @@ async function roomView(id) {
     clearInterval(pollTimer);
     clearTimeout(reloadTimer);
     room.destroy();
+    builder.leave();
     document.removeEventListener('keydown', onKey, true);
     document.documentElement.classList.remove('in-game');
   };
@@ -3748,12 +4408,11 @@ async function houseView(id) {
   return root;
 }
 
-// The public worlds: The Commons and the worlds people start. Everything these pages show about a
-// world is numbers and listed words from the server, and any text from it goes in as text.
+// The public worlds: The Commons and the frozen worlds people started. Everything these pages show
+// about a world is numbers and listed words from the server, and any text from it goes in as text.
 
 const STAGE_PHRASE = { hamlet: 'a hamlet', village: 'a village', town: 'a town', city: 'a city' };
-// The first number is the game's own total, and the figures on the street are real, so it is not called people.
-const WORLD_STATS = [['people', 'Population'], ['jobs', 'Jobs'], ['parks', 'Parks', true], ['stage', 'Stage', true]];
+const WORLD_STATS = [['places', 'Places'], ['roads', 'Roads'], ['stage', 'Stage', true]];
 const EMOTE_WORD = { wave: 'waving', cheer: 'cheering', think: 'thinking', sleep: 'asleep', dance: 'dancing' };
 const numberText = (n) => Number(n || 0).toLocaleString();
 // The server's own words, made into a sentence for the status bar.
@@ -3761,13 +4420,13 @@ const plain = (text) => (/[.!?]$/.test(text) ? sentence(text) : `${sentence(text
 
 function showFacts(frame, view) {
   const { outputs } = frame;
-  outputs.people.textContent = numberText(view.population);
-  outputs.jobs.textContent = numberText(view.jobs);
-  outputs.parks.textContent = numberText(view.parks);
+  outputs.places.textContent = numberText(view.places);
+  outputs.roads.textContent = numberText(view.roads);
   outputs.stage.textContent = STAGE_NAME[view.stage] || '-';
 }
 
 const POLL_MS = 4000;
+const REPO_URL = 'https://github.com/CakeRepository/agentshangout';
 const SLOWEST_MS = 60000;
 
 // Looks at a world now and then. The server allows a minute's worth of looks per address, so this
@@ -3942,17 +4601,45 @@ async function signInDialog(title, why) {
 
 const BUILD_TOOLS = [
   ['road', 'Road', 'Road: drag a straight line of up to 16 tiles. It has to touch a road. 1 move a tile.'],
-  ['homes', 'Homes', 'Homes: drag a box of up to 5 by 5. They grow where there are jobs. 1 move a tile.'],
-  ['shops', 'Shops', 'Shops: drag a box of up to 5 by 5. They grow where there are people. 1 move a tile.'],
-  ['workshops', 'Work', 'Workshops: drag a box of up to 5 by 5, and keep them away from homes. 1 move a tile.'],
-  ['park', 'Park', 'Park: click a tile. Parks help the buildings around them. 2 moves.'],
-  ['house', 'House', 'House: click a tile beside a road. Everyone gets one. 1 move.'],
-  ['studio', 'Studio', 'Studio: click a tile beside a road. A space of your own, away from home. 1 move.'],
+  ['house', 'House', 'House: click a tile beside a road. Private: people come in when you invite them. 1 move.'],
+  ['studio', 'Studio', 'Studio: click a tile beside a road. A private place away from home. 1 move.'],
+  ['club', 'Club', 'Club: click a tile beside a road. A private place for the people you invite. 1 move.'],
+  ['cafe', 'Cafe', 'Cafe: click a tile beside a road. A shared place: anyone signed in can walk in. 1 move.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
-// W54: buildings are only in The Commons for now.
-const PLACED_TOOLS = new Set(['house', 'studio']);
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+
+// W66, W67, W69: what the page says about the end of the old city, in its own words.
+const DISASTER_WORDS = {
+  meteors: {
+    omen: 'Strange lights are falling over the hills.',
+    striking: 'Meteors are hitting The Commons!',
+    over: 'The meteors are gone, and so is everything they hit. Start again.',
+  },
+  flood: {
+    omen: 'The water is rising.',
+    striking: 'The Commons is flooding!',
+    over: 'The water has gone down, and taken the town with it. Start again.',
+  },
+  twister: {
+    omen: 'The wind is picking up.',
+    striking: 'A twister is tearing through The Commons!',
+    over: 'The wind has dropped. There is nothing left standing. Start again.',
+  },
+  frog: {
+    omen: 'Something very big is croaking in the hills.',
+    striking: 'A giant frog is stomping through The Commons!',
+    over: 'The frog has gone home. Nothing else is left. Start again.',
+  },
+};
+
+// How long until a place comes, in the largest unit that means anything.
+function waitText(seconds) {
+  const whole = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  if (seconds >= 86_400) return `in ${whole(Math.ceil(seconds / 86_400), 'day', 'days')}`;
+  if (seconds >= 3_600) return `in ${whole(Math.ceil(seconds / 3_600), 'hour', 'hours')}`;
+  return `in ${whole(Math.max(1, Math.ceil(seconds / 60)), 'minute', 'minutes')}`;
+}
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -3961,7 +4648,7 @@ function moveSentence(body, done) {
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
   if (body.action === 'place') return `Your ${body.kind} is up. ${left}`;
-  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
+  const verb = { road: 'Road laid on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
   const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
@@ -3970,7 +4657,7 @@ function moveSentence(body, done) {
 // The tiles a move should have made, if it did exactly what it said: all of them, with nothing
 // left alone. Anything else waits for the server's own view.
 function movedTiles(body, done) {
-  if (done.skipped || !['road', 'zone', 'park', 'place'].includes(body.action)) return null;
+  if (done.skipped || !['road', 'place'].includes(body.action)) return null;
   const kind = body.kind ?? body.action;
   const made = [];
   for (let y = Math.min(body.y, body.y2 ?? body.y); y <= Math.max(body.y, body.y2 ?? body.y); y++) {
@@ -3982,9 +4669,7 @@ function movedTiles(body, done) {
 // Your town and your goal, from the server's numbers and its fixed sentences, for the status bar.
 function townCountsText(t) {
   const n = (c, one, many) => `${numberText(c)} ${c === 1 ? one : many}`;
-  return `Your town: ${n(t.roads, 'road', 'roads')}, ${n(t.homes, 'home', 'homes')}, ${n(t.shops, 'shop', 'shops')}, `
-    + `${n(t.workshops, 'workshop', 'workshops')}, ${n(t.parks, 'park', 'parks')}, population ${numberText(t.people)}, `
-    + `${n(t.jobs, 'job', 'jobs')}, best level ${numberText(t.best_level)}.`;
+  return `Yours: ${n(t.roads, 'road', 'roads')} and ${n(t.places, 'place', 'places')}.`;
 }
 
 function townText(mine) {
@@ -4153,6 +4838,7 @@ async function worldView(id, { home = false } = {}) {
     : [null, null];
   const owner = Boolean(mine?.world && mine.world.id === latest.id);
   const canRemove = owner || (latest.kind === 'public' && me?.keeper === true);
+  const frozen = latest.kind !== 'public';
   let moves = typeof mover?.moves_left === 'number' ? mover.moves_left : null;
   // Which player is you, so your own figure gets your own menu.
   let myId = mover?.player ? String(mover.player.id) : null;
@@ -4160,7 +4846,7 @@ async function worldView(id, { home = false } = {}) {
 
   const frame = windowFrame({
     label: latest.name,
-    stats: me ? [...WORLD_STATS, ['moves', 'Moves left', true]] : WORLD_STATS,
+    stats: me && !frozen ? [...WORLD_STATS, ['moves', 'Moves left', true]] : WORLD_STATS,
     tools: true,
     heading: 'h1',
     live: latest.kind === 'public',
@@ -4182,7 +4868,7 @@ async function worldView(id, { home = false } = {}) {
   const setTitle = (view) => {
     if (frame.title.dataset.name === view.name) return;
     frame.title.dataset.name = view.name;
-    frame.title.replaceChildren(...[view.name, view.kind === 'public' ? h('span', { class: 'wd-title-sub' }, ' · a city built by AI agents') : null].filter(Boolean));
+    frame.title.replaceChildren(...[view.name, view.kind === 'public' ? h('span', { class: 'wd-title-sub' }, ' · places people can go') : null].filter(Boolean));
   };
 
   // Signed in, the status bar also says how your town is doing and what to aim for next. It is asked
@@ -4195,7 +4881,7 @@ async function worldView(id, { home = false } = {}) {
   const townFull = h('p', { class: 'muted fine', hidden: true });
   let townAt = Date.now();
   const showTown = (data) => {
-    const t = data?.your_town;
+    const t = frozen ? null : data?.your_town;
     townEl.hidden = !t;
     townFull.hidden = !t;
     if (!t) return;
@@ -4210,20 +4896,56 @@ async function worldView(id, { home = false } = {}) {
       const data = await api(`/api/worlds/${path}/me`);
       moves = data.moves_left;
       if (data.player) myId = String(data.player.id);
+      placesLeft = data.places || null;
       showMoves();
       showTown(data);
+      showLocks();
     } catch {
       // What is shown stays, and the next move asks again.
     }
   }
   showTown(mover);
 
+  // How long until each place comes, for a person (W62). It's asked for along with their town.
+  let placesLeft = mover?.places || null;
+  const lockOf = (name) => {
+    const left = placesLeft?.[name];
+    return left > 0 ? waitText(left) : '';
+  };
+  const showLocks = () => {
+    for (const [name, button] of buttons) {
+      const lock = lockOf(name);
+      button.classList.toggle('locked', Boolean(lock));
+      button.querySelector('.wd-lock')?.replaceChildren(lock);
+    }
+  };
+
+  // The news: what's coming, or what's happening, over the map.
+  const news = h('div', { class: 'wd-news', hidden: true });
+  let struck = false;
+  well.append(news);
+  const showNews = (disaster) => {
+    const words = DISASTER_WORDS[disaster?.kind]?.[disaster?.stage];
+    news.hidden = !words;
+    if (!words) return;
+    news.dataset.stage = disaster.stage;
+    if (news.textContent !== words) news.textContent = words;
+    // Nobody should miss it, so the map goes there, once.
+    const hit = disaster.hits?.[Math.floor(disaster.hits.length / 2)];
+    if (hit && !struck && world.cssW) {
+      struck = true;
+      world.focus(hit[0], hit[1], { zoom: 0.8 });
+    }
+  };
+
   let tool = null;
   let trouble = false;
   const buttons = new Map();
-  const idle = me
-    ? 'Pick a tool, then click or drag on the map. Right-click, or press and hold, for a menu.'
-    : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
+  const idle = frozen
+    ? 'This world is frozen. Anyone can look around, and nothing here changes.'
+    : me
+      ? 'Pick a tool, then click or drag on the map. Right-click a place, or press and hold, to go in.'
+      : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
 
   const hintNow = () => (tool ? BUILD_TOOLS.find(([key]) => key === tool)[2] : idle);
 
@@ -4284,28 +5006,21 @@ async function worldView(id, { home = false } = {}) {
   // What the map is showing, in words.
   const summaryEl = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const summaryCopy = h('p', { class: 'world-summary' });
-  const inviteUrl = owner && !latest.open && mine.world.invite_code
-    ? `${location.origin}/world/${path}#join=${mine.world.invite_code}`
-    : null;
   panels.add('info', 'What\'s going on', {},
     summaryCopy,
     me ? townFull : h('p', { class: 'muted' }, 'You\'re looking around. ',
       h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
-    h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler. The population number is the game\'s own total, not a count of real people.'),
-    inviteUrl ? h('div', { class: 'stack' },
-      h('h3', {}, 'Your invite link'),
-      h('p', { class: 'muted fine' }, 'Only people with this link can build in your world. Anyone can watch.'),
-      secretRow(inviteUrl)) : null,
+    h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
     h('details', { class: 'world-help' },
       h('summary', {}, 'What am I looking at?'),
       h('ul', {},
         h('li', {}, latest.kind === 'public'
           ? 'A person on the street is someone with this page open right now. People who sign in and build are people too.'
           : 'A person is someone who signed in and is building here.'),
-        h('li', {}, 'A robot is an agent: an AI that joined to play. Most of the builders are robots. Everyone builds with moves: roads, zones and parks. Nobody can type anything here.'),
+        h('li', {}, 'A robot is an agent: an AI that joined to play. Agents lay roads, and people put up places. Nobody can type anything here.'),
         latest.kind === 'public' ? h('li', {}, 'A frog is a web crawler, a search engine passing through. Robots that haven\'t joined are agents reading our guide. They can\'t build.') : null,
-        h('li', {}, 'The population number is the game\'s own total, not real people. Homes grow where there are jobs, shops where there are people, and workshops at a steady pace.'))));
+        h('li', {}, 'Every building is a place someone can go. A house, a studio and a club are private unless you\'re invited, and a cafe is shared. A person gets a house first, and the others come with time.'))));
 
   const aroundCount = h('p', { class: 'muted' });
   const aroundList = h('ul', { class: 'around' });
@@ -4334,6 +5049,8 @@ async function worldView(id, { home = false } = {}) {
   };
   document.addEventListener('fullscreenchange', syncFull);
 
+  const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
+
   frame.actions.append(...[
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
@@ -4341,6 +5058,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
+    repoLink('wd-tbtn sec'),
     link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
     fullButton('sec'),
@@ -4351,6 +5069,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
+    repoLink('wd-btn wide'),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
     fullButton('', 'wd-btn wide'),
@@ -4364,20 +5083,26 @@ async function worldView(id, { home = false } = {}) {
       openAccount('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
       return;
     }
+    // W61: a place that hasn't come yet stays in the toolbar, so people can see what's ahead.
+    if (name && lockOf(name)) {
+      say(`Places come with time: this one comes ${lockOf(name)}.`);
+      return;
+    }
     tool = name;
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === name));
     world.setTool(name);
     say(hintNow());
   }
 
-  for (const [name, label, hint] of BUILD_TOOLS) {
-    if (PLACED_TOOLS.has(name) && path !== 'commons') continue;
+  for (const [name, label, hint] of frozen ? [] : BUILD_TOOLS) {
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
-      h('span', { class: 'wd-btn-label' }, label));
+      h('span', { class: 'wd-btn-label' }, label),
+      BUILDING_KINDS.has(name) ? h('small', { class: 'wd-lock' }) : null);
     buttons.set(name, button);
     frame.tools.append(button);
   }
+  showLocks();
 
   // Where you are looking: closer, farther, and back to the town.
   const viewGroup = h('div', { class: 'game-view', role: 'group', 'aria-label': 'View' });
@@ -4397,7 +5122,7 @@ async function worldView(id, { home = false } = {}) {
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   async function send(body) {
-    say(['road', 'zone', 'park', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
+    say(['road', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
       const done = await api(`/api/worlds/${path}/act`, { method: 'POST', body });
       moves = done.moves_left;
@@ -4422,11 +5147,9 @@ async function worldView(id, { home = false } = {}) {
 
   function build(tile) {
     if (!tool || !me) return;
-    const zone = tool === 'homes' || tool === 'shops' || tool === 'workshops';
     if (tool === 'road') send({ action: 'road', x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
-    else if (zone) send({ action: 'zone', kind: tool, x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
-    else if (PLACED_TOOLS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
-    else send({ action: tool === 'park' ? 'park' : 'bulldoze', x: tile.x, y: tile.y });
+    else if (BUILDING_KINDS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
+    else send({ action: 'bulldoze', x: tile.x, y: tile.y });
   }
 
   // --- Menus on the map ------------------------------------------------------------------------
@@ -4489,6 +5212,8 @@ async function worldView(id, { home = false } = {}) {
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
+    } else if (frozen) {
+      items.push({ label: 'Nothing happens here', run: () => say(idle) });
     } else {
       if (BUILDING_KINDS.has(t.kind)) items.push({ label: 'Go in', run: () => goIn(t) });
       if (t.land !== 'water') items.push({ label: 'Walk here', cost: '1 move', run: () => send({ action: 'walk', x: t.x, y: t.y }) });
@@ -4498,6 +5223,7 @@ async function worldView(id, { home = false } = {}) {
       items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze').map(([key, label]) => ({
         label,
         icon: menuIcon(key),
+        cost: lockOf(key) || undefined,
         checked: tool === key,
         run: () => pick(key),
       })));
@@ -4540,13 +5266,13 @@ async function worldView(id, { home = false } = {}) {
       agents ? count(agents, 'agent', 'agents') : null,
       frogs ? count(frogs, 'frog', 'frogs') : null,
     ].filter(Boolean);
-    let text = `${view.name} is ${STAGE_PHRASE[view.stage] || 'a place'} with a population of ${numberText(view.population)}, ${count(view.jobs, 'job', 'jobs')} and ${count(view.parks, 'park', 'parks')}.`;
+    let text = `${view.name} is ${STAGE_PHRASE[view.stage] || 'a place'} with ${count(view.places, 'place', 'places')} and ${count(view.roads, 'road', 'roads')}.`;
     if (street.length) text += ` On the street: ${nameList.format(street)}.`;
+    const news = DISASTER_WORDS[view.disaster?.kind]?.[view.disaster?.stage];
+    if (news) text += ` ${news}`;
     if (before) {
       const changes = [];
       if (view.stage !== before.stage) changes.push(`It has grown into ${STAGE_PHRASE[view.stage] || 'something new'}.`);
-      const gained = view.population - before.population;
-      if (gained) changes.push(`Population ${gained > 0 ? 'up' : 'down'} by ${numberText(Math.abs(gained))}.`);
       const built = view.tiles.length - before.tiles.length;
       if (built) changes.push(`${count(Math.abs(built), 'tile', 'tiles')} ${built > 0 ? 'built' : 'cleared'}.`);
       if (changes.length) text += ` Just now: ${changes.join(' ')}`;
@@ -4555,9 +5281,7 @@ async function worldView(id, { home = false } = {}) {
   }
 
   async function removeOne(playerId, name) {
-    const warning = owner
-      ? `Remove ${name}? What they built here comes down, and they can't build in your world again.`
-      : `Remove ${name}? What they built here comes down, and their token stops working.`;
+    const warning = `Remove ${name}? What they built here comes down, and their token stops working.`;
     if (!confirm(warning)) return;
     try {
       const done = await api(`/api/worlds/${path}/players/${encodeURIComponent(playerId)}/remove`, { method: 'POST' });
@@ -4602,6 +5326,9 @@ async function worldView(id, { home = false } = {}) {
     world.setView(view);
     showFacts(frame, view);
     setTitle(view);
+    showNews(view.disaster);
+    // When it ends everyone's wait starts again, so that isn't left to the next look.
+    if (me && before && before.disaster?.stage !== view.disaster?.stage) refreshTown();
     const text = summaryOf(view, before);
     summaryCopy.textContent = text;
     // A screen reader hears it when something real changed, and not every time someone walks by.
@@ -4615,7 +5342,7 @@ async function worldView(id, { home = false } = {}) {
       trouble = false;
       say(hintNow());
     }
-    // The city grows by itself, so now and then your town is asked about again.
+    // The wait for a place goes on by itself, so now and then your town is asked about again.
     if (me && Date.now() - townAt > 30000) refreshTown();
   }
 
@@ -4629,21 +5356,6 @@ async function worldView(id, { home = false } = {}) {
   });
   arrive(latest);
   say(mover?.trouble || idle);
-
-  // An invite link opens the world for building, once the person is signed in.
-  async function acceptInvite(code) {
-    try {
-      const joined = await api(`/api/worlds/join/${encodeURIComponent(code)}`, { method: 'POST' });
-      history.replaceState(null, '', location.pathname);
-      if (joined.world_id !== latest.id) go(`/world/${encodeURIComponent(joined.world_id)}`);
-      else say('You\'re in. You can build here now.');
-    } catch (error) {
-      say(error.status === 404 ? 'That invite link doesn\'t work.' : plain(error.message));
-    }
-  }
-  const invite = new URLSearchParams(location.hash.slice(1)).get('join');
-  if (invite && me) acceptInvite(invite);
-  else if (invite) openAccount('Sign in, and this link lets you build in this world.');
 
   // --- Keys, and leaving -----------------------------------------------------------------------
 
@@ -4674,96 +5386,23 @@ async function worldView(id, { home = false } = {}) {
   return root;
 }
 
-const PREVIEW_COLORS = { g: [109, 155, 60], f: [63, 110, 52], w: [74, 134, 200], s: [220, 196, 136], h: [141, 138, 110] };
-
-// A small picture of a land from its rows, a pixel to a tile.
-function landCanvas(rows) {
-  const size = rows.length;
-  const canvas = h('canvas', { width: size, height: size, class: 'land-thumb', 'aria-hidden': 'true' });
-  const g = canvas.getContext('2d');
-  const image = g.createImageData(size, size);
-  rows.forEach((row, y) => {
-    let x = 0;
-    for (const [, run, letter] of String(row).matchAll(/(\d*)([gfwsh])/g)) {
-      const rgb = PREVIEW_COLORS[letter];
-      for (let i = run === '' ? 1 : Number(run); i > 0 && x < size; i--, x++) image.data.set([...rgb, 255], (y * size + x) * 4);
-    }
-  });
-  g.putImageData(image, 0, 0);
-  return canvas;
-}
-
-// Picking a land and who can build, then starting the world.
-function startWorldForm() {
-  const error = formError();
-  const legend = h('legend', {}, 'Pick a map');
-  const choices = h('fieldset', { class: 'map-choices' }, legend);
-  const waiting = h('p', { class: 'muted', role: 'status' }, 'Drawing some maps…');
-  const again = h('button', { type: 'button', class: 'link', onclick: () => draw() }, 'Show me different maps');
-
-  async function draw() {
-    waiting.hidden = false;
-    again.disabled = true;
-    error.hidden = true;
-    try {
-      const { seeds } = await api('/api/worlds/preview');
-      choices.replaceChildren(legend, ...seeds.map((item, index) =>
-        h('label', { class: 'map-choice' },
-          landCanvas(item.land),
-          h('span', { class: 'map-choice-name' },
-            h('input', { type: 'radio', name: 'seed', value: String(item.seed), checked: index === 0, required: true, 'aria-label': `Map: ${item.name}` }),
-            ` ${item.name}`))));
-    } catch (failure) {
-      error.textContent = failure.message;
-      error.hidden = false;
-    } finally {
-      waiting.hidden = true;
-      again.disabled = false;
-    }
-  }
-
-  const form = h('form', {
-    class: 'stack',
-    onsubmit: submitter(error, async (values) => {
-      const view = await api('/api/worlds', { method: 'POST', body: { seed: Number(values.seed), open: values.open === 'everyone' } });
-      go(`/world/${encodeURIComponent(view.id)}`);
-    }),
-  },
-    h('p', { class: 'muted' }, 'Pick a land, then choose who can build. Anyone can watch, and you get one world.'),
-    choices,
-    waiting,
-    again,
-    h('fieldset', { class: 'choice-row' },
-      h('legend', {}, 'Who can build'),
-      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'open', value: 'everyone', checked: true }), 'Everyone'),
-      h('label', { class: 'check' }, h('input', { type: 'radio', name: 'open', value: 'invite' }), 'Only people with my link')),
-    error,
-    h('button', { type: 'submit', class: 'primary' }, 'Start my world'));
-  draw();
-  return form;
-}
-
 function worldRow(world) {
   const own = world.kind !== 'public';
   const active = world.players_active;
   return h('li', { class: 'world-row' },
-    h('span', { class: 'world-row-icon', 'aria-hidden': 'true' }, toolIcon(own ? 'park' : 'homes', 44)),
+    h('span', { class: 'world-row-icon', 'aria-hidden': 'true' }, toolIcon('house', 44)),
     h('div', { class: 'world-row-main' },
       link(`/world/${encodeURIComponent(world.id)}`, world.name, { class: 'world-row-name' }),
-      h('small', { class: 'muted' }, `${own ? 'A world someone started' : 'The public city'} · ${world.open ? 'Everyone can build' : 'Only people with the link can build'}`)),
+      h('small', { class: 'muted' }, own ? 'A world someone started, frozen as it was' : 'The one map, open to everyone')),
     h('p', { class: 'world-row-facts' },
       h('span', { class: 'wd-lcd amber' }, STAGE_NAME[world.stage] || world.stage),
-      h('span', { class: 'wd-lcd' }, `Population ${numberText(world.population)}`),
+      h('span', { class: 'wd-lcd' }, `${numberText(world.places)} ${world.places === 1 ? 'place' : 'places'}`),
       h('span', { class: 'wd-lcd' }, `${active} ${active === 1 ? 'builder' : 'builders'} active`)));
 }
 
-// The busiest worlds, and a way to start your own.
+// The Commons, and the worlds people started before it became the one map.
 async function worldsView() {
-  const me = await api('/api/me').catch(() => null);
-  const [listed, mine] = await Promise.all([
-    api('/api/worlds'),
-    me ? api('/api/worlds/mine').catch(() => null) : null,
-  ]);
+  const listed = await api('/api/worlds');
   document.title = 'Worlds · Agents Hangout';
   const list = h('ul', { class: 'world-list' }, listed.worlds.map(worldRow));
 
@@ -4775,37 +5414,12 @@ async function worldsView() {
   }, 20000);
   leaveRoom = () => clearInterval(timer);
 
-  const start = [];
-  if (!me) {
-    start.push(
-      h('p', { class: 'muted' }, 'Sign in and you can start a world of your own. Anyone can watch it, and you choose who can build.'),
-      h('button', {
-        type: 'button',
-        class: 'primary',
-        onclick: () => signInDialog('Sign in to start a world', 'Make an account in a few seconds, then pick a land for your world.'),
-      }, 'Sign in'));
-  } else if (mine?.world) {
-    const world = mine.world;
-    start.push(
-      h('p', {}, 'You have a world: ', link(`/world/${encodeURIComponent(world.id)}`, world.name), '.'),
-      world.open
-        ? h('div', { class: 'stack' },
-          h('p', { class: 'muted' }, 'Everyone can build in it, so you can just share its address.'),
-          secretRow(`${location.origin}/world/${encodeURIComponent(world.id)}`))
-        : h('div', { class: 'stack' },
-          h('p', { class: 'muted' }, 'Only people with your invite link can build in it. Send it to them privately.'),
-          secretRow(`${location.origin}/world/${encodeURIComponent(world.id)}#join=${world.invite_code}`)));
-  } else {
-    start.push(startWorldForm());
-  }
-
   return h('main', { class: 'worlds-page' },
     masthead(h('nav', { 'aria-label': 'Site' }, link('/', 'Back to The Commons', { class: 'button primary' }))),
-    windowPanel({ title: 'Worlds', label: 'Busiest worlds', heading: 'h1' },
-      h('h2', {}, 'Busiest worlds'),
-      h('p', { class: 'muted' }, 'Anyone can watch a world. Most of the builders in them are bots.'),
-      list),
-    windowPanel({ title: 'Start your own world', label: 'Start your own world' }, ...start));
+    windowPanel({ title: 'Worlds', label: 'Worlds', heading: 'h1' },
+      h('h2', {}, 'Worlds'),
+      h('p', { class: 'muted' }, 'The Commons is the one map, and anyone can watch it. A world someone started before that stays as it was.'),
+      list));
 }
 
 // B2: bots read plan times in their owner's own time zone, so a signed-in page says what it is.
