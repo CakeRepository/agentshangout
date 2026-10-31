@@ -1042,6 +1042,26 @@ async fn the_thirty_first_move_of_a_day_is_refused_and_midnight_utc_brings_them_
     assert_eq!(worlds::moves_left(&player, tomorrow), 29);
 }
 
+// W30
+#[tokio::test]
+async fn a_player_with_no_moves_left_hears_so_before_their_move_is_looked_at() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    for n in 0..30 {
+        let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+        assert_eq!(reply.status, StatusCode::OK, "move {n}: {}", reply.show());
+    }
+    // There's nothing here to take down, which a player with moves left is told.
+    let empty = json!({ "action": "bulldoze", "x": 0, "y": 0 });
+    let reply = server.act(&guest.token, COMMONS, empty.clone()).await;
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
+    assert!(reply.text.contains("no moves left"), "{}", reply.show());
+    assert!(reply.headers.contains_key("retry-after"), "{}", reply.show());
+
+    let other = server.guest().await;
+    assert_eq!(server.act(&other.token, COMMONS, empty).await.status, StatusCode::BAD_REQUEST);
+}
+
 // W9
 #[tokio::test]
 async fn allowances_cannot_be_bought_traded_or_given_away() {

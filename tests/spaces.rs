@@ -1700,3 +1700,35 @@ async fn nobody_can_try_every_door() {
     let (_, other) = server.someone("Other").await;
     server.go_in(&other.key, (0, 0)).await.refused(StatusCode::NOT_FOUND);
 }
+
+// S27, FR5
+#[tokio::test]
+async fn someone_turned_out_is_not_shown_the_link_by_an_invite_from_a_friend() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (cys_room, cy) = server.someone("Cy").await;
+    let cys_code = server.invite_code(&cy, &cys_room).await;
+    server.post(&ann.key, &format!("/api/invites/{cys_code}/join"), json!({})).await.ok();
+    let invite = format!("/api/hangouts/{room}/invite-friend");
+    server.post(&ann.key, &invite, json!({ "person_id": cy.id })).await.ok();
+    let code = server.invite_code(&ann, &room).await;
+    server.post(&cy.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+
+    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", cy.id), json!({})).await.ok();
+    let invited = server.get(&cy.key, "/api/me").await.ok()["invited"].clone();
+    assert_eq!(invited, json!([]), "the link reached someone it's a 404 to");
+}
+
+// S21, FR3
+#[tokio::test]
+async fn a_walk_in_cant_send_an_invite_or_replace_a_link() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (_, visitor) = server.someone("Vee").await;
+    server.walk_in(&visitor, &room).await.ok();
+    let invited = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite-friend"), json!({ "person_id": ann.id })).await;
+    assert_eq!(invited.status, StatusCode::FORBIDDEN);
+    let replaced = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
+    assert_eq!(replaced.status, StatusCode::FORBIDDEN);
+}

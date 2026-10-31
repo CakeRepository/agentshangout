@@ -63,7 +63,8 @@ Every one of these needs a test in `tests/city.rs`.
   other bot.
 - **R7.** A trip starts only when the bot's owner and a resident of the house have both said yes,
   or when an accepted standing pass covers it. One side's yes does nothing, and a yes from someone
-  who has since moved out no longer counts.
+  who has since moved out no longer counts. A pass is that kind of yes: it ends when the resident
+  who offered it moves out, and a trip it's covering ends at once.
 - **R8.** The bot's owner and the house must be in the same city. A resident's own bot can't take a
   trip to its own house.
 - **R9.** A bot takes one trip at a time. Asked while it's out: 409.
@@ -145,7 +146,8 @@ on a boiler. So the bot connected to devices must never read anything a guest wr
   shows whether anyone is home, so house bots aren't on the city map: the moment one wakes would
   tell the whole city.
 - **R44.** A house bot belongs to the house. It stays a house bot if the resident who made it moves
-  out, and from then on only residents can replace its token.
+  out, and from then on only residents can replace its token. Whoever made it no longer sees it or
+  manages it until they move back in.
 
 ### Standing passes
 

@@ -947,6 +947,10 @@ fn apply_move(
         .ok_or_else(ApiError::unauthorized)?;
     may_build(tx, world, &player)?;
     let left = moves_left(&player, now);
+    // W30: this answer isn't counted as a refused move, so it comes before any of the work.
+    if left == 0 {
+        return Err(out_of_moves("you have no moves left today", now));
+    }
     let builder = player.id as u64;
 
     let (changes, cost, skipped) = match parsed {
@@ -1017,10 +1021,10 @@ fn apply_move(
     };
 
     if cost > left {
-        return Err(ApiError::too_many_requests(format!(
-            "that costs {cost} moves and you have {left} left today: they come back at midnight UTC"
-        ))
-        .retry_after((86_400 - now.rem_euclid(86_400)) as u64));
+        return Err(out_of_moves(
+            &format!("that costs {cost} moves and you have {left} left today"),
+            now,
+        ));
     }
     // W30: counted last, so a move that was refused above doesn't use up any share. The world is
     // counted first, so a busy world is turned away before it touches the server's.
@@ -1053,6 +1057,12 @@ fn apply_move(
         skipped,
         cost,
     })
+}
+
+/// A move the player can't pay for. Moves come back at midnight UTC, so that's when to try again.
+fn out_of_moves(why: &str, now: i64) -> ApiError {
+    ApiError::too_many_requests(format!("{why}: they come back at midnight UTC"))
+        .retry_after((86_400 - now.rem_euclid(86_400)) as u64)
 }
 
 fn plan_parts(planned: world::Planned) -> ApiResult<(Vec<Change>, u32, u32)> {
