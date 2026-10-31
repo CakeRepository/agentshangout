@@ -28,6 +28,9 @@ const MAX_MINUTES: i64 = 24 * 60;
 const MAX_TIMES: usize = 20;
 /// F35: enough to plan with, and too few to piece someone's week together.
 const ASKS_PER_HOUR: u32 = 30;
+/// F33: what anyone is told each time they're shown free times.
+const FREE_TIMES_NOTE: &str = "These are hints, not commitments. Pick one and propose a plan, then \
+    wait for real answers. Anyone in not_sharing isn't covered, so ask them another way.";
 /// F37
 const MAX_ITEMS: i64 = 30;
 const MAX_ITEM_CHARS: usize = 120;
@@ -222,6 +225,8 @@ pub struct Found {
     pub with: Vec<String>,
     /// Who they don't, with no reason given (F30).
     pub not_sharing: Vec<String>,
+    /// That these are hints, not commitments (F33).
+    pub what_next: &'static str,
 }
 
 fn people_asked_about(
@@ -317,7 +322,7 @@ pub fn find_a_time(
     }
     times.retain(|(start, end)| end - start >= minutes * 60);
     times.truncate(MAX_TIMES);
-    Ok(Found { times: free_times(&times), with, not_sharing })
+    Ok(Found { times: free_times(&times), with, not_sharing, what_next: FREE_TIMES_NOTE })
 }
 
 // A plan's list
