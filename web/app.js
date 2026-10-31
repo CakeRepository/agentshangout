@@ -5258,17 +5258,98 @@ async function worldView(id, { home = false } = {}) {
     if (spec) menu.open(spec, clientX, clientY, via);
   }
 
+  // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.
+  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+  const ACCESS_TEXT = {
+    in: 'is inside',
+    visiting: 'is visiting now',
+    can_walk_in: 'can walk in: it\u2019s open to anyone',
+    needs_invite: 'needs an invite from the owner',
+  };
+  const placeCard = h('div', { class: 'city-card', hidden: true, 'aria-hidden': 'true' });
+  const placeDetails = new Map();
+  let hoveredPlace = null;
+  let pointer = null;
+  const ownerAt = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y)?.[2] || null;
+
+  function placeCardAt() {
+    if (!pointer || placeCard.hidden) return;
+    const box = placeCard.parentElement.getBoundingClientRect();
+    const x = pointer.x - box.left;
+    const y = pointer.y - box.top;
+    const w = placeCard.offsetWidth;
+    const hgt = placeCard.offsetHeight;
+    placeCard.style.left = `${Math.max(4, x + 16 + w > box.width ? x - w - 16 : x + 16)}px`;
+    placeCard.style.top = `${Math.max(4, y + 16 + hgt > box.height ? y - hgt - 16 : y + 16)}px`;
+  }
+
+  function showPlace(place) {
+    if (!place || !pointer) {
+      placeCard.hidden = true;
+      return;
+    }
+    const key = `${place.x},${place.y}`;
+    const owner = ownerAt(place.x, place.y);
+    const details = placeDetails.get(key)?.body;
+    const lines = [
+      h('strong', { class: 'city-card-name' }, owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
+      details?.yours ? h('span', { class: 'city-card-home' }, 'Yours') : null,
+    ];
+    for (const bot of details?.bots || []) {
+      const allowed = bot.access !== 'needs_invite';
+      lines.push(h('span', { class: allowed ? 'city-card-bot allowed' : 'city-card-bot' },
+        h('b', {}, bot.name), ` ${ACCESS_TEXT[bot.access] || ''}`));
+    }
+    if (!me || me.kind !== 'person') lines.push(h('small', { class: 'city-card-hint' }, 'Sign in to see how your bots can get in.'));
+    placeCard.replaceChildren(...lines.filter(Boolean));
+    placeCard.hidden = false;
+    placeCardAt();
+  }
+
+  async function loadPlace(place) {
+    const key = `${place.x},${place.y}`;
+    const known = placeDetails.get(key);
+    if (known && Date.now() - known.at < 15000) return;
+    placeDetails.set(key, { at: Date.now(), body: known?.body });
+    try {
+      const body = await api(`/api/places/${encodeURIComponent(place.x)}/${encodeURIComponent(place.y)}`);
+      placeDetails.set(key, { at: Date.now(), body });
+      if (hoveredPlace && hoveredPlace.x === place.x && hoveredPlace.y === place.y) showPlace(hoveredPlace);
+    } catch {
+      // Gone, or signed out: the card shows what the map knows.
+    }
+  }
+
   function hovered(hover) {
     let text = '';
+    const kind = hover?.tile?.kind;
+    hoveredPlace = hover && hover.x !== null && PLACE_KINDS.has(kind) ? { x: hover.x, y: hover.y, kind } : null;
     if (hover?.player) text = hover.player.name;
     else if (hover?.person) text = `${hover.person.name}, just looking`;
     else if (hover?.visitor) text = `${hover.visitor.name}, an agent passing through`;
     else if (hover?.crawler) text = `${hover.crawler.name}, a web crawler`;
-    else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${hover.tile?.kind ? ` · ${hover.tile.kind}` : ''}`;
+    else if (hoveredPlace) {
+      const owner = ownerAt(hover.x, hover.y);
+      text = `${hover.x}, ${hover.y} · ${owner ? `${owner}\u2019s ${kind}` : kind}`;
+    } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
     frame.where.textContent = text;
+    showPlace(hoveredPlace);
+    if (hoveredPlace && me && me.kind === 'person') loadPlace(hoveredPlace);
   }
 
   const world = new World(frame.host, { interactive: true, onTile: build, onHover: hovered, onPick: picked, onFollow: followEnded });
+  frame.host.parentElement.classList.add('wd-hovercard');
+  frame.host.parentElement.append(placeCard);
+  world.canvas.addEventListener('pointermove', (event) => {
+    pointer = { x: event.clientX, y: event.clientY };
+    if (hoveredPlace && placeCard.hidden) showPlace(hoveredPlace);
+    else placeCardAt();
+  });
+  world.canvas.addEventListener('pointerleave', () => {
+    pointer = null;
+    hoveredPlace = null;
+    placeCard.hidden = true;
+  });
   world.canvas.addEventListener('wheel', () => menu.close(), { passive: true });
   world.canvas.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') menu.close();

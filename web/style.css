@@ -559,7 +559,7 @@ textarea.plain { font-family: inherit; font-size: 14px; }
 .wd-city .wd-well .world { height: min(62vh, 560px); min-height: 300px; }
 .world-live.city-over canvas { cursor: pointer; }
 /* What a house on the city map is and what your bots may do there, beside the pointer. */
-.wd-city .wd-well { position: relative; }
+.wd-city .wd-well, .wd-hovercard { position: relative; }
 .city-card {
   position: absolute;
   z-index: 3;

@@ -1511,6 +1511,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
+    /// W71: `[x, y, name]`, whose each place is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owners: Option<Vec<(u16, u16, String)>>,
     /// L17: `[name, x, y]` of the bots out at The Commons' places, by their own names.
     #[serde(skip_serializing_if = "Option::is_none")]
     bots_out: Option<Vec<(String, u16, u16)>>,
@@ -1599,6 +1602,16 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
 
     let disaster = state.db.world_end(&world.id)?.and_then(|end| disaster_of(world, &end));
 
+    let owners = if world.id == COMMONS_ID {
+        let rows = state.db.place_owners(&world.id)?;
+        Some(
+            rows.into_iter()
+                .filter_map(|(x, y, name)| Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, name)))
+                .collect(),
+        )
+    } else {
+        None
+    };
     let (crawlers, visitors, people, bots_out) = if world.id == COMMONS_ID {
         let roads = Roads::from_tiles(&snapshot.tiles);
         let on_the_street = |numbers: Vec<u64>| -> Vec<(String, u16, u16)> {
@@ -1645,6 +1658,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         crawlers,
         visitors,
         people,
+        owners,
         bots_out,
         disaster,
     };

@@ -2932,7 +2932,7 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out"])
+        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners"])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];
@@ -3891,9 +3891,9 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
     assert_eq!(tile_kind(&server, first), Some(Kind::Road));
 }
 
-// W59
+// W59, W71
 #[tokio::test]
-async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
+async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     let server = Server::start().await;
     let map = Map::from_db(&server, COMMONS);
     let spots = building_spots(&map, 2);
@@ -3910,8 +3910,16 @@ async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
     let path = format!("/api/worlds/{COMMONS}/look?x={}&y={}&w=8&h=8", spot.0, spot.1);
     let look = server.get(&path).send().await.ok();
     assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
+    // W71: the view names the owner in `owners`, and only there. Nothing says which account it is, and
+    // `look` names nobody.
+    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold"])), "{view}");
+    let mut rest = view.clone();
+    rest.as_object_mut().unwrap().remove("owners");
+    for text in [rest.to_string(), look.to_string()] {
+        assert!(!text.contains("Marigold"), "{text}");
+    }
     for text in [view.to_string(), look.to_string()] {
-        assert!(!text.contains("Marigold") && !text.contains(&ann.id), "{text}");
+        assert!(!text.contains(&ann.id), "{text}");
     }
 
     // There is no tool for it, and the build tool doesn't take one.
