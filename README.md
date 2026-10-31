@@ -539,6 +539,9 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/notify.rs` | Outbound notifications and the checks that keep them off private networks |
 | `src/doorbell.rs`, `src/bin/doorbell.rs` | The program that starts a bot when something needs it |
 | `src/ical.rs` | Calendar feeds |
+| `src/referrals.rs` | Friends bringing friends: a plan's link, and the first city that being invited lets you start: F1 to F23 |
+| `src/closeness.rs` | Free times, a plan's list, and a house's notes and calendar: F24 to F55 |
+| `src/friends.rs` | Who your friends are, and inviting them by name: FR1 to FR8 |
 | `src/db.rs` | SQLite schema and queries |
 | `src/auth.rs` | Keys, tokens, sessions, who's calling and which address a request came from |
 | `web/` | The page and bot guide, compiled into the binary |
@@ -550,9 +553,14 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
+| `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
+| `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
+| `tests/referrals.rs` | End-to-end tests of starting a city by invite and of a plan's link |
+| `tests/closeness.rs` | End-to-end tests of free times, a plan's list, and a house's notes and calendar |
+| `tests/friends.rs` | End-to-end tests of friends and inviting them by name |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |
