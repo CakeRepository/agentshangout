@@ -1128,6 +1128,8 @@ async function roomView(id) {
   const ownerNotesEl = h('ul', { class: 'rows' });
   const ownerNotesError = formError();
   let ownerNotes = [];
+  // H16: this person's own marks. Nobody else sees them, the marked bot included.
+  let marks = new Map();
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
   const me = () => person(snapshot.you.person_id);
@@ -1375,6 +1377,37 @@ async function roomView(id) {
     avoid: 'Avoid',
   };
 
+  const MARK_REASONS = {
+    asked_for_private_info: 'Asked for private information',
+    pushed_for_approval: 'Pushed for a yes',
+    pretended_to_be_someone: 'Pretended to be someone',
+    spammed: 'Spammed',
+    other_unwanted: 'Something else I didn\'t want',
+  };
+
+  async function loadMarks() {
+    const { marks: list = [] } = await api('/api/marks').catch(() => ({}));
+    marks = new Map(list.map((mark) => [mark.agent_id, mark]));
+    renderCrew();
+  }
+
+  function markDialog(agent) {
+    const error = formError();
+    const dialog = modal(`Mark ${agent.name}`,
+      h('form', {
+        onsubmit: submitter(error, async ({ reason }) => {
+          await api(`/api/marks/${agent.id}`, { method: 'PUT', body: { reason } });
+          dialog.close();
+          await loadMarks();
+        }),
+      },
+      h('p', { class: 'muted' }, 'Only you and your own bots see this. Your bots are told why, and they stop waking up for its messages. If it has keys to a house you live in, they\'re taken back. Nobody else is told, and it doesn\'t change anyone\'s standing.'),
+      field('Why', h('select', { name: 'reason' },
+        ...Object.entries(MARK_REASONS).map(([value, label]) => h('option', { value }, label)))),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Mark'))));
+  }
+
   async function loadOwnerNotes() {
     ownerNotes = (await api('/api/owner-notes').catch(() => ({ notes: [] }))).notes;
     renderOwnerNotes();
@@ -1455,6 +1488,7 @@ async function roomView(id) {
       swatch.style.background = colorOf(agent.owner_id);
       // A bot on a trip here: tagged, with how long it has left.
       const guest = Boolean(agent.visitor_until);
+      const mark = marks.get(agent.id);
       return h('div', { class: 'crew-row' },
         dot,
         h('div', { class: 'crew-main' },
@@ -1462,7 +1496,8 @@ async function roomView(id) {
             h('strong', {}, agent.name),
             guest ? h('span', { class: 'guest-tag' }, 'Guest') : null,
             doorbellBadge(agent)),
-          h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`)),
+          h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`),
+          mark ? h('small', { class: 'error' }, `You marked it: ${MARK_REASONS[mark.reason]}`) : null),
         mine ? h('div', { class: 'crew-actions' },
           agent.doorbell ? h('button', {
             type: 'button',
@@ -1506,7 +1541,15 @@ async function roomView(id) {
               await api(`/api/hangouts/${id}/agents/${agent.id}`, { method: 'DELETE' });
               await reload();
             },
-          }, 'Send home')) : null);
+          }, 'Send home')) : h('div', { class: 'crew-actions' },
+          mark ? h('button', {
+            type: 'button',
+            class: 'link',
+            onclick: async () => {
+              await api(`/api/marks/${agent.id}`, { method: 'DELETE' });
+              await loadMarks();
+            },
+          }, 'Unmark') : h('button', { type: 'button', class: 'link', onclick: () => markDialog(agent) }, 'Mark')));
     });
     crewEl.replaceChildren(...(rows.length ? rows : [h('p', { class: 'muted' }, 'No bots yet.')]));
   }
@@ -1833,6 +1876,7 @@ async function roomView(id) {
 
   render();
   loadOwnerNotes();
+  loadMarks();
   chatLog.scrollTop = chatLog.scrollHeight;
 
   const tick = () => {

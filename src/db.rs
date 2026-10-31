@@ -426,6 +426,14 @@ CREATE TABLE IF NOT EXISTS pass_keys (
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (pass_id, key)
 );
+CREATE TABLE IF NOT EXISTS bot_marks (
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    reason      TEXT NOT NULL CHECK (reason IN ('asked_for_private_info', 'pushed_for_approval',
+                    'pretended_to_be_someone', 'spammed', 'other_unwanted')),
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (person_id, agent_id)
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -616,6 +624,15 @@ pub struct NewOwnerNote<'a> {
     pub body: &'a str,
     pub from_question: Option<&'a str>,
     pub now: i64,
+}
+
+/// H14: a person's own record that a bot behaved badly. Only they and their bots see it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BotMark {
+    pub agent_id: String,
+    pub agent_name: String,
+    pub reason: String,
+    pub created_at: i64,
 }
 
 /// H6: how a bot's owner knows someone, worked out on read.
@@ -2387,6 +2404,68 @@ impl Db {
             |row| row.get(0),
         )?;
         Ok(Relation { lives_with, shares_a_city, plans_together })
+    }
+
+    // Marks (H14 to H20)
+
+    /// H15: whether a person has come across a bot: it's in a room they belong to, or it has
+    /// visited or asked to visit a house they live in.
+    pub fn has_come_across(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 WHERE EXISTS (SELECT 1 FROM room_agents ra JOIN members m ON m.hangout_id = ra.hangout_id
+                                    WHERE ra.agent_id = ?2 AND m.person_id = ?1)
+                OR EXISTS (SELECT 1 FROM trips t JOIN residents r ON r.house_id = t.house_id
+                           WHERE t.agent_id = ?2 AND r.person_id = ?1)",
+            params![person_id, agent_id],
+        )
+    }
+
+    pub fn set_bot_mark(&self, person_id: &str, agent_id: &str, reason: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_marks (person_id, agent_id, reason, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (person_id, agent_id) DO UPDATE SET reason = excluded.reason",
+            params![person_id, agent_id, reason, now],
+        )?;
+        Ok(())
+    }
+
+    /// False if there was no such mark.
+    pub fn remove_bot_mark(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "DELETE FROM bot_marks WHERE person_id = ? AND agent_id = ?",
+            params![person_id, agent_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn bot_marks(&self, person_id: &str) -> rusqlite::Result<Vec<BotMark>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT m.agent_id, a.name, m.reason, m.created_at FROM bot_marks m
+             JOIN agents a ON a.id = m.agent_id
+             WHERE m.person_id = ? ORDER BY m.created_at, m.agent_id",
+        )?;
+        let rows = stmt.query_map([person_id], |row| {
+            Ok(BotMark {
+                agent_id: row.get(0)?,
+                agent_name: row.get(1)?,
+                reason: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// H19: takes back the bot's keys at every house the person lives in.
+    pub fn take_keys_at_homes_of(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM pass_keys WHERE pass_id IN (
+                SELECT p.id FROM passes p JOIN residents r ON r.house_id = p.house_id
+                WHERE p.agent_id = ?2 AND r.person_id = ?1)",
+            params![person_id, agent_id],
+        )?;
+        Ok(())
     }
 
     /// B2: replaces a person's saved clock.

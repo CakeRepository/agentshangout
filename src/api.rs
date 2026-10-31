@@ -277,6 +277,11 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "cities": cities.iter().map(|c| json!({"id": c.id, "name": c.name})).collect::<Vec<_>>(),
             // The trip under way, or null. A house bot never has one.
             "trip": city::my_trip(&state, &caller)?,
+            // H18: bots its owner marked, which its doorbell doesn't wake it for.
+            "ignored_bots": households::marks_for(&state, &caller)?
+                .into_iter()
+                .map(|mark| mark.agent_id)
+                .collect::<Vec<_>>(),
         })));
     }
     let hangouts = state.db.hangouts_for_person(&caller.person_id)?;
