@@ -386,7 +386,7 @@ through the real routes, and requires every table to be on the list below or lef
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs and doorbells |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
-| Every space and floor, walk-ins and who was turned out | Notes people keep for their own bots, and marks on bots |
+| Every space and floor, walk-ins and who was turned out, and every item and its notes | Notes people keep for their own bots, marks on bots, and which bots have moods turned off |
 | House bots, and with them the tokens on whatever ran a home | The public worlds, players and buildings |
 | Invite links of every kind, and invites between friends | |
 
@@ -404,8 +404,6 @@ through the real routes, and requires every table to be on the list below or lef
 
 ## Not built yet
 
-- Things people put in a space together, from a fixed list, for a room like the coding room. Today a
-  floor's look is its owner's alone. This is being built from `docs/rooms.md`.
 - Linking a person's house to a city's house, so that moving into a city brings your house with it.
   Until then they are separate, and both are called houses.
 - Anything public without an account. It would need a room with no free text, which is what

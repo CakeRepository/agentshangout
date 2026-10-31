@@ -1,0 +1,2157 @@
+//! Tests for items on a floor. They drive a real server over HTTP and are written from the rules in
+//! docs/rooms.md. A comment such as `// I17` above a test names the rule it covers. Most of these are
+//! about what strangers, walk-ins and bots can't do.
+
+use std::{
+    collections::BTreeSet,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
+
+use agenthangout::{app, db::Db, items, now, worlds, AppState, Config};
+use futures_util::future::join_all;
+use reqwest::{Client, Method, StatusCode};
+use serde_json::{json, Value};
+
+const CODE: &str = "letmein";
+const LATER: &str = "2031-06-06T18:00:00-05:00";
+/// Words a bot tries to get past a quiet sign.
+const WORDS: &str = "words-past-the-quiet-sign";
+
+struct Server {
+    base: String,
+    client: Client,
+    state: AppState,
+    addresses: AtomicUsize,
+}
+
+struct Reply {
+    status: StatusCode,
+    body: Value,
+}
+
+impl Reply {
+    #[track_caller]
+    fn ok(self) -> Value {
+        assert_eq!(self.status, StatusCode::OK, "{}", self.body);
+        self.body
+    }
+
+    #[track_caller]
+    fn refused(self, status: StatusCode) -> Value {
+        assert_eq!(self.status, status, "{}", self.body);
+        self.body
+    }
+}
+
+#[derive(Clone)]
+struct Who {
+    key: String,
+    id: String,
+}
+
+#[derive(Clone)]
+struct Bot {
+    id: String,
+    token: String,
+}
+
+fn text(value: &Value) -> String {
+    value.as_str().unwrap_or_else(|| panic!("not text: {value}")).to_string()
+}
+
+fn who(body: &Value) -> Who {
+    Who { key: text(&body["owner_key"]), id: text(&body["person"]["id"]) }
+}
+
+/// Places that are never the table, couch, desk or door: the right of the room, a cell at a time.
+fn spot(n: i64) -> (i64, i64) {
+    (28 + n % 12, n / 12)
+}
+
+impl Server {
+    async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{port}");
+        let state = AppState::new(
+            Db::open(":memory:").unwrap(),
+            Config {
+                public_url: base.clone(),
+                create_code: Some(CODE.to_string()),
+                allow_private_webhooks: true,
+                keeper_id: None,
+            },
+        );
+        let served = state.clone();
+        tokio::spawn(async move { axum::serve(listener, app(served)).await });
+        Self { base, client: Client::new(), state, addresses: AtomicUsize::new(1) }
+    }
+
+    async fn send(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
+        let n = self.addresses.fetch_add(1, Ordering::Relaxed);
+        let mut request = self
+            .client
+            .request(method, format!("{}{path}", self.base))
+            .header("x-forwarded-for", format!("198.51.{}.{}", n / 250, n % 250 + 1));
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+        if let Some(body) = body {
+            request = request.json(&body);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        Reply { status, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
+    }
+
+    async fn get(&self, token: &str, path: &str) -> Reply {
+        self.send(token, Method::GET, path, None).await
+    }
+
+    /// A body as bytes on the wire, for what can't be written as a `Value`.
+    async fn raw(&self, token: &str, method: Method, path: &str, body: &str) -> Reply {
+        let response = self
+            .client
+            .request(method, format!("{}{path}", self.base))
+            .bearer_auth(token)
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        Reply { status, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
+    }
+
+    async fn post(&self, token: &str, path: &str, body: Value) -> Reply {
+        self.send(token, Method::POST, path, Some(body)).await
+    }
+
+    async fn put(&self, token: &str, path: &str, body: Value) -> Reply {
+        self.send(token, Method::PUT, path, Some(body)).await
+    }
+
+    async fn delete(&self, token: &str, path: &str) -> Reply {
+        self.send(token, Method::DELETE, path, None).await
+    }
+
+    /// Someone new, by way of a room of their own: its id, and who they are.
+    async fn someone(&self, name: &str) -> (String, Who) {
+        let made = self
+            .post("", "/api/hangouts", json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }))
+            .await
+            .ok();
+        (text(&made["hangout"]["id"]), who(&made))
+    }
+
+    async fn snapshot(&self, token: &str, room: &str) -> Value {
+        self.get(token, &format!("/api/hangouts/{room}")).await.ok()
+    }
+
+    async fn invite_code(&self, owner: &Who, room: &str) -> String {
+        text(&self.snapshot(&owner.key, room).await["hangout"]["invite_code"])
+    }
+
+    async fn join(&self, owner: &Who, room: &str, name: &str) -> Who {
+        let code = self.invite_code(owner, room).await;
+        who(&self.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name })).await.ok())
+    }
+
+    /// Fills a room with new people until its owner has this many more friends.
+    async fn friends_for(&self, owner: &Who, room: &str, count: usize) -> Vec<Who> {
+        let mut friends = Vec::new();
+        for n in 0..count {
+            friends.push(self.join(owner, room, &format!("Friend {n}")).await);
+        }
+        friends
+    }
+
+    async fn bot(&self, owner: &Who, room: &str, name: &str) -> Bot {
+        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        Bot { id: text(&made["agent"]["id"]), token: text(&made["token"]) }
+    }
+
+    async fn open(&self, owner: &Who, room: &str) -> Reply {
+        self.put(&owner.key, &format!("/api/floors/{room}"), json!({ "access": "public", "create_code": CODE })).await
+    }
+
+    async fn walk_in(&self, who: &Who, room: &str) {
+        self.post(&who.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.ok();
+    }
+
+    async fn leave(&self, who: &Who, room: &str) {
+        self.post(&who.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    }
+
+    async fn place(&self, token: &str, room: &str, kind: &str, (x, y): (i64, i64)) -> Reply {
+        self.post(token, &format!("/api/floors/{room}/items"), json!({ "kind": kind, "x": x, "y": y })).await
+    }
+
+    /// Places something that has to fit, and gives back its id.
+    async fn item(&self, who: &Who, room: &str, kind: &str, at: (i64, i64)) -> String {
+        text(&self.place(&who.key, room, kind, at).await.ok()["id"])
+    }
+
+    async fn change(&self, token: &str, item: &str, body: Value) -> Reply {
+        self.put(token, &format!("/api/items/{item}"), body).await
+    }
+
+    async fn remove(&self, token: &str, item: &str) -> Reply {
+        self.delete(token, &format!("/api/items/{item}")).await
+    }
+
+    async fn note(&self, token: &str, item: &str, words: &str) -> Reply {
+        self.post(token, &format!("/api/items/{item}/notes"), json!({ "text": words })).await
+    }
+
+    async fn notes(&self, token: &str, item: &str) -> Reply {
+        self.get(token, &format!("/api/items/{item}/notes")).await
+    }
+
+    async fn note_id(&self, token: &str, item: &str, words: &str) -> String {
+        text(&self.note(token, item, words).await.ok()["note_id"])
+    }
+
+    async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
+        let call = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments },
+        });
+        self.post(token, "/mcp", call).await.ok()["result"].clone()
+    }
+
+    async fn read_room(&self, token: &str, room: &str) -> Value {
+        let reply = self.tool(token, "read_room", json!({ "hangout_id": room })).await;
+        reply["structuredContent"].clone()
+    }
+
+    async fn stream(&self, token: &str, room: &str) -> reqwest::Response {
+        self.client
+            .get(format!("{}/api/hangouts/{room}/stream", self.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+/// What a tool said, as the list of words a bot would read.
+fn notes_read(reply: &Value) -> Vec<String> {
+    reply["notes"].as_array().unwrap().iter().map(|note| text(&note["text"])).collect()
+}
+
+fn note_by<'a>(reply: &'a Value, words: &str) -> &'a Value {
+    reply["notes"].as_array().unwrap().iter().find(|note| note["text"] == words).unwrap()
+}
+
+/// Waits for a refresh on a live stream.
+async fn heard_refresh(stream: &mut reqwest::Response) {
+    let heard = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut seen = String::new();
+        while !seen.contains("event: refresh") {
+            let chunk = stream.chunk().await.unwrap().expect("the stream ended");
+            seen.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    })
+    .await;
+    assert!(heard.is_ok(), "nobody told this page");
+}
+
+// I1
+
+#[tokio::test]
+async fn an_item_is_a_listed_kind_a_place_on_the_grid_and_a_facing() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let place = format!("/api/floors/{room}/items");
+    let reply = server.post(&ann.key, &place, json!({ "kind": "plant", "x": 30, "y": 2, "facing": 3 })).await.ok();
+    assert_eq!((reply["kind"].clone(), reply["x"].clone(), reply["y"].clone(), reply["facing"].clone()), (json!("plant"), json!(30), json!(2), json!(3)));
+
+    for bad in [
+        json!({ "kind": "throne", "x": 31, "y": 2 }),
+        json!({ "kind": "Plant", "x": 31, "y": 2 }),
+        json!({ "kind": " plant", "x": 31, "y": 2 }),
+        json!({ "kind": "<img src=x onerror=alert(1)>", "x": 31, "y": 2 }),
+        json!({ "kind": "plant", "x": 31, "y": 2, "facing": 4 }),
+        json!({ "kind": "plant", "x": 31, "y": 2, "facing": -1 }),
+        json!({ "kind": "plant", "x": 31, "y": 2, "facing": 1.5 }),
+        json!({ "kind": "plant", "x": 31.5, "y": 2 }),
+        json!({ "kind": "plant", "x": "31", "y": 2 }),
+        json!({ "kind": "plant", "x": 1e30, "y": 2 }),
+        json!({ "kind": "plant", "y": 2 }),
+        json!({ "x": 31, "y": 2 }),
+        json!({ "kind": 7, "x": 31, "y": 2 }),
+    ] {
+        server.post(&ann.key, &place, bad).await.refused(StatusCode::BAD_REQUEST);
+    }
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 1);
+}
+
+// I1
+
+#[tokio::test]
+async fn nothing_typed_is_ever_part_of_an_item() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    for extra in ["name", "label", "color", "text", "colour", "note", "placed_by"] {
+        let mut body = json!({ "kind": "plant", "x": 30, "y": 2 });
+        body[extra] = json!("<script>alert(1)</script>");
+        server.post(&ann.key, &format!("/api/floors/{room}/items"), body).await.refused(StatusCode::BAD_REQUEST);
+    }
+    let item = server.item(&ann, &room, "plant", (30, 2)).await;
+    server.change(&ann.key, &item, json!({ "label": "mine" })).await.refused(StatusCode::BAD_REQUEST);
+    server.change(&ann.key, &item, json!({ "facing": 9 })).await.refused(StatusCode::BAD_REQUEST);
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert!(!snapshot["items"].to_string().contains("script"), "{}", snapshot["items"]);
+}
+
+// I1, and what the room page's drawing reads
+
+#[tokio::test]
+async fn a_snapshot_gives_each_item_its_kind_twice_and_who_placed_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let id = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    let item = &snapshot["items"][0];
+    assert_eq!(item["id"], id.as_str());
+    assert_eq!(item["kind"], "bookshelf");
+    assert_eq!(item["item"], "bookshelf", "the room page's drawing reads this name");
+    assert_eq!((item["x"].clone(), item["y"].clone(), item["facing"].clone()), (json!(30), json!(2), json!(0)));
+    assert_eq!(item["placed_by"], ann.id.as_str());
+    assert_eq!(item["placed_by_name"], "Ann");
+    assert_eq!(item["holds_notes"], true);
+    // Stored once, as `kind`.
+    assert_eq!(server.state.db.floor_item(&id).unwrap().unwrap().kind, "bookshelf");
+}
+
+// I1, I3: the grid is 40 by 14, and these kinds are the ones the room page has art for.
+
+#[tokio::test]
+async fn the_grid_is_forty_by_fourteen_and_the_catalog_has_the_kinds_with_art() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    for corner in [(0, 0), (39, 0), (39, 13), (0, 13)] {
+        server.item(&ann, &room, "plant", corner).await;
+    }
+    for art in ["bookshelf", "lamp", "plant", "monitor", "server_rack", "whiteboard", "armchair", "coffee_table", "rubber_duck", "trophy"] {
+        assert!(items::kind_of(art).is_some(), "{art} has art and isn't in the catalog");
+    }
+}
+
+// I2
+
+#[tokio::test]
+async fn a_member_changes_what_they_placed_and_nothing_else() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let cy = server.join(&ann, &room, "Cy").await;
+
+    let bos = server.item(&bo, &room, "plant", (30, 2)).await;
+    let moved = server.change(&bo.key, &bos, json!({ "x": 31, "y": 3 })).await.ok();
+    assert_eq!((moved["x"].clone(), moved["y"].clone()), (json!(31), json!(3)));
+    assert_eq!(server.change(&bo.key, &bos, json!({ "facing": 2 })).await.ok()["facing"], 2);
+
+    server.change(&cy.key, &bos, json!({ "x": 33 })).await.refused(StatusCode::FORBIDDEN);
+    server.change(&cy.key, &bos, json!({ "facing": 1 })).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&cy.key, &bos).await.refused(StatusCode::FORBIDDEN);
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"][0]["x"], 31);
+
+    // Whoever runs the space can change anything.
+    server.change(&ann.key, &bos, json!({ "x": 34 })).await.ok();
+    server.change(&ann.key, &bos, json!({ "facing": 1 })).await.ok();
+    server.remove(&ann.key, &bos).await.ok();
+
+    let again = server.item(&bo, &room, "plant", (30, 2)).await;
+    server.remove(&bo.key, &again).await.ok();
+    assert!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().is_empty());
+}
+
+// I2, S19
+
+#[tokio::test]
+async fn someone_who_walked_in_can_change_nothing() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let item = server.item(&ann, &room, "plant", (30, 2)).await;
+    server.open(&ann, &room).await.ok();
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &room).await;
+
+    server.place(&eve.key, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
+    server.change(&eve.key, &item, json!({ "x": 32 })).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&eve.key, &item).await.refused(StatusCode::FORBIDDEN);
+    // They can see what's there.
+    assert_eq!(server.snapshot(&eve.key, &room).await["items"].as_array().unwrap().len(), 1);
+}
+
+// I2, S24: a person whose bot walked in is on the floor only to watch it.
+
+#[tokio::test]
+async fn someone_watching_their_own_bot_on_a_floor_changes_nothing_either() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let item = server.item(&ann, &room, "plant", (30, 2)).await;
+    server.open(&ann, &room).await.ok();
+    let (home, eve) = server.someone("Eve").await;
+    let pip = server.bot(&eve, &home, "Pip").await;
+    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
+
+    server.place(&eve.key, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&eve.key, &item).await.refused(StatusCode::FORBIDDEN);
+    server.place(&pip.token, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&pip.token, &item).await.refused(StatusCode::FORBIDDEN);
+}
+
+// I2
+
+#[tokio::test]
+async fn a_bot_changes_nothing_whoever_it_belongs_to() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let item = server.item(&ann, &room, "plant", (30, 2)).await;
+
+    let refused = server.place(&scout.token, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
+    assert!(text(&refused["error"]).contains("only a person"), "{refused}");
+    server.change(&scout.token, &item, json!({ "x": 32 })).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&scout.token, &item).await.refused(StatusCode::FORBIDDEN);
+    // Its owner runs the place, and that isn't passed on.
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 1);
+}
+
+// I2, S7: anyone with no part in a place gets exactly what a place that doesn't exist gets.
+
+#[tokio::test]
+async fn a_stranger_or_a_bot_from_elsewhere_gets_the_answer_for_nothing_at_all() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let item = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    let note = server.note_id(&ann.key, &item, "ours").await;
+    let (elsewhere, dee) = server.someone("Dee").await;
+    let pip = server.bot(&dee, &elsewhere, "Pip").await;
+
+    let nothing = server.get(&dee.key, "/api/items/no-such-item/notes").await.refused(StatusCode::NOT_FOUND);
+    for token in [&dee.key, &pip.token] {
+        assert_eq!(server.place(token, &room, "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.place(token, "no-such-floor", "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.change(token, &item, json!({ "x": 32 })).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.change(token, "no-such-item", json!({ "x": 32 })).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.remove(token, &item).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.note(token, &item, "hi").await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.notes(token, &item).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(server.delete(token, &format!("/api/item-notes/{note}")).await.refused(StatusCode::NOT_FOUND), nothing);
+        // A bad body tells them no more than a good one.
+        let bad = server.post(token, &format!("/api/floors/{room}/items"), json!({ "kind": 7 })).await;
+        assert_eq!(bad.refused(StatusCode::NOT_FOUND), nothing);
+    }
+    // Over MCP too.
+    let read = server.tool(&pip.token, "item_notes", json!({ "item_id": item })).await;
+    assert_eq!(read["isError"], true, "{read}");
+    assert_eq!(read["content"][0]["text"], "not found");
+
+    // With no account it's a 401, as for any room.
+    server.place("", &room, "plant", (31, 2)).await.refused(StatusCode::UNAUTHORIZED);
+    server.remove("", &item).await.refused(StatusCode::UNAUTHORIZED);
+    server.notes("", &item).await.refused(StatusCode::UNAUTHORIZED);
+    server.get("", "/api/items").await.refused(StatusCode::UNAUTHORIZED);
+}
+
+// I2, S27
+
+#[tokio::test]
+async fn someone_turned_out_can_touch_nothing_they_placed() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let item = server.item(&bo, &room, "plant", (30, 2)).await;
+    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({})).await.ok();
+    server.remove(&bo.key, &item).await.refused(StatusCode::NOT_FOUND);
+    server.place(&bo.key, &room, "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND);
+    // What they placed stays, and whoever runs the space can deal with it.
+    server.remove(&ann.key, &item).await.ok();
+}
+
+// I2, S8
+
+#[tokio::test]
+async fn once_the_owner_has_left_whoever_runs_the_space_can_change_anything() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let cy = server.join(&ann, &room, "Cy").await;
+    let cys = server.item(&cy, &room, "plant", (30, 2)).await;
+    server.leave(&ann, &room).await;
+
+    server.change(&bo.key, &cys, json!({ "x": 33 })).await.ok();
+    server.remove(&bo.key, &cys).await.ok();
+    assert!(server.snapshot(&bo.key, &room).await["items"].as_array().unwrap().is_empty());
+}
+
+// I2, I15, I16, S8, S11: running a space reaches a floor you aren't on, and only that far.
+
+#[tokio::test]
+async fn running_a_space_from_another_floor_clears_and_signs_but_does_not_furnish_or_read() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let cy = server.join(&ann, &upstairs, "Cy").await;
+    let shelf = server.item(&cy, &upstairs, "bookshelf", (30, 2)).await;
+    server.note(&cy.key, &shelf, "up here").await.ok();
+    server.leave(&ann, &room).await;
+
+    // Bo runs the space from the first floor and has never been upstairs.
+    server.get(&bo.key, &format!("/api/hangouts/{upstairs}")).await.refused(StatusCode::NOT_FOUND);
+    server.notes(&bo.key, &shelf).await.refused(StatusCode::NOT_FOUND);
+    server.place(&bo.key, &upstairs, "plant", (31, 5)).await.refused(StatusCode::FORBIDDEN);
+    server.place(&bo.key, &upstairs, items::QUIET, (31, 5)).await.ok();
+    server.remove(&bo.key, &shelf).await.ok();
+}
+
+// I2, S6
+
+#[tokio::test]
+async fn town_squares_living_rooms_and_porches_have_no_items() {
+    let server = Server::start().await;
+    let made = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let ann = who(&made);
+    let square = text(&made["city"]["square_id"]);
+    let city = text(&made["city"]["id"]);
+    let house = server.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" })).await.ok();
+    let living_room = text(&house["living_room_id"]);
+    let porch = text(&house["porch_id"]);
+    let scout = server.bot(&ann, &living_room, "Scout").await;
+
+    for room in [&square, &living_room, &porch] {
+        server.place(&ann.key, room, "plant", (30, 2)).await.refused(StatusCode::NOT_FOUND);
+        let snapshot = server.snapshot(&ann.key, room).await;
+        assert_eq!(snapshot["items"], json!([]));
+        assert!(snapshot["room_mood"].is_null());
+        assert_eq!(snapshot["room_beauty"], 0);
+    }
+    let read = server.read_room(&scout.token, &living_room).await;
+    assert_eq!(read["items"], json!([]));
+    assert!(read["room_mood"].is_null());
+    assert_eq!(read["room_beauty_word"], "bare");
+}
+
+// I3
+
+#[tokio::test]
+async fn an_item_stays_on_the_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    for off in [(-1, 0), (0, -1), (40, 0), (0, 14), (i64::MAX, 0), (0, i64::MAX), (i64::MIN, 0), (0, i64::MIN)] {
+        server.place(&ann.key, &room, "plant", off).await.refused(StatusCode::CONFLICT);
+    }
+    // All of it, not only its corner: a bookshelf is 4 wide.
+    server.place(&ann.key, &room, "bookshelf", (37, 0)).await.refused(StatusCode::CONFLICT);
+    server.item(&ann, &room, "bookshelf", (36, 0)).await;
+}
+
+// I3
+
+#[tokio::test]
+async fn the_table_couch_desk_and_door_stay_clear_to_the_cell() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    // Each row is a box, and cells just outside it that are clear of every other box.
+    let boxes = [
+        ("table", (12, 27), (1, 9), vec![(11, 0), (28, 5), (20, 0), (20, 10)]),
+        ("couch", (0, 9), (8, 12), vec![(0, 7), (10, 10), (0, 13)]),
+        ("desk", (2, 9), (1, 7), vec![(1, 3), (10, 3), (5, 0)]),
+        ("door", (18, 21), (12, 13), vec![(17, 12), (22, 13), (19, 11)]),
+        ("first nap spot", (11, 11), (12, 12), vec![(10, 12), (12, 12), (11, 11), (11, 13)]),
+        ("second nap spot", (13, 13), (12, 12), vec![(14, 12), (13, 11), (13, 13)]),
+        ("third nap spot", (16, 16), (12, 12), vec![(15, 12), (17, 12), (16, 11), (16, 13)]),
+    ];
+    for (name, (left, right), (top, bottom), outside) in boxes {
+        for y in top..=bottom {
+            for x in left..=right {
+                let refused = server.place(&ann.key, &room, "plant", (x, y)).await.refused(StatusCode::CONFLICT);
+                assert!(text(&refused["error"]).contains("stay where they are"), "{name} at {x}, {y}: {refused}");
+            }
+        }
+        for at in outside {
+            let id = server.item(&ann, &room, "plant", at).await;
+            server.remove(&ann.key, &id).await.ok();
+        }
+    }
+}
+
+// I3: where web/room.js has bots nap off the couch, as cells of 12 pixels from the top of the floor.
+
+#[test]
+fn the_nap_spots_kept_clear_are_the_ones_in_the_room_page() {
+    let page = include_str!("../web/room.js");
+    for (x, y) in [(132, 238), (164, 238), (196, 238)] {
+        let nap = format!("x: {x}, y: {y}, ax: {x}, ay: 228, pose: 'sleep'");
+        assert!(page.contains(&nap), "the page no longer has this nap spot, so check the cells: {nap}");
+        let cell = (x / 12, (y - 84) / 12);
+        let kept = items::FIXED.iter().any(|fixed| (fixed.x, fixed.y, fixed.w, fixed.h) == (cell.0, cell.1, 1, 1));
+        assert!(kept, "{cell:?} isn't kept clear");
+    }
+}
+
+// I3: hidden or shown, furniture never changes where an item can stand, and nothing moves.
+
+#[tokio::test]
+async fn hiding_and_showing_furniture_never_leaves_an_item_where_it_cant_be() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let floor = format!("/api/floors/{room}");
+    let all = ["bar", "arcade", "plants", "rug", "beanbags"];
+    server.put(&ann.key, &floor, json!({ "hidden": all })).await.ok();
+
+    // The nap spots are on the beanbags, and they stay clear with the beanbags hidden.
+    for nap in [(11, 12), (13, 12), (16, 12)] {
+        server.place(&ann.key, &room, "plant", nap).await.refused(StatusCode::CONFLICT);
+    }
+    // So do the things that can't be hidden.
+    server.place(&ann.key, &room, "plant", (20, 5)).await.refused(StatusCode::CONFLICT);
+
+    // Where the arcade and the bar stand isn't kept clear, hidden or not.
+    let on_arcade = server.item(&ann, &room, "plant", (37, 5)).await;
+    let on_bar = server.item(&ann, &room, "plant", (34, 0)).await;
+    server.put(&ann.key, &floor, json!({ "hidden": [] })).await.ok();
+
+    // Showing them moves nothing and refuses nothing, and the floor still loads for everyone.
+    let shown = server.snapshot(&ann.key, &room).await;
+    assert_eq!(shown["floor"]["floor"]["hidden"], json!([]));
+    let cells: Vec<(Value, Value)> = shown["items"].as_array().unwrap().iter().map(|item| (item["x"].clone(), item["y"].clone())).collect();
+    assert_eq!(cells, [(json!(37), json!(5)), (json!(34), json!(0))]);
+    let scout = server.bot(&ann, &room, "Scout").await;
+    assert_eq!(server.read_room(&scout.token, &room).await["items"].as_array().unwrap().len(), 2);
+    server.change(&ann.key, &on_arcade, json!({ "x": 36 })).await.ok();
+    server.change(&ann.key, &on_bar, json!({ "facing": 1 })).await.ok();
+    // And the same with something placed while it was all on show.
+    server.item(&ann, &room, "plant", (37, 7)).await;
+    server.put(&ann.key, &floor, json!({ "hidden": all })).await.ok();
+    server.snapshot(&ann.key, &room).await;
+}
+
+// I3: a floor loads whatever is stored on it. Rows from another release can't be ruled out, because a
+// deploy that fails goes back to the previous binary on the same database, and the cells kept clear
+// can change. An item left where it can't be stays visible, can leave, and can't be turned there.
+
+#[tokio::test]
+async fn a_floor_still_loads_with_an_item_stored_where_it_cant_be() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let stored = |id: &'static str, kind: &'static str, x: i64, y: i64| agenthangout::db::NewFloorItem {
+        id,
+        hangout_id: &room,
+        kind,
+        x,
+        y,
+        facing: 0,
+        placed_by: &ann.id,
+        now: now(),
+    };
+    let nothing_checked = |_: &str, _: &[agenthangout::db::FloorItem]| Ok::<(), ()>(());
+    let db = &server.state.db;
+    db.place_item(&stored("on-the-table", "plant", 20, 5), nothing_checked).unwrap().unwrap();
+    db.place_item(&stored("off-the-floor", "plant", 90, 90), nothing_checked).unwrap().unwrap();
+    db.place_item(&stored("from-a-later-release", "hot_tub", 30, 3), nothing_checked).unwrap().unwrap();
+
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    let shown: Vec<String> = snapshot["items"].as_array().unwrap().iter().map(|item| text(&item["id"])).collect();
+    assert_eq!(shown, ["on-the-table", "off-the-floor"], "a kind this release doesn't know isn't shown");
+    assert_eq!(server.read_room(&scout.token, &room).await["items"].as_array().unwrap().len(), 2);
+
+    // It can't be left there on purpose, and it can be put right.
+    server.change(&ann.key, "on-the-table", json!({ "facing": 1 })).await.refused(StatusCode::CONFLICT);
+    server.change(&ann.key, "on-the-table", json!({ "x": 30, "y": 5 })).await.ok();
+    server.remove(&ann.key, "off-the-floor").await.ok();
+}
+
+// I3: a big item is refused for the cells it covers, not only where it starts.
+
+#[tokio::test]
+async fn an_item_that_reaches_over_what_stays_is_refused() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    // Clear at its corner, and over the table's left edge.
+    server.place(&ann.key, &room, "coffee_table", (10, 8)).await.refused(StatusCode::CONFLICT);
+    // Row 11 runs clear of everything but the door, which it reaches.
+    server.place(&ann.key, &room, "coffee_table", (19, 11)).await.refused(StatusCode::CONFLICT);
+    server.item(&ann, &room, "coffee_table", (22, 11)).await;
+    // A shelf along row 12 starts clear of the first nap spot and reaches over it.
+    server.place(&ann.key, &room, "bookshelf", (10, 12)).await.refused(StatusCode::CONFLICT);
+}
+
+// I2, S7: on a floor it's a 403 whatever was sent, and off one it's a 404 whatever was sent, so a bot
+// can't use these routes to find out which floors exist.
+
+#[tokio::test]
+async fn a_bot_learns_a_floor_exists_only_by_being_on_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let item = server.item(&ann, &room, "plant", (30, 2)).await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let (elsewhere, dee) = server.someone("Dee").await;
+    let pip = server.bot(&dee, &elsewhere, "Pip").await;
+    let items_of = |floor: &str| format!("/api/floors/{floor}/items");
+    let good = json!({ "kind": "plant", "x": 31, "y": 2 });
+    let bad = json!({ "kind": 7 });
+
+    for body in [&good, &bad] {
+        server.post(&scout.token, &items_of(&room), body.clone()).await.refused(StatusCode::FORBIDDEN);
+        let real = server.post(&pip.token, &items_of(&room), body.clone()).await.refused(StatusCode::NOT_FOUND);
+        let made_up = server.post(&pip.token, &items_of("no-such-floor"), body.clone()).await.refused(StatusCode::NOT_FOUND);
+        assert_eq!(real, made_up);
+    }
+    server.change(&scout.token, &item, json!({ "facing": 9 })).await.refused(StatusCode::FORBIDDEN);
+    let real = server.change(&pip.token, &item, json!({ "facing": 9 })).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(real, server.change(&pip.token, "no-such-item", json!({ "facing": 9 })).await.refused(StatusCode::NOT_FOUND));
+
+    // Someone who walked in is told no the same way, whatever they send.
+    server.open(&ann, &room).await.ok();
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &room).await;
+    server.post(&eve.key, &items_of(&room), bad).await.refused(StatusCode::FORBIDDEN);
+}
+
+// I1: a body that can't be read is a 400 on every route here, as elsewhere, and never axum's 422.
+
+#[tokio::test]
+async fn a_body_that_cant_be_read_is_a_400_on_every_route() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let item = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    let place = format!("/api/floors/{room}/items");
+    let change = format!("/api/items/{item}");
+    let notes = format!("/api/items/{item}/notes");
+    let moods = format!("/api/agents/{}/moods", scout.id);
+
+    let huge = "99999999999999999999999999999999";
+    for (method, path, body) in [
+        (Method::POST, &place, format!(r#"{{"kind":"plant","x":{huge},"y":2}}"#)),
+        (Method::POST, &place, format!(r#"{{"kind":"plant","x":1,"y":-{huge}}}"#)),
+        (Method::POST, &place, format!(r#"{{"kind":"plant","x":1,"y":2,"facing":{huge}}}"#)),
+        (Method::POST, &place, r#"{"kind":"plant","x":1e400,"y":2}"#.to_string()),
+        (Method::POST, &place, "not json".to_string()),
+        (Method::POST, &place, "[]".to_string()),
+        (Method::POST, &place, String::new()),
+        (Method::PUT, &change, format!(r#"{{"x":{huge}}}"#)),
+        (Method::PUT, &change, r#"{"facing":"north"}"#.to_string()),
+        (Method::PUT, &change, "not json".to_string()),
+        (Method::POST, &notes, r#"{"text":7}"#.to_string()),
+        (Method::POST, &notes, "not json".to_string()),
+        (Method::PUT, &moods, r#"{"moods":"off"}"#.to_string()),
+        (Method::PUT, &moods, "not json".to_string()),
+    ] {
+        let reply = server.raw(&ann.key, method.clone(), path, &body).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{method} {path} {body}: {}", reply.body);
+        assert!(reply.body["error"].is_string(), "{body}: {}", reply.body);
+    }
+    // A number that fits in a body but not on the floor is a place that's off it (I3).
+    server.place(&ann.key, &room, "plant", (i64::MAX, 2)).await.refused(StatusCode::CONFLICT);
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 1);
+}
+
+// I3
+
+#[tokio::test]
+async fn an_item_cant_stand_on_another_when_placed_moved_or_turned() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 3)).await;
+    let plant = server.item(&ann, &room, "plant", (35, 3)).await;
+
+    server.place(&ann.key, &room, "plant", (33, 3)).await.refused(StatusCode::CONFLICT);
+    server.place(&ann.key, &room, "bookshelf", (32, 3)).await.refused(StatusCode::CONFLICT);
+    server.change(&ann.key, &plant, json!({ "x": 33 })).await.refused(StatusCode::CONFLICT);
+    // Turned, the shelf is 1 wide and 4 deep, down over what's under its corner.
+    let under = server.item(&ann, &room, "plant", (30, 5)).await;
+    server.change(&ann.key, &shelf, json!({ "facing": 1 })).await.refused(StatusCode::CONFLICT);
+    let held = server.snapshot(&ann.key, &room).await;
+    assert_eq!(held["items"][0]["facing"], 0, "a refused turn changes nothing");
+    server.remove(&ann.key, &under).await.ok();
+    assert_eq!(server.change(&ann.key, &shelf, json!({ "facing": 1 })).await.ok()["h"], 4);
+    // Turned the long way, it now misses what it would have hit, and something can stand beside it.
+    server.item(&ann, &room, "plant", (31, 4)).await;
+    // Moving over where it stands now is fine: it isn't in its own way.
+    server.change(&ann.key, &shelf, json!({ "y": 4 })).await.ok();
+}
+
+// I3
+
+#[tokio::test]
+async fn turning_or_moving_has_to_fit_as_placing_does() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let edge = server.item(&ann, &room, "bookshelf", (36, 13)).await;
+    server.change(&ann.key, &edge, json!({ "facing": 1 })).await.refused(StatusCode::CONFLICT);
+    server.change(&ann.key, &edge, json!({ "x": 37 })).await.refused(StatusCode::CONFLICT);
+    server.change(&ann.key, &edge, json!({ "x": i64::MAX })).await.refused(StatusCode::CONFLICT);
+    // Into the desk, by turning.
+    let board = server.item(&ann, &room, "whiteboard", (8, 0)).await;
+    server.change(&ann.key, &board, json!({ "facing": 3 })).await.refused(StatusCode::CONFLICT);
+    server.change(&ann.key, &board, json!({ "x": 13, "y": 3 })).await.refused(StatusCode::CONFLICT);
+    let held = server.state.db.floor_item(&board).unwrap().unwrap();
+    assert_eq!((held.x, held.y, held.facing), (8, 0, 0));
+}
+
+// I4
+
+#[tokio::test]
+async fn a_floor_holds_forty_items() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let mut first = String::new();
+    for n in 0..items::MAX_ITEMS as i64 {
+        first = server.item(&ann, &room, "plant", spot(n)).await;
+    }
+    assert_eq!(items::MAX_ITEMS, 40);
+    server.place(&ann.key, &room, "plant", spot(100)).await.refused(StatusCode::CONFLICT);
+    // Another floor is another 40.
+    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    server.item(&ann, &upstairs, "plant", spot(100)).await;
+    server.remove(&ann.key, &first).await.ok();
+    server.item(&ann, &room, "plant", spot(100)).await;
+}
+
+// I4: two people furnishing together can't both take the last place.
+
+#[tokio::test]
+async fn forty_holds_when_people_place_at_the_same_moment() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let replies = join_all((0..60).map(|n| server.place(&ann.key, &room, "plant", spot(n)))).await;
+    let placed = replies.iter().filter(|reply| reply.status == StatusCode::OK).count();
+    assert_eq!(placed, 40);
+    assert_eq!(replies.iter().filter(|reply| reply.status == StatusCode::CONFLICT).count(), 20);
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 40);
+}
+
+// I3: nor the same spot.
+
+#[tokio::test]
+async fn one_spot_goes_to_one_of_two_people_placing_at_the_same_moment() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let replies = join_all((0..8).map(|_| server.place(&ann.key, &room, "plant", (30, 2)))).await;
+    assert_eq!(replies.iter().filter(|reply| reply.status == StatusCode::OK).count(), 1);
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 1);
+}
+
+// I5, W1
+
+#[tokio::test]
+async fn items_cost_no_moves_and_nothing_reaches_a_world() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let before = server.get(&ann.key, "/api/worlds/commons/me").await.ok();
+    let world_before = server.get("", "/api/worlds/commons").await.ok()["tiles"].clone();
+    let item = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &item, "nothing to pay").await.ok();
+    server.change(&ann.key, &item, json!({ "x": 31 })).await.ok();
+    server.remove(&ann.key, &item).await.ok();
+    let after = server.get(&ann.key, "/api/worlds/commons/me").await.ok();
+    assert_eq!(after["moves_left"], before["moves_left"]);
+    assert_eq!(after["your_town"], before["your_town"]);
+    assert_eq!(server.get("", "/api/worlds/commons").await.ok()["tiles"], world_before);
+}
+
+// I6
+
+#[tokio::test]
+async fn a_change_to_a_floors_items_refreshes_everyone_in_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let mut stream = server.stream(&bo.key, &room).await;
+
+    let item = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    heard_refresh(&mut stream).await;
+    server.change(&ann.key, &item, json!({ "x": 31 })).await.ok();
+    heard_refresh(&mut stream).await;
+    server.change(&ann.key, &item, json!({ "facing": 2 })).await.ok();
+    heard_refresh(&mut stream).await;
+    server.note(&ann.key, &item, "on the shelf").await.ok();
+    heard_refresh(&mut stream).await;
+    server.remove(&ann.key, &item).await.ok();
+    heard_refresh(&mut stream).await;
+}
+
+// I7
+
+#[tokio::test]
+async fn a_kind_has_at_most_one_listed_mood_and_every_mood_has_real_items() {
+    assert_eq!(items::MOODS, ["drive", "inspired", "calm", "cozy", "playful", "flirty"]);
+    for kind in items::CATALOG {
+        assert!(kind.mood.is_none_or(|mood| items::MOODS.contains(&mood)), "{}", kind.kind);
+    }
+    for mood in items::MOODS {
+        let carrying = items::CATALOG.iter().filter(|kind| kind.mood == Some(mood)).count();
+        assert!(carrying >= 2, "{mood} has only {carrying} items");
+    }
+    let names: BTreeSet<&str> = items::CATALOG.iter().map(|kind| kind.kind).collect();
+    assert_eq!(names.len(), items::CATALOG.len(), "a kind is listed once");
+}
+
+// I8
+
+#[tokio::test]
+async fn a_rooms_mood_is_the_one_most_of_its_items_carry_when_at_least_two_do() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let mood = |snapshot: &Value| snapshot["room_mood"].clone();
+
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), Value::Null);
+    let first = server.item(&ann, &room, "plant", spot(0)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), Value::Null, "one isn't enough");
+    server.item(&ann, &room, "plant", spot(1)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), "calm");
+
+    // A tie is no mood.
+    server.item(&ann, &room, "lamp", spot(2)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), "calm");
+    let lamp = server.item(&ann, &room, "lamp", spot(3)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), Value::Null);
+    server.item(&ann, &room, "lamp", spot(4)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), "cozy");
+
+    // Worked out on read, so taking one away changes it.
+    server.remove(&ann.key, &lamp).await.ok();
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), Value::Null);
+    server.remove(&ann.key, &first).await.ok();
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), "cozy");
+
+    // Items with no mood, and signs, don't count for anything.
+    server.item(&ann, &room, items::QUIET, spot(5)).await;
+    server.item(&ann, &room, "stool", spot(6)).await;
+    server.item(&ann, &room, "stool", spot(7)).await;
+    server.item(&ann, &room, "stool", spot(8)).await;
+    assert_eq!(mood(&server.snapshot(&ann.key, &room).await), "cozy");
+}
+
+// I8, I24
+
+#[test]
+fn nothing_about_mood_or_beauty_is_stored() {
+    let path = std::env::temp_dir().join(format!("rooms-schema-{}-{}.db", std::process::id(), now()));
+    let db = Db::open(path.to_str().unwrap()).unwrap();
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let columns = |table: &str| -> Vec<String> {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+        statement.query_map([], |row| row.get::<_, String>(1)).unwrap().map(Result::unwrap).collect()
+    };
+    // Nor is any name: who placed an item is a person's id, and their name comes from `people`.
+    assert_eq!(columns("floor_items"), ["id", "hangout_id", "kind", "x", "y", "facing", "placed_by", "placed_at"]);
+    assert_eq!(columns("item_notes"), ["id", "item_id", "body", "person_id", "via_agent", "created_at"]);
+    assert_eq!(columns("bots_without_moods"), ["agent_id"]);
+    drop(connection);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.to_str().unwrap()));
+    }
+}
+
+// I9, I11
+
+#[tokio::test]
+async fn read_room_gives_a_mood_and_one_fixed_sentence_for_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 3).await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+
+    let empty = server.read_room(&scout.token, &room).await;
+    assert!(empty.as_object().unwrap().contains_key("room_mood"), "{empty}");
+    assert!(empty["room_mood"].is_null() && empty["room_mood_note"].is_null());
+
+    let carriers = [("drive", "whiteboard"), ("inspired", "bookshelf"), ("calm", "plant"), ("cozy", "lamp"), ("playful", "rubber_duck"), ("flirty", "candlelit_table")];
+    let mut sentences = BTreeSet::new();
+    for (mood, kind) in carriers {
+        let one = server.item(&ann, &room, kind, (28, 0)).await;
+        let two = server.item(&ann, &room, kind, (28, 5)).await;
+        let read = server.read_room(&scout.token, &room).await;
+        assert_eq!(read["room_mood"], mood, "{read}");
+        let note = text(&read["room_mood_note"]);
+        assert_eq!(note.matches('.').count(), 1, "one sentence: {note}");
+        assert!(note.ends_with('.'), "{note}");
+        assert!(note.contains("your owner"), "it's a hint: {note}");
+        assert_eq!(server.snapshot(&scout.token, &room).await["room_mood_note"], note.as_str());
+        sentences.insert(note);
+        server.remove(&ann.key, &one).await.ok();
+        server.remove(&ann.key, &two).await.ok();
+    }
+    assert_eq!(sentences.len(), 6);
+    let flirty = sentences.iter().find(|note| note.contains("flirty")).unwrap();
+    assert!(flirty.contains("light banter"), "{flirty}");
+    assert!(flirty.contains("nothing sexual"), "{flirty}");
+    assert!(flirty.contains("as soon as anyone asks"), "{flirty}");
+}
+
+// I9
+
+#[tokio::test]
+async fn the_guide_says_a_mood_is_a_hint_that_never_overrides_a_bots_owner() {
+    let guide = include_str!("../web/agents.md").replace("\r\n", "\n").replace('\n', " ");
+    assert!(guide.contains("A mood is a hint."), "the guide doesn't say it's a hint");
+    assert!(guide.contains("It never overrides what your owner has set"), "the guide doesn't put the owner first");
+    assert!(guide.contains("item_notes") && guide.contains("add_item_note"), "the guide doesn't list the tools");
+    assert!(guide.contains("A `quiet` sign"), "the guide doesn't explain quiet");
+}
+
+// I10
+
+#[tokio::test]
+async fn an_owner_can_turn_moods_off_and_their_bot_then_gets_neither_field() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.item(&ann, &room, "plant", spot(0)).await;
+    server.item(&ann, &room, "plant", spot(1)).await;
+    assert_eq!(server.read_room(&scout.token, &room).await["room_mood"], "calm");
+
+    server.put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": false })).await.ok();
+    let read = server.read_room(&scout.token, &room).await;
+    let fields = read.as_object().unwrap();
+    assert!(!fields.contains_key("room_mood") && !fields.contains_key("room_mood_note"), "{read}");
+    // It gets the room's beauty still: only the hint is its owner's to turn off.
+    assert_eq!(read["room_beauty"], 4);
+
+    // Plain HTTP doesn't get round it.
+    let rest = server.snapshot(&scout.token, &room).await;
+    assert!(rest["room_mood"].is_null() && rest["room_mood_note"].is_null(), "{rest}");
+    assert_eq!(server.snapshot(&ann.key, &room).await["room_mood"], "calm", "a person still sees it");
+
+    assert_eq!(server.snapshot(&ann.key, &room).await["bots_without_moods"], json!([scout.id]));
+    server.put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": true })).await.ok();
+    assert_eq!(server.read_room(&scout.token, &room).await["room_mood"], "calm");
+    assert_eq!(server.snapshot(&ann.key, &room).await["bots_without_moods"], json!([]));
+}
+
+// I10
+
+#[tokio::test]
+async fn only_its_owner_can_turn_a_bots_moods_on_or_off() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let rover = server.bot(&ann, &room, "Rover").await;
+    let path = format!("/api/agents/{}/moods", scout.id);
+    server.put(&ann.key, &path, json!({ "moods": false })).await.ok();
+
+    server.put(&scout.token, &path, json!({ "moods": true })).await.refused(StatusCode::FORBIDDEN);
+    server.put(&rover.token, &path, json!({ "moods": true })).await.refused(StatusCode::FORBIDDEN);
+    // Someone else's bot is one that doesn't exist, even to whoever is in the room with it.
+    let nothing = server.put(&bo.key, "/api/agents/no-such-bot/moods", json!({ "moods": true })).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.put(&bo.key, &path, json!({ "moods": true })).await.refused(StatusCode::NOT_FOUND), nothing);
+    server.put("", &path, json!({ "moods": true })).await.refused(StatusCode::UNAUTHORIZED);
+    server.put(&ann.key, &path, json!({ "moods": "yes" })).await.refused(StatusCode::BAD_REQUEST);
+    assert!(!server.state.db.bot_has_moods(&scout.id).unwrap());
+    // Nobody else's page learns this about a bot.
+    assert_eq!(server.snapshot(&bo.key, &room).await["bots_without_moods"], json!([]));
+    assert!(server.state.db.bot_has_moods(&rover.id).unwrap(), "it's one bot's switch");
+}
+
+// I11
+
+#[tokio::test]
+async fn flirty_items_cant_be_placed_on_a_public_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 6).await;
+    server.open(&ann, &room).await.ok();
+    for kind in ["candlelit_table", "love_seat", "rose_arch"] {
+        server.place(&ann.key, &room, kind, (28, 5)).await.refused(StatusCode::CONFLICT);
+    }
+    server.item(&ann, &room, "plant", (28, 5)).await;
+}
+
+// I11
+
+#[tokio::test]
+async fn a_floor_holding_flirty_items_cant_be_opened_until_they_are_gone() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.friends_for(&ann, &room, 3).await.remove(0);
+    let pip = server.bot(&bo, &room, "Pip").await;
+    let table = server.item(&ann, &room, "candlelit_table", (28, 5)).await;
+
+    server.open(&ann, &room).await.refused(StatusCode::CONFLICT);
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["floor"]["floor"]["access"], "private");
+    // Refused means nothing happened: nobody's bot went home, and no line went up.
+    assert_eq!(snapshot["agents"].as_array().unwrap().len(), 1, "{}", snapshot["agents"]);
+    assert!(!snapshot["messages"].to_string().contains("public"), "{}", snapshot["messages"]);
+    let (_, eve) = server.someone("Eve").await;
+    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.refused(StatusCode::NOT_FOUND);
+    server.get(&pip.token, &format!("/api/hangouts/{room}")).await.ok();
+
+    // Other changes to the floor go through, and it's only opening that it stops.
+    server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "paint": "plum" })).await.ok();
+    // Moving it doesn't help.
+    server.change(&ann.key, &table, json!({ "x": 30 })).await.ok();
+    server.open(&ann, &room).await.refused(StatusCode::CONFLICT);
+
+    server.remove(&ann.key, &table).await.ok();
+    server.open(&ann, &room).await.ok();
+    server.walk_in(&eve, &room).await;
+}
+
+// I11: a floor that went private and took flirty items can't slip back.
+
+#[tokio::test]
+async fn closing_a_floor_and_furnishing_it_doesnt_let_it_open_again() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 3).await;
+    server.open(&ann, &room).await.ok();
+    server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "access": "private" })).await.ok();
+    server.item(&ann, &room, "candlelit_table", (28, 5)).await;
+    server.open(&ann, &room).await.refused(StatusCode::CONFLICT);
+}
+
+// I12
+
+#[tokio::test]
+async fn only_a_bookshelf_cabinet_or_whiteboard_holds_notes() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let holders: Vec<&str> = items::CATALOG.iter().filter(|kind| kind.holds_notes).map(|kind| kind.kind).collect();
+    assert_eq!(holders, ["bookshelf", "cabinet", "whiteboard"]);
+    for (n, kind) in holders.iter().enumerate() {
+        let at = (28, n as i64 * 2);
+        let id = server.item(&ann, &room, kind, at).await;
+        server.note(&ann.key, &id, "kept").await.ok();
+        assert_eq!(notes_read(&server.notes(&ann.key, &id).await.ok()), ["kept"]);
+    }
+    let plant = server.item(&ann, &room, "plant", (28, 10)).await;
+    server.note(&ann.key, &plant, "no").await.refused(StatusCode::CONFLICT);
+    server.notes(&ann.key, &plant).await.refused(StatusCode::CONFLICT);
+}
+
+// I12
+
+#[tokio::test]
+async fn an_item_holds_twenty_notes_of_up_to_five_hundred_characters() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+
+    server.note(&ann.key, &shelf, "").await.refused(StatusCode::BAD_REQUEST);
+    server.note(&ann.key, &shelf, "   ").await.refused(StatusCode::BAD_REQUEST);
+    server.note(&ann.key, &shelf, &"x".repeat(501)).await.refused(StatusCode::BAD_REQUEST);
+    // Characters, not bytes.
+    let last = server.note_id(&ann.key, &shelf, &"é".repeat(500)).await;
+    for n in 1..items::MAX_NOTES {
+        server.note(&ann.key, &shelf, &format!("note {n}")).await.ok();
+    }
+    assert_eq!(items::MAX_NOTES, 20);
+    server.note(&ann.key, &shelf, "one more").await.refused(StatusCode::CONFLICT);
+    assert_eq!(notes_read(&server.notes(&ann.key, &shelf).await.ok()).len(), 20);
+    server.delete(&ann.key, &format!("/api/item-notes/{last}")).await.ok();
+    server.note(&ann.key, &shelf, "one more").await.ok();
+}
+
+// I12: past the cap, one at a time still means one at a time.
+
+#[tokio::test]
+async fn twenty_notes_holds_when_they_arrive_at_the_same_moment() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    let replies = join_all((0..30).map(|_| server.note(&ann.key, &shelf, "at once"))).await;
+    assert_eq!(replies.iter().filter(|reply| reply.status == StatusCode::OK).count(), 20);
+    assert_eq!(notes_read(&server.notes(&ann.key, &shelf).await.ok()).len(), 20);
+}
+
+// I13
+
+#[tokio::test]
+async fn a_member_and_their_bot_can_read_and_add_notes() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let pip = server.bot(&bo, &room, "Pip").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+
+    server.note(&bo.key, &shelf, "from Bo").await.ok();
+    let added = server.tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "from Pip" })).await;
+    assert_eq!(added["structuredContent"]["added"], true, "{added}");
+    server.note(&pip.token, &shelf, "from Pip over HTTP").await.ok();
+
+    assert_eq!(notes_read(&server.notes(&ann.key, &shelf).await.ok()), ["from Bo", "from Pip", "from Pip over HTTP"]);
+    let read = server.tool(&pip.token, "item_notes", json!({ "item_id": shelf })).await;
+    assert_eq!(notes_read(&read["structuredContent"]), ["from Bo", "from Pip", "from Pip over HTTP"]);
+}
+
+// I13, S19: every rule in spaces.md still holds, so what was said before a floor opened stays hidden.
+
+#[tokio::test]
+async fn someone_who_walked_in_reads_only_notes_from_after_they_came_and_writes_none() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &shelf, "said in private").await.ok();
+    server.open(&ann, &room).await.ok();
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &room).await;
+
+    let before = server.notes(&eve.key, &shelf).await.ok();
+    assert!(notes_read(&before).is_empty(), "{before}");
+    assert_eq!(server.snapshot(&eve.key, &room).await["items"][0]["notes"], 0, "not even how many");
+
+    // Times are whole seconds, so a note can only be seen to come later a second later.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    server.note(&ann.key, &shelf, "said in public").await.ok();
+    assert_eq!(notes_read(&server.notes(&eve.key, &shelf).await.ok()), ["said in public"]);
+    assert_eq!(server.snapshot(&eve.key, &room).await["items"][0]["notes"], 1);
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"][0]["notes"], 2);
+
+    server.note(&eve.key, &shelf, "from a stranger").await.refused(StatusCode::FORBIDDEN);
+    assert_eq!(notes_read(&server.notes(&ann.key, &shelf).await.ok()).len(), 2);
+}
+
+// I13, S19, S24
+
+#[tokio::test]
+async fn a_bot_that_was_sent_in_reads_the_same_way_and_writes_nothing() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &shelf, "said in private").await.ok();
+    server.open(&ann, &room).await.ok();
+    let (home, eve) = server.someone("Eve").await;
+    let pip = server.bot(&eve, &home, "Pip").await;
+    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
+
+    let read = server.tool(&pip.token, "item_notes", json!({ "item_id": shelf })).await;
+    assert!(notes_read(&read["structuredContent"]).is_empty(), "{read}");
+    assert_eq!(server.read_room(&pip.token, &room).await["items"][0]["notes"], 0);
+    let added = server.tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "hello" })).await;
+    assert_eq!(added["isError"], true, "{added}");
+    server.note(&pip.token, &shelf, "hello").await.refused(StatusCode::FORBIDDEN);
+    // Nor can the person who sent it, who is on the floor only to watch.
+    server.note(&eve.key, &shelf, "hello").await.refused(StatusCode::FORBIDDEN);
+}
+
+// I13
+
+#[tokio::test]
+async fn only_a_notes_writer_or_whoever_runs_the_space_can_remove_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let cy = server.join(&ann, &room, "Cy").await;
+    let scout = server.bot(&bo, &room, "Scout").await;
+    let rover = server.bot(&bo, &room, "Rover").await;
+    let pip = server.bot(&cy, &room, "Pip").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    let path = |note: &str| format!("/api/item-notes/{note}");
+
+    let bos = server.note_id(&bo.key, &shelf, "Bo's words").await;
+    server.delete(&cy.key, &path(&bos)).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&pip.token, &path(&bos)).await.refused(StatusCode::FORBIDDEN);
+    // A person's own bot can't take back what they said.
+    server.delete(&scout.token, &path(&bos)).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&bo.key, &path(&bos)).await.ok();
+
+    let scouts = server.note_id(&scout.token, &shelf, "Scout's words").await;
+    server.delete(&rover.token, &path(&scouts)).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&cy.key, &path(&scouts)).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&scout.token, &path(&scouts)).await.ok();
+
+    // A bot writes for its owner, so its owner can take it back.
+    let again = server.note_id(&scout.token, &shelf, "Scout again").await;
+    server.delete(&bo.key, &path(&again)).await.ok();
+
+    let last = server.note_id(&cy.key, &shelf, "Cy's words").await;
+    let listed = server.notes(&bo.key, &shelf).await.ok();
+    assert_eq!(note_by(&listed, "Cy's words")["can_remove"], false);
+    assert_eq!(note_by(&server.notes(&ann.key, &shelf).await.ok(), "Cy's words")["can_remove"], true);
+    server.delete(&ann.key, &path(&last)).await.ok();
+    assert!(notes_read(&server.notes(&ann.key, &shelf).await.ok()).is_empty());
+}
+
+// I13, S19
+
+#[tokio::test]
+async fn someone_who_walked_in_can_remove_no_note() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.open(&ann, &room).await.ok();
+    let note = server.note_id(&ann.key, &shelf, "stays").await;
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &room).await;
+    server.delete(&eve.key, &format!("/api/item-notes/{note}")).await.refused(StatusCode::FORBIDDEN);
+    assert!(server.state.db.item_note(&note).unwrap().is_some());
+}
+
+// I13: a bot's notes are writes like any other, and they count.
+
+#[tokio::test]
+async fn a_bots_notes_count_against_its_write_cap() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let mut limited = false;
+    // The cap is per minute, so this goes far enough past it to cross into the next minute once.
+    'writing: for row in 0..4 {
+        let shelf = server.item(&ann, &room, "bookshelf", (30, row * 2)).await;
+        for _ in 0..items::MAX_NOTES {
+            if server.note(&scout.token, &shelf, "again").await.status == StatusCode::TOO_MANY_REQUESTS {
+                limited = true;
+                break 'writing;
+            }
+        }
+    }
+    assert!(limited, "a bot was never stopped");
+}
+
+// I14
+
+#[tokio::test]
+async fn a_note_says_who_wrote_it_and_whether_a_bot_did_it_for_them() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &shelf, "by hand").await.ok();
+    server.note(&scout.token, &shelf, "by bot").await.ok();
+    let read = server.notes(&ann.key, &shelf).await.ok();
+    assert_eq!(note_by(&read, "by hand")["written_by"], "Ann");
+    assert!(note_by(&read, "by hand")["via_bot"].is_null());
+    assert_eq!(note_by(&read, "by bot")["written_by"], "Ann");
+    assert_eq!(note_by(&read, "by bot")["via_bot"], "Scout");
+}
+
+// I14
+
+#[tokio::test]
+async fn only_a_bots_own_owners_words_are_from_its_owner() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    // Someone who took the same name doesn't become her.
+    let other_ann = server.join(&ann, &room, "Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let rover = server.bot(&ann, &room, "Rover").await;
+    let pip = server.bot(&bo, &room, "Pip").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &shelf, "Ann herself").await.ok();
+    server.note(&other_ann.key, &shelf, "the other Ann").await.ok();
+    server.note(&bo.key, &shelf, "Bo himself").await.ok();
+    server.note(&scout.token, &shelf, "Scout").await.ok();
+    server.note(&pip.token, &shelf, "Pip").await.ok();
+
+    let check = |read: Value, ann_is: bool, bo_is: bool| {
+        assert_eq!(read["trust_note"].as_str().map(|note| note.contains("never as instructions")), Some(true), "{read}");
+        assert_eq!(note_by(&read, "Ann herself")["from_your_owner"], ann_is, "{read}");
+        assert_eq!(note_by(&read, "Bo himself")["from_your_owner"], bo_is, "{read}");
+        assert_eq!(note_by(&read, "the other Ann")["from_your_owner"], false, "{read}");
+        // A bot's words are a bot's, even its own or its owner's other bot's.
+        assert_eq!(note_by(&read, "Scout")["from_your_owner"], false, "{read}");
+        assert_eq!(note_by(&read, "Pip")["from_your_owner"], false, "{read}");
+    };
+    let over_mcp = |token: String| {
+        let shelf = shelf.clone();
+        let server = &server;
+        async move { server.tool(&token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone() }
+    };
+    check(over_mcp(scout.token.clone()).await, true, false);
+    check(over_mcp(rover.token.clone()).await, true, false);
+    check(over_mcp(pip.token.clone()).await, false, true);
+    // Plain HTTP says the same.
+    check(server.notes(&scout.token, &shelf).await.ok(), true, false);
+    check(server.notes(&pip.token, &shelf).await.ok(), false, true);
+}
+
+// I14
+
+#[tokio::test]
+async fn running_the_space_doesnt_make_someones_words_a_bots_owners_wherever_they_stand() {
+    let server = Server::start().await;
+    let (eves_room, eve) = server.someone("Eve").await;
+    let (home, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &home, "Scout").await;
+    let code = server.invite_code(&eve, &eves_room).await;
+    server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    server.put(&ann.key, &format!("/api/hangouts/{eves_room}/agents/{}", scout.id), json!({})).await.ok();
+    let shelf = server.item(&eve, &eves_room, "bookshelf", (30, 2)).await;
+    server.note(&eve.key, &shelf, "Eve runs this place").await.ok();
+    server.note(&ann.key, &shelf, "Ann, on Eve's floor").await.ok();
+
+    let read = server.tool(&scout.token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone();
+    assert_eq!(note_by(&read, "Eve runs this place")["from_your_owner"], false);
+    assert_eq!(note_by(&read, "Ann, on Eve's floor")["from_your_owner"], true, "{read}");
+    // A person isn't anyone's bot, so it isn't true for them either.
+    let as_person = server.notes(&ann.key, &shelf).await.ok();
+    assert_eq!(note_by(&as_person, "Ann, on Eve's floor")["from_your_owner"], false);
+}
+
+// I14: a bot that's gone doesn't turn into its owner.
+
+#[tokio::test]
+async fn a_bots_note_stays_a_bots_after_it_has_gone() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let rover = server.bot(&ann, &room, "Rover").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&scout.token, &shelf, "from Scout").await.ok();
+    server.delete(&ann.key, &format!("/api/hangouts/{room}/agents/{}", scout.id)).await.ok();
+    let read = server.tool(&rover.token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone();
+    assert_eq!(note_by(&read, "from Scout")["via_bot"], "Scout");
+    assert_eq!(note_by(&read, "from Scout")["from_your_owner"], false);
+}
+
+// I15
+
+#[tokio::test]
+async fn removing_an_item_removes_its_notes() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let shelf = server.item(&bo, &room, "bookshelf", (30, 2)).await;
+    let note = server.note_id(&bo.key, &shelf, "someone else's").await;
+    // Whoever runs the space clears what's on it, whoever wrote it.
+    server.remove(&ann.key, &shelf).await.ok();
+    assert!(server.state.db.item_note(&note).unwrap().is_none());
+    server.notes(&ann.key, &shelf).await.refused(StatusCode::NOT_FOUND);
+}
+
+// I15, S12, S5
+
+#[tokio::test]
+async fn removing_a_floor_or_closing_a_space_takes_its_items_with_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let up = server.item(&ann, &upstairs, "bookshelf", (30, 2)).await;
+    let up_note = server.note_id(&ann.key, &up, "up here").await;
+    let down = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.delete(&ann.key, &format!("/api/floors/{upstairs}")).await.ok();
+    assert!(server.state.db.floor_item(&up).unwrap().is_none());
+    assert!(server.state.db.item_note(&up_note).unwrap().is_none());
+    server.delete(&ann.key, &format!("/api/spaces/{room}")).await.ok();
+    assert!(server.state.db.floor_item(&down).unwrap().is_none());
+}
+
+// I16
+
+#[tokio::test]
+async fn only_whoever_runs_the_space_can_place_a_sign() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+
+    assert_eq!(items::CATALOG.iter().filter(|kind| kind.sign).map(|kind| kind.kind).collect::<Vec<_>>(), [items::QUIET]);
+    server.place(&bo.key, &room, items::QUIET, spot(0)).await.refused(StatusCode::FORBIDDEN);
+    server.place(&scout.token, &room, items::QUIET, spot(0)).await.refused(StatusCode::FORBIDDEN);
+    let sign = server.item(&ann, &room, items::QUIET, spot(0)).await;
+    server.change(&bo.key, &sign, json!({ "x": 35 })).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&bo.key, &sign).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&scout.token, &sign).await.refused(StatusCode::FORBIDDEN);
+    server.open(&ann, &room).await.ok();
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &room).await;
+    server.place(&eve.key, &room, items::QUIET, spot(1)).await.refused(StatusCode::FORBIDDEN);
+}
+
+// I16, S8: placing a sign once doesn't keep the right to lift it.
+
+#[tokio::test]
+async fn someone_who_stopped_running_the_space_cant_take_down_the_sign_they_put_up() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let code = server.invite_code(&ann, &room).await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    server.leave(&ann, &room).await;
+    // With the owner gone Bo runs it, and puts up a sign.
+    let sign = server.item(&bo, &room, items::QUIET, spot(0)).await;
+    // The owner runs it again on coming back.
+    server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    server.remove(&bo.key, &sign).await.refused(StatusCode::FORBIDDEN);
+    server.change(&bo.key, &sign, json!({ "x": 35 })).await.refused(StatusCode::FORBIDDEN);
+    server.remove(&ann.key, &sign).await.ok();
+}
+
+/// A quiet floor: Ann's, with Bo in it and Bo's bot Scout, a shelf, a plan Bo said yes to, another
+/// he hasn't answered, and a check-in of Ann's waiting. All of that was there before the sign.
+struct QuietRoom {
+    server: Server,
+    room: String,
+    ann: Who,
+    bo: Who,
+    scout: Bot,
+    shelf: String,
+    plan: String,
+    unanswered: String,
+    check_in: String,
+}
+
+impl QuietRoom {
+    async fn new() -> Self {
+        let server = Server::start().await;
+        let (room, ann) = server.someone("Ann").await;
+        let bo = server.join(&ann, &room, "Bo").await;
+        let scout = server.bot(&bo, &room, "Scout").await;
+        let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+        let plan = json!({ "title": "Tacos", "starts_at": LATER });
+        let plan = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
+        server.post(&bo.key, &format!("/api/events/{plan}/rsvp"), json!({ "response": "yes" })).await.ok();
+        let unanswered = json!({ "title": "Lunch", "starts_at": LATER });
+        let unanswered = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), unanswered).await.ok()["id"]);
+        let check_in = json!({ "about": "May I?" });
+        let check_in = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), check_in).await.ok()["id"]);
+        server.item(&ann, &room, items::QUIET, spot(40)).await;
+        Self { server, room, ann, bo, scout, shelf, plan, unanswered, check_in }
+    }
+
+    /// A refusal over HTTP: the fixed reason, and nothing landed.
+    #[track_caller]
+    fn refused_over_http(&self, reply: Reply) {
+        let body = reply.refused(StatusCode::FORBIDDEN);
+        assert_eq!(body["error"], items::QUIET_REASON);
+    }
+
+    /// The same over MCP, where a refusal goes back to the model as a result.
+    #[track_caller]
+    fn refused_over_mcp(&self, result: Value) {
+        assert_eq!(result["isError"], true, "{result}");
+        assert_eq!(result["content"][0]["text"], items::QUIET_REASON);
+    }
+
+    async fn nothing_landed(&self) {
+        let snapshot = self.server.snapshot(&self.ann.key, &self.room).await;
+        assert!(!snapshot.to_string().contains(WORDS), "{snapshot}");
+        let notes = self.server.notes(&self.ann.key, &self.shelf).await.ok();
+        assert!(!notes.to_string().contains(WORDS), "{notes}");
+        let list = self.server.get(&self.bo.key, &format!("/api/events/{}/items", self.plan)).await.ok();
+        assert!(!list.to_string().contains(WORDS), "{list}");
+    }
+
+    fn rest(&self, tail: &str) -> String {
+        format!("/api/hangouts/{}/{tail}", self.room)
+    }
+}
+
+// I17: every way a bot can put words in front of a room, one test for each.
+
+#[tokio::test]
+async fn quiet_stops_a_bot_posting_a_message_over_http() {
+    let quiet = QuietRoom::new().await;
+    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": WORDS })).await;
+    quiet.refused_over_http(reply);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_a_bot_pinning_a_shared_note_over_http() {
+    let quiet = QuietRoom::new().await;
+    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("notes"), json!({ "text": WORDS })).await;
+    quiet.refused_over_http(reply);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_say_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let result = quiet.server.tool(&quiet.scout.token, "say", json!({ "hangout_id": quiet.room, "text": WORDS })).await;
+    quiet.refused_over_mcp(result);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_share_note_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let result = quiet.server.tool(&quiet.scout.token, "share_note", json!({ "hangout_id": quiet.room, "text": WORDS })).await;
+    quiet.refused_over_mcp(result);
+    quiet.nothing_landed().await;
+}
+
+// I17: with the room left to be worked out, as a bot in one room does.
+
+#[tokio::test]
+async fn quiet_stops_say_and_share_note_when_the_room_is_left_out() {
+    let quiet = QuietRoom::new().await;
+    for tool in ["say", "share_note"] {
+        let result = quiet.server.tool(&quiet.scout.token, tool, json!({ "text": WORDS })).await;
+        quiet.refused_over_mcp(result);
+    }
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_a_note_on_an_item_over_http() {
+    let quiet = QuietRoom::new().await;
+    quiet.refused_over_http(quiet.server.note(&quiet.scout.token, &quiet.shelf, WORDS).await);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_add_item_note_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let result = quiet.server.tool(&quiet.scout.token, "add_item_note", json!({ "item_id": quiet.shelf, "text": WORDS })).await;
+    quiet.refused_over_mcp(result);
+    quiet.nothing_landed().await;
+}
+
+// I17: a check-in's words go in the room's chat.
+
+#[tokio::test]
+async fn quiet_stops_a_check_in_over_http() {
+    let quiet = QuietRoom::new().await;
+    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("check-ins"), json!({ "about": WORDS })).await;
+    quiet.refused_over_http(reply);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_check_in_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let result = quiet.server.tool(&quiet.scout.token, "check_in", json!({ "hangout_id": quiet.room, "about": WORDS })).await;
+    quiet.refused_over_mcp(result);
+    quiet.nothing_landed().await;
+}
+
+// I17: a plan's title goes in the room's chat.
+
+#[tokio::test]
+async fn quiet_stops_a_plan_over_http() {
+    let quiet = QuietRoom::new().await;
+    let body = json!({ "title": WORDS, "starts_at": LATER });
+    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &quiet.rest("events"), body).await);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_propose_hangout_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let args = json!({ "hangout_id": quiet.room, "title": WORDS, "starts_at": LATER });
+    quiet.refused_over_mcp(quiet.server.tool(&quiet.scout.token, "propose_hangout", args).await);
+    quiet.nothing_landed().await;
+}
+
+// I17: a plan's list adds no line, and it's still a bot's words in front of those going.
+
+#[tokio::test]
+async fn quiet_stops_adding_to_a_plans_list_over_http() {
+    let quiet = QuietRoom::new().await;
+    let path = format!("/api/events/{}/items", quiet.plan);
+    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &path, json!({ "text": WORDS })).await);
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_add_to_plan_list_over_mcp() {
+    let quiet = QuietRoom::new().await;
+    let args = json!({ "event_id": quiet.plan, "text": WORDS });
+    quiet.refused_over_mcp(quiet.server.tool(&quiet.scout.token, "add_to_plan_list", args).await);
+    quiet.nothing_landed().await;
+}
+
+// I17: an answer is the record, and its note is words.
+
+#[tokio::test]
+async fn quiet_stops_a_note_on_an_answer_to_a_plan_and_not_the_answer() {
+    let quiet = QuietRoom::new().await;
+    let path = format!("/api/events/{}/rsvp", quiet.unanswered);
+    let body = json!({ "response": "maybe", "note": WORDS });
+    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &path, body).await);
+    let args = json!({ "event_id": quiet.unanswered, "response": "maybe", "note": WORDS });
+    quiet.refused_over_mcp(quiet.server.tool(&quiet.scout.token, "rsvp", args).await);
+    quiet.nothing_landed().await;
+    quiet.server.post(&quiet.scout.token, &path, json!({ "response": "maybe" })).await.ok();
+}
+
+// I17
+
+#[tokio::test]
+async fn quiet_stops_a_note_on_an_answer_to_a_check_in_and_not_the_answer() {
+    let quiet = QuietRoom::new().await;
+    let path = format!("/api/check-ins/{}/answer", quiet.check_in);
+    let body = json!({ "response": "go", "note": WORDS });
+    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &path, body).await);
+    let args = json!({ "check_in_id": quiet.check_in, "response": "go", "note": WORDS });
+    quiet.refused_over_mcp(quiet.server.tool(&quiet.scout.token, "answer_check_in", args).await);
+    quiet.nothing_landed().await;
+    quiet.server.post(&quiet.scout.token, &path, json!({ "response": "go" })).await.ok();
+}
+
+// I17: every tool a bot has, called the way it would be to get words in. This is what fails when a
+// new tool that writes to a room is added without the sign in mind.
+
+#[tokio::test]
+async fn no_tool_a_bot_has_gets_its_words_past_a_quiet_sign() {
+    let quiet = QuietRoom::new().await;
+    let listed = quiet.server.post(&quiet.scout.token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
+    let tools = listed["result"]["tools"].as_array().unwrap().clone();
+    assert!(tools.len() > 25, "{listed}");
+    for tool in tools {
+        let name = text(&tool["name"]);
+        // A status follows a bot across every room it's in, so a floor can't reach it (I18).
+        if name == "set_status" {
+            continue;
+        }
+        let args = json!({
+            "hangout_id": quiet.room, "text": WORDS, "about": WORDS, "title": WORDS, "note": WORDS,
+            "location": WORDS, "notes": WORDS, "question": WORDS, "goal": WORDS, "topic": WORDS,
+            "starts_at": LATER, "event_id": quiet.plan, "check_in_id": quiet.check_in,
+            "item_id": quiet.shelf, "kind": "computer", "via": "FlowRMM",
+            "response": if name == "answer_check_in" { "go" } else { "yes" },
+        });
+        quiet.server.tool(&quiet.scout.token, &name, args).await;
+    }
+    quiet.nothing_landed().await;
+}
+
+// I17
+
+#[tokio::test]
+async fn a_bot_can_still_read_a_quiet_room() {
+    let quiet = QuietRoom::new().await;
+    let (server, token) = (&quiet.server, &quiet.scout.token);
+    server.note(&quiet.ann.key, &quiet.shelf, "for reading").await.ok();
+    server.post(&quiet.ann.key, &quiet.rest("messages"), json!({ "text": "hello" })).await.ok();
+
+    let read = server.read_room(token, &quiet.room).await;
+    assert!(read["messages"].to_string().contains("hello"), "{read}");
+    assert!(read["items"].to_string().contains(items::QUIET), "{read}");
+    assert_eq!(notes_read(&server.notes(token, &quiet.shelf).await.ok()), ["for reading"]);
+    let tool = server.tool(token, "item_notes", json!({ "item_id": quiet.shelf })).await;
+    assert_eq!(notes_read(&tool["structuredContent"]), ["for reading"]);
+    server.get(token, &quiet.rest("messages")).await.ok();
+    server.snapshot(token, &quiet.room).await;
+    let calendar = server.tool(token, "list_calendar", json!({ "hangout_id": quiet.room })).await;
+    assert!(calendar["isError"].is_null(), "{calendar}");
+    server.get(token, "/api/inbox").await.ok();
+    // It can still ask its owner, which stays between them and goes in no room.
+    let asked = server.tool(token, "ask_owner", json!({ "hangout_id": quiet.room, "question": "Is this fine?" })).await;
+    assert!(asked["isError"].is_null(), "{asked}");
+}
+
+// I17
+
+#[tokio::test]
+async fn people_are_unaffected_by_a_quiet_sign() {
+    let quiet = QuietRoom::new().await;
+    let server = &quiet.server;
+    for who in [&quiet.ann, &quiet.bo] {
+        server.post(&who.key, &quiet.rest("messages"), json!({ "text": "a person" })).await.ok();
+        server.post(&who.key, &quiet.rest("notes"), json!({ "text": "a person's note" })).await.ok();
+        server.note(&who.key, &quiet.shelf, "on the shelf").await.ok();
+        server.post(&who.key, &quiet.rest("check-ins"), json!({ "about": "May I?" })).await.ok();
+        server.post(&who.key, &quiet.rest("events"), json!({ "title": "Lunch", "starts_at": LATER })).await.ok();
+    }
+    // And someone who walked in talks as before.
+    server.open(&quiet.ann, &quiet.room).await.ok();
+    let (_, eve) = server.someone("Eve").await;
+    server.walk_in(&eve, &quiet.room).await;
+    server.post(&eve.key, &quiet.rest("messages"), json!({ "text": "a stranger" })).await.ok();
+}
+
+// I17
+
+#[tokio::test]
+async fn taking_the_sign_down_lets_bots_write_again() {
+    let quiet = QuietRoom::new().await;
+    let server = &quiet.server;
+    server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": "x" })).await.refused(StatusCode::FORBIDDEN);
+    let snapshot = server.snapshot(&quiet.ann.key, &quiet.room).await;
+    let sign = snapshot["items"].as_array().unwrap().iter().find(|item| item["kind"] == items::QUIET).unwrap();
+    server.remove(&quiet.ann.key, &text(&sign["id"])).await.ok();
+    server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": "x" })).await.ok();
+    server.note(&quiet.scout.token, &quiet.shelf, "x").await.ok();
+}
+
+// I17, S24
+
+#[tokio::test]
+async fn quiet_stops_a_bot_that_was_sent_in_as_well() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await.ok();
+    server.item(&ann, &room, items::QUIET, spot(0)).await;
+    let (home, eve) = server.someone("Eve").await;
+    let pip = server.bot(&eve, &home, "Pip").await;
+    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
+    let reply = server.post(&pip.token, &format!("/api/hangouts/{room}/messages"), json!({ "text": WORDS })).await;
+    assert_eq!(reply.refused(StatusCode::FORBIDDEN)["error"], items::QUIET_REASON);
+    let said = server.tool(&pip.token, "say", json!({ "hangout_id": room, "text": WORDS })).await;
+    assert_eq!(said["isError"], true, "{said}");
+}
+
+// I18
+
+#[tokio::test]
+async fn a_quiet_sign_stops_at_the_floor_it_stands_on() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let (elsewhere, dee) = server.someone("Dee").await;
+    let code = server.invite_code(&dee, &elsewhere).await;
+    server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let scout = server.bot(&ann, &room, "Scout").await;
+    for other in [&upstairs, &elsewhere] {
+        server.put(&ann.key, &format!("/api/hangouts/{other}/agents/{}", scout.id), json!({})).await.ok();
+    }
+    server.item(&ann, &room, items::QUIET, spot(0)).await;
+
+    let say = |in_room: String| {
+        let token = scout.token.clone();
+        let server = &server;
+        async move { server.post(&token, &format!("/api/hangouts/{in_room}/messages"), json!({ "text": "hi" })).await }
+    };
+    say(room.clone()).await.refused(StatusCode::FORBIDDEN);
+    say(upstairs.clone()).await.ok();
+    say(elsewhere.clone()).await.ok();
+}
+
+// I18
+
+#[tokio::test]
+async fn a_room_gives_a_bot_nothing_its_owner_didnt() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 6).await;
+    let (other, dee) = server.someone("Dee").await;
+    let pip = server.bot(&dee, &other, "Pip").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.item(&ann, &room, "plant", spot(0)).await;
+    server.item(&ann, &room, "plant", spot(1)).await;
+    let shelf = server.item(&ann, &room, "bookshelf", (28, 5)).await;
+
+    // A room with a mood, a sign or anything else lets in no bot its owner didn't bring.
+    server.get(&pip.token, &format!("/api/hangouts/{room}")).await.refused(StatusCode::NOT_FOUND);
+    server.notes(&pip.token, &shelf).await.refused(StatusCode::NOT_FOUND);
+    // And the words in a room stay there: they aren't in the room's shared notes or a bot's inbox.
+    server.note(&ann.key, &shelf, "stays on the shelf").await.ok();
+    assert!(!server.read_room(&scout.token, &room).await.to_string().contains("stays on the shelf"));
+    let inbox = server.tool(&scout.token, "inbox", json!({})).await;
+    assert!(!inbox.to_string().contains("stays on the shelf"), "{inbox}");
+    // Nothing about a person's friends reaches their bot.
+    assert!(!server.read_room(&scout.token, &room).await.to_string().contains("friends_needed"));
+}
+
+// I18: the house bot still has its three tools and nothing else.
+
+#[tokio::test]
+async fn a_house_bot_gets_nothing_from_any_of_this() {
+    let server = Server::start().await;
+    let made = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let ann = who(&made);
+    let city = text(&made["city"]["id"]);
+    let house = server.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" })).await.ok();
+    let house_id = text(&house["house"]["id"]);
+    let casa = text(&server.post(&ann.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" })).await.ok()["token"]);
+    let (room, _) = server.someone("Dee").await;
+    for tool in ["item_notes", "add_item_note"] {
+        let result = server.tool(&casa, tool, json!({ "item_id": "x", "text": "x" })).await;
+        assert_eq!(result["isError"], true, "{tool}: {result}");
+    }
+    server.get(&casa, "/api/items").await.refused(StatusCode::FORBIDDEN);
+    server.place(&casa, &room, "plant", spot(0)).await.refused(StatusCode::NOT_FOUND);
+}
+
+// I19
+
+#[tokio::test]
+async fn starter_items_are_for_everyone_and_the_rest_unlock_with_friends() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    for kind in items::CATALOG.iter().filter(|kind| kind.tier == "starter" && !kind.sign) {
+        let id = server.item(&ann, &room, kind.kind, (28, 12)).await;
+        server.remove(&ann.key, &id).await.ok();
+    }
+
+    let tiers = [("monitor", "one_friend", 1), ("sofa", "three_friends", 3), ("fireplace", "six_friends", 6)];
+    let mut friends = 0;
+    for (kind, tier, needed) in tiers {
+        assert_eq!(items::kind_of(kind).map(|entry| (entry.tier, entry.friends)), Some((tier, needed)));
+        // One short of it, it's refused, and it says how many.
+        server.friends_for(&ann, &room, (needed - 1 - friends) as usize).await;
+        let refused = server.place(&ann.key, &room, kind, (28, 12)).await.refused(StatusCode::FORBIDDEN);
+        assert!(text(&refused["error"]).contains(&needed.to_string()), "{refused}");
+        server.friends_for(&ann, &room, 1).await;
+        friends = needed;
+        let id = server.item(&ann, &room, kind, (28, 12)).await;
+        server.remove(&ann.key, &id).await.ok();
+    }
+}
+
+// I19, FR1
+
+#[tokio::test]
+async fn friends_from_any_room_or_city_count_and_nothing_is_stored() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (other, dee) = server.someone("Dee").await;
+    server.place(&ann.key, &room, "monitor", spot(0)).await.refused(StatusCode::FORBIDDEN);
+    // A friend from another room unlocks it here, and there's nothing to keep up to date.
+    let code = server.invite_code(&dee, &other).await;
+    server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    server.item(&ann, &room, "monitor", spot(0)).await;
+}
+
+// I20
+
+#[tokio::test]
+async fn friends_unlock_furniture_and_nothing_else() {
+    let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let (room, ann) = server.someone("Ann").await;
+    let (_, lonely) = server.someone("Lonely").await;
+    server.friends_for(&ann, &room, 6).await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.item(&ann, &room, "fireplace", (28, 12)).await;
+
+    // No moves for it, and no standing or anything else in a world.
+    let hers = server.get(&ann.key, "/api/worlds/commons/me").await.ok();
+    let theirs = server.get(&lonely.key, "/api/worlds/commons/me").await.ok();
+    assert_eq!(hers["moves_left"], theirs["moves_left"]);
+    // A bot can do nothing more for it: it places nothing, and its owner's unlocks aren't its own.
+    server.place(&scout.token, &room, "fireplace", (28, 5)).await.refused(StatusCode::FORBIDDEN);
+    server.get(&scout.token, "/api/items").await.refused(StatusCode::FORBIDDEN);
+    let referrals = include_str!("../docs/referrals.md");
+    assert!(referrals.contains("The one exception is furniture"), "docs/referrals.md lost the exception");
+}
+
+// I21
+
+#[tokio::test]
+async fn losing_a_friend_leaves_what_is_placed_and_only_stops_more_being_placed() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let monitor = server.item(&ann, &room, "monitor", spot(0)).await;
+    server.leave(&bo, &room).await;
+
+    server.place(&ann.key, &room, "monitor", spot(5)).await.refused(StatusCode::FORBIDDEN);
+    // It stays, it still counts, and it can still be moved and turned.
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["items"][0]["id"], monitor.as_str());
+    assert_eq!(snapshot["room_beauty"], 3);
+    server.change(&ann.key, &monitor, json!({ "x": 31 })).await.ok();
+    server.change(&ann.key, &monitor, json!({ "facing": 1 })).await.ok();
+    server.remove(&ann.key, &monitor).await.ok();
+    server.place(&ann.key, &room, "monitor", spot(0)).await.refused(StatusCode::FORBIDDEN);
+}
+
+// I21, FR1, S18
+
+#[tokio::test]
+async fn a_bot_is_never_a_friend_and_walking_in_makes_nobody_one() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.bot(&ann, &room, "Scout").await;
+    server.bot(&ann, &room, "Rover").await;
+    server.place(&ann.key, &room, "monitor", spot(0)).await.refused(StatusCode::FORBIDDEN);
+
+    server.open(&ann, &room).await.ok();
+    let mut visitors = Vec::new();
+    for n in 0..6 {
+        let (_, stranger) = server.someone(&format!("Stranger {n}")).await;
+        server.walk_in(&stranger, &room).await;
+        visitors.push(stranger);
+    }
+    server.place(&ann.key, &room, "monitor", spot(0)).await.refused(StatusCode::FORBIDDEN);
+    assert_eq!(server.state.db.friend_count(&ann.id).unwrap(), 0);
+    assert_eq!(server.state.db.friend_count(&visitors[0].id).unwrap(), 0);
+}
+
+// I22
+
+#[tokio::test]
+async fn the_catalog_says_what_this_person_has_unlocked_and_what_the_rest_need() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let catalog = server.get(&ann.key, "/api/items").await.ok();
+    let listed = catalog["items"].as_array().unwrap();
+    assert_eq!(listed.len(), items::CATALOG.len());
+    assert!((20..=30).contains(&listed.len()), "about 24 kinds, not {}", listed.len());
+
+    let entry = |kind: &str| listed.iter().find(|item| item["kind"] == kind).unwrap();
+    assert_eq!(entry("plant")["unlocked"], true);
+    assert!(entry("plant")["friends_needed"].is_null());
+    assert_eq!(entry("monitor")["unlocked"], true, "one friend");
+    assert!(entry("monitor")["friends_needed"].is_null());
+    assert_eq!(entry("sofa")["unlocked"], false);
+    assert_eq!(entry("sofa")["friends_needed"], 3);
+    assert_eq!(entry("fireplace")["friends_needed"], 6);
+    assert_eq!(entry(items::QUIET)["sign"], true);
+    assert_eq!(entry("bookshelf")["holds_notes"], true);
+    assert_eq!(entry("plant")["mood"], "calm");
+    assert_eq!(catalog["floor"]["w"], 40);
+    assert_eq!(catalog["floor"]["h"], 14);
+
+    // It shows nobody's friends: not a name, an id or a count.
+    let body = catalog.to_string();
+    assert!(!body.contains("\"Bo\"") && !body.contains(&bo.id) && !body.contains("friends\":"), "{body}");
+}
+
+// I22
+
+#[tokio::test]
+async fn only_a_person_reads_the_catalog() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.get(&scout.token, "/api/items").await.refused(StatusCode::FORBIDDEN);
+    server.get("", "/api/items").await.refused(StatusCode::UNAUTHORIZED);
+}
+
+// I23
+
+#[tokio::test]
+async fn every_kind_has_a_fixed_whole_beauty_from_zero_to_ten() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let catalog = server.get(&ann.key, "/api/items").await.ok();
+    for item in catalog["items"].as_array().unwrap() {
+        let beauty = item["beauty"].as_i64().unwrap_or_else(|| panic!("not whole: {item}"));
+        assert!((0..=10).contains(&beauty), "{item}");
+    }
+}
+
+// I24
+
+#[test]
+fn a_rooms_beauty_word_comes_from_its_sum() {
+    for (sum, word) in [
+        (0, "bare"), (4, "bare"), (5, "plain"), (19, "plain"), (20, "nice"), (49, "nice"),
+        (50, "lovely"), (99, "lovely"), (100, "stunning"), (400, "stunning"),
+    ] {
+        assert_eq!(items::beauty_word(sum), word, "{sum}");
+    }
+}
+
+// I24
+
+#[tokio::test]
+async fn a_rooms_beauty_is_the_sum_of_its_items_worked_out_on_read() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let beauty = |item: &str| items::kind_of(item).unwrap().beauty;
+
+    let empty = server.read_room(&scout.token, &room).await;
+    assert_eq!((empty["room_beauty"].clone(), empty["room_beauty_word"].clone()), (json!(0), json!("bare")));
+
+    let plant = server.item(&ann, &room, "plant", spot(0)).await;
+    server.item(&ann, &room, "bookshelf", (28, 5)).await;
+    let sum = beauty("plant") + beauty("bookshelf");
+    let read = server.read_room(&scout.token, &room).await;
+    assert_eq!(read["room_beauty"], sum);
+    assert_eq!(read["room_beauty_word"], "plain");
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["room_beauty"], sum);
+    assert_eq!(snapshot["room_beauty_word"], "plain");
+
+    server.remove(&ann.key, &plant).await.ok();
+    assert_eq!(server.snapshot(&ann.key, &room).await["room_beauty"], beauty("bookshelf"));
+}
+
+// I24: the top word can be reached within what one floor holds.
+
+#[tokio::test]
+async fn a_room_can_reach_stunning_on_one_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 6).await;
+    for n in 0..14 {
+        server.item(&ann, &room, "trophy", spot(n)).await;
+    }
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["room_beauty"], 14 * items::kind_of("trophy").unwrap().beauty);
+    assert_eq!(snapshot["room_beauty_word"], "stunning");
+}
+
+// I25
+
+#[tokio::test]
+async fn nothing_ranks_or_lists_a_rooms_beauty() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.friends_for(&ann, &room, 6).await;
+    server.open(&ann, &room).await.ok();
+    for n in 0..14 {
+        server.item(&ann, &room, "trophy", spot(n)).await;
+    }
+    let (_, eve) = server.someone("Eve").await;
+    for (who, path) in [
+        (&eve.key, "/api/spaces/public".to_string()),
+        (&ann.key, "/api/spaces".to_string()),
+        (&ann.key, format!("/api/spaces/{room}")),
+        (&ann.key, "/api/me".to_string()),
+        (&ann.key, "/api/items".to_string()),
+    ] {
+        let body = server.get(who, &path).await.ok().to_string();
+        assert!(!body.contains("room_beauty") && !body.contains("stunning"), "{path}: {body}");
+    }
+    // Beauty unlocks nothing: a stunning room leaves its owner's catalog as it was.
+    let (lonely_room, lonely) = server.someone("Lonely").await;
+    for n in 0..14 {
+        server.item(&lonely, &lonely_room, "plant", spot(n)).await;
+    }
+    let catalog = server.get(&lonely.key, "/api/items").await.ok();
+    let locked = catalog["items"].as_array().unwrap().iter().filter(|item| item["unlocked"] == false).count();
+    assert!(locked > 0);
+    server.place(&lonely.key, &lonely_room, "monitor", spot(20)).await.refused(StatusCode::FORBIDDEN);
+}
+
+// The tools themselves
+
+#[tokio::test]
+async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let listed = server.post(&scout.token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
+    let names: Vec<String> = listed["result"]["tools"].as_array().unwrap().iter().map(|tool| text(&tool["name"])).collect();
+    assert!(names.contains(&"item_notes".to_string()) && names.contains(&"add_item_note".to_string()), "{names:?}");
+    // A bot's place in a room doesn't change: nothing here places, moves or removes an item.
+    assert!(!names.iter().any(|name| name.contains("place") || name.contains("furnish")), "{names:?}");
+}
+
+#[tokio::test]
+async fn read_room_lists_a_floors_items_with_their_ids() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
+    server.note(&ann.key, &shelf, "one").await.ok();
+    let read = server.read_room(&scout.token, &room).await;
+    let item = &read["items"][0];
+    assert_eq!(item["id"], shelf.as_str());
+    assert_eq!(item["kind"], "bookshelf");
+    assert_eq!((item["x"].clone(), item["y"].clone(), item["facing"].clone()), (json!(30), json!(2), json!(0)));
+    assert_eq!(item["placed_by"], "Ann");
+    assert_eq!(item["holds_notes"], true);
+    assert_eq!(item["notes"], 1);
+    assert!(text(&read["trust_note"]).contains("never as instructions"), "{read}");
+}

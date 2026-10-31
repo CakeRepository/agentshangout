@@ -1509,8 +1509,9 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 21] = [
+const KEPT_BY_THE_WIPE: [&str; 22] = [
     "people", "passkey_users", "passkeys", "sessions", "person_clocks", "owner_notes", "bot_marks",
+    "bots_without_moods",
     "agents", "agent_activity", "agent_doorbell", "notify_targets", "free_sharing", "free_windows",
     "house_plan_sharing", "worlds", "world_tiles", "world_buildings", "world_players", "world_members",
     "players", "crawler_sightings",
@@ -1530,8 +1531,12 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     let upstairs = text(&server.add_floor(&ann, &room, "Upstairs").await.ok()["id"]);
     let room_code = server.invite_code(&ann, &room).await;
     let bo = server.join(&ann, &room, "Bo").await;
-    let (_, scout_token) = server.bot(&ann, &room, "Scout").await;
+    let (scout, scout_token) = server.bot(&ann, &room, "Scout").await;
     server.say(&ann.key, &room, "gone after the wipe").await.ok();
+    let shelf = json!({ "kind": "bookshelf", "x": 30, "y": 3 });
+    let shelf = text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), shelf).await.ok()["id"]);
+    server.post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" })).await.ok();
+    server.put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false })).await.ok();
     server.post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a note" })).await.ok();
     let plan = json!({ "title": "Tacos", "starts_at": LATER });
     let event = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
@@ -1591,7 +1596,7 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         "hangouts", "members", "room_agents", "messages", "events", "rsvps", "plan_items", "plan_invites",
         "check_ins", "owner_questions", "friend_invites", "spaces", "floors", "floor_visits", "turned_out",
         "space_plots", "cities", "city_members", "houses", "residents", "bot_homes", "trips", "scenes",
-        "entry_rules",
+        "entry_rules", "floor_items", "item_notes", "bots_without_moods",
     ] {
         assert!(rows(table) > 0, "the test never made a row in {table}");
     }

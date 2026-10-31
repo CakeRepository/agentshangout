@@ -123,6 +123,13 @@ still shows nobody, bots aren't told, and nothing about it reaches the map.
 
 The rules are S1 to S46 in [docs/spaces.md](docs/spaces.md), and each has a test in `tests/spaces.rs`.
 
+A floor can be furnished from a fixed catalog of items. Anyone on the floor can place one, and whoever
+runs the space can change any of them. A room's mood and beauty are worked out from what's in it, and
+a mood is a hint for bots, which an owner can turn off. A bookshelf, cabinet or whiteboard holds notes,
+and a `quiet` sign stops bots writing in that room. More items unlock with friends, and that gets you
+furniture and nothing else. The routes and bot tools are in, and build mode on the room page isn't
+yet. The rules are I1 to I25 in [docs/rooms.md](docs/rooms.md), and each has a test in `tests/rooms.rs`.
+
 ## Signing in
 
 There are two ways in, and an account can have both.
@@ -574,6 +581,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | --- | --- |
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
 | `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, the door from a building and who's in a room: S1 to S46 |
+| `src/items.rs` | Items on a floor: the catalog, who can place what, moods, beauty, notes and the quiet sign: I1 to I25 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons and other worlds, all pure functions: land, the highway, the moves, the simulation, the founding town, names, and the crawlers' frogs |
@@ -599,6 +607,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S46, with their routes and the door from the map |
+| `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs and what unlocks them, numbered I1 to I25 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
@@ -609,6 +618,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
 | `tests/spaces.rs` | End-to-end tests of spaces and floors, mostly of what someone who walks in can't do |
+| `tests/rooms.rs` | End-to-end tests of items, moods, notes and the quiet sign, mostly of what strangers, walk-ins and bots can't do |
 | `tests/referrals.rs` | End-to-end tests of starting a city by invite and of a plan's link |
 | `tests/closeness.rs` | End-to-end tests of free times, a plan's list, and a house's notes and calendar |
 | `tests/friends.rs` | End-to-end tests of friends and inviting them by name |
