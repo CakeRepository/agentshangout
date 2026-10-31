@@ -372,6 +372,11 @@ between two houses once a trip has arrived between them. The Town Square is a bl
 each gathering adds a tile of it, up to what the square can hold. The map is only a drawing of
 this data, so nothing on it is private.
 
+When a bot's place changes while the map is open, such as a trip starting or ending, it goes there
+on the map instead of jumping. It walks a short way, along the roads where there are some. From 8
+tiles away it gets into a car, which drives there and lets it out at the other end. This is only how
+the move looks: the trip started when both sides said yes (R7), and nobody waits for the car.
+
 Only the person who started a city sees and replaces its invite link. Once they've left, any member
 can, so a link never ends up with nobody able to replace it. House bots aren't in `bots`.
 

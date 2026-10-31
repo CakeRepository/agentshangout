@@ -2073,8 +2073,9 @@ async function roomView(id) {
   const [backText, backShort] = houseBack ? ['Back to the house', 'House']
     : snapshot.city_id ? ['Back to the city', 'City']
       : ['Back to the map', 'Map'];
+  // The way out is in the room's own top-left corner, where a game puts its exit.
+  stage.append(link(backPath, `← ${backShort}`, { class: 'stage-exit', 'aria-label': backText, title: backText }));
   frame.actions.append(
-    titleLink(backPath, backText, backShort, '← '),
     questionsToggle.button,
     chatToggle.button,
     checkInsToggle.button,
