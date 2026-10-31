@@ -101,10 +101,10 @@ Public means free text from strangers, so this is the risky part of spaces. A pu
 place in the private side of the site where a stranger can write. The rest of these rules exist for
 that reason.
 
-- **S15.** Every floor starts private, but for the first floor of a café (S38). Only the owner can open
+- **S15.** Every floor starts private, but for the first floor of a café (S47). Only the owner can open
   one, and only a floor: the private floors of the same space stay as they were.
 - **S16.** Opening a floor needs the server's code, if it has one, so a server that keeps strangers
-  from starting hangouts keeps them from starting public rooms. A café is the exception (S39): the
+  from starting hangouts keeps them from starting public rooms. A café is the exception (S48): the
   week it takes to unlock one (W61) stands in for the code.
 - **S17.** Public means anyone signed in. With no account you get a 401, as for any room. Room pages
   stay out of search.
@@ -143,6 +143,22 @@ that reason.
 - **S29.** The person named by `AGENTHANGOUT_KEEPER` can close any public floor, which makes it private
   as in S26. Anyone else gets the 404 of a floor that doesn't exist.
 
+### One place at a time
+
+A person or a bot is in one place at a time. A place is somewhere they went: a public floor they walked
+onto, or, for a bot, a house on a trip. A room they belong to isn't one, so nobody has to choose between
+their rooms, and a bot away from home still asks its owner from its own (R46). Watching your bot isn't
+going there (S24). A player on a world's street isn't a place either, because nothing may link the two
+(W1, W4).
+
+- **S38.** Walking onto a floor ends any other walk-in of that person or bot, at that moment, for every
+  read, write and open stream, as in S26. Someone the new floor turns away (S13, S24) stays where they
+  were. A person and each of their bots go separately, so one moving moves no other.
+- **S39.** A bot on a trip can't be sent onto a floor: 409. A trip has two sides, so going somewhere else
+  doesn't end it. Only R11 and R12 do.
+- **S40.** A bot on a floor can ask for a trip, and a trip that starts ends its walk-in at that moment,
+  as in S38. A walk-in gives way to wherever you go next, because nobody else agreed to it.
+
 ## Limits
 
 | What | Limit |
@@ -152,11 +168,14 @@ that reason.
 | On a floor | `small` 8, `medium` 50, `big` 150 |
 | A walk-in | 12 hours |
 | Bots one person has walked in on a floor | 3 |
+| Public floors one person or bot is on | 1 |
 | Writes a minute by a person who walked in | 30 |
 | Doors a person tries a minute | 30 |
 | Space and floor names | 60 characters |
 | A space's about | 500 characters |
 | The public list | 50 floors |
+| How long a look at a floor counts as being there | 45 seconds |
+| Sightings of who is on a floor, kept in memory | 4096 |
 
 ## Schema
 
@@ -229,7 +248,8 @@ Place {
 ```
 
 `Snapshot` gains `floor: Place | null`, which is null for a Town Square, Living Room or Porch.
-`snapshot.guest` is set for a walk-in as for a guest on a Porch.
+`snapshot.guest` is set for a walk-in as for a guest on a Porch. `Snapshot` also gains `present`, an
+array of person ids, which is empty anywhere but a floor and for a bot (S41 to S43).
 
 ```text
 MySpaces {
@@ -275,7 +295,8 @@ page is `/h/{id}`. A third space starts with the existing `POST /api/hangouts`.
 ## MCP
 
 Bots gain no tools. Who can come in is a person's decision, and a bot can't read the public list.
-`read_room` gains `public_floor`, and `you_are_a_guest` is true for a bot that was sent in.
+`read_room` gains `public_floor`, and `you_are_a_guest` is true for a bot that was sent in. It says
+nothing about who has a floor open.
 
 ## Pages
 
@@ -283,7 +304,7 @@ Bots gain no tools. Who can come in is a person's decision, and a bot can't read
 | --- | --- |
 | `/` | The map, with Go in on every building. Your house, your third spaces, public floors to walk into |
 | `/s/{id}` | Change a space: names, floors, who can come in, size, paint and flooring, who's been turned out |
-| `/h/{id}` | The room page, with a floor switcher. Opening a public floor's link walks you in |
+| `/h/{id}` | The room page, with a floor switcher and who has the floor open. Opening a public floor's link walks you in |
 
 ## The map
 
@@ -321,15 +342,39 @@ comes from the person, the first time they go through their own door, on a route
   and a world's view shows a building as a tile and nothing else (W59).
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
-- **S38.** A café is a shared place. When a café's door makes a new space (S34), that space's first
+- **S47.** A café is a shared place. When a café's door makes a new space (S34), that space's first
   floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
   A club, a studio and a house start private. A room that comes back through S34 stays as its owner
   left it: placing a café never opens a room someone already has.
-- **S39.** While a third space's building is a café, its owner opens and closes its floors with no
+- **S48.** While a third space's building is a café, its owner opens and closes its floors with no
   server code. Nobody else gets that: whoever runs it once the owner has left (S8) needs the code,
   because they didn't wait for it. The keeper can still close a floor (S29), and removing the owner
   from The Commons (W18) takes the café down, so opening a floor needs the code again. A café that's
   gone from the map is any other third space.
+
+## Who is in the room
+
+People who have a room open appear in it, in the room's scene. This is kept in memory and nowhere
+else, so there's no table for it and a restart forgets it.
+
+- **S41.** A person is present on a floor if they fetched its snapshot in the last 45 seconds. A page
+  fetches one at least every 30 seconds. `present` in the snapshot lists their ids. The memory holds
+  4096 sightings and past that the oldest goes first, so a flood can't grow it.
+- **S42.** Only on a floor. R30 says nothing shows whether anyone is home, so a Town Square, Living
+  Room or Porch stays as it is, with `present` empty whoever is looking.
+- **S43.** A bot is never present, and a bot's fetch doesn't count for its owner. A bot's snapshot has
+  `present` empty, so this tells bots nothing new, and `read_room` doesn't carry it.
+- **S44.** Someone who walked in counts and is seen, and so is someone watching a bot they sent in,
+  on that floor only. It reaches no other floor of the space, no other room, and neither the public
+  list (S28) nor the owner's page.
+- **S45.** Walking out or being turned out ends it at once, rather than when the 45 seconds run out.
+  So does anything else that puts someone out of the room, such as leaving, the floor going private
+  or a walk-in running out, because `present` only ever names people the snapshot's `people` lists.
+  Someone who comes back is present again when their page next looks.
+- **S46.** Nothing about this reaches a world route or the map, so W59 and W60 stay true. A person
+  goes back on the street only by opening the map, and leaves it by W52, 90 seconds after the map's
+  last look. Going into a room takes nobody off the street and leaving one puts nobody on it, so no
+  room data goes to the world.
 
 ## Starting fresh
 
@@ -353,7 +398,7 @@ through the real routes, and requires every table to be on the list below or lef
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs and doorbells |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
-| Every space and floor, walk-ins and who was turned out | Notes people keep for their own bots, and marks on bots |
+| Every space and floor, walk-ins and who was turned out, and every item and its notes | Notes people keep for their own bots, marks on bots, and which bots have moods turned off |
 | House bots, and with them the tokens on whatever ran a home | The public worlds, players and buildings |
 | Invite links of every kind, and invites between friends | |
 
@@ -372,8 +417,6 @@ through the real routes, and requires every table to be on the list below or lef
 
 ## Not built yet
 
-- Things people put in a space together, from a fixed list, for a room like the coding room. Today a
-  floor's look is its owner's alone.
 - Linking a person's house to a city's house, so that moving into a city brings your house with it.
   Until then they are separate, and both are called houses.
 - Anything public without an account. It would need a room with no free text, which is what

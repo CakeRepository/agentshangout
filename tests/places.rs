@@ -1,6 +1,6 @@
 //! Tests for what the map is since zones went: places you can go into, which come with time, the
 //! worlds that froze, and the end of the old city. They are written from the rules in
-//! docs/public-city.md (W13, W20 to W28, W46 to W49, W61 to W70) and docs/spaces.md (S38, S39). A
+//! docs/public-city.md (W13, W20 to W28, W46 to W49, W61 to W70) and docs/spaces.md (S47, S48). A
 //! comment such as `// W61` above a test names the rule it covers.
 //!
 //! The clock on a place is real seconds, so a test that looks days ahead calls `worlds::act` with a
@@ -519,7 +519,7 @@ async fn a_person_is_told_when_each_place_comes_and_a_bot_is_told_nothing() {
     assert!(server.me(&guest).await["places"].is_null());
 }
 
-// W63, S38
+// W63, S47
 #[tokio::test]
 async fn a_cafe_is_shared_and_everything_else_is_private_unless_you_are_invited() {
     let server = Server::start().await;
@@ -546,7 +546,7 @@ async fn a_cafe_is_shared_and_everything_else_is_private_unless_you_are_invited(
     assert!(!view.contains("access") && !view.contains("private"), "{view}");
 }
 
-// W63, S38: a café that goes up with no one through its door yet is shut, like any building.
+// W63, S47: a café that goes up with no one through its door yet is shut, like any building.
 #[tokio::test]
 async fn a_cafe_is_shut_until_its_owner_has_been_through_its_door() {
     let server = Server::start().await;
@@ -557,7 +557,7 @@ async fn a_cafe_is_shut_until_its_owner_has_been_through_its_door() {
     server.go_in(&stranger.key, cafe).await.refused(StatusCode::NOT_FOUND);
 }
 
-// S38
+// S47
 #[tokio::test]
 async fn placing_a_cafe_never_opens_a_room_someone_already_has() {
     let server = Server::start().await;
@@ -578,7 +578,7 @@ async fn placing_a_cafe_never_opens_a_room_someone_already_has() {
     assert_eq!(floor["floor"]["floor"]["access"], "private", "{floor}");
 }
 
-// S39
+// S48
 #[tokio::test]
 async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_gets_that() {
     let server = Server::start().await;
@@ -608,7 +608,7 @@ async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_g
     server.put(&ann.key, &path, json!({ "access": "public", "create_code": CODE })).await.ok();
 }
 
-// S39, S8: whoever runs a cafe after its owner has left isn't the person who waited for it.
+// S48, S8: whoever runs a cafe after its owner has left isn't the person who waited for it.
 #[tokio::test]
 async fn only_the_owner_of_a_cafe_opens_it_with_no_code() {
     let server = Server::start().await;

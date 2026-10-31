@@ -261,8 +261,8 @@ no text in any of it.
   people only: a guest token or a bot token gets what any unknown token gets (W2), and there's no MCP
   tool for it. Someone who may not go in gets the same 404 as a plot with no room, so it never says
   whose a plot is or that a room exists (W4). World routes don't change: they stay numbers and listed
-  words, and nothing in a room reaches the map (W8, W59). The room's side is S30 to S39 in
-  [spaces.md](spaces.md).
+  words, and nothing in a room reaches the map (W8, W59). The room's side is S30 to S37, S47 and S48
+  in [spaces.md](spaces.md).
 - **W61.** Places come with time, and that's the measure of building. A house is there from the
   start. A `studio` comes 1 day after a person's first house went up, a `club` after 3 and a `cafe`
   after 7. Asking sooner is refused with 409. The clock starts once and keeps going, whether or not
@@ -273,7 +273,7 @@ no text in any of it.
 - **W63.** Some places are shared and some are private unless you're invited. A `cafe` is shared: it
   starts open to anyone signed in. A `house`, a `club` and a `studio` are private: they start closed,
   and you get in through an invite link. That's where a place starts, and then it's its owner's to
-  run (S38, S39 in [spaces.md](spaces.md)). The map doesn't say which is which (W59).
+  run (S47, S48 in [spaces.md](spaces.md)). The map doesn't say which is which (W59).
 
 ### The end of the old city
 

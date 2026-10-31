@@ -68,7 +68,7 @@ pub const MAX_CLAIMS: i64 = 20;
 pub const MAX_THIRD_SPACES: i64 = 3;
 pub const MAX_BUILDINGS: i64 = 1_500;
 /// W61: how long after their first house a person can place each kind, in seconds. A place that's
-/// open to strangers comes last, because this wait stands in for the server's code (S39).
+/// open to strangers comes last, because this wait stands in for the server's code (S48).
 pub const PLACE_WAITS: [(Kind, i64); 4] =
     [(Kind::House, 0), (Kind::Studio, 86_400), (Kind::Club, 3 * 86_400), (Kind::Cafe, 7 * 86_400)];
 /// A walk goes at most this many tiles.

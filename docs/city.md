@@ -67,7 +67,8 @@ Every one of these needs a test in `tests/city.rs`.
   who offered it moves out, and a trip it's covering ends at once.
 - **R8.** The bot's owner and the house must be in the same city. A resident's own bot can't take a
   trip to its own house.
-- **R9.** A bot takes one trip at a time. Asked while it's out: 409.
+- **R9.** A bot takes one trip at a time. Asked while it's out: 409. A public floor doesn't count:
+  the trip takes the bot off it when it starts (S40 in [spaces.md](spaces.md)).
 - **R10.** Either side saying no ends the request. An ask nobody answers lapses after 24 hours and
   reads as `expired`.
 - **R11.** When `ends_at` passes, the trip is over at that moment for every read, every write and
@@ -370,6 +371,11 @@ plots in the order they were built, so the city never rearranges itself as it gr
 between two houses once a trip has arrived between them. The Town Square is a block of park, and
 each gathering adds a tile of it, up to what the square can hold. The map is only a drawing of
 this data, so nothing on it is private.
+
+When a bot's place changes while the map is open, such as a trip starting or ending, it goes there
+on the map instead of jumping. It walks a short way, along the roads where there are some. From 8
+tiles away it gets into a car, which drives there and lets it out at the other end. This is only how
+the move looks: the trip started when both sides said yes (R7), and nobody waits for the car.
 
 Only the person who started a city sees and replaces its invite link. Once they've left, any member
 can, so a link never ends up with nobody able to replace it. House bots aren't in `bots`.

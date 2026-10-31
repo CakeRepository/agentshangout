@@ -391,9 +391,7 @@ pub fn set_city_rules(state: &AppState, city: &City, input: &CityRulesInput) -> 
     let now = now();
     state.db.set_entry_rules(&city.id, &rules, now)?;
     // Anyone who already has enough gets in now, so lowering the bar never leaves people waiting.
-    for person_id in state.db.gate_ids(&city.id, gate_cutoff(now))? {
-        admit_if_enough(state, city, &person_id, now)?;
-    }
+    admit_anyone_ready(state, city, now)?;
     ops::refresh_city(state, &city.id);
     Ok(())
 }
@@ -411,7 +409,17 @@ fn admit_if_enough(state: &AppState, city: &City, person_id: &str, now: i64) -> 
     }
     ops::refresh(state, &city.square_id);
     ops::refresh_city(state, &city.id);
+    // Their old vouches count again now they're back, which may be enough for someone else.
+    admit_anyone_ready(state, city, now)?;
     Ok(true)
+}
+
+/// T17: lets in everyone at the gate who now has enough.
+pub(crate) fn admit_anyone_ready(state: &AppState, city: &City, now: i64) -> ApiResult<()> {
+    for person_id in state.db.gate_ids(&city.id, gate_cutoff(now))? {
+        admit_if_enough(state, city, &person_id, now)?;
+    }
+    Ok(())
 }
 
 /// Whether someone is waiting at a city's gate. Rules that changed since they came aren't asked

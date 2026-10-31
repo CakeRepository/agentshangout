@@ -8,7 +8,7 @@ use crate::{
     city,
     db::{Event, House, HouseNote, HousePlan, NewHouseNote, NewPlanItem, NoteWrite, Person, PlanItem},
     error::{ApiError, ApiResult},
-    now,
+    items, now,
     ops::{self, iso},
     worlds::Limiter,
     AppState,
@@ -362,6 +362,8 @@ pub fn items_for_room(state: &AppState, caller: &Caller, events: &[Event]) -> Ap
 /// F37
 pub fn add_item(state: &AppState, caller: &Caller, event_id: &str, text: &str) -> ApiResult<PlanItem> {
     let event = plan_you_are_going_to(state, caller, event_id)?;
+    // I17: a list is words for the room, even if it adds no line to chat.
+    items::no_quiet(state, caller, &event.hangout_id)?;
     let text = ops::clean(text, "item", MAX_ITEM_CHARS)?;
     ops::note_agent_write(state, caller)?;
     let id = auth::new_id();

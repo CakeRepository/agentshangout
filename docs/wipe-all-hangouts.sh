@@ -14,6 +14,7 @@ what_goes() {
     echo "Rooms and floors:         $(number 'SELECT COUNT(*) FROM hangouts;')"
     echo "Lines of chat and notes:  $(number 'SELECT COUNT(*) FROM messages;')"
     echo "Plans:                    $(number 'SELECT COUNT(*) FROM events;')"
+    echo "Items on floors:          $(number 'SELECT COUNT(*) FROM floor_items;')"
     echo "Check-ins:                $(number 'SELECT COUNT(*) FROM check_ins;')"
     echo "Cities:                   $(number 'SELECT COUNT(*) FROM cities;')"
     echo "Houses in cities:         $(number 'SELECT COUNT(*) FROM houses;')"
@@ -59,7 +60,8 @@ DELETE FROM agents WHERE id IN (SELECT agent_id FROM bot_homes WHERE is_house = 
 -- who lives there, bots' homes, trips, passes, scenes, house notes, vouches and the gate.
 DELETE FROM cities;
 -- This takes everything in a room: members, bots' places, chat, notes, plans and their answers,
--- lists and links, check-ins and questions for owners, and the spaces and floors that were these.
+-- lists and links, check-ins and questions for owners, the spaces and floors that were these, and
+-- the items on those floors with their notes.
 DELETE FROM hangouts;
 -- These name a place with no foreign key, so nothing above took them.
 DELETE FROM entry_rules;

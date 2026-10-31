@@ -3175,7 +3175,7 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
     for (who, body) in &views {
         // The city also shows what it asks of newcomers, and for people (not their bots) who is
         // waiting at its gate (T16).
-        let mut top_level = vec!["bots", "city", "growth", "houses", "people", "rules", "you"];
+        let mut top_level = vec!["bots", "city", "growth", "houses", "people", "rules", "you", "your_passes"];
         if !who.ends_with(" bot") {
             top_level.insert(2, "gate");
         }
@@ -3200,6 +3200,14 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
             );
         }
         assert!(!body["bots"].as_array().unwrap().is_empty());
+        // H21: Scout's pass is shown to Scout and its owner, Bo, and to nobody else. Set it aside and
+        // scan the rest.
+        let passes: Vec<&str> = body["your_passes"].as_array().unwrap().iter().map(|pass| pass["id"].as_str().unwrap()).collect();
+        let own = matches!(*who, "another member" | "a guest bot");
+        assert_eq!(passes, if own { vec![set.pass.as_str()] } else { vec![] }, "{who}");
+        let mut body = body.clone();
+        body.as_object_mut().unwrap().remove("your_passes");
+        let body = &body;
         for secret in &secrets {
             assert!(!has(body, secret), "the city page shows {secret} to {who}: {body}");
         }
@@ -3633,7 +3641,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
         "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
         "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "friend_invite_ends", "place_clocks", "world_ends",
+        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "floor_items", "item_notes", "bots_without_moods", "friend_invite_ends", "place_clocks", "world_ends",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -3650,7 +3658,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["world_ends", "place_clocks", "friend_invite_ends", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
+        for table in ["world_ends", "place_clocks", "friend_invite_ends", "bots_without_moods", "item_notes", "floor_items", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection

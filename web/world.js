@@ -3513,6 +3513,26 @@ function carSprite(heading, colorIdx) {
   });
 }
 
+// Which way a car points for each way a figure can face (see carPosition's headings).
+const FACE_HEADING = { fr: 0, fl: 1, bl: 2, br: 3 };
+
+// A way from one tile to another along one side and then the other, for a car with no route.
+// Returns the tiles after the start, like findPath.
+function lPath(sx, sy, tx, ty) {
+  const tiles = [];
+  let x = sx;
+  let y = sy;
+  while (x !== tx) {
+    x += Math.sign(tx - x);
+    tiles.push([x, y]);
+  }
+  while (y !== ty) {
+    y += Math.sign(ty - y);
+    tiles.push([x, y]);
+  }
+  return tiles;
+}
+
 function drawCar(bg, car, night) {
   const X = car.dx;
   const Y = car.dy;
@@ -3829,6 +3849,11 @@ const BUILD_TIME = 0.8;
 const MAX_ANIMS = 60;
 const MAX_PLAYERS = 400;
 const MAX_CARS = 56;
+// A figure going this many tiles or more takes a car instead of walking. A ride is only how the move
+// looks: the server has already put them where they're going.
+const DRIVE_TILES = 8;
+// How much faster a ride is than the figure's own walk.
+const DRIVE_FACTOR = 3;
 
 const screenOf = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
@@ -4722,17 +4747,16 @@ export class World {
       p.path.length = 0;
       return;
     }
-    const route = this.findPath(sx, sy, x, y);
+    const far = Math.abs(sx - x) + Math.abs(sy - y) >= DRIVE_TILES;
+    const route = this.findPath(sx, sy, x, y)
+      // With no way through, a car still gets there: along one side, then the other.
+      || (far ? lPath(sx, sy, x, y) : null);
     if (route) {
       p.path = route.map(([tx, ty]) => [tx + 0.5 + p.ox, ty + 0.5 + p.oy]);
-    } else if (Math.abs(sx - x) + Math.abs(sy - y) < 14) {
-      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy]];
+      p.ride = far && route.length >= DRIVE_TILES ? { color: ih(p.h, 4, 9) % 8 } : null;
     } else {
-      this.sparkle(p.px, p.py, 6);
-      p.px = x + 0.5 + p.ox;
-      p.py = y + 0.5 + p.oy;
-      p.path.length = 0;
-      this.sparkle(p.px, p.py, 6);
+      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy]];
+      p.ride = null;
     }
   }
 
@@ -5435,7 +5459,7 @@ export class World {
           continue;
         }
         if (p.path.length) {
-          let budget = p.speed * dt;
+          let budget = p.speed * (p.ride ? DRIVE_FACTOR : 1) * dt;
           while (budget > 0 && p.path.length) {
             const [tx, ty] = p.path[0];
             const dx = tx - p.px;
@@ -5456,7 +5480,12 @@ export class World {
               budget = 0;
             }
           }
-          p.walking = true;
+          p.walking = !p.ride;
+          // Out of the car at the end of the road, in a little dust.
+          if (p.ride && !p.path.length) {
+            p.ride = null;
+            this.sparkle(p.px, p.py, 4);
+          }
         } else {
           p.walking = false;
           // People and visitors potter about a little near where they were seen, then drift back.
@@ -5961,7 +5990,10 @@ export class World {
         case 'player':
         case 'person':
         case 'visitor':
-          r4 = drawPlayer(bg, e, t, this.time, this.hoverEnt === e, this.calm);
+          // Someone on a ride is drawn as their car, facing the way they're going.
+          r4 = e.ride
+            ? drawCar(bg, { dx: e.dx, dy: e.dy, heading: FACE_HEADING[e.face] ?? 0, color: e.ride.color }, night)
+            : drawPlayer(bg, e, t, this.time, this.hoverEnt === e, this.calm);
           break;
         case 'frog':
           r4 = drawFrog(bg, e, t, this.time, this.hoverEnt === e, this.calm);
