@@ -481,7 +481,7 @@ fn founding() -> (world::Tiles, world::Stats) {
     (tiles, stats)
 }
 
-/// Fills in homes until The Commons is a town, which is when the founders' crew stops (W46).
+/// Fills in homes until The Commons is a town.
 fn make_a_town(server: &Server) {
     worlds::ensure_commons(&server.state).unwrap();
     let homes: Vec<Change> = (47..=49u16)

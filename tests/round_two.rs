@@ -1,7 +1,7 @@
 //! Round two of the security loop for the public worlds (docs/public-city.md, W1 to W51) and what
 //! they touch. Round one (`worlds_attack.rs`) found real bugs and they were fixed; this round looks
 //! for what is still wrong, and above all for what the fixes brought in: side streets (W15), the
-//! road-cut check (W17), the founding town and its crew (W28, W46), tips (W47), the address limits
+//! road-cut check (W17), the founding town (W28, W46), tips (W47), the address limits
 //! (W12), and a database that was made by the code that is live today.
 //!
 //! A comment such as `// W17` above a test names the rule it attacks. A test that fails is a bug in
@@ -494,7 +494,7 @@ fn land_of(server: &Server, world: &str) -> world::Land {
     world::terrain(row.seed, row.size)
 }
 
-/// Fills in homes until The Commons is a town, which is when the founders' crew stops (W46).
+/// Fills in homes until The Commons is a town.
 fn make_a_town(server: &Server) {
     worlds::ensure_commons(&server.state).unwrap();
     let homes: Vec<Change> = (47..=49u16)
