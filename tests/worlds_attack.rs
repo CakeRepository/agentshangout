@@ -493,7 +493,7 @@ impl Map {
     }
 }
 
-/// Fills in homes until The Commons is a town, which is when the founders' crew stops (W46).
+/// Fills in homes until The Commons is a town.
 fn make_a_town(server: &Server) {
     worlds::ensure_commons(&server.state).unwrap();
     let homes: Vec<Change> = (47..=49u16)
@@ -2128,7 +2128,10 @@ async fn one_address_hammering_join_cannot_use_up_the_servers_new_guests_for_eve
             others += 1;
         }
     }
-    assert_eq!(others, 60, "{others} other addresses got in");
+    // Addresses share a fixed number of counters, so one of these can land on the flooded
+    // address's counter and be refused early, about one time in 4,096. The limiter says so. What
+    // this guards is the server's own allowance, and a flood that used it up would stop them all.
+    assert!(others >= 59, "{others} other addresses got in");
 }
 
 // W12, W30

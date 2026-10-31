@@ -37,6 +37,7 @@ pub const PARK_COST: u32 = 2;
 pub const BULLDOZE_COST: u32 = 1;
 pub const WALK_COST: u32 = 1;
 pub const EMOTE_COST: u32 = 1;
+pub const PLACE_COST: u32 = 1;
 
 /// A zone grows only within this many tiles of a road joined to the highway.
 const ROAD_REACH: usize = 3;
@@ -833,6 +834,10 @@ pub enum Kind {
     Workshops,
     Park,
     Cleared,
+    House,
+    Cafe,
+    Club,
+    Studio,
 }
 
 impl Kind {
@@ -844,6 +849,10 @@ impl Kind {
             Kind::Workshops => "workshops",
             Kind::Park => "park",
             Kind::Cleared => "cleared",
+            Kind::House => "house",
+            Kind::Cafe => "cafe",
+            Kind::Club => "club",
+            Kind::Studio => "studio",
         }
     }
 
@@ -855,9 +864,18 @@ impl Kind {
             Kind::Workshops,
             Kind::Park,
             Kind::Cleared,
+            Kind::House,
+            Kind::Cafe,
+            Kind::Club,
+            Kind::Studio,
         ]
         .into_iter()
         .find(|kind| kind.as_str() == word)
+    }
+
+    /// W54: what a person places by hand. It holds its tile and adds nothing to the simulation.
+    pub fn is_building(self) -> bool {
+        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio)
     }
 
     pub fn is_zone(self) -> bool {
@@ -1166,6 +1184,35 @@ pub fn plan_park(land: &Land, tiles: &Tiles, player: u64, x: i64, y: i64) -> Pla
     }
 }
 
+/// W55: one building on open land with a road beside it. `tiles` must reach 3 tiles past it, as for
+/// a zone, for the roads that keep a side street (W15).
+pub fn plan_place(land: &Land, tiles: &Tiles, player: u64, kind: Kind, x: i64, y: i64) -> Planned {
+    if !kind.is_building() {
+        return Err("a building is a house, cafe, club or studio");
+    }
+    let pos = land.locate(x, y).ok_or(OFF_MAP)?;
+    let (px, py) = pos;
+    let beside_road = [(px.wrapping_sub(1), py), (px + 1, py), (px, py.wrapping_sub(1)), (px, py + 1)]
+        .iter()
+        .any(|at| tiles.get(at).is_some_and(|tile| tile.kind == Kind::Road));
+    match spot(land, tiles, pos) {
+        Spot::Free if is_reserved(tiles, pos) => Err(KEPT),
+        Spot::Free if !beside_road => Err("a building needs a road beside it"),
+        Spot::Free => Ok(laid(
+            vec![pos],
+            0,
+            Tile {
+                kind,
+                level: 0,
+                player: Some(player),
+            },
+            PLACE_COST,
+        )),
+        Spot::Road | Spot::Built => Err("that tile is already built on"),
+        Spot::Blocked(why) => Err(why),
+    }
+}
+
 /// W17: one tile, and only what you built. Anything else needs its builder gone for 7 days (the
 /// caller says who is, by `gone`) and the tile at level 0. The highway has no builder, so it is
 /// never bulldozed. A road comes down only if no grown building depends on it, so `tiles` must be
@@ -1221,7 +1268,8 @@ pub fn plan_bulldoze_tile(
         return Err("that forest is already cleared");
     }
     let mine = tile.player == Some(player);
-    let abandoned = tile.level == 0 && tile.player.is_some_and(gone);
+    // W57: a building stays on the map however long its owner is away.
+    let abandoned = tile.level == 0 && !tile.kind.is_building() && tile.player.is_some_and(gone);
     if !mine && !abandoned {
         return Err("you can only bulldoze what you built");
     }
@@ -1246,7 +1294,7 @@ fn strands_a_building(tiles: &Tiles, road: Pos) -> bool {
     after.cells[usize::from(road.1) * after.size + usize::from(road.0)] = None;
     let (served, still) = (served_zones(&before), served_zones(&after));
     before.cells.iter().enumerate().any(|(index, cell)| {
-        let grown = matches!(cell, Some(tile) if tile.kind.is_zone() && tile.level > 0);
+        let grown = matches!(cell, Some(tile) if tile.kind.is_building() || (tile.kind.is_zone() && tile.level > 0));
         grown && served[index] && !still[index]
     })
 }
@@ -1291,6 +1339,8 @@ fn tally<'a>(tiles: impl Iterator<Item = &'a Tile>) -> Tally {
             }
             Kind::Park => sum.counts.parks += 1,
             Kind::Cleared => sum.counts.cleared += 1,
+            // W58: a building has nobody living or working in it, as the game counts them.
+            Kind::House | Kind::Cafe | Kind::Club | Kind::Studio => {}
         }
     }
     sum
@@ -1316,7 +1366,7 @@ pub struct Stats {
     pub counts: Counts,
 }
 
-/// W23: hamlet, village from 50 people, town from 300, city from 1,500.
+/// W23: hamlet, village from 50 people, town from 600, city from 3,000.
 pub fn stage_for(population: u32) -> &'static str {
     match population {
         CITY_AT.. => "city",
@@ -1636,7 +1686,7 @@ fn joined_roads(grid: &Grid) -> Vec<bool> {
 /// position. Nothing else is random.
 const ODDS_SCALE: u64 = 1024;
 /// The odds a zone at level 0, 1 and 2 grows a level this step, out of 1,024, with no park or smoke
-/// about. The first level comes in a few minutes; the next two take about an hour and several.
+/// about. The first level comes in a few minutes; the next two take about 40 minutes and 3 hours.
 const LEVEL_ODDS: [u32; 3] = [512, 24, 6];
 /// The odds a zone with no joined road within reach loses a level this step, out of 1,024.
 const DECAY_ODDS: u32 = 4;
@@ -1670,7 +1720,7 @@ fn open_levels(wanted: u32, per_level: u32) -> usize {
 
 /// W19-W22: what changes in the world in one step. A pure function of the tiles, the seed and the
 /// step number, so it can be replayed. Zones near a road joined to the highway may grow a level: the
-/// first in a few minutes, the second in about an hour, the third in several. Demand holds them
+/// first in minutes, the second in about 40 minutes, the third in about 3 hours. Demand holds them
 /// back (homes need jobs, shops need people, workshops just need time, and every world has room
 /// for a dozen settlers and a corner shop to start with), new buildings go up before taller ones,
 /// and a home grows past level 1 only with a shop within 5 tiles and past level 2 only with a park
@@ -5312,10 +5362,14 @@ mod tests {
             Kind::Workshops,
             Kind::Park,
             Kind::Cleared,
+            Kind::House,
+            Kind::Cafe,
+            Kind::Club,
+            Kind::Studio,
         ] {
             assert_eq!(Kind::parse(kind.as_str()), Some(kind));
         }
-        for word in ["", "Road", "house", "homes ", "walk", "zone"] {
+        for word in ["", "Road", "palace", "homes ", "walk", "zone"] {
             assert_eq!(Kind::parse(word), None, "{word:?}");
         }
         assert_eq!(Kind::Workshops.as_str(), "workshops");

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{self, Caller},
     city,
-    db::{Event, NewPlanItem, Person, PlanItem},
+    db::{Event, House, HouseNote, HousePlan, NewHouseNote, NewPlanItem, NoteWrite, Person, PlanItem},
     error::{ApiError, ApiResult},
     now,
     ops::{self, iso},
@@ -33,6 +33,13 @@ const MAX_ITEMS: i64 = 30;
 const MAX_ITEM_CHARS: usize = 120;
 /// F44: how soon a plan has to be to show up in `plans_soon`.
 const SOON_SECS: i64 = 2 * DAY_SECS;
+/// F45
+const MAX_HOUSE_NOTES: i64 = 50;
+const MAX_TOPIC_CHARS: usize = 60;
+const MAX_HOUSE_NOTE_CHARS: usize = 500;
+/// F52: how far ahead a house's calendar looks.
+const CALENDAR_SECS: i64 = 14 * DAY_SECS;
+const PERSONS_WORD: &str = "a person wrote that note, and a bot can't change it: ask them";
 
 pub struct Limits {
     asks: Limiter,
@@ -201,7 +208,8 @@ fn shares_with(state: &AppState, them: &str, you: &str) -> ApiResult<bool> {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct FindTime {
-    /// Names or ids of people in the city. Left out, it means everyone else in your house (F34).
+    /// Names or ids of people in the city. Left out or empty, it means everyone else in your house
+    /// (F34).
     pub with: Option<Vec<String>>,
     pub minutes: Option<i64>,
 }
@@ -223,7 +231,7 @@ fn people_asked_about(
     input: &FindTime,
 ) -> ApiResult<Vec<Person>> {
     let everyone = state.db.city_members(city_id)?;
-    let Some(asked) = &input.with else {
+    let Some(asked) = input.with.as_deref().filter(|asked| !asked.is_empty()) else {
         let house = state.db.house_of_person_in_city(city_id, &caller.person_id)?.ok_or_else(|| {
             ApiError::bad_request("your owner doesn't live in a house here, so say who with `with`")
         })?;
@@ -464,6 +472,91 @@ pub fn plan_soon(
             .collect(),
         open_items: open,
     }))
+}
+
+// A house's notes and calendar
+
+/// F46, F48: the house, if this side lives there and is at home.
+fn your_house(state: &AppState, caller: &Caller, house_id: &str) -> ApiResult<House> {
+    ops::no_house_bot(caller)?;
+    if !state.db.is_resident(house_id, &caller.person_id)? {
+        return Err(ApiError::not_found());
+    }
+    if city::my_trip(state, caller)?.is_some() {
+        return Err(ApiError::forbidden("what's at home stays at home: use this once you're back"));
+    }
+    state.db.house(house_id)?.ok_or_else(ApiError::not_found)
+}
+
+pub fn house_notes(state: &AppState, caller: &Caller, house_id: &str) -> ApiResult<Vec<HouseNote>> {
+    let house = your_house(state, caller, house_id)?;
+    Ok(state.db.house_notes(&house.id)?)
+}
+
+/// F45, F47: writes under a topic, replacing what's there.
+pub fn set_house_note(
+    state: &AppState,
+    caller: &Caller,
+    house_id: &str,
+    topic: &str,
+    text: &str,
+) -> ApiResult<()> {
+    let house = your_house(state, caller, house_id)?;
+    let topic = ops::clean(topic, "topic", MAX_TOPIC_CHARS)?;
+    let text = ops::clean(text, "note", MAX_HOUSE_NOTE_CHARS)?;
+    ops::note_agent_write(state, caller)?;
+    let written = state.db.set_house_note(
+        &NewHouseNote {
+            id: &auth::new_id(),
+            house_id: &house.id,
+            topic: &topic,
+            text: &text,
+            written_by: &caller.person_id,
+            via_agent: caller.is_agent().then_some(caller.name.as_str()),
+            now: now(),
+        },
+        MAX_HOUSE_NOTES,
+    )?;
+    match written {
+        NoteWrite::Saved => {
+            city::refresh_house(state, &house);
+            Ok(())
+        }
+        NoteWrite::Full => Err(ApiError::conflict(format!("a house holds {MAX_HOUSE_NOTES} notes"))),
+        NoteWrite::PersonsWord => Err(ApiError::conflict(PERSONS_WORD)),
+    }
+}
+
+/// F47
+pub fn remove_house_note(
+    state: &AppState,
+    caller: &Caller,
+    house_id: &str,
+    topic: &str,
+) -> ApiResult<()> {
+    let house = your_house(state, caller, house_id)?;
+    let topic = topic.trim();
+    let by_bot = state.db.house_note_by_bot(&house.id, topic)?.ok_or_else(ApiError::not_found)?;
+    if caller.is_agent() && !by_bot {
+        return Err(ApiError::conflict(PERSONS_WORD));
+    }
+    ops::note_agent_write(state, caller)?;
+    state.db.remove_house_note(&house.id, topic)?;
+    city::refresh_house(state, &house);
+    Ok(())
+}
+
+/// F51: only a person chooses this.
+pub fn set_shows_plans(state: &AppState, caller: &Caller, on: bool) -> ApiResult<()> {
+    ops::require_human(caller, "choose whether your plans show on your house's calendar")?;
+    state.db.set_shows_plans_to_house(&caller.person_id, on, now())?;
+    Ok(())
+}
+
+pub fn house_calendar(state: &AppState, caller: &Caller, house_id: &str) -> ApiResult<Vec<HousePlan>> {
+    let house = your_house(state, caller, house_id)?;
+    let now = now();
+    Ok(state.db.house_calendar(&house.id, now, now + CALENDAR_SECS)?)
 }
 
 #[cfg(test)]

@@ -132,6 +132,9 @@ pub struct HouseView {
     pub scenes: Vec<Scene>,
     /// Open requests, plus the last 24 hours.
     pub scene_requests: Vec<SceneRequest>,
+    /// What this household wants remembered (F45), and what's on for it (F52).
+    pub notes: Vec<crate::db::HouseNote>,
+    pub calendar: Vec<crate::db::HousePlan>,
     /// What this house asks of anyone whose bot wants to visit.
     pub rules: trust::Requirements,
     /// How each person asking to visit stands in the city, by their person id.
@@ -505,6 +508,8 @@ pub fn house_view(state: &AppState, caller: &Caller, house_id: &str) -> ApiResul
         passes: state.db.passes_for_house(&house.id)?,
         scenes: state.db.scenes(&house.id)?,
         scene_requests: state.db.recent_scene_requests(&house.id, now - DAY_SECS, now)?,
+        notes: state.db.house_notes(&house.id)?,
+        calendar: state.db.house_calendar(&house.id, now, now + 14 * DAY_SECS)?,
         rules: trust::house_requirements(state, &house.id)?,
         standing: trust::asker_standings(state, &house, &asking, now)?,
         asking,

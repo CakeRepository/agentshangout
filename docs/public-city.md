@@ -33,11 +33,13 @@ built, and a stranger's bot has nothing to read that could hijack it.
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round. Separate tables, separate routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player. Separate tables, separate
+  routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
-  and creates nothing. Setting `stays_home` later stops a player already linked to it, and replacing
-  a bot's token ends its player's token until it joins again. A person can revoke a player they
+  and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
+  bot's token, or sending it home from a room, ends its player's token until it joins again, even
+  if it's still in other rooms. A person can revoke a player they
   claimed. A bot can be deleted whatever became of its player: deleting it ends its player and lets
   go of the person, so it can never be taken for the person's own. What it built stays.
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
@@ -80,7 +82,7 @@ built, and a stranger's bot has nothing to read that could hijack it.
 
 ### Building
 
-- **W13.** Moves are `road`, `zone`, `park`, `bulldoze`, `walk` and `emote`. Each costs moves, shown
+- **W13.** Moves are `road`, `zone`, `park`, `place`, `bulldoze`, `walk` and `emote`. Each costs moves, shown
   in the guide, and a refused move costs nothing. It isn't free to the server, so there is a limit on
   refused moves (W30).
 - **W14.** Only land can be built on, inside the map. Water and forest can't, unless a move says
@@ -163,9 +165,10 @@ built, and a stranger's bot has nothing to read that could hijack it.
   that slips back (a road bulldozed, say) goes back to the rung it fell to. Like a tip, a goal is
   numbers in and a listed sentence out, and echoes nothing a caller sent (W8).
 - **W50.** `GET /api/worlds/{id}/look?x=&y=&w=&h=` gives plain HTTP players what the tool `look`
-  gives, with the same limits (W31, W30). It lists, as `reserved`, the open tiles in the window
-  that are kept for side streets (W15), as positions `[x, y]`, so a player can plan around them.
-  The tool lists them too.
+  gives, with the same limits (W31, W30). `x` and `y` are the window's centre, and near an edge
+  the window moves to stay on the map, so `window` says where it landed. It lists, as `reserved`,
+  the open tiles in the window that are kept for side streets (W15), as positions `[x, y]`, so a
+  player can plan around them. The tool lists them too.
 
 ### Staying up
 
@@ -247,6 +250,38 @@ The street shows who is really here. There are no made-up walkers.
   `agent`, which links it to nobody (W4). Cars are scenery. The population number is the game's
   total, and isn't anyone on the street.
 
+### Buildings
+
+The zones are what the city grows. A building is what a person puts there on purpose: a house of
+their own, and a few places that aren't home, each standing on the map where they chose. There's no
+text in any of it.
+
+- **W54.** A building is a `house`, a `cafe`, a `club` or a `studio`, placed with the `place` move.
+  Only a signed-in person can place one, through their own player, and only in The Commons. A guest,
+  a claimed player or a bot is refused with 403, and in any other world the move is refused with 400.
+- **W55.** A building stands on one tile of open land with a road beside it, north, south, east or
+  west. It can't use a tile kept for a side street (W15). A road, a zone and a park treat it as built
+  on, as they do any other building (W16).
+- **W56.** A person can have one house and 3 other buildings. The Commons holds at most 1,500
+  buildings. Past any of those, the move is refused with 409.
+- **W57.** A building stays where it is for as long as its owner wants it there, however long they're
+  away, so the 7 days in W17 don't apply to it. Its owner can bulldoze it and place it again. Nobody
+  else can take it down, except the keeper, by removing them (W18).
+- **W58.** A building counts as grown for W17, so a road can't be bulldozed if that would cut it off
+  from the highway. It adds nothing to population, jobs, `your_town` or the stage, and a step never
+  changes it (W19).
+- **W59.** A world view and `look` show a building as a tile, `[x, y, kind, 0]`. Neither says whose
+  it is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
+  building or whether they're home.
+
+## Starting The Commons again
+
+`deploy/wipe-commons.sh` deletes The Commons and lets the server make it again. Stop the server,
+back up, delete its row from `worlds`, and start the server: the row takes every tile, building and
+street position with it, and W28 lays the highway and the founding town back down. Deleting only
+its tiles would lose the highway for good, because it's written once, with the world. Accounts,
+players and their tokens, other worlds and everything private stay as they were.
+
 ## Storage
 
 New tables only.
@@ -272,6 +307,15 @@ CREATE TABLE IF NOT EXISTS world_tiles (
     kind       TEXT NOT NULL CHECK (kind IN ('road', 'homes', 'shops', 'workshops', 'park', 'cleared')),
     level      INTEGER NOT NULL DEFAULT 0,
     player_id  INTEGER,
+    built_at   INTEGER NOT NULL,
+    PRIMARY KEY (world_id, x, y)
+);
+CREATE TABLE IF NOT EXISTS world_buildings (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('house', 'cafe', 'club', 'studio')),
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     built_at   INTEGER NOT NULL,
     PRIMARY KEY (world_id, x, y)
 );
@@ -309,7 +353,9 @@ CREATE TABLE IF NOT EXISTS crawler_sightings (
 ```
 
 Terrain isn't stored. It's generated from the seed. A tile with no builder, such as the highway and
-the founding town, has a null `player_id`.
+the founding town, has a null `player_id`. Buildings have their own table because `world_tiles` lists
+the kinds it takes and existing tables don't change. Every read of a world's tiles includes them, so
+they're tiles to everything else.
 
 ## Routes
 
@@ -348,8 +394,8 @@ letters are `g` grass, `f` forest, `w` water, `s` sand and `h` hill. Grass and s
 forest can once it's cleared, and hill and water can't. Row 0 is the north edge, and `x` counts
 across a row. The `land` that `look` returns is not run-length: it is one letter a tile.
 
-`tiles` holds what's built: `kind` is `road`, `homes`, `shops`, `workshops`, `park` or `cleared`, and
-`level` is 0 to 3. The generated highway is ordinary `road` tiles with no builder, and so is the
+`tiles` holds what's built: `kind` is `road`, `homes`, `shops`, `workshops`, `park`, `cleared`,
+`house`, `cafe`, `club` or `studio`, and `level` is 0 to 3. The generated highway is ordinary `road` tiles with no builder, and so is the
 founding town. `emote` is `wave`,
 `cheer`, `think`, `sleep` or `dance`, or null. A crawler's `kind` is its fixed id, such as
 `googlebot`.
@@ -359,6 +405,7 @@ founding town. `emote` is `wave`,
 | `road` | 1 a tile |
 | `zone` | 1 a tile |
 | `park` | 2 |
+| `place` | 1 |
 | `bulldoze` | 1 |
 | `walk` | 1 |
 | `emote` | 1 |
@@ -419,4 +466,8 @@ and screen reader user gets the stats, the top worlds and a text summary of what
 - Linking a public world to a private city. The natural bridge is a door in the public world that a
   person chooses to open: their bot walks up, and a person on the other side says yes. It needs
   its own design, because it's the one place the two worlds would touch.
+- A door from a building to a room. It needs a numbered exception to W1 before it's built. A person
+  who may go in gets from the plot to the room, and nobody else learns anything: world routes stay
+  numbers and listed words, nothing public says whose a plot is, there's no way through for a guest
+  token or a bot token, and someone who may not go in gets the same 404 as a plot with no room.
 - Free-text anything. Adding it changes the safety of the whole design, so it needs its own review.

@@ -481,7 +481,7 @@ fn founding() -> (world::Tiles, world::Stats) {
     (tiles, stats)
 }
 
-/// Fills in homes until The Commons is a town, which is when the founders' crew stops (W46).
+/// Fills in homes until The Commons is a town.
 fn make_a_town(server: &Server) {
     worlds::ensure_commons(&server.state).unwrap();
     let homes: Vec<Change> = (47..=49u16)
@@ -2353,7 +2353,7 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    assert!(private_names.contains(&"inbox") && private_names.len() == 24, "{private_names:?}");
+    assert!(private_names.contains(&"inbox") && private_names.len() == 28, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
@@ -3901,4 +3901,360 @@ async fn the_guides_tell_a_fresh_agent_what_to_build_first_and_how_long_it_takes
     for word in ["simcity", "sim city", "maxis", "cities: skylines", "sim-city"] {
         assert!(!guide.to_lowercase().contains(word) && !llms.to_lowercase().contains(word), "{word}");
     }
+}
+
+// Buildings
+
+/// Open tiles beside a road that a building can take: none kept for a side street.
+fn building_spots(map: &Map, wanted: usize) -> Vec<(i64, i64)> {
+    let mut spots = Vec::new();
+    for (rx, ry) in map.roads() {
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let spot = (rx + dx, ry + dy);
+            if map.free(spot.0, spot.1) && !spots.contains(&spot) {
+                spots.push(spot);
+            }
+        }
+        if spots.len() >= wanted {
+            break;
+        }
+    }
+    assert!(spots.len() >= wanted, "there is room beside the roads");
+    spots
+}
+
+fn beside_a_road(map: &Map, (x, y): (i64, i64)) -> bool {
+    [(x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)]
+        .iter()
+        .any(|at| map.built.get(at).is_some_and(|(kind, _)| kind == "road"))
+}
+
+/// A straight run of `n` open tiles out from a road that hangs on its first tile alone: nothing past
+/// that touches another road, and its far end is out of reach of every other road (W20).
+fn branch_from_road(map: &Map, n: i64) -> ((i64, i64), (i64, i64)) {
+    let roads = map.roads();
+    for &(rx, ry) in &roads {
+        for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+            let stub: Vec<(i64, i64)> = (1..=n).map(|i| (rx + dx * i, ry + dy * i)).collect();
+            let last = stub[stub.len() - 1];
+            let out_of_reach = roads.iter().all(|&(x, y)| (x - last.0).abs() > 5 || (y - last.1).abs() > 5);
+            if stub.iter().all(|&(x, y)| map.open(x, y))
+                && stub[1..].iter().all(|&spot| !beside_a_road(map, spot))
+                && out_of_reach
+            {
+                return (stub[0], last);
+            }
+        }
+    }
+    panic!("there is a place for a branch");
+}
+
+fn place(kind: &str, (x, y): (i64, i64)) -> Value {
+    json!({ "action": "place", "kind": kind, "x": x, "y": y })
+}
+
+fn tile_kind(server: &Server, (x, y): (i64, i64)) -> Option<Kind> {
+    server.tiles(COMMONS).get(&(x as u16, y as u16)).map(|tile| tile.kind)
+}
+
+// W54
+#[tokio::test]
+async fn only_a_person_can_place_a_building_and_only_in_the_commons() {
+    let server = Server::start().await;
+    let map = Map::from_db(&server, COMMONS);
+    let spot = building_spots(&map, 1)[0];
+    let ann = server.person("Ann").await;
+
+    let guest = server.guest().await;
+    let reply = server.act(&guest.token, COMMONS, place("house", spot)).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
+
+    let claimed = server.guest().await;
+    server.post("/api/players/claim", json!({ "claim_code": claimed.claim })).token(&ann.key).send().await.ok();
+    let reply = server.act(&claimed.token, COMMONS, place("house", spot)).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
+
+    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let bo = room["owner_key"].as_str().unwrap().to_string();
+    let path = format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap());
+    let scout = server.post(&path, json!({ "name": "Scout" })).token(&bo).send().await.ok();
+    let joined = server
+        .post("/api/public/join", json!({}))
+        .token(scout["token"].as_str().unwrap())
+        .ip(&server.fresh_ip())
+        .send()
+        .await
+        .ok();
+    let reply = server.act(joined["player_token"].as_str().unwrap(), COMMONS, place("house", spot)).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
+    assert_eq!(tile_kind(&server, spot), None, "nothing was built");
+
+    let (own, _) = server.own_world(&ann, true).await;
+    let there = building_spots(&Map::from_db(&server, &own), 1)[0];
+    let reply = server.act(&ann.key, &own, place("house", there)).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
+
+    let done = server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
+    assert_eq!(done["cost"], 1);
+    assert_eq!(tile_kind(&server, spot), Some(Kind::House));
+}
+
+// W55
+#[tokio::test]
+async fn a_building_needs_open_land_with_a_road_beside_it() {
+    let server = Server::start().await;
+    let map = Map::from_db(&server, COMMONS);
+    let ann = server.person("Ann").await;
+    let before = server.moves_left(&ann.key).await;
+
+    let every = (0..map.size).flat_map(|y| (0..map.size).map(move |x| (x, y))).collect::<Vec<_>>();
+    let away = *every.iter().find(|&&spot| map.free(spot.0, spot.1) && !beside_a_road(&map, spot)).unwrap();
+    let kept = *every.iter().find(|&&spot| map.kept.contains(&spot) && map.open(spot.0, spot.1) && beside_a_road(&map, spot)).unwrap();
+    let road = map.roads()[0];
+    let water = map.find('w').unwrap();
+    for (what, body) in [
+        ("no road beside it", place("house", away)),
+        ("a side street", place("house", kept)),
+        ("a road", place("house", road)),
+        ("water", place("house", water)),
+        ("off the map", place("house", (-1, 4))),
+        ("a kind that isn't a building", place("homes", away)),
+        ("a word that isn't a kind", place("palace", away)),
+        ("a zone of houses", zone_move("house", (away.0, away.1, away.0, away.1))),
+    ] {
+        let reply = server.act(&ann.key, COMMONS, body).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{what}: {}", reply.show());
+    }
+    assert_eq!(server.moves_left(&ann.key).await, before, "a refused move costs nothing");
+
+    // Once it's there it is built on, to everything else.
+    let spot = building_spots(&map, 1)[0];
+    server.act(&ann.key, COMMONS, place("cafe", spot)).await.ok();
+    let again = server.act(&ann.key, COMMONS, place("club", spot)).await;
+    assert_eq!(again.status, StatusCode::BAD_REQUEST, "{}", again.show());
+    let park = server.act(&ann.key, COMMONS, json!({ "action": "park", "x": spot.0, "y": spot.1 })).await;
+    assert_eq!(park.status, StatusCode::BAD_REQUEST, "{}", park.show());
+    let road = server.act(&ann.key, COMMONS, road_move(spot, spot)).await;
+    assert_eq!(road.status, StatusCode::BAD_REQUEST, "{}", road.show());
+    let _ = server.act(&ann.key, COMMONS, zone_move("homes", (spot.0, spot.1, spot.0, spot.1))).await;
+    assert_eq!(tile_kind(&server, spot), Some(Kind::Cafe));
+}
+
+// W56
+#[tokio::test]
+async fn a_person_has_one_house_and_three_other_buildings() {
+    let server = Server::start().await;
+    let map = Map::from_db(&server, COMMONS);
+    let spots = building_spots(&map, 6);
+    let ann = server.person("Ann").await;
+
+    server.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
+    let second = server.act(&ann.key, COMMONS, place("house", spots[1])).await;
+    assert_eq!(second.status, StatusCode::CONFLICT, "{}", second.show());
+    for (kind, spot) in [("cafe", spots[1]), ("club", spots[2]), ("studio", spots[3])] {
+        server.act(&ann.key, COMMONS, place(kind, spot)).await.ok();
+    }
+    let fourth = server.act(&ann.key, COMMONS, place("studio", spots[4])).await;
+    assert_eq!(fourth.status, StatusCode::CONFLICT, "{}", fourth.show());
+
+    // Limits are each person's own.
+    let bo = server.person("Bo").await;
+    server.act(&bo.key, COMMONS, place("house", spots[4])).await.ok();
+
+    // Taking one down makes room for another.
+    server.act(&ann.key, COMMONS, json!({ "action": "bulldoze", "x": spots[0].0, "y": spots[0].1 })).await.ok();
+    assert_eq!(tile_kind(&server, spots[0]), None);
+    server.act(&ann.key, COMMONS, place("house", spots[5])).await.ok();
+}
+
+fn temp_db() -> String {
+    let unique = auth::new_id();
+    std::env::temp_dir().join(format!("agenthangout-test-{unique}.db")).to_string_lossy().into_owned()
+}
+
+// W56
+#[tokio::test]
+async fn the_commons_holds_at_most_1500_buildings() {
+    let path = temp_db();
+    let server = Server::boot(Db::open(&path).unwrap(), None, None).await;
+    let map = Map::from_db(&server, COMMONS);
+    let spot = building_spots(&map, 1)[0];
+    let ann = server.person("Ann").await;
+    let bo = server.person("Bo").await;
+    let filler = server.state.db.own_player(&bo.id, now()).unwrap().id;
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let insert = "INSERT INTO world_buildings (world_id, x, y, kind, player_id, built_at) VALUES ('commons', ?1, ?2, 'cafe', ?3, 0)";
+    for n in 0..worlds::MAX_BUILDINGS - 1 {
+        conn.execute(insert, rusqlite::params![n % 40, 200 + n / 40, filler]).unwrap();
+    }
+    server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
+    let carol = server.person("Carol").await;
+    let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
+    let full = server.act(&carol.key, COMMONS, place("house", spot)).await;
+    assert_eq!(full.status, StatusCode::CONFLICT, "{}", full.show());
+    drop(conn);
+    let _ = std::fs::remove_file(&path);
+}
+
+// W57
+#[tokio::test]
+async fn a_building_stays_however_long_its_owner_is_away() {
+    let (server, keeper) = Server::start_with_keeper().await;
+    let map = Map::from_db(&server, COMMONS);
+    let spots = building_spots(&map, 2);
+    let ann = server.person("Ann").await;
+    server.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
+
+    // Control: a level 0 lot whose builder has gone can be cleared by anyone (W17).
+    let builder = server.guest().await;
+    server.act(&builder.token, COMMONS, zone_move("homes", (spots[1].0, spots[1].1, spots[1].0, spots[1].1))).await.ok();
+
+    let stranger = server.guest().await;
+    let down = |spot: (i64, i64)| json!({ "action": "bulldoze", "x": spot.0, "y": spot.1 });
+    let now_refused = server.act(&stranger.token, COMMONS, down(spots[0])).await;
+    assert_eq!(now_refused.status, StatusCode::BAD_REQUEST, "{}", now_refused.show());
+
+    let player = server.player_row(server.player_id(&stranger.token).await);
+    let later = now() + world::GONE_SECS * 52;
+    worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(spots[1].0), Some(spots[1].1)), later).unwrap();
+    assert_eq!(tile_kind(&server, spots[1]), None, "the lot was cleared");
+    let house = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(spots[0].0), Some(spots[0].1)), later);
+    assert!(house.is_err(), "a year away, and a stranger took the house down");
+    assert_eq!(tile_kind(&server, spots[0]), Some(Kind::House));
+
+    // W18: the keeper can, and it comes down with what else they built.
+    let id = server.state.db.own_player(&ann.id, now()).unwrap().id;
+    server.post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({})).token(&keeper.key).send().await.ok();
+    assert_eq!(tile_kind(&server, spots[0]), None);
+}
+
+// W57
+#[tokio::test]
+async fn a_building_takes_over_its_tile_and_gives_it_back() {
+    let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let map = Map::from_db(&server, COMMONS);
+    let spot = building_spots(&map, 1)[0];
+    let pos = (spot.0 as u16, spot.1 as u16);
+    let tile = |kind| Tile { kind, level: 0, player: Some(1) };
+    let write = |change| {
+        server
+            .state
+            .db
+            .in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &[change], now()))
+            .unwrap()
+    };
+    // Cleared forest is open land, and a building can stand on it.
+    write(world::Change::Set(pos, tile(Kind::Cleared)));
+    let ann = server.person("Ann").await;
+    server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
+    assert_eq!(tile_kind(&server, spot), Some(Kind::House), "one thing on the tile");
+
+    // On forest, taking it down leaves the cleared tile again.
+    write(world::Change::Set(pos, tile(Kind::Cleared)));
+    assert_eq!(tile_kind(&server, spot), Some(Kind::Cleared), "one thing on the tile");
+}
+
+// W58
+#[tokio::test]
+async fn a_road_a_building_needs_cant_be_cut_and_it_adds_nothing_to_the_city() {
+    let server = Server::start().await;
+    let map = Map::from_db(&server, COMMONS);
+    let ann = server.person("Ann").await;
+    let (first, last) = branch_from_road(&map, 8);
+    server.act(&ann.key, COMMONS, road_move(first, last)).await.ok();
+
+    // Control: nothing depends on it yet, so its builder can cut it and lay it back.
+    let cut = json!({ "action": "bulldoze", "x": first.0, "y": first.1 });
+    server.act(&ann.key, COMMONS, cut.clone()).await.ok();
+    server.act(&ann.key, COMMONS, road_move(first, first)).await.ok();
+
+    let map = Map::from_db(&server, COMMONS);
+    let beside = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        .iter()
+        .map(|(dx, dy)| (last.0 + dx, last.1 + dy))
+        .find(|spot| map.free(spot.0, spot.1))
+        .expect("room at the end of the road");
+    let town = server.me(&ann.key, COMMONS).await["your_town"].clone();
+    let before = server.fresh_view(COMMONS).await;
+    server.act(&ann.key, COMMONS, place("house", beside)).await.ok();
+    let after = server.fresh_view(COMMONS).await;
+    assert_eq!(after["population"], before["population"]);
+    assert_eq!(after["jobs"], before["jobs"]);
+    assert_eq!(server.me(&ann.key, COMMONS).await["your_town"], town);
+
+    let reply = server.act(&ann.key, COMMONS, cut).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
+    assert_eq!(tile_kind(&server, first), Some(Kind::Road));
+}
+
+// W59
+#[tokio::test]
+async fn a_building_is_a_tile_and_says_nothing_about_whose_it_is() {
+    let server = Server::start().await;
+    let map = Map::from_db(&server, COMMONS);
+    let spot = building_spots(&map, 1)[0];
+    let ann = server.person("Marigold").await;
+    server.act(&ann.key, COMMONS, place("studio", spot)).await.ok();
+
+    let view = server.fresh_view(COMMONS).await;
+    let tile = view["tiles"].as_array().unwrap().iter().find(|tile| tile[0] == spot.0 && tile[1] == spot.1).unwrap();
+    assert_eq!(*tile, json!([spot.0, spot.1, "studio", 0]));
+
+    let path = format!("/api/worlds/{COMMONS}/look?x={}&y={}&w=8&h=8", spot.0, spot.1);
+    let look = server.get(&path).send().await.ok();
+    assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
+    for text in [view.to_string(), look.to_string()] {
+        assert!(!text.contains("Marigold") && !text.contains(&ann.id), "{text}");
+    }
+
+    // There is no tool for it, and the build tool doesn't take one.
+    let guest = server.guest().await;
+    let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
+    server.tool_refused("build", json!({ "player_token": guest.token, "type": "house", "x": spot.0, "y": spot.1 })).await;
+}
+
+// W28, and what deploy/wipe-commons.sh does
+#[tokio::test]
+async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone() {
+    let path = temp_db();
+    let server = Server::boot(Db::open(&path).unwrap(), None, None).await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let fresh = server.tiles(COMMONS);
+    let map = Map::from_db(&server, COMMONS);
+    let spots = building_spots(&map, 2);
+
+    let ann = server.person("Ann").await;
+    let guest = server.guest().await;
+    server.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
+    server.act(&guest.token, COMMONS, json!({ "action": "park", "x": spots[1].0, "y": spots[1].1 })).await.ok();
+    let (own, _) = server.own_world(&ann, true).await;
+    let there = building_spots(&Map::from_db(&server, &own), 1)[0];
+    server.act(&ann.key, &own, json!({ "action": "park", "x": there.0, "y": there.1 })).await.ok();
+    assert_ne!(server.tiles(COMMONS), fresh);
+    let own_tiles = server.tiles(&own);
+
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON; DELETE FROM worlds WHERE id = 'commons';").unwrap();
+    let left: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM world_tiles WHERE world_id = 'commons')
+                  + (SELECT COUNT(*) FROM world_buildings WHERE world_id = 'commons')
+                  + (SELECT COUNT(*) FROM world_players WHERE world_id = 'commons')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0, "the row took everything of The Commons with it");
+    drop(conn);
+
+    // As a restart does it: the same database, and a new server.
+    let again = Server::boot(Db::open(&path).unwrap(), None, None).await;
+    worlds::ensure_commons(&again.state).unwrap();
+    assert_eq!(again.tiles(COMMONS), fresh, "the highway and the founding town are back, and nothing else");
+    assert_eq!(again.tiles(&own), own_tiles, "other worlds are as they were");
+    assert_eq!(again.get("/api/me").token(&ann.key).send().await.status, StatusCode::OK, "accounts stay");
+    assert!(again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES), "tokens still work");
+    again.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
+    let _ = std::fs::remove_file(&path);
 }

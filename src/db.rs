@@ -390,6 +390,32 @@ CREATE TABLE IF NOT EXISTS plan_items (
     created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_at);
+CREATE TABLE IF NOT EXISTS world_buildings (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('house', 'cafe', 'club', 'studio')),
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    built_at   INTEGER NOT NULL,
+    PRIMARY KEY (world_id, x, y)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS world_buildings_one_house
+    ON world_buildings (world_id, player_id) WHERE kind = 'house';
+CREATE INDEX IF NOT EXISTS world_buildings_by_player ON world_buildings (world_id, player_id);
+CREATE TABLE IF NOT EXISTS house_notes (
+    id          TEXT PRIMARY KEY,
+    house_id    TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+    topic       TEXT NOT NULL COLLATE NOCASE,
+    body        TEXT NOT NULL,
+    written_by  TEXT NOT NULL REFERENCES people(id),
+    via_agent   TEXT,
+    updated_at  INTEGER NOT NULL,
+    UNIQUE (house_id, topic)
+);
+CREATE TABLE IF NOT EXISTS house_plan_sharing (
+    person_id   TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    updated_at  INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS friend_invites (
     id           TEXT PRIMARY KEY,
     kind         TEXT NOT NULL,
@@ -716,6 +742,49 @@ pub struct NewPlanItem<'a> {
     pub added_by: &'a str,
     pub adder: &'a str,
     pub now: i64,
+}
+
+/// Something a household wants remembered (F45).
+#[derive(Clone, Debug, Serialize)]
+pub struct HouseNote {
+    pub topic: String,
+    pub text: String,
+    /// The person it was written by or for.
+    pub writer: String,
+    /// The bot that wrote it, if a person didn't.
+    pub via_agent: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct NewHouseNote<'a> {
+    pub id: &'a str,
+    pub house_id: &'a str,
+    pub topic: &'a str,
+    pub text: &'a str,
+    pub written_by: &'a str,
+    pub via_agent: Option<&'a str>,
+    pub now: i64,
+}
+
+/// What came of writing a house note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteWrite {
+    Saved,
+    Full,
+    /// A bot tried to write over what a person wrote (F47).
+    PersonsWord,
+}
+
+/// A plan on a house's calendar. This is all of it, because anything here is shown (F53).
+#[derive(Clone, Debug, Serialize)]
+pub struct HousePlan {
+    pub title: String,
+    pub location: String,
+    pub starts_at: i64,
+    pub ends_at: i64,
+    pub on_calendar: bool,
+    pub going: Vec<String>,
 }
 
 /// An event as one person's calendar feed should show it.
@@ -4106,6 +4175,164 @@ impl Db {
         Ok(())
     }
 
+    // A house's notes and calendar
+
+    pub fn house_notes(&self, house_id: &str) -> rusqlite::Result<Vec<HouseNote>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT n.topic, n.body, p.name, n.via_agent, n.updated_at FROM house_notes n
+             JOIN people p ON p.id = n.written_by
+             WHERE n.house_id = ? ORDER BY n.topic",
+        )?;
+        let rows = stmt.query_map([house_id], |row| {
+            Ok(HouseNote {
+                topic: row.get(0)?,
+                text: row.get(1)?,
+                writer: row.get(2)?,
+                via_agent: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Writes under a topic, replacing what's there. The lock is held throughout, so two writers
+    /// can't both pass these checks.
+    pub fn set_house_note(&self, note: &NewHouseNote, max: i64) -> rusqlite::Result<NoteWrite> {
+        let conn = self.conn();
+        let existing: Option<Option<String>> = conn
+            .query_row(
+                "SELECT via_agent FROM house_notes WHERE house_id = ? AND topic = ?",
+                params![note.house_id, note.topic],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match existing {
+            Some(None) if note.via_agent.is_some() => return Ok(NoteWrite::PersonsWord),
+            Some(_) => {}
+            None => {
+                let count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM house_notes WHERE house_id = ?",
+                    [note.house_id],
+                    |row| row.get(0),
+                )?;
+                if count >= max {
+                    return Ok(NoteWrite::Full);
+                }
+            }
+        }
+        conn.execute(
+            "INSERT INTO house_notes (id, house_id, topic, body, written_by, via_agent, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (house_id, topic) DO UPDATE SET
+                topic = excluded.topic, body = excluded.body, written_by = excluded.written_by,
+                via_agent = excluded.via_agent, updated_at = excluded.updated_at",
+            params![
+                note.id,
+                note.house_id,
+                note.topic,
+                note.text,
+                note.written_by,
+                note.via_agent,
+                note.now
+            ],
+        )?;
+        Ok(NoteWrite::Saved)
+    }
+
+    /// Whether a bot wrote this note, if there is one.
+    pub fn house_note_by_bot(&self, house_id: &str, topic: &str) -> rusqlite::Result<Option<bool>> {
+        self.conn()
+            .query_row(
+                "SELECT via_agent IS NOT NULL FROM house_notes WHERE house_id = ? AND topic = ?",
+                params![house_id, topic],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn remove_house_note(&self, house_id: &str, topic: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM house_notes WHERE house_id = ? AND topic = ?",
+            params![house_id, topic],
+        )?;
+        Ok(())
+    }
+
+    /// F51: whether this person's plans show on their house's calendar.
+    pub fn shows_plans_to_house(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM house_plan_sharing WHERE person_id = ?",
+            [person_id],
+        )
+    }
+
+    pub fn set_shows_plans_to_house(
+        &self,
+        person_id: &str,
+        on: bool,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        if on {
+            self.conn().execute(
+                "INSERT INTO house_plan_sharing (person_id, updated_at) VALUES (?, ?)
+                 ON CONFLICT (person_id) DO UPDATE SET updated_at = excluded.updated_at",
+                params![person_id, now],
+            )?;
+        } else {
+            self.conn()
+                .execute("DELETE FROM house_plan_sharing WHERE person_id = ?", [person_id])?;
+        }
+        Ok(())
+    }
+
+    /// F52 to F54: the house's calendar between two times, soonest first.
+    pub fn house_calendar(
+        &self,
+        house_id: &str,
+        from: i64,
+        to: i64,
+    ) -> rusqlite::Result<Vec<HousePlan>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT e.id, e.title, e.location, e.starts_at, e.ends_at, e.status, p.name
+             FROM houses h
+             JOIN residents res ON res.house_id = h.id
+             JOIN people p ON p.id = res.person_id
+             JOIN rsvps r ON r.person_id = res.person_id AND r.response IN ('yes', 'maybe')
+             JOIN events e ON e.id = r.event_id
+             WHERE h.id = ?1 AND e.status != 'cancelled' AND e.ends_at >= ?2 AND e.starts_at <= ?3
+               AND (e.hangout_id = h.living_room
+                    OR EXISTS (SELECT 1 FROM house_plan_sharing s WHERE s.person_id = res.person_id))
+             ORDER BY e.starts_at, e.id, p.name, p.id",
+        )?;
+        let mut rows = stmt.query(params![house_id, from, to])?;
+        let mut plans: Vec<(String, HousePlan)> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let name: String = row.get(6)?;
+            match plans.last_mut() {
+                Some((last, plan)) if *last == id => plan.going.push(name),
+                _ => {
+                    let status: String = row.get(5)?;
+                    plans.push((
+                        id,
+                        HousePlan {
+                            title: row.get(1)?,
+                            location: row.get(2)?,
+                            starts_at: row.get(3)?,
+                            ends_at: row.get(4)?,
+                            on_calendar: status == "confirmed",
+                            going: vec![name],
+                        },
+                    ));
+                }
+            }
+        }
+        Ok(plans.into_iter().map(|(_, plan)| plan).collect())
+    }
+
     // Growth. Counted from what happened, on read. Nothing is stored.
 
     /// Confirmed Town Square plans that have finished, with a yes from at least two people. A
@@ -4783,7 +5010,8 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
     match region {
         None => {
             let mut stmt = conn.prepare_cached(
-                "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?",
+                "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings WHERE world_id = ?1",
             )?;
             let mut rows = stmt.query([world_id])?;
             while let Some(row) = rows.next()? {
@@ -4795,6 +5023,8 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
         Some([x0, y0, x1, y1]) => {
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles
+                 WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5",
             )?;
             let mut rows = stmt.query(params![world_id, x0, x1, y0, y1])?;
@@ -4824,9 +5054,32 @@ fn q_write_changes(
     )?;
     let mut remove =
         conn.prepare_cached("DELETE FROM world_tiles WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
+    // A building has its own table, because `world_tiles` lists the kinds it takes and existing
+    // tables don't change. It takes over its tile, which may be cleared forest, and forest it was
+    // on goes back to cleared when it comes down.
+    let mut set_building = conn.prepare_cached(
+        "INSERT INTO world_buildings (world_id, x, y, kind, player_id, built_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut remove_building =
+        conn.prepare_cached("DELETE FROM world_buildings WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
     for change in changes {
         match change {
+            Change::Set((x, y), tile) if tile.kind.is_building() => {
+                remove.execute(params![world_id, x, y])?;
+                set_building.execute(params![
+                    world_id,
+                    x,
+                    y,
+                    tile.kind.as_str(),
+                    tile.player.map(|player| player as i64),
+                    now
+                ])?;
+            }
             Change::Set((x, y), tile) => {
+                if tile.kind == Kind::Cleared {
+                    remove_building.execute(params![world_id, x, y])?;
+                }
                 set.execute(params![
                     world_id,
                     x,
@@ -4839,6 +5092,7 @@ fn q_write_changes(
             }
             Change::Remove((x, y)) => {
                 remove.execute(params![world_id, x, y])?;
+                remove_building.execute(params![world_id, x, y])?;
             }
         }
     }
@@ -4969,6 +5223,18 @@ impl WorldTx<'_> {
     /// The tiles inside a box, corners included.
     pub fn tiles_in(&self, world_id: &str, region: [i64; 4]) -> rusqlite::Result<Tiles> {
         q_tiles(&self.tx, world_id, Some(region))
+    }
+
+    /// W56: this player's houses, this player's other buildings, and all the buildings in the world.
+    pub fn building_counts(&self, world_id: &str, player_id: i64) -> rusqlite::Result<(i64, i64, i64)> {
+        self.tx.query_row(
+            "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
+                    COALESCE(SUM(player_id = ?2 AND kind <> 'house'), 0),
+                    COUNT(*)
+             FROM world_buildings WHERE world_id = ?1",
+            params![world_id, player_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
     }
 
     pub fn all_tiles(&self, world_id: &str) -> rusqlite::Result<Tiles> {
@@ -5350,6 +5616,25 @@ impl Db {
 
     /// Everything a player has built in a world. It reads their tiles only, by the index on world
     /// and player, so it costs what they have built and not what the world holds.
+    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
+    /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
+    pub fn building_at(
+        &self,
+        world_id: &str,
+        x: i64,
+        y: i64,
+    ) -> rusqlite::Result<Option<(String, Option<String>)>> {
+        self.conn()
+            .query_row(
+                "SELECT b.kind, p.person_id FROM world_buildings b
+                 JOIN players p ON p.id = b.player_id
+                 WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
+                params![world_id, x, y],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
@@ -5570,6 +5855,9 @@ impl Db {
         let down = tx.execute(
             "DELETE FROM world_tiles WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
+        )? + tx.execute(
+            "DELETE FROM world_buildings WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
@@ -5607,7 +5895,8 @@ impl Db {
             &conn,
             "SELECT 1 FROM world_players WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_members WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
+             UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
+             UNION ALL SELECT 1 FROM world_buildings WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
             params![world_id, player_id],
         )
     }

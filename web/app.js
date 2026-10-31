@@ -375,6 +375,7 @@ async function homeParts(me) {
     h('h2', {}, `Hi, ${me.name}`),
     h('p', { class: 'muted' }, 'You\'re signed in. Build in any world, claim bots, and start private rooms and cities.'),
     freeTimesField(me),
+    housePlansField(me),
     h('button', {
       type: 'button',
       class: 'ghost',
@@ -491,6 +492,27 @@ function freeTimesField(me) {
   }, options);
   return h('div', {},
     field('Who can see when you\'re free', select, 'Friends\' agents only ever see times, never what you\'re doing. Your own agent posts them.'),
+    error);
+}
+
+// Whether this person's plans show on their house's calendar (F51). Only they choose this.
+function housePlansField(me) {
+  const error = formError();
+  const select = h('select', {
+    onchange: async () => {
+      error.hidden = true;
+      try {
+        await api('/api/sharing', { method: 'PUT', body: { house_calendar: select.value === 'on' } });
+      } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+      }
+    },
+  },
+    h('option', { value: 'off', selected: !me.plans_on_house_calendar }, 'Keep them to myself'),
+    h('option', { value: 'on', selected: me.plans_on_house_calendar }, 'Show them to my house'));
+  return h('div', {},
+    field('Your plans', select, 'The people you live with see the title, time and place. Nobody else does.'),
     error);
 }
 
@@ -803,6 +825,12 @@ const timeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute:
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' });
 const fromUnix = (unix) => new Date(unix * 1000);
 const whenText = (unix) => `${dayFormat.format(fromUnix(unix))}, ${timeFormat.format(fromUnix(unix))}`;
+// A plan's start and end, naming the day once if it ends on the same one.
+function spanText(start, end) {
+  if (!(end > start)) return whenText(start);
+  const sameDay = dayFormat.format(fromUnix(start)) === dayFormat.format(fromUnix(end));
+  return `${whenText(start)} to ${sameDay ? timeFormat.format(fromUnix(end)) : whenText(end)}`;
+}
 
 function untilText(unix) {
   const seconds = unix - Date.now() / 1000;
@@ -2635,6 +2663,8 @@ async function houseView(id) {
   const botsEl = h('section', { class: 'panel stack' });
   const aiEl = h('section', { class: 'panel stack' });
   const scenesEl = h('section', { class: 'panel stack' });
+  const notesEl = h('section', { class: 'panel stack' });
+  const calendarEl = h('section', { class: 'panel stack' });
   const passesEl = h('section', { class: 'panel stack', hidden: true });
 
   // Forms stay put between reloads so nothing someone is typing gets wiped.
@@ -3052,6 +3082,60 @@ async function houseView(id) {
       })));
   }
 
+  // Stays put between reloads, like the forms above, so nothing someone is typing gets wiped.
+  const noteError = formError();
+  const noteForm = h('form', {
+    class: 'stack',
+    onsubmit: submitter(noteError, async (values) => {
+      await api(`/api/houses/${path}/notes`, { method: 'PUT', body: values });
+      noteForm.reset();
+      await reload();
+    }),
+  },
+    field('Topic', h('input', { name: 'topic', required: true, maxLength: 60, placeholder: 'Trash day' })),
+    field('Note', h('input', { name: 'text', required: true, maxLength: 500, placeholder: 'Tuesday morning, bins out by 7' })),
+    noteError,
+    h('button', { type: 'submit', class: 'ghost' }, 'Save'));
+
+  function renderHouseNotes() {
+    notesEl.replaceChildren(
+      h('h2', {}, 'House notes'),
+      h('p', { class: 'muted' }, 'What your household wants remembered. Only the people who live here and their bots can read these. Saving under a topic replaces what was there.'),
+      view.notes.length
+        ? h('ul', { class: 'rows' }, view.notes.map((note) => {
+          const error = formError();
+          return h('li', {},
+            h('div', {},
+              h('strong', {}, note.topic),
+              h('p', {}, note.text),
+              h('small', { class: 'muted' }, note.via_agent ? `${note.via_agent} for ${note.writer}` : note.writer)),
+            h('button', {
+              type: 'button',
+              class: 'link danger',
+              onclick: act(error, async () => {
+                await api(`/api/houses/${path}/notes/remove`, { method: 'POST', body: { topic: note.topic } });
+                await reload();
+              }),
+            }, 'Remove'),
+            error);
+        }))
+        : h('p', { class: 'muted' }, 'Nothing yet.'),
+      noteForm);
+  }
+
+  function renderHouseCalendar() {
+    calendarEl.replaceChildren(
+      h('h2', {}, 'What\'s on'),
+      h('p', { class: 'muted' }, 'The next two weeks: plans in your Living Room, and plans of anyone here who chose to show theirs.'),
+      view.calendar.length
+        ? h('ul', { class: 'rows' }, view.calendar.map((plan) => h('li', {},
+          h('div', {},
+            h('strong', {}, plan.title),
+            h('p', { class: 'muted' }, [whenText(plan.starts_at), plan.location].filter(Boolean).join(' · ')),
+            h('small', { class: 'muted' }, `${plan.going.join(', ')}${plan.on_calendar ? '' : ' · not confirmed yet'}`)))))
+        : h('p', { class: 'muted' }, 'Nothing yet.'));
+  }
+
   function render() {
     const key = JSON.stringify([view, inbox, me.person_id, city?.houses]);
     if (key === lastKey) {
@@ -3068,6 +3152,8 @@ async function houseView(id) {
     renderGuests();
     renderAsks();
     renderFamily();
+    renderHouseNotes();
+    renderHouseCalendar();
     renderBots();
     renderAi();
     renderScenes();
@@ -3101,6 +3187,8 @@ async function houseView(id) {
     guestsEl,
     asksEl,
     familyEl,
+    notesEl,
+    calendarEl,
     botsEl,
     aiEl,
     scenesEl,
@@ -3328,8 +3416,12 @@ const BUILD_TOOLS = [
   ['shops', 'Shops', 'Shops: drag a box of up to 5 by 5. They grow where there are people. 1 move a tile.'],
   ['workshops', 'Work', 'Workshops: drag a box of up to 5 by 5, and keep them away from homes. 1 move a tile.'],
   ['park', 'Park', 'Park: click a tile. Parks help the buildings around them. 2 moves.'],
+  ['house', 'House', 'House: click a tile beside a road. Everyone gets one. 1 move.'],
+  ['studio', 'Studio', 'Studio: click a tile beside a road. A space of your own, away from home. 1 move.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
+// W54: buildings are only in The Commons for now.
+const PLACED_TOOLS = new Set(['house', 'studio']);
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -3337,17 +3429,18 @@ function moveSentence(body, done) {
   if (body.action === 'walk') return `Walking. ${left}`;
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
+  if (body.action === 'place') return `Your ${body.kind} is up. ${left}`;
   const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
-  const skipped = done.skipped ? `, leaving ${done.skipped} that were already built on` : '';
+  const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
 }
 
 // The tiles a move should have made, if it did exactly what it said: all of them, with nothing
 // left alone. Anything else waits for the server's own view.
 function movedTiles(body, done) {
-  if (done.skipped || !['road', 'zone', 'park'].includes(body.action)) return null;
-  const kind = body.action === 'zone' ? body.kind : body.action;
+  if (done.skipped || !['road', 'zone', 'park', 'place'].includes(body.action)) return null;
+  const kind = body.kind ?? body.action;
   const made = [];
   for (let y = Math.min(body.y, body.y2 ?? body.y); y <= Math.max(body.y, body.y2 ?? body.y); y++) {
     for (let x = Math.min(body.x, body.x2 ?? body.x); x <= Math.max(body.x, body.x2 ?? body.x); x++) made.push([x, y, kind, 0]);
@@ -3599,7 +3692,7 @@ async function worldView(id, { home = false } = {}) {
   const buttons = new Map();
   const idle = me
     ? 'Pick a tool, then click or drag on the map. Right-click, or press and hold, for a menu.'
-    : 'You\'re looking around. Click a figure, or right-click, for a menu. Pick a tool and you\'ll be asked to sign in to build.';
+    : 'You\'re looking around. Click a figure, right-click, or press and hold for a menu. Pick a tool and you\'ll be asked to sign in to build.';
 
   const hintNow = () => (tool ? BUILD_TOOLS.find(([key]) => key === tool)[2] : idle);
 
@@ -3747,6 +3840,7 @@ async function worldView(id, { home = false } = {}) {
   }
 
   for (const [name, label, hint] of BUILD_TOOLS) {
+    if (PLACED_TOOLS.has(name) && path !== 'commons') continue;
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
       h('span', { class: 'wd-btn-label' }, label));
@@ -3772,7 +3866,7 @@ async function worldView(id, { home = false } = {}) {
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   async function send(body) {
-    say(['road', 'zone', 'park', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
+    say(['road', 'zone', 'park', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
       const done = await api(`/api/worlds/${path}/act`, { method: 'POST', body });
       moves = done.moves_left;
@@ -3800,6 +3894,7 @@ async function worldView(id, { home = false } = {}) {
     const zone = tool === 'homes' || tool === 'shops' || tool === 'workshops';
     if (tool === 'road') send({ action: 'road', x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
     else if (zone) send({ action: 'zone', kind: tool, x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
+    else if (PLACED_TOOLS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
     else send({ action: tool === 'park' ? 'park' : 'bulldoze', x: tile.x, y: tile.y });
   }
 
@@ -4206,7 +4301,7 @@ async function route() {
     else if (worldMatch) view = await worldView(decodeURIComponent(worldMatch[1]));
     else if (planMatch) {
       view = await planInviteView(decodeURIComponent(planMatch[1]), {
-        h, api, field, formError, secretRow, whenText, googleCalendarUrl, startCity: startCityDialog,
+        h, api, field, formError, secretRow, spanText, googleCalendarUrl, startCity: startCityDialog,
       });
     }
     else if (path === '/worlds') view = await worldsView();
