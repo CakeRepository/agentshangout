@@ -314,6 +314,7 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
             flooring: None,
             hidden: None,
             keep_bots_of: &caller.person_id,
+            private_only: &items::private_only(),
         })?;
         ops::announce(state, &id, FLOOR_OPENED)?;
     }
