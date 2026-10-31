@@ -474,6 +474,12 @@ CREATE TABLE IF NOT EXISTS space_plots (
     space_id    TEXT NOT NULL UNIQUE REFERENCES spaces(id) ON DELETE CASCADE,
     PRIMARY KEY (world_id, x, y)
 );
+CREATE TABLE IF NOT EXISTS person_clocks (
+    person_id       TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    time_zone       TEXT NOT NULL,
+    utc_offset_min  INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -682,6 +688,8 @@ pub struct Event {
     pub proposed_by: String,
     pub proposer: String,
     pub updated_at: i64,
+    /// When it was proposed.
+    pub created_at: i64,
     pub rsvps: Vec<Rsvp>,
 }
 
@@ -715,6 +723,14 @@ pub struct NewCheckIn<'a> {
     pub needs_human: bool,
     pub expires_at: i64,
     pub now: i64,
+}
+
+/// B2: the time zone a person's page last reported, and its offset from UTC then.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PersonClock {
+    pub time_zone: String,
+    pub utc_offset_minutes: i64,
+    pub updated_at: i64,
 }
 
 /// A bot's private question to its owner. `answer` stays empty until they reply, and a question
@@ -1195,6 +1211,7 @@ fn event_from_row(row: &Row) -> rusqlite::Result<Event> {
         proposed_by: row.get(10)?,
         proposer: row.get(11)?,
         updated_at: row.get(12)?,
+        created_at: row.get(13)?,
         rsvps: Vec::new(),
     })
 }
@@ -1252,7 +1269,7 @@ const AGENTS: &str = "agents a LEFT JOIN agent_activity x ON x.agent_id = a.id \
      LEFT JOIN agent_doorbell d ON d.agent_id = a.id";
 const MESSAGE_COLS: &str = "id, hangout_id, person_id, agent_id, speaker, kind, body, created_at";
 const EVENT_COLS: &str = "e.id, e.hangout_id, e.title, e.location, e.notes, e.starts_at, e.ends_at, \
-     e.status, e.min_yes, e.sequence, e.proposed_by, e.proposer, e.updated_at";
+     e.status, e.min_yes, e.sequence, e.proposed_by, e.proposer, e.updated_at, e.created_at";
 const CITY_COLS: &str = "c.id, c.name, c.invite_code, c.square_id, c.created_by, c.created_at";
 const HOUSE_COLS: &str =
     "h.id, h.city_id, h.name, h.invite_code, h.living_room, h.porch, h.created_by, h.created_at";
@@ -2508,6 +2525,42 @@ impl Db {
 
     // Notification targets. An owner is a person or a bot; their ids can't collide.
 
+    /// B2: replaces a person's saved clock.
+    pub fn set_person_clock(
+        &self,
+        person_id: &str,
+        time_zone: &str,
+        utc_offset_min: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO person_clocks (person_id, time_zone, utc_offset_min, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (person_id) DO UPDATE SET
+                 time_zone = excluded.time_zone,
+                 utc_offset_min = excluded.utc_offset_min,
+                 updated_at = excluded.updated_at",
+            params![person_id, time_zone, utc_offset_min, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn person_clock(&self, person_id: &str) -> rusqlite::Result<Option<PersonClock>> {
+        self.conn()
+            .query_row(
+                "SELECT time_zone, utc_offset_min, updated_at FROM person_clocks WHERE person_id = ?",
+                [person_id],
+                |row| {
+                    Ok(PersonClock {
+                        time_zone: row.get(0)?,
+                        utc_offset_minutes: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
     pub fn notify_url(&self, owner_id: &str) -> rusqlite::Result<Option<String>> {
         self.conn()
             .query_row(
@@ -2646,14 +2699,14 @@ impl Db {
         ))?;
         let rows = stmt.query_map(params![person_id, since], |row| {
             let mut event = event_from_row(row)?;
-            let in_room: bool = row.get(15)?;
+            let in_room: bool = row.get(16)?;
             if !in_room {
                 event.notes.clear();
             }
             Ok(FeedEvent {
                 event,
-                hangout_name: if in_room { row.get(13)? } else { "a friend".to_string() },
-                response: row.get(14)?,
+                hangout_name: if in_room { row.get(14)? } else { "a friend".to_string() },
+                response: row.get(15)?,
             })
         })?;
         rows.collect()

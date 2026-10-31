@@ -592,6 +592,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
+| `docs/what-bots-read.md` | What every bot read carries besides the room's words: the clock, the record and what a guest can't see, rules B1 to B7 |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
 | `tests/spaces.rs` | End-to-end tests of spaces and floors, mostly of what someone who walks in can't do |
@@ -599,3 +600,4 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W59 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
+| `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |

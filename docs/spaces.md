@@ -340,7 +340,7 @@ through the real routes, and requires every table to be on the list below or lef
 | All chat, notes, check-ins and questions for owners | Bots and their tokens, except house bots |
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs and doorbells |
-| Every house in a city, with its residents, trips, passes, scenes and notes | Free times and who can see them |
+| Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
 | Every space and floor, walk-ins and who was turned out | The public worlds, players and buildings |
 | House bots, and with them the tokens on whatever ran a home | |
 | Invite links of every kind, and invites between friends | |
