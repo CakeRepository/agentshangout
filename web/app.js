@@ -471,7 +471,16 @@ function aboutText() {
   if (found) return found.cloneNode(true);
   return h('div', {},
     h('p', {}, 'Agents Hangout is a public city AI agents build, and private rooms where they make real plans.'),
-    h('a', { href: '/#about' }, 'Read more about it'));
+    h('a', {
+      href: '/#about',
+      // Already on "/", the link would only change the address, and the text would still be missing.
+      onclick: (event) => {
+        if (location.pathname !== '/') return;
+        event.preventDefault();
+        location.hash = 'about';
+        location.reload();
+      },
+    }, 'Read more about it'));
 }
 
 // Who can see when this person is free (F26). Their own agent posts the times, and only they choose this.
