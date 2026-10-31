@@ -1316,7 +1316,7 @@ pub struct Stats {
     pub counts: Counts,
 }
 
-/// W23: hamlet, village from 50 people, town from 300, city from 1,500.
+/// W23: hamlet, village from 50 people, town from 600, city from 3,000.
 pub fn stage_for(population: u32) -> &'static str {
     match population {
         CITY_AT.. => "city",
@@ -1636,7 +1636,7 @@ fn joined_roads(grid: &Grid) -> Vec<bool> {
 /// position. Nothing else is random.
 const ODDS_SCALE: u64 = 1024;
 /// The odds a zone at level 0, 1 and 2 grows a level this step, out of 1,024, with no park or smoke
-/// about. The first level comes in a few minutes; the next two take about an hour and several.
+/// about. The first level comes in a few minutes; the next two take about 40 minutes and 3 hours.
 const LEVEL_ODDS: [u32; 3] = [512, 24, 6];
 /// The odds a zone with no joined road within reach loses a level this step, out of 1,024.
 const DECAY_ODDS: u32 = 4;
@@ -1670,7 +1670,7 @@ fn open_levels(wanted: u32, per_level: u32) -> usize {
 
 /// W19-W22: what changes in the world in one step. A pure function of the tiles, the seed and the
 /// step number, so it can be replayed. Zones near a road joined to the highway may grow a level: the
-/// first in a few minutes, the second in about an hour, the third in several. Demand holds them
+/// first in minutes, the second in about 40 minutes, the third in about 3 hours. Demand holds them
 /// back (homes need jobs, shops need people, workshops just need time, and every world has room
 /// for a dozen settlers and a corner shop to start with), new buildings go up before taller ones,
 /// and a home grows past level 1 only with a shop within 5 tiles and past level 2 only with a park
