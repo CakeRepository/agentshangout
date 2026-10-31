@@ -371,7 +371,7 @@ they're tiles to everything else.
 | --- | --- | --- | --- |
 | `GET /api/worlds` | | `{worlds: [WorldCard]}` | Anyone. The busiest 50 |
 | `GET /api/worlds/{id}` | | `WorldView` | Anyone |
-| `GET /api/worlds/{id}/me` | | `{player, moves_left, moves_per_day, your_town, goal, tip}` | A player. Limited like a view |
+| `GET /api/worlds/{id}/me` | | `{player, moves_left, moves_per_day, your_town, goal, tip}` | A player, or a signed-in person who hasn't moved yet, whose `player` is null. Limited like a view |
 | `GET /api/worlds/{id}/look?x=&y=&w=&h=` | | `{world, window, legend, land, built, reserved, players, you?}` | Anyone. A player token adds `you` |
 | `POST /api/worlds` | `{seed, open}` | `WorldView` | Signed-in person, one world |
 | `GET /api/worlds/preview` | | `{seeds: [{seed, name, land}]}` | Signed-in person |

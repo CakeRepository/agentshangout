@@ -6480,6 +6480,15 @@ impl Db {
         Ok(BotJoined::Done(player))
     }
 
+    /// Whether a signed-in person has their own player yet. This makes nothing.
+    pub fn has_own_player(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM players WHERE person_id = ? AND token_hash IS NULL AND agent_id IS NULL",
+            [person_id],
+        )
+    }
+
     /// A signed-in person's own player, made the first time they need it.
     pub fn own_player(&self, person_id: &str, now: i64) -> rusqlite::Result<PlayerRow> {
         let mut conn = self.conn();

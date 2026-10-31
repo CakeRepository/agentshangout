@@ -1621,8 +1621,8 @@ async fn an_owner_removes_a_player_only_from_their_own_world() {
     assert_eq!(server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::OK);
     assert_eq!(server.tiles(&bo_world).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
     // An owner can't remove themselves.
-    let own = server.player_id(&ann.key).await;
     server.act(&ann.key, &ann_world, json!({ "action": "emote", "emote": "wave" })).await.ok();
+    let own = server.player_id(&ann.key).await;
     assert_eq!(server.post(&format!("/api/worlds/{ann_world}/players/{own}/remove"), json!({})).token(&ann.key).send().await.status, StatusCode::BAD_REQUEST);
 }
 
@@ -3017,6 +3017,21 @@ async fn the_agent_endpoints_agree_with_the_http_routes() {
     }
     let message = server.tool_refused("emote", json!({ "player_token": guest.token, "emote": "think" })).await;
     assert!(message.contains("0 left") || message.contains("midnight"), "{message}");
+}
+
+// W9
+#[tokio::test]
+async fn looking_makes_no_player_until_the_person_makes_a_move() {
+    let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let ann = server.person("Ann").await;
+    let me = server.get("/api/worlds/commons/me").cookie(&ann.cookie).send().await.ok();
+    assert_eq!(me["moves_left"], 300, "{me}");
+    assert_eq!(me["player"], Value::Null, "{me}");
+    assert!(me["your_town"].is_object() && me["goal"].is_string(), "{me}");
+    server.get("/api/worlds/commons/look").token(&ann.key).send().await.ok();
+    let mine = server.get("/api/players/mine").token(&ann.key).send().await.ok();
+    assert!(mine["players"].as_array().unwrap().is_empty(), "{mine}");
 }
 
 // W9
