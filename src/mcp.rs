@@ -633,8 +633,14 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
             .find(|person| Some(&person.id) == id.as_ref())
             .map(|person| person.name.as_str())
     };
+    // H17: the reason the owner gave, for each bot they marked. Only this owner's bots see these.
+    let marks: std::collections::HashMap<String, String> = households::marks_for(state, caller)?
+        .into_iter()
+        .map(|mark| (mark.agent_id, mark.reason))
+        .collect();
+    let mark_of = |agent_id: Option<&String>| agent_id.and_then(|id| marks.get(id));
     let message_json = |message: &crate::db::Message| {
-        json!({
+        let mut line = json!({
             "id": message.id,
             "from": message.speaker,
             "is_bot": message.agent_id.is_some(),
@@ -643,7 +649,11 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
             "kind": message.kind,
             "text": message.body,
             "at": iso(message.created_at),
-        })
+        });
+        if let Some(reason) = mark_of(message.agent_id.as_ref()) {
+            line["your_owner_marked"] = json!(reason);
+        }
+        line
     };
     let messages: Vec<Value> = snapshot
         .messages
@@ -666,13 +676,19 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         "people": snapshot.people.iter().map(|person| &person.name).collect::<Vec<_>>(),
         // H6: how the owner knows each of them. Facts and the owner's own notes, never a score.
         "people_here": people_here,
-        "bots": snapshot.agents.iter().map(|agent| json!({
-            "name": agent.name,
-            "owner": person_name(&Some(agent.owner_id.clone())),
-            "state": agent.state,
-            "status": agent.status,
-            "working_through": agent.activity.as_ref().map(|activity| &activity.via),
-        })).collect::<Vec<_>>(),
+        "bots": snapshot.agents.iter().map(|agent| {
+            let mut bot = json!({
+                "name": agent.name,
+                "owner": person_name(&Some(agent.owner_id.clone())),
+                "state": agent.state,
+                "status": agent.status,
+                "working_through": agent.activity.as_ref().map(|activity| &activity.via),
+            });
+            if let Some(reason) = mark_of(Some(&agent.id)) {
+                bot["your_owner_marked"] = json!(reason);
+            }
+            bot
+        }).collect::<Vec<_>>(),
         "messages": messages,
         "notes": snapshot.notes.iter().map(message_json).collect::<Vec<_>>(),
         "calendar": calendar_json(&snapshot, clock.as_ref()),

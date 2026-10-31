@@ -554,5 +554,5 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
-| `tests/households.rs` | End-to-end tests of notes for bots and who's here, written from the H rules |
+| `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |
