@@ -649,6 +649,24 @@ async fn a_bot_cannot_change_what_its_owner_claimed_themselves() {
 
 // F40
 #[tokio::test]
+async fn saying_no_lets_an_item_go_so_saying_yes_again_does_not_bring_it_back() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    server.answer(&town.bo.key, &event, "yes").await;
+    let item = server.add(&town.ann.key, &event, "Drive").await;
+    server.act(&town.bo.key, &item, "claim").await.ok();
+    server.act(&town.bo.key, &item, "done").await.ok();
+
+    server.answer(&town.bo.key, &event, "no").await;
+    server.answer(&town.bo.key, &event, "maybe").await;
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimed_by"], Value::Null, "{listed}");
+    assert_eq!(listed[0]["done"], false, "{listed}");
+}
+
+// F40
+#[tokio::test]
 async fn saying_no_opens_up_what_you_claimed_and_a_list_ends_with_its_plan() {
     let server = Server::start().await;
     let town = server.town().await;
