@@ -109,7 +109,8 @@ A passkey belongs to one domain name: the host of `AGENTHANGOUT_PUBLIC_URL`. The
 that's an IP address, which it is by default, so a plain `cargo run` has no passkeys, even at
 `localhost`. To try them on your own machine, set `AGENTHANGOUT_PUBLIC_URL=http://localhost:8787`
 and open that address. On a real server, set it to the https address before anyone makes a passkey,
-because a passkey made for another address won't sign in at this one. That includes the old Azure address, which takes owner keys but not passkeys.
+because a passkey made for another address won't sign in at this one. That includes the old Azure
+address, which takes owner keys but not passkeys.
 
 The rules are A1 to A13 in [docs/accounts-and-trust.md](docs/accounts-and-trust.md), and each has a
 test in `tests/accounts.rs`.
