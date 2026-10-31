@@ -340,9 +340,11 @@ function passkeysCard(me, status, first) {
 // (the way in, your account, your rooms and cities, the form that starts a hangout) are panels that
 // open over the map. This builds those sections. It is asked for the first time one of them opens.
 async function homeParts(me) {
-  const [status, passkeyList] = await Promise.all([
+  const [status, passkeyList, spaces, publicFloors] = await Promise.all([
     passkeyStatus(),
     me?.passkeys ? api('/api/passkeys').then((data) => data.passkeys).catch(() => null) : [],
+    me ? api('/api/spaces').catch(() => null) : null,
+    me ? api('/api/spaces/public').then((data) => data.floors).catch(() => []) : [],
   ]);
   const createError = formError();
 
@@ -355,8 +357,9 @@ async function homeParts(me) {
       else enter();
     }),
   },
-    h('h2', {}, 'Start a hangout'),
-    field('Hangout name', h('input', { name: 'name', required: true, maxLength: 60, placeholder: 'Taco Tuesday crew' })),
+    h('h2', {}, 'Start a third space'),
+    h('p', { class: 'muted' }, 'Somewhere that isn\'t home: a café, a club, a workshop.'),
+    field('Name', h('input', { name: 'name', required: true, maxLength: 60, placeholder: 'Taco Tuesday crew' })),
     me ? null : field('Your name', h('input', { name: 'your_name', required: true, maxLength: 60, autocomplete: 'given-name' })),
     field('Server code', h('input', { name: 'create_code', autocomplete: 'off' }), 'Only if this server\'s owner gave you one.'),
     createError,
@@ -391,13 +394,39 @@ async function homeParts(me) {
       onclick: async () => { await api('/api/session', { method: 'DELETE' }); route(); },
     }, 'Sign out'));
 
-  // The rooms a signed-in person is in. This is their way to the pages that keep their own layout.
-  const hangoutsCard = me && h('section', { class: 'card', 'aria-label': 'Your hangouts' },
-    h('h2', {}, 'Your hangouts'),
-    me.hangouts.length
-      ? h('ul', { class: 'room-list' }, me.hangouts.map((hangout) =>
-        h('li', {}, h('a', { href: `/h/${hangout.id}`, onclick: (e) => { e.preventDefault(); go(`/h/${hangout.id}`); } }, hangout.name))))
-      : h('p', { class: 'muted' }, 'You aren\'t in any hangouts yet.'));
+  // A person's house and third spaces, and the way to change each.
+  const owned = spaces ? [spaces.house, ...spaces.third] : [];
+  const spaceRow = ({ space, floors, on_map: onMap }) => {
+    const open = floors.filter((floor) => floor.access === 'public').length;
+    return h('li', {},
+      link(`/h/${floors[0].id}`, space.name),
+      h('span', { class: 'muted' }, ` · ${floors.length === 1 ? '1 floor' : `${floors.length} floors`}${open ? ` · ${open} public` : ''}${onMap ? '' : ' · not on the map yet'} · `),
+      link(`/s/${space.id}`, 'Customize'));
+  };
+  const spacesCard = spaces && h('section', { class: 'card', 'aria-label': 'Your spaces' },
+    h('h2', {}, 'Your spaces'),
+    h('ul', { class: 'room-list' }, owned.map(spaceRow)),
+    h('p', { class: 'muted' }, `Your house, and ${spaces.third.length} of ${spaces.limits.third_spaces} third spaces.`),
+    h('p', { class: 'muted' }, 'Every space is a building on the map. Build a house or a studio beside a road, then right-click it and choose Go in.'));
+
+  // Public floors. Walk in opens the room, which is what walks someone in.
+  const publicCard = publicFloors.length ? h('section', { class: 'card', 'aria-label': 'Public floors' },
+    h('h2', {}, 'Public floors'),
+    h('p', { class: 'muted' }, 'Anyone signed in can walk in. You see what happens from when you arrive, and these are strangers\' words.'),
+    h('ul', { class: 'room-list' }, publicFloors.map((floor) => h('li', {},
+      h('strong', {}, floor.space_name === floor.name ? floor.name : `${floor.space_name}: ${floor.name}`),
+      h('span', { class: 'muted' }, ` · ${floor.owner_name} · ${floor.here} of ${floor.capacity} · `),
+      link(`/h/${floor.id}`, 'Walk in'),
+      floor.about ? h('p', { class: 'muted' }, floor.about) : null)))) : null;
+
+  // Rooms this person is in that aren't their own spaces. This is their way to the pages that keep
+  // their own layout.
+  const ownFloors = new Set(owned.flatMap(({ floors }) => floors.map((floor) => floor.id)));
+  const otherRooms = me ? me.hangouts.filter((hangout) => !ownFloors.has(hangout.id)) : [];
+  const hangoutsCard = otherRooms.length ? h('section', { class: 'card', 'aria-label': 'Other rooms you\'re in' },
+    h('h2', {}, 'Other rooms you\'re in'),
+    h('ul', { class: 'room-list' }, otherRooms.map((hangout) =>
+      h('li', {}, h('a', { href: `/h/${hangout.id}`, onclick: (e) => { e.preventDefault(); go(`/h/${hangout.id}`); } }, hangout.name))))) : null;
 
   // Places friends have invited them to. Open goes to the place's normal invite page.
   const invitedCard = me?.invited?.length ? h('section', { class: 'card', 'aria-label': 'Invites for you' },
@@ -458,7 +487,8 @@ async function homeParts(me) {
     signIn,
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
-    rooms: [...(invitedCard ? [invitedCard] : []), ...(me ? [hangoutsCard] : []), cities, createForm],
+    // Someone signed in starts a third space by building one on the map.
+    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me ? null : createForm].filter(Boolean),
     stop: () => stop(),
   };
 }
@@ -1133,7 +1163,13 @@ function friendInviter({ invite, here }) {
 
 async function roomView(id) {
   const root = h('main', { class: 'room' });
-  let snapshot = await api(`/api/hangouts/${encodeURIComponent(id)}`);
+  const load = () => api(`/api/hangouts/${encodeURIComponent(id)}`);
+  // A public floor is open to anyone signed in, so its link walks them in. Any other room stays a 404.
+  let snapshot = await load().catch(async (failure) => {
+    if (failure.status !== 404) throw failure;
+    await api(`/api/floors/${encodeURIComponent(id)}/walk-in`, { method: 'POST' });
+    return load();
+  });
   const shownMessages = new Set();
 
   const liveEl = h('span', { class: 'live' }, 'CONNECTING');
@@ -1559,12 +1595,16 @@ async function roomView(id) {
             type: 'button',
             class: 'link danger',
             onclick: async () => {
-              if (!confirm(`Bring ${agent.name} home? It leaves this Porch right away.`)) return;
+              if (!confirm(`Bring ${agent.name} home? It leaves here right away.`)) return;
               try {
-                // A guest isn't in the room's crew, so its trip is found through its owner's inbox.
-                const { your_trips: trips = [] } = await api('/api/inbox');
-                const trip = trips.find((item) => item.agent_id === agent.id && item.status === 'here');
-                if (trip) await api(`/api/trips/${trip.id}/end`, { method: 'POST' });
+                if (snapshot.floor) {
+                  await api(`/api/floors/${id}/walk-out`, { method: 'POST', body: { agent_id: agent.id } });
+                } else {
+                  // A guest isn't in the room's crew, so its trip is found through its owner's inbox.
+                  const { your_trips: trips = [] } = await api('/api/inbox');
+                  const trip = trips.find((item) => item.agent_id === agent.id && item.status === 'here');
+                  if (trip) await api(`/api/trips/${trip.id}/end`, { method: 'POST' });
+                }
                 await reload();
               } catch (error) {
                 alert(error.message);
@@ -1608,10 +1648,38 @@ async function roomView(id) {
     calendarPanel.hidden = Boolean(guest);
     bringButton.hidden = Boolean(guest);
     emptyBring.hidden = Boolean(guest);
+    // Someone who walked onto a public floor can send a bot in. On a Porch that's what a trip is for.
+    sendButton.hidden = !(guest && snapshot.floor);
     if (!guest) return;
     guestEl.replaceChildren(
       h('strong', {}, `You're a guest here until ${whenText(guest.until)} (${untilText(guest.until)}).`),
       ` You can only see what's happened since you arrived, at ${timeFormat.format(fromUnix(guest.since))}.`);
+  }
+
+  // Which floor of which space this is. Only floors this caller can reach come from the server.
+  function renderFloors() {
+    const place = snapshot.floor;
+    floorsEl.hidden = !place;
+    if (!place) return;
+    const { floor, space, floors, here, capacity, runs_it: runsIt } = place;
+    const open = floor.access === 'public';
+    floorsEl.replaceChildren(
+      h('strong', {}, space.name),
+      ...floors.map((each) => (each.id === id
+        ? h('span', { class: 'floor-chip here', 'aria-current': 'page' }, each.name)
+        : link(`/h/${each.id}`, each.name, { class: 'floor-chip' }))),
+      h('span', { class: `floor-tag${open ? ' public' : ''}` }, open ? 'Public' : 'Private'),
+      h('small', { class: 'muted' }, `${SIZE_NAME[floor.size] || floor.size} · ${here} of ${capacity}`),
+      ...(runsIt ? [link(`/s/${space.id}`, 'Customize')] : []),
+      ...(snapshot.guest ? [h('button', {
+        type: 'button',
+        class: 'link',
+        onclick: async () => {
+          await api(`/api/floors/${id}/walk-out`, { method: 'POST' });
+          go('/');
+        },
+      }, 'Walk out')] : []),
+      ...(space.about ? [h('small', { class: 'muted floors-about' }, space.about)] : []));
   }
 
   function renderBack() {
@@ -1636,6 +1704,9 @@ async function roomView(id) {
       asking: asking.has(agent.id),
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
+    room.setLook(snapshot.floor?.floor);
+    stage.dataset.size = snapshot.floor?.floor.size || '';
+    renderFloors();
     renderGuest();
     renderBoard();
     renderLegend();
@@ -1650,7 +1721,7 @@ async function roomView(id) {
 
   async function reload() {
     try {
-      snapshot = await api(`/api/hangouts/${encodeURIComponent(id)}`);
+      snapshot = await load();
       render();
     } catch (error) {
       if (error.status === 401 || error.status === 404) go('/');
@@ -1662,6 +1733,25 @@ async function roomView(id) {
     clearTimeout(reloadTimer);
     reloadTimer = setTimeout(reload, 250);
   };
+
+  // A bot on a public floor reads strangers' words, so only its owner sends it, and this says so.
+  async function sendBot() {
+    const mine = await api('/api/me');
+    const here = new Set(snapshot.agents.map((agent) => agent.id));
+    const bots = (mine.bots || []).filter((bot) => !here.has(bot.id));
+    const error = formError();
+    const dialog = modal('Send a bot in',
+      h('p', {}, 'Anyone here can write to it, so send a bot with nothing to lose. It stays 12 hours, or until you bring it home.'),
+      error,
+      bots.length ? h('div', { class: 'also' }, bots.map((bot) => h('button', {
+        type: 'button',
+        onclick: act(error, async () => {
+          await api(`/api/floors/${id}/walk-in`, { method: 'POST', body: { agent_id: bot.id } });
+          dialog.close();
+          await reload();
+        }),
+      }, bot.name))) : h('p', { class: 'muted' }, 'You have no bots to send. Make one in your house first.'));
+  }
 
   async function bringBot() {
     const mine = await api('/api/me');
@@ -1861,6 +1951,7 @@ async function roomView(id) {
   // Rooms that belong to a city or house have no invite link, and a guest can't hand one out.
   const inviteButton = h('button', { type: 'button', onclick: inviteDialog }, 'Invite');
   const bringButton = h('button', { type: 'button', onclick: bringBot }, 'Bring a bot');
+  const sendButton = h('button', { type: 'button', onclick: sendBot, hidden: true }, 'Send a bot in');
   const calendarPanel = h('div', { class: 'panel' },
     h('div', { class: 'panel-head' },
       h('h2', {}, 'Calendar'),
@@ -1868,6 +1959,7 @@ async function roomView(id) {
     calendarEl);
   const guestEl = h('div', { class: 'guest-banner', role: 'status', hidden: true });
   const backEl = h('a', { class: 'muted', hidden: true });
+  const floorsEl = h('nav', { class: 'floors', 'aria-label': 'Floors', hidden: true });
 
   root.append(
     h('header', { class: 'top' },
@@ -1880,6 +1972,7 @@ async function roomView(id) {
         inviteButton,
         h('button', { type: 'button', onclick: notifyDialog }, 'Notify me'),
         h('button', { type: 'button', class: 'primary', onclick: calendarDialog }, 'My calendar'))),
+    floorsEl,
     guestEl,
     questionsPanel,
     stage,
@@ -1899,7 +1992,8 @@ async function roomView(id) {
         h('div', { class: 'panel' },
           h('div', { class: 'panel-head' },
             h('h2', {}, 'Crew'),
-            bringButton),
+            bringButton,
+            sendButton),
           crewEl),
         h('div', { class: 'panel' },
           h('h2', {}, 'Shared notes'),
@@ -1959,6 +2053,213 @@ async function roomView(id) {
     room.destroy();
   };
   return root;
+}
+
+// Changing a space: its name, its floors, who can come in and how each floor looks. The server
+// turns away anyone who doesn't run it, and offers the words a floor can be set to.
+
+const SIZE_NAME = { small: 'Small', medium: 'Medium', big: 'Big' };
+const wordName = (word) => word[0].toUpperCase() + word.slice(1);
+const optionsFor = (words, chosen) =>
+  words.map((value) => h('option', { value, selected: value === chosen }, wordName(value)));
+
+async function spaceView(id) {
+  const path = encodeURIComponent(id);
+  const [{ choices, limits }, first] = await Promise.all([api('/api/spaces'), api(`/api/spaces/${path}`)]);
+  let view = first;
+  const titleEl = h('h1', {});
+  const body = h('div', { class: 'stack' });
+
+  async function reload() {
+    view = await api(`/api/spaces/${path}`);
+    render();
+  }
+
+  function spacePanel() {
+    const error = formError();
+    return h('section', { class: 'panel stack', 'aria-label': 'This space' },
+      h('h2', {}, view.space.kind === 'house' ? 'Your house' : 'This third space'),
+      h('form', {
+        class: 'stack',
+        onsubmit: submitter(error, async (values) => {
+          await api(`/api/spaces/${path}`, { method: 'PUT', body: values });
+          await reload();
+        }),
+      },
+        field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: view.space.name })),
+        field('About', h('input', { name: 'about', maxLength: 500, value: view.space.about }), 'Shown in the room, and on the public list if a floor is public.'),
+        error,
+        h('button', { type: 'submit' }, 'Save')));
+  }
+
+  function floorCard({ floor, invite_url: inviteUrl, here, capacity }, index) {
+    const error = formError();
+    const url = `/api/floors/${encodeURIComponent(floor.id)}`;
+    const button = (label, title, disabled, direction) => h('button', {
+      type: 'button',
+      class: 'ghost',
+      title,
+      disabled,
+      onclick: act(error, async () => {
+        await api(`${url}/move`, { method: 'POST', body: { direction } });
+        await reload();
+      }),
+    }, label);
+    const opening = () => access.value === 'public';
+    const warning = h('p', { class: 'muted' }, 'Anyone signed in can walk in and read what\'s said from then on. They can\'t see anything from before. Other people\'s bots go home, and their owners can bring them back.');
+    const codeField = field('Server code', h('input', { name: 'create_code', autocomplete: 'off' }), 'Only if this server\'s owner gave you one.');
+    const access = h('select', {
+      name: 'access',
+      onchange: () => {
+        warning.hidden = !opening();
+        codeField.hidden = !opening() || floor.access === 'public';
+      },
+    }, h('option', { value: 'private', selected: floor.access === 'private' }, 'Private'),
+    h('option', { value: 'public', selected: floor.access === 'public' }, 'Public'));
+    warning.hidden = !opening();
+    codeField.hidden = true;
+    const size = h('select', { name: 'size' }, choices.sizes.map((choice) =>
+      h('option', { value: choice.size, selected: choice.size === floor.size }, `${SIZE_NAME[choice.size] || choice.size} (${choice.capacity})`)));
+    return h('article', { class: 'floor-card stack' },
+      h('div', { class: 'row' },
+        h('div', { class: 'row-main' },
+          h('strong', {}, floor.name),
+          h('small', { class: 'muted' }, `${here} of ${capacity} here`)),
+        h('div', { class: 'row-actions' },
+          link(`/h/${floor.id}`, 'Open'),
+          button('Up', 'Move this floor up', index === view.floors.length - 1, 'up'),
+          button('Down', 'Move this floor down', index === 0, 'down'))),
+      h('form', {
+        class: 'stack',
+        onsubmit: submitter(error, async (values) => {
+          await api(url, {
+            method: 'PUT',
+            body: {
+              name: values.name,
+              access: values.access,
+              size: values.size,
+              paint: values.paint,
+              flooring: values.flooring,
+              hidden: choices.furniture.filter((item) => !values[`show-${item}`]),
+              create_code: values.create_code || undefined,
+            },
+          });
+          await reload();
+        }),
+      },
+        field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: floor.name })),
+        h('div', { class: 'look-grid' },
+          field('Who can come in', access),
+          field('Size', size),
+          field('Paint', h('select', { name: 'paint' }, optionsFor(choices.paints, floor.paint))),
+          field('Flooring', h('select', { name: 'flooring' }, optionsFor(choices.floorings, floor.flooring)))),
+        warning,
+        codeField,
+        h('fieldset', { class: 'checks' },
+          h('legend', {}, 'Furniture'),
+          choices.furniture.map((item) => h('label', { class: 'toggle' },
+            h('input', { type: 'checkbox', name: `show-${item}`, checked: !floor.hidden.includes(item) }),
+            wordName(item)))),
+        error,
+        h('button', { type: 'submit' }, 'Save this floor')),
+      h('details', {},
+        h('summary', {}, 'Invite link'),
+        h('p', { class: 'muted' }, 'Anyone with this link can join this floor and bring their bots. It opens no other floor.'),
+        secretRow(inviteUrl)),
+      floor.id === view.space.id ? null : h('button', {
+        type: 'button',
+        class: 'link danger',
+        onclick: act(error, async () => {
+          if (!confirm(`Remove ${floor.name}? Its chat, notes and plans are deleted, and its plans come off everyone's calendars. This can't be undone.`)) return;
+          await api(url, { method: 'DELETE' });
+          await reload();
+        }),
+      }, 'Remove this floor'));
+  }
+
+  function floorsPanel() {
+    const error = formError();
+    return h('section', { class: 'panel stack', 'aria-label': 'Floors' },
+      h('h2', {}, 'Floors'),
+      view.floors.map(floorCard),
+      view.floors.length < limits.floors ? h('form', {
+        class: 'copy-row',
+        onsubmit: submitter(error, async (values) => {
+          await api(`/api/spaces/${path}/floors`, { method: 'POST', body: values });
+          await reload();
+        }),
+      },
+        h('input', { name: 'name', required: true, maxLength: 60, placeholder: 'Name a new floor', 'aria-label': 'Name a new floor' }),
+        h('button', { type: 'submit' }, 'Add a floor')) : h('p', { class: 'muted' }, `A space has at most ${limits.floors} floors.`),
+      error);
+  }
+
+  function peoplePanel() {
+    const error = formError();
+    const turnOut = (person) => `/api/spaces/${path}/people/${encodeURIComponent(person.id)}/turn-out`;
+    return h('section', { class: 'panel stack', 'aria-label': 'People' },
+      h('h2', {}, 'People'),
+      h('ul', { class: 'rows' }, view.people.map((person) => h('li', { class: 'row' },
+        h('div', { class: 'row-main' },
+          h('span', {}, person.name),
+          h('small', { class: 'muted' }, person.walked_in ? 'Walked in' : 'Member')),
+        person.id === view.space.owner_id ? null : h('button', {
+          type: 'button',
+          class: 'link danger',
+          onclick: act(error, async () => {
+            if (!confirm(`Turn ${person.name} out? They and their bots leave every floor, and can't come back until you let them.`)) return;
+            await api(turnOut(person), { method: 'POST' });
+            await reload();
+          }),
+        }, 'Turn out')))),
+      view.turned_out.length ? h('h3', {}, 'Turned out') : null,
+      view.turned_out.length ? h('ul', { class: 'rows' }, view.turned_out.map((person) => h('li', { class: 'row' },
+        h('span', {}, person.name),
+        h('button', {
+          type: 'button',
+          class: 'link',
+          onclick: act(error, async () => {
+            await api(turnOut(person), { method: 'DELETE' });
+            await reload();
+          }),
+        }, 'Let back')))) : null,
+      error);
+  }
+
+  function closePanel() {
+    const error = formError();
+    return h('section', { class: 'panel stack', 'aria-label': 'Close this space' },
+      h('h2', {}, 'Close this space'),
+      h('p', { class: 'muted' }, 'Closing it deletes every floor, with its chat, notes and plans. It can\'t be undone.'),
+      error,
+      h('button', {
+        type: 'button',
+        class: 'link danger',
+        onclick: act(error, async () => {
+          if (!confirm(`Close ${view.space.name}? Every floor's chat, notes and plans are deleted. This can't be undone.`)) return;
+          await api(`/api/spaces/${path}`, { method: 'DELETE' });
+          go('/');
+        }),
+      }, 'Close this space'));
+  }
+
+  function render() {
+    titleEl.textContent = view.space.name;
+    document.title = `${view.space.name} · Agents Hangout`;
+    body.replaceChildren(
+      spacePanel(),
+      floorsPanel(),
+      peoplePanel(),
+      ...(view.space.kind === 'third' ? [closePanel()] : []));
+  }
+
+  render();
+  return h('main', { class: 'house' },
+    h('header', { class: 'top' },
+      h('a', { class: 'brand', href: '/', onclick: (e) => { e.preventDefault(); go('/'); } }, 'Agents Hangout'),
+      titleEl,
+      link(`/h/${view.floors[0].floor.id}`, 'Back to the room', { class: 'top-link' })),
+    body);
 }
 
 // Cities and houses
@@ -3431,6 +3732,7 @@ const BUILD_TOOLS = [
 ];
 // W54: buildings are only in The Commons for now.
 const PLACED_TOOLS = new Set(['house', 'studio']);
+const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -3951,12 +4253,24 @@ async function worldView(id, { home = false } = {}) {
     return { title: self ? `${f.name} (you)` : f.name, sub: what, items };
   }
 
+  // Offered on every building to anyone signed in, so the menu never says whose one is or whether it
+  // will open (W4). Only the server knows, and a door that stays shut says nothing about why.
+  async function goIn(t) {
+    try {
+      const { hangout_id } = await api('/api/spaces/door', { method: 'POST', body: { x: t.x, y: t.y } });
+      go(`/h/${hangout_id}`);
+    } catch (failure) {
+      say(failure.status === 404 ? 'Nothing opens for you here.' : failure.message);
+    }
+  }
+
   function tileMenu(t) {
     const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
     } else {
+      if (BUILDING_KINDS.has(t.kind)) items.push({ label: 'Go in', run: () => goIn(t) });
       if (t.land !== 'water') items.push({ label: 'Walk here', cost: '1 move', run: () => send({ action: 'walk', x: t.x, y: t.y }) });
       if ((t.kind && t.kind !== 'cleared') || (!t.kind && t.land === 'forest')) {
         items.push({ label: 'Clear', cost: '1 move', run: () => send({ action: 'bulldoze', x: t.x, y: t.y }) });
@@ -4295,6 +4609,7 @@ async function route() {
   const joinMatch = path.match(/^\/join\/([^/]+)$/);
   const cityMatch = path.match(/^\/c\/([^/]+)$/);
   const houseMatch = path.match(/^\/house\/([^/]+)$/);
+  const spaceMatch = path.match(/^\/s\/([^/]+)$/);
   const joinCityMatch = path.match(/^\/join-city\/([^/]+)$/);
   const joinHouseMatch = path.match(/^\/join-house\/([^/]+)$/);
   const worldMatch = path.match(/^\/world\/([^/]+)$/);
@@ -4305,6 +4620,7 @@ async function route() {
     else if (joinMatch) view = await joinView(decodeURIComponent(joinMatch[1]));
     else if (cityMatch) view = await cityView(decodeURIComponent(cityMatch[1]));
     else if (houseMatch) view = await houseView(decodeURIComponent(houseMatch[1]));
+    else if (spaceMatch) view = await spaceView(decodeURIComponent(spaceMatch[1]));
     else if (joinCityMatch) view = await joinCityView(decodeURIComponent(joinCityMatch[1]));
     else if (joinHouseMatch) view = await joinHouseView(decodeURIComponent(joinHouseMatch[1]));
     else if (worldMatch) view = await worldView(decodeURIComponent(worldMatch[1]));

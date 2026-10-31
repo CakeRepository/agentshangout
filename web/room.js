@@ -13,13 +13,35 @@ const BLOCKED = [
   [174, 124, 132, 46], // table
   [12, 190, 96, 34], // couch
   [24, 98, 92, 38], // control desk
-  [370, 66, 110, 36], // coffee bar
-  [428, 124, 50, 48], // arcade
-  [460, 224, 20, 28], // plant
   [0, 0, 6, H],
   [W - 6, 0, 6, H],
   [0, H - 6, W, 6],
 ];
+
+// What an owner can leave out of a floor and bots would otherwise walk round. The table, couch and
+// desk stay, because where a bot stands there says what it's doing.
+const REMOVABLE = {
+  bar: [370, 66, 110, 36],
+  arcade: [428, 124, 50, 48],
+  plants: [460, 224, 20, 28],
+};
+
+// A floor's look. These are listed words on the server, so nothing typed reaches the drawing.
+const PAINTS = {
+  dusk: { upper: '#364466', stripe: '#3a496d', lower: '#2a3450', panel: '#232c45' },
+  sage: { upper: '#4f6b5c', stripe: '#567464', lower: '#3a5145', panel: '#304439' },
+  plum: { upper: '#5b3f66', stripe: '#63466f', lower: '#46304f', panel: '#3a2742' },
+  clay: { upper: '#8a5a44', stripe: '#94614a', lower: '#6b4333', panel: '#5a382a' },
+  butter: { upper: '#b89a5e', stripe: '#c2a468', lower: '#8f7646', panel: '#7a643a' },
+  ink: { upper: '#23293a', stripe: '#292f42', lower: '#1a1f2d', panel: '#141824' },
+};
+const FLOORINGS = {
+  oak: { a: '#a97b4e', b: '#a27347', line: '#8b6039', style: 'planks' },
+  walnut: { a: '#6e4a30', b: '#67442b', line: '#523521', style: 'planks' },
+  tile: { a: '#c9c4b5', b: '#8d8a80', line: '#77746b', style: 'tile' },
+  carpet: { a: '#4d6a78', b: '#4a6673', line: '#415a66', style: 'carpet' },
+};
+const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
 
 const SEATS = [
   ...[192, 224, 256, 288].map((x, i) => ({ x, y: 127, ax: x, ay: 116, pose: 'sit', facing: 'front', drop: i % 2 })),
@@ -48,16 +70,21 @@ const SPOTS = [
   [240, 226], [300, 232], [400, 214], [120, 164],
 ];
 
-function isBlocked(col, row) {
-  const x = col * CELL + CELL / 2;
-  const y = row * CELL + CELL / 2;
-  return BLOCKED.some(([bx, by, bw, bh]) => x >= bx && x < bx + bw && y >= by && y < by + bh);
-}
-
 const GRID = new Uint8Array(COLS * ROWS);
-for (let row = 0; row < ROWS; row++) {
-  for (let col = 0; col < COLS; col++) GRID[row * COLS + col] = isBlocked(col, row) ? 1 : 0;
+
+// Bots walk where the furniture isn't, so this follows what a floor has left out.
+function fillGrid(hidden) {
+  const left = Object.entries(REMOVABLE).filter(([item]) => !hidden.includes(item));
+  const blocks = [...BLOCKED, ...left.map(([, block]) => block)];
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
+      const x = col * CELL + CELL / 2;
+      const y = row * CELL + CELL / 2;
+      GRID[row * COLS + col] = blocks.some(([bx, by, bw, bh]) => x >= bx && x < bx + bw && y >= by && y < by + bh) ? 1 : 0;
+    }
+  }
 }
+fillGrid([]);
 
 const free = (col, row) => col >= 0 && row >= 0 && col < COLS && row < ROWS && !GRID[row * COLS + col];
 
@@ -151,13 +178,35 @@ function paintWindow(g, x, y, w, h, sky) {
   r(g, '#d8c7a3', x - 5, y + h + 3, w + 10, 2);
 }
 
-function paintRoom(g, hour) {
+function paintFloor(g, { a, b, line, style }) {
+  if (style === 'tile') {
+    for (let y = WALL + 1, row = 0; y < H; y += 12, row++) {
+      for (let x = 0, col = 0; x < W; x += 12, col++) r(g, (row + col) % 2 ? a : b, x, y, 12, 12);
+    }
+    return;
+  }
+  if (style === 'carpet') {
+    r(g, a, 0, WALL + 1, W, H - WALL - 1);
+    for (let y = WALL + 3; y < H; y += 4) {
+      for (let x = (y % 8) * 2; x < W; x += 8) r(g, b, x, y, 1, 1);
+    }
+    return;
+  }
+  for (let y = WALL + 1, row = 0; y < H; y += 10, row++) {
+    r(g, row % 2 ? a : b, 0, y, W, 10);
+    r(g, line, 0, y + 9, W, 1);
+    for (let x = (row * 37) % 60; x < W; x += 60) r(g, line, x, y, 1, 9);
+  }
+}
+
+function paintRoom(g, hour, look) {
   const sky = skyFor(hour);
+  const paint = PAINTS[look.paint] || PAINTS.dusk;
   // Wall
-  r(g, '#364466', 0, 0, W, WALL);
-  for (let x = 0; x < W; x += 16) r(g, '#3a496d', x, 0, 8, 46);
-  r(g, '#2a3450', 0, 46, W, 18);
-  for (let x = 6; x < W; x += 24) r(g, '#232c45', x, 48, 18, 14);
+  r(g, paint.upper, 0, 0, W, WALL);
+  for (let x = 0; x < W; x += 16) r(g, paint.stripe, x, 0, 8, 46);
+  r(g, paint.lower, 0, 46, W, 18);
+  for (let x = 6; x < W; x += 24) r(g, paint.panel, x, 48, 18, 14);
   r(g, '#c9a86a', 0, 45, W, 1);
   r(g, '#1b2236', 0, 64, W, 3);
 
@@ -165,20 +214,18 @@ function paintRoom(g, hour) {
   paintWindow(g, 372, 10, 72, 32, sky);
 
   // Floor
-  for (let y = WALL + 1, row = 0; y < H; y += 10, row++) {
-    r(g, row % 2 ? '#a97b4e' : '#a27347', 0, y, W, 10);
-    r(g, '#8b6039', 0, y + 9, W, 1);
-    for (let x = (row * 37) % 60; x < W; x += 60) r(g, '#8b6039', x, y, 1, 9);
-  }
+  paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
   r(g, 'rgba(30,20,50,.20)', 0, WALL + 1, W, 3);
 
   // Rug under the table
-  r(g, '#6a2a3c', 128, 104, 224, 100);
-  r(g, '#c9a86a', 132, 108, 216, 1);
-  r(g, '#c9a86a', 132, 199, 216, 1);
-  r(g, '#c9a86a', 132, 108, 1, 92);
-  r(g, '#c9a86a', 347, 108, 1, 92);
-  r(g, '#7b3346', 138, 114, 204, 80);
+  if (!look.hidden.includes('rug')) {
+    r(g, '#6a2a3c', 128, 104, 224, 100);
+    r(g, '#c9a86a', 132, 108, 216, 1);
+    r(g, '#c9a86a', 132, 199, 216, 1);
+    r(g, '#c9a86a', 132, 108, 1, 92);
+    r(g, '#c9a86a', 347, 108, 1, 92);
+    r(g, '#7b3346', 138, 114, 204, 80);
+  }
 
   // Whiteboard frame; the words on it are an HTML overlay
   r(g, '#20283e', 148, 5, 184, 52);
@@ -387,6 +434,7 @@ export class Room {
     this.background.width = W;
     this.background.height = H;
     this.paintedHour = -1;
+    this.look = PLAIN_LOOK;
     this.bots = new Map();
     this.confetti = [];
     this.last = performance.now();
@@ -397,6 +445,16 @@ export class Room {
 
   destroy() {
     this.running = false;
+    fillGrid([]);
+  }
+
+  // A room that isn't a floor keeps the plain look.
+  setLook({ paint, flooring, hidden } = PLAIN_LOOK) {
+    if (paint === this.look.paint && flooring === this.look.flooring
+      && hidden.join() === this.look.hidden.join()) return;
+    this.look = { paint, flooring, hidden };
+    fillGrid(hidden);
+    this.paintedHour = -1;
   }
 
   setBots(list) {
@@ -588,14 +646,17 @@ export class Room {
     const hour = new Date().getHours();
     if (hour !== this.paintedHour) {
       this.paintedHour = hour;
-      paintRoom(this.background.getContext('2d'), hour);
+      paintRoom(this.background.getContext('2d'), hour, this.look);
     }
 
     const g = this.g;
+    const { hidden } = this.look;
     g.drawImage(this.background, 0, 0);
-    paintBar(g, time);
-    paintPlant(g, 470, 250);
-    paintPlant(g, 14, 92);
+    if (!hidden.includes('bar')) paintBar(g, time);
+    if (!hidden.includes('plants')) {
+      paintPlant(g, 470, 250);
+      paintPlant(g, 14, 92);
+    }
 
     const lit = SEATS.slice(0, 8).map((seat) =>
       [...this.bots.values()].some((bot) => bot.seat === seat && !bot.path.length),
@@ -606,10 +667,10 @@ export class Room {
     const props = [
       { y: 136, draw: () => paintDesk(g, time, deskLit) },
       { y: 150, draw: () => paintTable(g, lit) },
-      { y: 172, draw: () => paintArcade(g, time) },
+      hidden.includes('arcade') ? null : { y: 172, draw: () => paintArcade(g, time) },
       { y: 200, draw: () => paintCouch(g) },
-      { y: 232, draw: () => paintBeanbags(g) },
-    ];
+      hidden.includes('beanbags') ? null : { y: 232, draw: () => paintBeanbags(g) },
+    ].filter(Boolean);
     const bots = [...this.bots.values()];
     for (const bot of bots) this.update(bot, dt);
     const scene = [...props, ...bots.map((bot) => ({ y: bot.y, draw: () => drawBot(g, bot, time) }))];

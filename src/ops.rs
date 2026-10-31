@@ -12,7 +12,7 @@ use crate::{
         NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip, Visit,
     },
     error::{ApiError, ApiResult},
-    ical, notify, now, AppState, HubEvent,
+    ical, notify, now, spaces, AppState, HubEvent,
 };
 
 pub const MAX_AGENT_WRITES_PER_MINUTE: u32 = 30;
@@ -162,14 +162,16 @@ pub(crate) fn announce(state: &AppState, hangout_id: &str, body: &str) -> ApiRes
     Ok(())
 }
 
-fn is_porch(state: &AppState, hangout_id: &str) -> ApiResult<bool> {
-    Ok(state.db.house_for_room(hangout_id)?.is_some_and(|house| house.porch_id == hangout_id))
+/// Whether guests can be here: a Porch, or a public floor.
+fn has_guests(state: &AppState, hangout_id: &str) -> ApiResult<bool> {
+    Ok(state.db.house_for_room(hangout_id)?.is_some_and(|house| house.porch_id == hangout_id)
+        || state.db.floor(hangout_id)?.is_some_and(|floor| floor.access == "public"))
 }
 
-/// For a line that repeats a plan or a check-in. A Porch's guests can't see those, so a Porch gets
-/// no line at all: the people who live there have the plan and check-in panels.
+/// For a line that repeats a plan or a check-in. Guests can't see those, so a Porch or a public
+/// floor gets no line at all: the people who belong there have the plan and check-in panels.
 pub(crate) fn announce_in_house_only(state: &AppState, hangout_id: &str, body: &str) -> ApiResult<()> {
-    if is_porch(state, hangout_id)? {
+    if has_guests(state, hangout_id)? {
         return Ok(());
     }
     announce(state, hangout_id, body)
@@ -245,6 +247,7 @@ pub fn post_message(
     require_room(state, caller, hangout_id)?;
     let body = clean(body, "message", MAX_MESSAGE_CHARS)?;
     note_agent_write(state, caller)?;
+    spaces::note_walk_in_write(state, caller, hangout_id)?;
     let message = state.db.insert_message(&NewMessage {
         hangout_id,
         person_id: Some(&caller.person_id),
@@ -502,6 +505,7 @@ pub fn create_check_in(
     input: &CheckInInput,
 ) -> ApiResult<CheckIn> {
     require_room(state, caller, hangout_id)?;
+    spaces::no_walk_ins(state, caller, hangout_id, "ask a check-in")?;
     let about = clean(&input.about, "about", MAX_ABOUT_CHARS)?;
     let minutes = input.expires_minutes.unwrap_or(DEFAULT_CHECK_IN_MINUTES);
     if !(1..=MAX_CHECK_IN_MINUTES).contains(&minutes) {
@@ -605,10 +609,10 @@ pub fn answer_check_in(
 // one goes in the room. An answer is only words: a trip, a scene and a plan each have their own yes,
 // and nothing here can give one.
 
-/// Tells an open page about a question. A Porch's guests aren't even told that something changed,
-/// so there the owner's page finds it on its next reload.
+/// Tells an open page about a question. Guests aren't even told that something changed, so where
+/// they can be the owner's page finds it on its next reload.
 fn refresh_for_owner(state: &AppState, hangout_id: &str) -> ApiResult<()> {
-    if !is_porch(state, hangout_id)? {
+    if !has_guests(state, hangout_id)? {
         refresh(state, hangout_id);
     }
     Ok(())
@@ -878,17 +882,20 @@ pub struct Snapshot {
     /// Which city and house this room belongs to, so the page can link back.
     pub city_id: Option<String>,
     pub house_id: Option<String>,
+    /// Which floor of which space this is. Null for a Town Square, Living Room or Porch.
+    pub floor: Option<spaces::Place>,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
     let mut hangout = require_room(state, caller, hangout_id)?;
-    // Who gets into a room is a human decision, so bots never see the invite. A house's rooms
-    // and a city's square ignore invites altogether.
-    if caller.is_agent() || state.db.is_managed_room(hangout_id)? {
-        hangout.invite_code.clear();
-    }
     let now = now();
     let guest = state.guest_visit(caller, hangout_id)?;
+    // Who gets into a room is a human decision, so bots never see the invite. A house's rooms
+    // and a city's square ignore invites altogether. A guest never sees it either: on a public
+    // floor it would let someone who walked in join and read everything from before (S21).
+    if caller.is_agent() || guest.is_some() || state.db.is_managed_room(hangout_id)? {
+        hangout.invite_code.clear();
+    }
     // Guests are shown beside the room's own bots and people so the room can name and colour them.
     // They are never in `agents_in` or `people_in`, which decide who gets notified.
     let mut agents = state.db.agents_in(hangout_id, now)?;
@@ -942,6 +949,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     } else {
         state.db.open_owner_questions(hangout_id, &caller.person_id, now - QUESTION_LAPSE_SECS)?
     };
+    let floor = spaces::place(state, caller, hangout_id)?;
     Ok(Snapshot {
         hangout,
         you: You {
@@ -961,6 +969,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         guest,
         city_id,
         house_id,
+        floor,
     })
 }
 
@@ -1005,7 +1014,10 @@ pub fn join(state: &AppState, person: &Person, hangout: &Hangout) -> ApiResult<(
     if state.db.is_member(&hangout.id, &person.id)? {
         return Ok(());
     }
+    spaces::check_can_join(state, &person.id, &hangout.id)?;
     state.db.add_member(&hangout.id, &person.id, now())?;
+    // A member isn't a guest, so a walk-in ends here and isn't counted twice.
+    state.db.end_visit(&hangout.id, &person.id)?;
     announce(state, &hangout.id, &format!("{} joined the hangout.", person.name))?;
     refresh(state, &hangout.id);
     Ok(())
@@ -1018,6 +1030,9 @@ pub fn leave(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
         return Err(ApiError::forbidden(
             "this room belongs to a city or a house: leave that instead",
         ));
+    }
+    if spaces::leave_own_space(state, caller, hangout_id)? {
+        return Ok(());
     }
     state.db.remove_member(hangout_id, &caller.person_id)?;
     announce(state, hangout_id, &format!("{} left the hangout.", caller.name))?;
@@ -1048,6 +1063,7 @@ pub fn create_agent(
     require_human(caller, "add a bot")?;
     // A guest adding a bot here would give it a place on the Porch that outlasts the trip.
     no_guests(state, caller, hangout_id, "add a bot")?;
+    spaces::check_fits(state, hangout_id)?;
     let name = clean(name, "name", MAX_NAME_CHARS)?;
     let id = auth::new_id();
     let token = auth::new_agent_token();
@@ -1106,6 +1122,7 @@ pub fn bring_agent(
             )));
         }
     }
+    spaces::check_fits(state, hangout_id)?;
     state.db.add_agent_to_room(hangout_id, agent_id)?;
     announce(state, hangout_id, &format!("{} brought in {}.", caller.name, agent.name))?;
     refresh(state, hangout_id);

@@ -428,6 +428,52 @@ CREATE TABLE IF NOT EXISTS friend_invites (
 );
 CREATE INDEX IF NOT EXISTS friend_invites_to_person ON friend_invites (to_person);
 CREATE INDEX IF NOT EXISTS friend_invites_by_sender ON friend_invites (from_person, created_at);
+CREATE TABLE IF NOT EXISTS spaces (
+    id          TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    owner_id    TEXT NOT NULL REFERENCES people(id),
+    kind        TEXT NOT NULL CHECK (kind IN ('house', 'third')),
+    name        TEXT NOT NULL,
+    about       TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS spaces_one_house ON spaces (owner_id) WHERE kind = 'house';
+CREATE INDEX IF NOT EXISTS spaces_by_owner ON spaces (owner_id);
+CREATE TABLE IF NOT EXISTS floors (
+    hangout_id  TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    level       INTEGER NOT NULL,
+    access      TEXT NOT NULL DEFAULT 'private' CHECK (access IN ('private', 'public')),
+    size        TEXT NOT NULL DEFAULT 'medium' CHECK (size IN ('small', 'medium', 'big')),
+    paint       TEXT NOT NULL DEFAULT 'dusk',
+    flooring    TEXT NOT NULL DEFAULT 'oak',
+    hidden      TEXT NOT NULL DEFAULT '',
+    UNIQUE (space_id, level)
+);
+CREATE TABLE IF NOT EXISTS floor_visits (
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    who         TEXT NOT NULL,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    since       INTEGER NOT NULL,
+    until       INTEGER NOT NULL,
+    PRIMARY KEY (hangout_id, who)
+);
+CREATE INDEX IF NOT EXISTS floor_visits_by_person ON floor_visits (person_id);
+CREATE INDEX IF NOT EXISTS floor_visits_by_bot ON floor_visits (agent_id);
+CREATE TABLE IF NOT EXISTS turned_out (
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (space_id, person_id)
+);
+-- Which building is a space's door. No key to `worlds`: a world never knows about this.
+CREATE TABLE IF NOT EXISTS space_plots (
+    world_id    TEXT NOT NULL,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    space_id    TEXT NOT NULL UNIQUE REFERENCES spaces(id) ON DELETE CASCADE,
+    PRIMARY KEY (world_id, x, y)
+);
 CREATE TABLE IF NOT EXISTS person_clocks (
     person_id       TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
     time_zone       TEXT NOT NULL,
@@ -552,6 +598,85 @@ pub struct Hangout {
     pub name: String,
     pub invite_code: String,
     pub created_by: String,
+}
+
+/// A house or a third space. Its id is the id of the floor it began with.
+#[derive(Clone, Debug, Serialize)]
+pub struct Space {
+    pub id: String,
+    pub owner_id: String,
+    pub kind: String,
+    pub name: String,
+    pub about: String,
+    pub created_at: i64,
+}
+
+/// A floor of a space. Its id is its hangout's id, so its name is the room's name.
+#[derive(Clone, Debug, Serialize)]
+pub struct Floor {
+    pub id: String,
+    pub space_id: String,
+    pub name: String,
+    pub level: i64,
+    pub access: String,
+    pub size: String,
+    pub paint: String,
+    pub flooring: String,
+    pub hidden: Vec<String>,
+}
+
+pub struct NewFloor<'a> {
+    pub id: &'a str,
+    pub space_id: &'a str,
+    pub name: &'a str,
+    pub invite_code: &'a str,
+    pub created_by: &'a str,
+    pub now: i64,
+}
+
+/// What to change about a floor. `None` leaves a field as it is.
+pub struct FloorChange<'a> {
+    pub id: &'a str,
+    pub name: Option<&'a str>,
+    pub access: Option<&'a str>,
+    pub size: Option<&'a str>,
+    pub paint: Option<&'a str>,
+    pub flooring: Option<&'a str>,
+    /// Comma-separated words, already checked.
+    pub hidden: Option<&'a str>,
+    /// Whose bots stay when this opens the floor to the public.
+    pub keep_bots_of: &'a str,
+}
+
+/// A public floor as the list shows it: nothing about who is there or what was said.
+#[derive(Clone, Debug, Serialize)]
+pub struct PublicFloor {
+    pub id: String,
+    pub name: String,
+    pub space_name: String,
+    pub owner_name: String,
+    pub about: String,
+    pub size: String,
+    pub capacity: i64,
+    pub here: i64,
+}
+
+pub struct NewVisit<'a> {
+    pub hangout_id: &'a str,
+    /// The person's id, or their bot's.
+    pub who: &'a str,
+    pub person_id: &'a str,
+    pub agent_id: Option<&'a str>,
+    pub until: i64,
+    pub now: i64,
+}
+
+/// What came of walking in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalkedIn {
+    In,
+    Full,
+    TooManyBots,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1497,6 +1622,76 @@ fn insert_room(
     Ok(())
 }
 
+/// A room, and the space it starts, with this one floor.
+fn insert_space(
+    conn: &Connection,
+    id: &str,
+    kind: &str,
+    name: &str,
+    invite_code: &str,
+    owner_id: &str,
+    now: i64,
+) -> rusqlite::Result<()> {
+    insert_room(conn, id, name, invite_code, owner_id, now)?;
+    conn.execute(
+        "INSERT INTO spaces (id, owner_id, kind, name, created_at) VALUES (?, ?, ?, ?, ?)",
+        params![id, owner_id, kind, name, now],
+    )?;
+    conn.execute(
+        "INSERT INTO floors (hangout_id, space_id, level) VALUES (?, ?, 0)",
+        params![id, id],
+    )?;
+    Ok(())
+}
+
+/// Spaces their owner still belongs to, aliased `s`.
+const HELD_SPACES: &str = "spaces s
+    JOIN members held ON held.hangout_id = s.id AND held.person_id = s.owner_id";
+const SPACE_COLS: &str = "s.id, s.owner_id, s.kind, s.name, s.about, s.created_at";
+const FLOORS: &str = "floors f JOIN hangouts h ON h.id = f.hangout_id";
+const FLOOR_COLS: &str =
+    "f.hangout_id, f.space_id, h.name, f.level, f.access, f.size, f.paint, f.flooring, f.hidden";
+/// How many are on floor `f`, with the time as parameter 1. A walk-in who has since joined isn't
+/// counted twice, because joining ends the walk-in.
+const ON_FLOOR: &str = "((SELECT COUNT(*) FROM members m WHERE m.hangout_id = f.hangout_id)
+    + (SELECT COUNT(*) FROM room_agents r WHERE r.hangout_id = f.hangout_id)
+    + (SELECT COUNT(*) FROM floor_visits v WHERE v.hangout_id = f.hangout_id AND v.until > ?1
+       AND f.access = 'public'))";
+
+fn count_on_floor(conn: &Connection, hangout_id: &str, now: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        &format!("SELECT {ON_FLOOR} FROM floors f WHERE f.hangout_id = ?2"),
+        params![now, hangout_id],
+        |row| row.get(0),
+    )
+}
+
+fn space_from_row(row: &Row) -> rusqlite::Result<Space> {
+    Ok(Space {
+        id: row.get(0)?,
+        owner_id: row.get(1)?,
+        kind: row.get(2)?,
+        name: row.get(3)?,
+        about: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+fn floor_from_row(row: &Row) -> rusqlite::Result<Floor> {
+    let hidden: String = row.get(8)?;
+    Ok(Floor {
+        id: row.get(0)?,
+        space_id: row.get(1)?,
+        name: row.get(2)?,
+        level: row.get(3)?,
+        access: row.get(4)?,
+        size: row.get(5)?,
+        paint: row.get(6)?,
+        flooring: row.get(7)?,
+        hidden: hidden.split(',').filter(|word| !word.is_empty()).map(str::to_string).collect(),
+    })
+}
+
 /// A member of a city is also a member of its Town Square. Getting in by any route, a house's link
 /// included, also ends a wait at the city's gate.
 fn join_city(conn: &Connection, city_id: &str, person_id: &str, now: i64) -> rusqlite::Result<()> {
@@ -1897,14 +2092,7 @@ impl Db {
     ) -> rusqlite::Result<Hangout> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO hangouts (id, name, invite_code, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
-            params![id, name, invite_code, created_by, now],
-        )?;
-        tx.execute(
-            "INSERT INTO members (hangout_id, person_id, joined_at) VALUES (?, ?, ?)",
-            params![id, created_by, now],
-        )?;
+        insert_space(&tx, id, "third", name, invite_code, created_by, now)?;
         tx.commit()?;
         Ok(Hangout {
             id: id.to_string(),
@@ -1912,6 +2100,37 @@ impl Db {
             invite_code: invite_code.to_string(),
             created_by: created_by.to_string(),
         })
+    }
+
+    /// Starts a hangout unless this person already holds `max` third spaces, which is the same as
+    /// a room with their name on it that they still belong to (S3).
+    pub fn start_third_space(
+        &self,
+        id: &str,
+        name: &str,
+        invite_code: &str,
+        created_by: &str,
+        now: i64,
+        max: i64,
+    ) -> rusqlite::Result<Option<Hangout>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let held: i64 = tx.query_row(
+            &format!("SELECT COUNT(*) FROM {HELD_SPACES} WHERE s.owner_id = ?1 AND s.kind = 'third'"),
+            [created_by],
+            |row| row.get(0),
+        )?;
+        if held >= max {
+            return Ok(None);
+        }
+        insert_space(&tx, id, "third", name, invite_code, created_by, now)?;
+        tx.commit()?;
+        Ok(Some(Hangout {
+            id: id.to_string(),
+            name: name.to_string(),
+            invite_code: invite_code.to_string(),
+            created_by: created_by.to_string(),
+        }))
     }
 
     pub fn hangout(&self, id: &str) -> rusqlite::Result<Option<Hangout>> {
@@ -1953,7 +2172,8 @@ impl Db {
         rows.collect()
     }
 
-    /// The bot's rooms, including the Porch of any house it's visiting on a live trip.
+    /// The bot's rooms, including the Porch of any house it's visiting on a live trip and any public
+    /// floor its owner sent it onto.
     pub fn hangouts_for_agent(&self, agent_id: &str, now: i64) -> rusqlite::Result<Vec<Hangout>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
@@ -1966,6 +2186,9 @@ impl Db {
                             JOIN pass_keys k ON k.pass_id = pk.id
                             WHERE t.agent_id = ?1 AND t.status = 'here' AND t.ends_at > ?2
                               AND pk.accepted_by IS NOT NULL AND k.key = 'living_room')
+                OR h.id IN (SELECT v.hangout_id FROM floor_visits v
+                            JOIN floors f ON f.hangout_id = v.hangout_id
+                            WHERE v.agent_id = ?1 AND v.until > ?2 AND f.access = 'public')
              ORDER BY h.created_at, h.id",
         )?;
         let rows = stmt.query_map(params![agent_id, now], hangout_from_row)?;
@@ -2007,14 +2230,18 @@ impl Db {
             .map(|found| found.is_some())
     }
 
-    /// Whether the bot is in the room: placed there, or visiting its Porch until `ends_at`.
+    /// Whether the bot is in the room: placed there, visiting its Porch until `ends_at`, or sent onto
+    /// a floor that is still public.
     pub fn agent_in_room(&self, hangout_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
         exists(
             &self.conn(),
             &format!(
                 "SELECT 1 WHERE EXISTS (SELECT 1 FROM room_agents WHERE hangout_id = ?1 AND agent_id = ?2)
                     OR EXISTS (SELECT 1 FROM trips t JOIN houses ho ON ho.id = t.house_id
-                               WHERE {GUEST_ROOM} AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3)"
+                               WHERE {GUEST_ROOM} AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3)
+                    OR EXISTS (SELECT 1 FROM floor_visits v JOIN floors f ON f.hangout_id = v.hangout_id
+                               WHERE v.hangout_id = ?1 AND v.agent_id = ?2 AND v.until > ?3
+                                 AND f.access = 'public')"
             ),
             params![hangout_id, agent_id, now],
         )
@@ -2991,6 +3218,433 @@ impl Db {
         )
     }
 
+    // Spaces and floors
+
+    /// This person's house, built with its one floor if they have none (S2).
+    pub fn ensure_house(
+        &self,
+        id: &str,
+        name: &str,
+        invite_code: &str,
+        owner_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<Space> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let house = |tx: &Connection| {
+            tx.query_row(
+                &format!("SELECT {SPACE_COLS} FROM spaces s WHERE s.owner_id = ? AND s.kind = 'house'"),
+                [owner_id],
+                space_from_row,
+            )
+            .optional()
+        };
+        if let Some(found) = house(&tx)? {
+            return Ok(found);
+        }
+        insert_space(&tx, id, "house", name, invite_code, owner_id, now)?;
+        let made = house(&tx)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        tx.commit()?;
+        Ok(made)
+    }
+
+    pub fn space(&self, id: &str) -> rusqlite::Result<Option<Space>> {
+        self.conn()
+            .query_row(&format!("SELECT {SPACE_COLS} FROM spaces s WHERE s.id = ?"), [id], space_from_row)
+            .optional()
+    }
+
+    /// The space a room is a floor of, if it is one.
+    pub fn space_for_room(&self, hangout_id: &str) -> rusqlite::Result<Option<Space>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT {SPACE_COLS} FROM spaces s JOIN floors f ON f.space_id = s.id
+                     WHERE f.hangout_id = ?"
+                ),
+                [hangout_id],
+                space_from_row,
+            )
+            .optional()
+    }
+
+    /// The space a tile was last the door of. This proves nothing alone: see `spaces::is_door_to`.
+    pub fn space_on_plot(&self, world_id: &str, x: i64, y: i64) -> rusqlite::Result<Option<Space>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT {SPACE_COLS} FROM spaces s JOIN space_plots d ON d.space_id = s.id
+                     WHERE d.world_id = ? AND d.x = ? AND d.y = ?"
+                ),
+                params![world_id, x, y],
+                space_from_row,
+            )
+            .optional()
+    }
+
+    /// Where a space's door was last put.
+    pub fn plot_of(&self, space_id: &str, world_id: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT x, y FROM space_plots WHERE space_id = ? AND world_id = ?",
+                params![space_id, world_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// Makes a tile the door of a space. A space has one door and a tile opens one space, so this
+    /// replaces whatever either of them had before.
+    pub fn set_plot(&self, world_id: &str, x: i64, y: i64, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT OR REPLACE INTO space_plots (world_id, x, y, space_id) VALUES (?, ?, ?, ?)",
+            params![world_id, x, y, space_id],
+        )?;
+        Ok(())
+    }
+
+    /// The third spaces this person holds, oldest first. Times are whole seconds and ids are random,
+    /// so two made in one second are told apart by which was stored first.
+    pub fn third_spaces_of(&self, owner_id: &str) -> rusqlite::Result<Vec<Space>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SPACE_COLS} FROM {HELD_SPACES}
+             WHERE s.owner_id = ? AND s.kind = 'third' ORDER BY s.created_at, s.rowid"
+        ))?;
+        let rows = stmt.query_map([owner_id], space_from_row)?;
+        rows.collect()
+    }
+
+    /// The floor this room is, or `None` for a Town Square, Living Room or Porch.
+    pub fn floor(&self, hangout_id: &str) -> rusqlite::Result<Option<Floor>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {FLOOR_COLS} FROM {FLOORS} WHERE f.hangout_id = ?"),
+                [hangout_id],
+                floor_from_row,
+            )
+            .optional()
+    }
+
+    /// A space's floors, lowest first.
+    pub fn floors_of(&self, space_id: &str) -> rusqlite::Result<Vec<Floor>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FLOOR_COLS} FROM {FLOORS} WHERE f.space_id = ? ORDER BY f.level"
+        ))?;
+        let rows = stmt.query_map([space_id], floor_from_row)?;
+        rows.collect()
+    }
+
+    /// A first floor still called what the space is called follows the space's new name, so a room
+    /// with one floor doesn't end up with two names.
+    pub fn change_space(
+        &self,
+        space: &Space,
+        name: Option<&str>,
+        about: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE spaces SET name = COALESCE(?2, name), about = COALESCE(?3, about) WHERE id = ?1",
+            params![space.id, name, about],
+        )?;
+        if let Some(name) = name {
+            tx.execute(
+                "UPDATE hangouts SET name = ?2 WHERE id = ?1 AND name = ?3",
+                params![space.id, name, space.name],
+            )?;
+        }
+        tx.commit()
+    }
+
+    /// Adds a floor above the others, with only its maker in it. `None` if the space is full (S4).
+    pub fn add_floor(&self, floor: &NewFloor, max: i64) -> rusqlite::Result<Option<Floor>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let (count, top): (i64, i64) = tx.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(level), -1) FROM floors WHERE space_id = ?",
+            [floor.space_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if count >= max {
+            return Ok(None);
+        }
+        insert_room(&tx, floor.id, floor.name, floor.invite_code, floor.created_by, floor.now)?;
+        tx.execute(
+            "INSERT INTO floors (hangout_id, space_id, level) VALUES (?, ?, ?)",
+            params![floor.id, floor.space_id, top + 1],
+        )?;
+        tx.commit()?;
+        // The connection's lock isn't reentrant, and `floor` takes it.
+        drop(conn);
+        self.floor(floor.id)
+    }
+
+    /// Changes a floor and returns the names of any bots this took off it. In one step, so no bot
+    /// is on a public floor for a moment on its way out (S25), and so walk-ins end with the floor
+    /// going private (S26) and don't come back if it opens again.
+    pub fn change_floor(&self, change: &FloorChange) -> rusqlite::Result<Vec<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let access: String =
+            tx.query_row("SELECT access FROM floors WHERE hangout_id = ?", [change.id], |row| row.get(0))?;
+        let mut taken_off = Vec::new();
+        if change.access == Some("public") && access != "public" {
+            let others = "SELECT a.id FROM agents a JOIN room_agents r ON r.agent_id = a.id
+                          WHERE r.hangout_id = ?1 AND a.owner_id != ?2";
+            {
+                let mut stmt = tx.prepare(&format!(
+                    "SELECT name FROM agents WHERE id IN ({others}) ORDER BY created_at, id"
+                ))?;
+                let names = stmt.query_map(params![change.id, change.keep_bots_of], |row| row.get(0))?;
+                taken_off = names.collect::<rusqlite::Result<Vec<String>>>()?;
+            }
+            tx.execute(
+                &format!("DELETE FROM room_agents WHERE hangout_id = ?1 AND agent_id IN ({others})"),
+                params![change.id, change.keep_bots_of],
+            )?;
+        }
+        if change.access == Some("private") {
+            tx.execute("DELETE FROM floor_visits WHERE hangout_id = ?", [change.id])?;
+        }
+        tx.execute(
+            "UPDATE floors SET access = COALESCE(?2, access), size = COALESCE(?3, size),
+                paint = COALESCE(?4, paint), flooring = COALESCE(?5, flooring),
+                hidden = COALESCE(?6, hidden)
+             WHERE hangout_id = ?1",
+            params![change.id, change.access, change.size, change.paint, change.flooring, change.hidden],
+        )?;
+        if let Some(name) = change.name {
+            tx.execute("UPDATE hangouts SET name = ?2 WHERE id = ?1", params![change.id, name])?;
+        }
+        tx.commit()?;
+        Ok(taken_off)
+    }
+
+    /// Swaps a floor with the one above or below it. At the end of the stack this does nothing.
+    pub fn move_floor(&self, floor: &Floor, up: bool) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let neighbour = if up {
+            "SELECT hangout_id, level FROM floors WHERE space_id = ? AND level > ? ORDER BY level LIMIT 1"
+        } else {
+            "SELECT hangout_id, level FROM floors WHERE space_id = ? AND level < ? ORDER BY level DESC LIMIT 1"
+        };
+        let found: Option<(String, i64)> = tx
+            .query_row(neighbour, params![floor.space_id, floor.level], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()?;
+        if let Some((other, level)) = found {
+            // Through a level nothing uses, because two floors can't share one even for a moment.
+            let place = "UPDATE floors SET level = ? WHERE hangout_id = ?";
+            tx.execute(place, params![-1, floor.id])?;
+            tx.execute(place, params![floor.level, other])?;
+            tx.execute(place, params![level, floor.id])?;
+        }
+        tx.commit()
+    }
+
+    /// Deletes rooms and everything in them: chat, notes, plans, check-ins and who was there. A
+    /// space goes with the room it began in.
+    pub fn remove_rooms(&self, hangout_ids: &[&str]) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for id in hangout_ids {
+            tx.execute("DELETE FROM hangouts WHERE id = ?", [id])?;
+        }
+        tx.commit()
+    }
+
+    /// How many are on a floor: members, their bots, and walk-ins and theirs (S13).
+    pub fn on_floor(&self, hangout_id: &str, now: i64) -> rusqlite::Result<i64> {
+        count_on_floor(&self.conn(), hangout_id, now)
+    }
+
+    /// Walks someone onto a public floor if they fit. Someone already there stays where they were
+    /// in the floor's history and gets more time (S22).
+    pub fn walk_in(
+        &self,
+        visit: &NewVisit,
+        capacity: i64,
+        max_bots: i64,
+    ) -> rusqlite::Result<WalkedIn> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let here = exists(
+            &tx,
+            "SELECT 1 FROM floor_visits WHERE hangout_id = ? AND who = ? AND until > ?",
+            params![visit.hangout_id, visit.who, visit.now],
+        )?;
+        if !here {
+            if count_on_floor(&tx, visit.hangout_id, visit.now)? >= capacity {
+                return Ok(WalkedIn::Full);
+            }
+            if visit.agent_id.is_some() {
+                let bots: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM floor_visits
+                     WHERE hangout_id = ? AND person_id = ? AND agent_id IS NOT NULL AND until > ?",
+                    params![visit.hangout_id, visit.person_id, visit.now],
+                    |row| row.get(0),
+                )?;
+                if bots >= max_bots {
+                    return Ok(WalkedIn::TooManyBots);
+                }
+            }
+        }
+        tx.execute(
+            "INSERT INTO floor_visits (hangout_id, who, person_id, agent_id, since, until)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (hangout_id, who) DO UPDATE SET
+                until = excluded.until,
+                since = CASE WHEN floor_visits.until > ?5 THEN floor_visits.since ELSE excluded.since END",
+            params![visit.hangout_id, visit.who, visit.person_id, visit.agent_id, visit.now, visit.until],
+        )?;
+        tx.commit()?;
+        Ok(WalkedIn::In)
+    }
+
+    /// Ends a walk-in. `who` is a person's id or their bot's.
+    pub fn end_visit(&self, hangout_id: &str, who: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM floor_visits WHERE hangout_id = ? AND who = ?",
+            params![hangout_id, who],
+        )?;
+        Ok(())
+    }
+
+    /// Moves a walk-in's times, which is how a test makes one run out. False if there's none.
+    pub fn set_visit_times(
+        &self,
+        hangout_id: &str,
+        who: &str,
+        since: i64,
+        until: i64,
+    ) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE floor_visits SET since = ?, until = ? WHERE hangout_id = ? AND who = ?",
+            params![since, until, hangout_id, who],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Takes someone and their bots off every floor of a space, and keeps them off (S27).
+    pub fn turn_out(&self, space_id: &str, person_id: &str, now: i64) -> rusqlite::Result<()> {
+        let floors = "SELECT hangout_id FROM floors WHERE space_id = ?1";
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            &format!(
+                "DELETE FROM room_agents WHERE hangout_id IN ({floors})
+                 AND agent_id IN (SELECT id FROM agents WHERE owner_id = ?2)"
+            ),
+            params![space_id, person_id],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM members WHERE hangout_id IN ({floors}) AND person_id = ?2"),
+            params![space_id, person_id],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM floor_visits WHERE hangout_id IN ({floors}) AND person_id = ?2"),
+            params![space_id, person_id],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO turned_out (space_id, person_id, created_at) VALUES (?, ?, ?)",
+            params![space_id, person_id, now],
+        )?;
+        tx.commit()
+    }
+
+    pub fn let_back(&self, space_id: &str, person_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM turned_out WHERE space_id = ? AND person_id = ?",
+            params![space_id, person_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_turned_out(&self, space_id: &str, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM turned_out WHERE space_id = ? AND person_id = ?",
+            params![space_id, person_id],
+        )
+    }
+
+    pub fn turned_out_of(&self, space_id: &str) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.name, p.color FROM people p
+             JOIN turned_out t ON t.person_id = p.id
+             WHERE t.space_id = ? ORDER BY t.created_at, p.id",
+        )?;
+        let rows = stmt.query_map([space_id], person_from_row)?;
+        rows.collect()
+    }
+
+    /// Everyone who is a member of any floor of a space.
+    pub fn members_of_space(&self, space_id: &str) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.name, p.color FROM people p
+             WHERE p.id IN (SELECT m.person_id FROM members m
+                            JOIN floors f ON f.hangout_id = m.hangout_id WHERE f.space_id = ?)
+             ORDER BY p.created_at, p.id",
+        )?;
+        let rows = stmt.query_map([space_id], person_from_row)?;
+        rows.collect()
+    }
+
+    /// Everyone on a public floor of a space who walked in or sent a bot.
+    pub fn walk_ins_of_space(&self, space_id: &str, now: i64) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT p.id, p.name, p.color FROM people p
+             WHERE p.id IN (SELECT v.person_id FROM floor_visits v
+                            JOIN floors f ON f.hangout_id = v.hangout_id
+                            WHERE f.space_id = ? AND f.access = 'public' AND v.until > ?)
+             ORDER BY p.created_at, p.id",
+        )?;
+        let rows = stmt.query_map(params![space_id, now], person_from_row)?;
+        rows.collect()
+    }
+
+    /// The public floors this person hasn't been turned out of, fullest first (S28). `capacity`
+    /// is filled in by `spaces`, which knows what the sizes hold.
+    pub fn public_floors(
+        &self,
+        person_id: &str,
+        now: i64,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<PublicFloor>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT f.hangout_id, h.name, s.name, p.name, s.about, f.size, {ON_FLOOR} AS here
+             FROM floors f
+             JOIN hangouts h ON h.id = f.hangout_id
+             JOIN spaces s ON s.id = f.space_id
+             JOIN people p ON p.id = s.owner_id
+             WHERE f.access = 'public'
+               AND NOT EXISTS (SELECT 1 FROM turned_out t WHERE t.space_id = s.id AND t.person_id = ?2)
+             ORDER BY here DESC, h.created_at DESC, f.hangout_id LIMIT ?3"
+        ))?;
+        let rows = stmt.query_map(params![now, person_id, limit], |row| {
+            Ok(PublicFloor {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                space_name: row.get(2)?,
+                owner_name: row.get(3)?,
+                about: row.get(4)?,
+                size: row.get(5)?,
+                capacity: 0,
+                here: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn residents(&self, house_id: &str) -> rusqlite::Result<Vec<Person>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
@@ -3190,10 +3844,12 @@ impl Db {
         agent_id: &str,
         keep_hangout_id: &str,
     ) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let conn = self.conn();
+        conn.execute(
             "DELETE FROM room_agents WHERE agent_id = ? AND hangout_id != ?",
             params![agent_id, keep_hangout_id],
         )?;
+        conn.execute("DELETE FROM floor_visits WHERE agent_id = ?", [agent_id])?;
         Ok(())
     }
 
@@ -3769,13 +4425,19 @@ impl Db {
             .optional()
     }
 
-    // Guests. A guest is a bot on a live trip to the house whose Porch this is, or its owner.
+    // Guests. A guest is a bot on a live trip to the house whose Porch this is, a person or bot who
+    // walked onto a public floor, or the owner of any of those bots.
 
-    /// The bots visiting a Porch, earliest arrival first, each with `visitor_until` set. Unlike
-    /// `agents_in` this is for showing guests, never for notifying anyone.
+    /// The bots visiting a Porch or a public floor, earliest arrival first, each with
+    /// `visitor_until` set. Unlike `agents_in` this is for showing guests, never for notifying anyone.
     pub fn visitors_in(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<Agent>> {
         let conn = self.conn();
-        let mut stmt = conn.prepare(&format!(
+        let visitor = |row: &Row| -> rusqlite::Result<Agent> {
+            let mut agent = agent_from_row(row, now)?;
+            agent.visitor_until = row.get(11)?;
+            Ok(agent)
+        };
+        let mut on_trips = conn.prepare(&format!(
             "SELECT {AGENT_COLS}, t.ends_at FROM {AGENTS}
              JOIN trips t ON t.agent_id = a.id
              JOIN houses ho ON ho.id = t.house_id
@@ -3783,16 +4445,29 @@ impl Db {
                AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id)
              ORDER BY t.arrived_at, a.id"
         ))?;
-        let rows = stmt.query_map(params![hangout_id, now], |row| {
-            let mut agent = agent_from_row(row, now)?;
-            agent.visitor_until = row.get(11)?;
-            Ok(agent)
-        })?;
-        rows.collect()
+        let mut walked_in = conn.prepare(&format!(
+            "SELECT {AGENT_COLS}, v.until FROM {AGENTS}
+             JOIN floor_visits v ON v.agent_id = a.id
+             JOIN floors f ON f.hangout_id = v.hangout_id
+             WHERE v.hangout_id = ?1 AND f.access = 'public' AND v.until > ?2
+               AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id)
+             ORDER BY v.since, a.id"
+        ))?;
+        // A room is a house's or a floor, so at most one of these finds anyone.
+        let mut visitors = on_trips
+            .query_map(params![hangout_id, now], visitor)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        visitors.extend(
+            walked_in
+                .query_map(params![hangout_id, now], visitor)?
+                .collect::<rusqlite::Result<Vec<_>>>()?,
+        );
+        Ok(visitors)
     }
 
-    /// The owners of the bots visiting a Porch, so the room can name and colour them. They aren't
-    /// members, so `people_in` never lists them, and nothing that notifies people should either.
+    /// The people visiting a room, and the owners of the bots visiting it, so the room can name and
+    /// colour them. They aren't members, so `people_in` never lists them, and nothing that notifies
+    /// people should either.
     pub fn visitor_owners(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<Person>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
@@ -3803,6 +4478,10 @@ impl Db {
                 JOIN agents a ON a.id = t.agent_id
                 WHERE {GUEST_ROOM} AND t.status = 'here' AND t.ends_at > ?2
                   AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = a.id))
+             OR p.id IN (
+                SELECT v.person_id FROM floor_visits v
+                JOIN floors f ON f.hangout_id = v.hangout_id
+                WHERE v.hangout_id = ?1 AND f.access = 'public' AND v.until > ?2)
              ORDER BY p.created_at, p.id"
         ))?;
         let rows = stmt.query_map(params![hangout_id, now], person_from_row)?;
@@ -3812,7 +4491,14 @@ impl Db {
     /// When this bot's visit to the room began and ends. `None` if it isn't a guest there: a bot
     /// that is placed in the room isn't one.
     pub fn bot_visit(&self, hangout_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<Option<Visit>> {
-        self.conn()
+        let conn = self.conn();
+        let visit = |row: &Row| {
+            Ok(Visit {
+                since: row.get(0)?,
+                until: row.get(1)?,
+            })
+        };
+        let trip = conn
             .query_row(
                 &format!(
                     "SELECT t.arrived_at, t.ends_at FROM trips t
@@ -3822,26 +4508,38 @@ impl Db {
                      ORDER BY t.arrived_at LIMIT 1"
                 ),
                 params![hangout_id, agent_id, now],
-                |row| {
-                    Ok(Visit {
-                        since: row.get(0)?,
-                        until: row.get(1)?,
-                    })
-                },
+                visit,
             )
-            .optional()
+            .optional()?;
+        if trip.is_some() {
+            return Ok(trip);
+        }
+        conn.query_row(
+            "SELECT v.since, v.until FROM floor_visits v
+             JOIN floors f ON f.hangout_id = v.hangout_id
+             WHERE v.hangout_id = ?1 AND v.agent_id = ?2 AND v.until > ?3 AND f.access = 'public'
+               AND NOT EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = ?1 AND r.agent_id = ?2)",
+            params![hangout_id, agent_id, now],
+            visit,
+        )
+        .optional()
     }
 
-    /// When a person's visit as the owner of a guest began and ends: from the earliest arrival of
-    /// their bots there to the last of their trips running out. `None` if none of their bots is
-    /// a guest there, or if they belong to the room anyway.
+    /// When a person's visit began and ends: as the owner of a guest, from the earliest arrival of
+    /// their bots there to the last of their trips running out, and likewise for walking onto a
+    /// public floor, themselves or by sending a bot. `None` if they aren't a guest there, or if
+    /// they belong to the room anyway.
     pub fn person_visit(
         &self,
         hangout_id: &str,
         person_id: &str,
         now: i64,
     ) -> rusqlite::Result<Option<Visit>> {
-        let (since, until): (Option<i64>, Option<i64>) = self.conn().query_row(
+        let conn = self.conn();
+        let visit = |row: &Row| -> rusqlite::Result<(Option<i64>, Option<i64>)> {
+            Ok((row.get(0)?, row.get(1)?))
+        };
+        let (since, until) = conn.query_row(
             &format!(
             "SELECT MIN(t.arrived_at), MAX(t.ends_at) FROM trips t
              JOIN houses ho ON ho.id = t.house_id
@@ -3851,7 +4549,18 @@ impl Db {
                AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = ?1 AND m.person_id = ?2)"
             ),
             params![hangout_id, person_id, now],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            visit,
+        )?;
+        if let Some((since, until)) = since.zip(until) {
+            return Ok(Some(Visit { since, until }));
+        }
+        let (since, until) = conn.query_row(
+            "SELECT MIN(v.since), MAX(v.until) FROM floor_visits v
+             JOIN floors f ON f.hangout_id = v.hangout_id
+             WHERE v.hangout_id = ?1 AND v.person_id = ?2 AND v.until > ?3 AND f.access = 'public'
+               AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = ?1 AND m.person_id = ?2)",
+            params![hangout_id, person_id, now],
+            visit,
         )?;
         Ok(since.zip(until).map(|(since, until)| Visit { since, until }))
     }

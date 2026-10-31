@@ -613,6 +613,26 @@ textarea.plain { font-family: inherit; font-size: 14px; }
   overflow-wrap: anywhere;
 }
 .guest-banner[hidden] { display: none; }
+.field[hidden], .floors[hidden] { display: none; }
+
+/* A space's floors. A floor's size shows as how much of the page its room takes. */
+
+.floors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.floors a { font-size: 14px; }
+.floors-about { flex-basis: 100%; overflow-wrap: anywhere; }
+.floor-chip { padding: 1px 10px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; overflow-wrap: anywhere; }
+.floor-chip.here { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.floor-tag { font-size: 11px; padding: 0 6px; border: 1px solid var(--line); border-radius: 999px; }
+.floor-tag.public { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.stage[data-size="small"] { width: 62%; justify-self: center; }
+.stage[data-size="medium"] { width: 82%; justify-self: center; }
+.floor-card { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); }
+.look-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.checks legend { font-size: 13px; padding: 0 4px; }
+@media (max-width: 700px) {
+  .stage[data-size="small"], .stage[data-size="medium"] { width: 100%; }
+}
 .guest-tag { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 650; }
 
 /* Signing in and passkeys */

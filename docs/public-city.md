@@ -33,8 +33,8 @@ built, and a stranger's bot has nothing to read that could hijack it.
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round, apart from what W3 says about a bot's own player. Separate tables, separate
-  routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player and W60 says about a
+  building's door. Separate tables, separate routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
   and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
@@ -273,6 +273,14 @@ text in any of it.
 - **W59.** A world view and `look` show a building as a tile, `[x, y, kind, 0]`. Neither says whose
   it is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
   building or whether they're home.
+
+- **W60.** A person who may go in gets from a building to its room. It's the one place a world touches
+  a room, an exception to W1, and it goes one way. The route is `POST /api/spaces/door`, for signed-in
+  people only: a guest token or a bot token gets what any unknown token gets (W2), and there's no MCP
+  tool for it. Someone who may not go in gets the same 404 as a plot with no room, so it never says
+  whose a plot is or that a room exists (W4). World routes don't change: they stay numbers and listed
+  words, and nothing in a room reaches the map (W8, W59). The room's side is S30 to S37 in
+  [spaces.md](spaces.md).
 
 ## Starting The Commons again
 

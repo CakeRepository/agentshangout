@@ -30,7 +30,7 @@ use crate::{
     error::{ApiError, ApiResult},
     friends, households, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
-    passkey, referrals,
+    passkey, referrals, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
     worlds::{self, Playing, SignedIn},
     AppState,
@@ -84,6 +84,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
         .merge(friends::routes())
+        .merge(spaces::routes())
         .merge(households::routes())
         .merge(city_routes())
         .merge(world_routes())
@@ -151,7 +152,7 @@ fn feed_url(state: &AppState, token: &str) -> String {
     format!("{}/cal/{token}.ics", state.config.public_url)
 }
 
-fn invite_url(state: &AppState, code: &str) -> String {
+pub(crate) fn invite_url(state: &AppState, code: &str) -> String {
     format!("{}/join/{code}", state.config.public_url)
 }
 
@@ -212,7 +213,7 @@ fn reply_with_session(
 }
 
 /// Starting anything new on a server with a create code needs that code. Joining never does.
-fn check_create_code(state: &AppState, code: Option<&str>) -> ApiResult<()> {
+pub(crate) fn check_create_code(state: &AppState, code: Option<&str>) -> ApiResult<()> {
     if let Some(expected) = &state.config.create_code {
         if code != Some(expected.as_str()) {
             return Err(ApiError::forbidden("that isn't the code for starting new hangouts or cities here"));
@@ -584,13 +585,22 @@ async fn create_hangout(
     check_create_code(&state, body.create_code.as_deref())?;
     let name = ops::clean(&body.name, "hangout name", MAX_NAME_CHARS)?;
     let (person, owner_key) = person_for(&state, caller, body.your_name.as_deref())?;
-    let hangout = state.db.create_hangout(
-        &auth::new_id(),
-        &name,
-        &auth::new_invite_code(),
-        &person.id,
-        now(),
-    )?;
+    let hangout = state
+        .db
+        .start_third_space(
+            &auth::new_id(),
+            &name,
+            &auth::new_invite_code(),
+            &person.id,
+            now(),
+            spaces::MAX_THIRD_SPACES,
+        )?
+        .ok_or_else(|| {
+            ApiError::conflict(format!(
+                "you have {} third spaces: close or leave one first",
+                spaces::MAX_THIRD_SPACES
+            ))
+        })?;
     let reply = Json(json!({
         "hangout": hangout,
         "person": person,
