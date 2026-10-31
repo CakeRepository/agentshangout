@@ -411,7 +411,7 @@ fn tools() -> Value {
         },
         {
             "name": "request_scene",
-            "description": "Ask for a scene to run. Nothing happens until a resident of that house, as a person, says yes, and a yes is good for ten minutes. You won't be told the result. Scenes never include locks, doors, garage, alarm or cameras.",
+            "description": "Ask for a scene to run. Nothing happens until a resident of that house, as a person, says yes, and a yes is good for ten minutes. You won't be told the result. Scene names can't use words like lock, door, garage, alarm or camera, but that says nothing about what a scene does.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "scene_id": { "type": "string", "description": "The id from list_scenes." } },
