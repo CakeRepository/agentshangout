@@ -136,6 +136,7 @@ pub fn app(state: AppState) -> Router {
         .merge(web::routes())
         .route("/mcp", post(mcp::handle))
         .route("/public/mcp", post(public_mcp::handle))
+        .fallback(web::not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn_with_state(state.clone(), web::security_headers))
         // Outermost, so it sees every request. It only watches (W38).
