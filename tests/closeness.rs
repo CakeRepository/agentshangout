@@ -437,6 +437,27 @@ async fn with_no_names_it_asks_about_the_rest_of_your_house() {
     server.find(&town, &town.dee.key, json!({})).await.is(StatusCode::BAD_REQUEST);
 }
 
+// F34
+#[tokio::test]
+async fn an_empty_list_means_no_names_and_a_bot_has_to_send_a_list() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let start = soon();
+    server.free(&town.ann, &[hours(start, 0, 4)]).await;
+    server.free(&town.cy, &[hours(start, 2, 6)]).await;
+    server.free(&town.bo, &[hours(start, 0, 9)]).await;
+
+    let found = server.find(&town, &town.ann.key, json!({ "with": [] })).await.ok();
+    assert_eq!(found["with"], json!(["Cy"]), "{found}");
+    let empty = server.tool(&town.scout, "find_a_time", json!({ "with": [] })).await;
+    assert_eq!(empty["structuredContent"]["with"], json!(["Cy"]), "{empty}");
+
+    for bad in [json!("Bo"), json!(7), json!(["Bo", 7])] {
+        let refused = server.tool(&town.scout, "find_a_time", json!({ "with": bad })).await;
+        assert_eq!(refused["isError"], true, "{refused}");
+    }
+}
+
 // F24
 #[tokio::test]
 async fn only_people_in_the_city_can_be_asked_about_and_only_by_people_in_it() {
