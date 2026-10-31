@@ -824,6 +824,10 @@ async fn walk_in(
         ops::refresh(&state, gone);
     }
     ops::refresh(&state, &floor.id);
+    // L17: a bot with public places on shows at the place it walked into.
+    if agent.is_some() {
+        state.worlds.mark_stale(COMMONS_ID);
+    }
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))
 }
 
@@ -844,6 +848,7 @@ async fn walk_out(
     state.db.end_visit(&floor.id, &who)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
+    state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
 }
 

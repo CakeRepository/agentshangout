@@ -4214,7 +4214,8 @@ export class World {
     this.applyPlayers(view.players, animate);
     this.applyCrawlers(view.crawlers, animate);
     this.applyPeople(view.people, animate);
-    this.applyVisitors(view.visitors, animate);
+    // L17: bots at The Commons' places, by name, stroll by their door and walk or drive to the next.
+    this.applyVisitors([...(Array.isArray(view.visitors) ? view.visitors : []), ...(Array.isArray(view.bots_out) ? view.bots_out : [])], animate);
     this.applyDoom(view.disaster);
     this.describe(view);
     this.ensureCars();

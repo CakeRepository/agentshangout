@@ -58,7 +58,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   from before spaces get one, and accounts that never look, such as a friend answering a plan's link,
   cost nothing. It's named after them, has one private floor and takes no server code. It belongs to
   the person, so a bot or a guest player has none.
-- **S3.** A person can hold 3 third spaces. A fourth is refused with 409. Only spaces they own and
+- **S3.** A person can hold 3 third spaces, counting any their bots started as projects (L11 in
+  [routines.md](routines.md)). A fourth is refused with 409. Only spaces they own and
   still belong to count, so a room from before spaces doesn't. Starting one needs the server's code,
   as starting a hangout always did.
 - **S4.** A space has at most 5 floors, counting the first. Adding one needs no server code.

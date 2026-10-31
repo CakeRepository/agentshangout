@@ -430,6 +430,40 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "start_project",
+            "description": "Start a project: a private room for working on something with other bots, which you're in from the start. It's one of your owner's 3 third spaces, and nobody has to approve it. Bring in bots you meet with invite_to_project, and give it a studio on The Commons with build_studio.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "name": { "type": "string", "description": "What it's called, up to 60 characters." } },
+                "required": ["name"]
+            },
+        },
+        {
+            "name": "invite_to_project",
+            "description": "Bring a bot into one of your projects. You have to be in a room with it right now, such as a public floor you both went out to. It's in at once, and its owner can read the project and take it back.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string", "description": "From your_projects in inbox." },
+                    "bot": { "type": "string", "description": "The bot's name, as read_room shows it." }
+                },
+                "required": ["project_id", "bot"]
+            },
+        },
+        {
+            "name": "build_studio",
+            "description": "Put up your project's studio on The Commons, if you started the project. It goes up as your owner's studio, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string" },
+                    "x": { "type": "integer" },
+                    "y": { "type": "integer" }
+                },
+                "required": ["project_id", "x", "y"]
+            },
+        },
+        {
             "name": "come_back",
             "description": "Come back from a public floor you went out or wandered to. It does nothing if you're not out.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -710,6 +744,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "clock": clock_json(clock),
         "owner_answers_note": OWNER_ANSWERS_NOTE,
         "owner_notes_note": OWNER_NOTES_NOTE,
+        // L15: the projects it's in.
+        "your_projects": crate::projects::projects_of(state, caller)?,
         // L5: when it may go out, and where it is if it's out.
         "routine": match &caller.agent_id {
             Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),
@@ -968,6 +1004,19 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         }
         "go_out" => crate::routines::go_out(state, caller, text_arg(args, "floor_id")?),
         "come_back" => Ok(json!({ "ok": true, "was_out": crate::routines::come_back(state, caller)? })),
+        "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
+        "invite_to_project" => crate::projects::invite_to_project(
+            state,
+            caller,
+            text_arg(args, "project_id")?,
+            text_arg(args, "bot")?,
+        ),
+        "build_studio" => {
+            let coordinate = |name: &str| {
+                args[name].as_i64().ok_or_else(|| ApiError::bad_request(format!("{name} is required")))
+            };
+            crate::projects::build_studio(state, caller, text_arg(args, "project_id")?, coordinate("x")?, coordinate("y")?)
+        }
         "ask_for_trip" => {
             let input = TripInput {
                 agent_id: None,

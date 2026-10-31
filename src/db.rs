@@ -553,6 +553,11 @@ CREATE TABLE IF NOT EXISTS bot_routines (
     public_places   INTEGER NOT NULL DEFAULT 0,
     updated_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projects (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -2916,6 +2921,74 @@ impl Db {
             params![person_id, agent_id],
         )?;
         Ok(())
+    }
+
+    // Projects (L11 to L15)
+
+    pub fn insert_project(&self, space_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO projects (space_id, agent_id, created_at) VALUES (?, ?, ?)",
+            params![space_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// A project's space and the bot that started it, if it's still there.
+    pub fn project(&self, space_id: &str) -> rusqlite::Result<Option<(Space, Option<String>)>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id WHERE p.space_id = ?"),
+                [space_id],
+                |row| Ok((space_from_row(row)?, row.get(6)?)),
+            )
+            .optional()
+    }
+
+    /// The projects whose first floor this bot is in, oldest first, with the bot that started each.
+    pub fn projects_of_bot(&self, agent_id: &str) -> rusqlite::Result<Vec<(Space, Option<String>)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id
+             JOIN room_agents r ON r.hangout_id = p.space_id AND r.agent_id = ?
+             ORDER BY p.created_at, p.space_id"
+        ))?;
+        let rows = stmt.query_map([agent_id], |row| Ok((space_from_row(row)?, row.get(6)?)))?;
+        rows.collect()
+    }
+
+    /// L17: bots with public places on, each at the door of a place whose building stands as its
+    /// space's (S33): `[agent, name, owner, x, y, out]`, where `out` says it walked onto a public floor
+    /// there rather than being in a project. Whether a project's bot is in its hours is the caller's
+    /// to work out.
+    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String, String, i64, i64, bool)>> {
+        // The building on a space's plot, standing as that space's door: its owner's own player put it
+        // up, and a house is a house's door and anything else a third space's.
+        const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
+             JOIN world_buildings b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
+                            AND pl.agent_id IS NULL AND pl.token_hash IS NULL
+             JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT a.id, a.name, a.owner_id, d.x, d.y, 1 FROM floor_visits v
+             JOIN agents a ON a.id = v.agent_id
+             JOIN floors f ON f.hangout_id = v.hangout_id AND f.access = 'public'
+             JOIN spaces s ON s.id = f.space_id
+             {DOOR}
+             WHERE v.until > ?2 AND (b.kind = 'house') = (s.kind = 'house')
+             UNION ALL
+             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0 FROM projects pr
+             JOIN room_agents ra ON ra.hangout_id = pr.space_id
+             JOIN agents a ON a.id = ra.agent_id
+             JOIN spaces s ON s.id = pr.space_id
+             {DOOR}
+             WHERE b.kind = 'studio'
+             LIMIT 400"
+        ))?;
+        let rows = stmt.query_map(params![world_id, now], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?;
+        rows.collect()
     }
 
     // Routines (L1 to L10)

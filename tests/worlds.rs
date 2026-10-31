@@ -2116,8 +2116,8 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, and public_floors, go_out and come_back for going out (L6, L8).
-    assert!(private_names.contains(&"inbox") && private_names.len() == 33, "{private_names:?}");
+    // 30, public_floors, go_out and come_back for going out (L6, L8), and three for projects (L11 to L13).
+    assert!(private_names.contains(&"inbox") && private_names.len() == 36, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
@@ -2932,7 +2932,7 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people"])
+        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out"])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];

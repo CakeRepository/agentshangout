@@ -1511,6 +1511,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
+    /// L17: `[name, x, y]` of the bots out at The Commons' places, by their own names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bots_out: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
 }
@@ -1596,7 +1599,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
 
     let disaster = state.db.world_end(&world.id)?.and_then(|end| disaster_of(world, &end));
 
-    let (crawlers, visitors, people) = if world.id == COMMONS_ID {
+    let (crawlers, visitors, people, bots_out) = if world.id == COMMONS_ID {
         let roads = Roads::from_tiles(&snapshot.tiles);
         let on_the_street = |numbers: Vec<u64>| -> Vec<(String, u16, u16)> {
             numbers
@@ -1618,9 +1621,10 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             .collect();
         let visitors = on_the_street(state.worlds.visitors(now));
         let people = on_the_street(state.worlds.people(now));
-        (Some(crawlers), Some(visitors), Some(people))
+        let bots_out = crate::routines::bots_at_places(state, &snapshot.tiles, now)?;
+        (Some(crawlers), Some(visitors), Some(people), Some(bots_out))
     } else {
-        (None, None, None)
+        (None, None, None, None)
     };
 
     let mut out = ViewOut {
@@ -1641,6 +1645,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         crawlers,
         visitors,
         people,
+        bots_out,
         disaster,
     };
     // The tag leaves out the time it was built and how long ago each frog was seen, because both
