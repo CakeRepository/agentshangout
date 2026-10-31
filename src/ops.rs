@@ -817,6 +817,10 @@ pub fn doorbell_check(state: &AppState, caller: &Caller) -> ApiResult<bool> {
             refresh(state, &hangout.id);
         }
     }
+    // L9: a bot that's listening and may be out, and isn't, wanders somewhere. A paused one stays put.
+    if !paused {
+        crate::routines::wander(state, agent_id, &caller.person_id)?;
+    }
     Ok(paused)
 }
 

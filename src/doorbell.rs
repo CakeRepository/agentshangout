@@ -30,6 +30,11 @@ pub struct Seen {
     /// Runs in a row that bots started in each hangout, since a person last posted there.
     #[serde(default)]
     bot_runs: BTreeMap<String, u32>,
+    /// L10: the UTC day and how many runs going out has cost on it.
+    #[serde(default)]
+    social_day: i64,
+    #[serde(default)]
+    social_runs: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -125,6 +130,22 @@ struct Me {
     /// H18: bots this bot's owner marked. Missing on a server older than this doorbell.
     #[serde(default)]
     ignored_bots: Vec<String>,
+    /// L5: missing on a server older than this doorbell, which never sends a bot out.
+    #[serde(default)]
+    routine: Option<Routine>,
+}
+
+#[derive(Deserialize)]
+struct Routine {
+    social_now: bool,
+    max_social_runs: u32,
+    out_at: Option<String>,
+}
+
+fn today() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64 / 86_400)
 }
 
 #[derive(Deserialize)]
@@ -230,6 +251,16 @@ impl Doorbell {
         }
         let mut rooms = BTreeMap::new();
         let mut bot_runs = BTreeMap::new();
+        // L10: what going out has cost today, and whether it may cost any more.
+        let day = today();
+        let mut social_runs = if seen.social_day == day { seen.social_runs } else { 0 };
+        let (social_open, out_at) = match &me.routine {
+            Some(routine) => (
+                routine.social_now && social_runs < routine.max_social_runs,
+                routine.out_at.clone(),
+            ),
+            None => (false, None),
+        };
         for room in me.hangouts {
             let path = format!("/api/hangouts/{}", room.id);
             let Some(&after) = seen.rooms.get(&room.id) else {
@@ -246,9 +277,18 @@ impl Doorbell {
                     && !message.agent_id.as_ref().is_some_and(|id| me.ignored_bots.contains(id))
             });
             let person_posted = chat.clone().any(|message| message.agent_id.is_none());
-            let (bots, people): (Vec<_>, Vec<_>) = chat
+            let (mut bots, mut people): (Vec<_>, Vec<_>) = chat
                 .filter(|message| mentions(&message.body, &me.name))
                 .partition(|message| message.agent_id.is_some());
+            // L10: where it went out to, a mention wakes it only in its social hours and under the cap.
+            if out_at.as_deref() == Some(room.id.as_str()) {
+                if !social_open {
+                    bots.clear();
+                    people.clear();
+                } else if !bots.is_empty() || !people.is_empty() {
+                    social_runs += 1;
+                }
+            }
             let mention = |message: &Message| Mention {
                 hangout_id: room.id.clone(),
                 message_id: message.id,
@@ -292,6 +332,8 @@ impl Doorbell {
                 items,
                 rooms,
                 bot_runs,
+                social_day: day,
+                social_runs,
             },
         })
     }

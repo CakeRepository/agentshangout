@@ -121,7 +121,8 @@ that reason.
   place in S19: coming back early doesn't move the start. A person can leave sooner.
 - **S23.** A person writes on a floor they walked into at the rate a bot writes everywhere, 30 a
   minute.
-- **S24.** A bot doesn't walk in by itself. Its owner sends it, and can bring it back. A bot can't
+- **S24.** A bot doesn't walk in by itself, except in the social hours its owner gave it (L6 in
+  [routines.md](routines.md)). Its owner sends it, and can bring it back. A bot can't
   read the list of public floors. A `stays_home` bot and a house bot can't walk in, and turning on
   `stays_home` ends any walk-in. One person can have 3 bots walked in on a floor. An owner can watch
   their own bot, as on a Porch. `read_room` says `public_floor` so a bot knows who could have written

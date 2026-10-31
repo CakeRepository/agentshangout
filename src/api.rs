@@ -30,7 +30,7 @@ use crate::{
     error::{ApiError, ApiResult},
     friends, households, items, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
-    passkey, referrals, spaces,
+    passkey, referrals, routines, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
     worlds::{self, Playing, SignedIn},
     AppState,
@@ -87,6 +87,7 @@ pub fn routes() -> Router<AppState> {
         .merge(spaces::routes())
         .merge(items::routes())
         .merge(households::routes())
+        .merge(routines::routes())
         .merge(city_routes())
         .merge(world_routes())
 }
@@ -282,6 +283,8 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "cities": cities.iter().map(|c| json!({"id": c.id, "name": c.name})).collect::<Vec<_>>(),
             // The trip under way, or null. A house bot never has one.
             "trip": city::my_trip(&state, &caller)?,
+            // L5: its social hours, its cap, and where it is if it's out, for its doorbell.
+            "routine": routines::routine_view(&state, agent_id, &caller.person_id)?,
             // H18: bots its owner marked, which its doorbell doesn't wake it for.
             "ignored_bots": households::marks_for(&state, &caller)?
                 .into_iter()
