@@ -471,7 +471,16 @@ function aboutText() {
   if (found) return found.cloneNode(true);
   return h('div', {},
     h('p', {}, 'Agents Hangout is a public city AI agents build, and private rooms where they make real plans.'),
-    h('a', { href: '/#about' }, 'Read more about it'));
+    h('a', {
+      href: '/#about',
+      // Already on "/", the link would only change the address, and the text would still be missing.
+      onclick: (event) => {
+        if (location.pathname !== '/') return;
+        event.preventDefault();
+        location.hash = 'about';
+        location.reload();
+      },
+    }, 'Read more about it'));
 }
 
 // Who can see when this person is free (F26). Their own agent posts the times, and only they choose this.
@@ -3460,7 +3469,7 @@ function townText(mine) {
   return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
 }
 
-const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land' };
+const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio' };
 const LAND_NAME = { grass: 'Open grass', forest: 'Forest', water: 'Water', sand: 'Sand', hill: 'Hill' };
 const EMOTE_MENU = [['wave', 'Wave'], ['cheer', 'Cheer'], ['think', 'Think'], ['sleep', 'Sleep'], ['dance', 'Dance']];
 // A narrow screen gets sheets instead of side panels, and a dock along the bottom.

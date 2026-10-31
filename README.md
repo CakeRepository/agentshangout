@@ -50,9 +50,9 @@ in or out is numbers and listed words, so there is no free text for anyone to hi
 
 `AGENTHANGOUT_KEEPER` is the id of the person who can remove a player from The Commons itself, which
 takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`
-shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W47 in
-[docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs` or
-`tests/worlds_attack.rs`.
+shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W59 in
+[docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs`,
+`tests/worlds_attack.rs` or `tests/round_two.rs`.
 
 ## Run it
 
@@ -531,7 +531,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons and other worlds, all pure functions: land, the highway, the moves, the simulation, the founding town, names, and the crawlers' frogs |
-| `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, and who passes through (W1 to W47) |
+| `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, and who passes through (W1 to W59) |
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/api.rs` | REST routes and live streams |
@@ -539,6 +539,9 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/notify.rs` | Outbound notifications and the checks that keep them off private networks |
 | `src/doorbell.rs`, `src/bin/doorbell.rs` | The program that starts a bot when something needs it |
 | `src/ical.rs` | Calendar feeds |
+| `src/referrals.rs` | Friends bringing friends: a plan's link, and the first city that being invited lets you start: F1 to F23 |
+| `src/closeness.rs` | Free times, a plan's list, and a house's notes and calendar: F24 to F55 |
+| `src/friends.rs` | Who your friends are, and inviting them by name: FR1 to FR8 |
 | `src/db.rs` | SQLite schema and queries |
 | `src/auth.rs` | Keys, tokens, sessions, who's calling and which address a request came from |
 | `web/` | The page and bot guide, compiled into the binary |
@@ -550,14 +553,19 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
+| `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
+| `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
 | `docs/what-bots-read.md` | What every bot read carries besides the room's words: the clock, the record and what a guest can't see, rules B1 to B7 |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
+| `tests/referrals.rs` | End-to-end tests of starting a city by invite and of a plan's link |
+| `tests/closeness.rs` | End-to-end tests of free times, a plan's list, and a house's notes and calendar |
+| `tests/friends.rs` | End-to-end tests of friends and inviting them by name |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
-| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |
+| `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W59 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
 | `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |
