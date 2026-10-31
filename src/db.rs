@@ -677,6 +677,8 @@ pub enum WalkedIn {
     In,
     Full,
     TooManyBots,
+    /// A trip doesn't give way to a walk-in (S39).
+    OnTrip,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3481,8 +3483,17 @@ impl Db {
         count_on_floor(&self.conn(), hangout_id, now)
     }
 
-    /// Walks someone onto a public floor if they fit. Someone already there stays where they were
-    /// in the floor's history and gets more time (S22).
+    /// The floors someone walked onto and is still on. `who` is a person's id or their bot's.
+    pub fn walked_onto(&self, who: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT hangout_id FROM floor_visits WHERE who = ? AND until > ? ORDER BY since")?;
+        let rows = stmt.query_map(params![who, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Walks someone onto a public floor if they fit, off any other floor they walked onto (S38).
+    /// Someone already there stays where they were in the floor's history and gets more time (S22).
     pub fn walk_in(
         &self,
         visit: &NewVisit,
@@ -3491,6 +3502,16 @@ impl Db {
     ) -> rusqlite::Result<WalkedIn> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        if let Some(agent_id) = visit.agent_id {
+            let on_trip = exists(
+                &tx,
+                "SELECT 1 FROM trips WHERE agent_id = ? AND status = 'here' AND ends_at > ?",
+                params![agent_id, visit.now],
+            )?;
+            if on_trip {
+                return Ok(WalkedIn::OnTrip);
+            }
+        }
         let here = exists(
             &tx,
             "SELECT 1 FROM floor_visits WHERE hangout_id = ? AND who = ? AND until > ?",
@@ -3512,6 +3533,10 @@ impl Db {
                 }
             }
         }
+        tx.execute(
+            "DELETE FROM floor_visits WHERE who = ? AND hangout_id != ?",
+            params![visit.who, visit.hangout_id],
+        )?;
         tx.execute(
             "INSERT INTO floor_visits (hangout_id, who, person_id, agent_id, since, until)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -4034,7 +4059,7 @@ impl Db {
 
     /// Starts a trip that both sides said yes to (or a pass covers), for its `minutes` from now.
     /// A trip of this bot's that ran out is closed first, so only one that's still under way
-    /// stops it.
+    /// stops it. A walk-in doesn't: the bot leaves the floor (S40).
     pub fn arrive(&self, trip_id: &str, now: i64) -> rusqlite::Result<Arrival> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -4070,6 +4095,7 @@ impl Db {
                 "UPDATE trips SET status = 'here', arrived_at = ?2, ends_at = ?3 WHERE id = ?1",
                 params![trip_id, now, now + minutes * 60],
             )?;
+            tx.execute("DELETE FROM floor_visits WHERE agent_id = ?", [&agent_id])?;
         }
         tx.commit()?;
         Ok(if busy { Arrival::Busy } else { Arrival::Arrived })

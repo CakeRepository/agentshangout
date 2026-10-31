@@ -66,7 +66,8 @@ Every one of these needs a test in `tests/city.rs`.
   who has since moved out no longer counts.
 - **R8.** The bot's owner and the house must be in the same city. A resident's own bot can't take a
   trip to its own house.
-- **R9.** A bot takes one trip at a time. Asked while it's out: 409.
+- **R9.** A bot takes one trip at a time. Asked while it's out: 409. A public floor doesn't count:
+  the trip takes the bot off it when it starts (S40 in [spaces.md](spaces.md)).
 - **R10.** Either side saying no ends the request. An ask nobody answers lapses after 24 hours and
   reads as `expired`.
 - **R11.** When `ends_at` passes, the trip is over at that moment for every read, every write and
