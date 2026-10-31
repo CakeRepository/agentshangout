@@ -529,6 +529,9 @@ CREATE INDEX IF NOT EXISTS item_notes_by_item ON item_notes (item_id, created_at
 CREATE TABLE IF NOT EXISTS bots_without_moods (
     agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS friend_invite_ends (
+    invite_id    TEXT PRIMARY KEY REFERENCES friend_invites(id) ON DELETE CASCADE
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -749,6 +752,8 @@ pub enum WalkedIn {
     In,
     Full,
     TooManyBots,
+    /// A trip doesn't give way to a walk-in (S39).
+    OnTrip,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1632,6 +1637,32 @@ fn exists(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> rusqli
         .map(|found| found.is_some())
 }
 
+/// FR6: ends the invites waiting for a place. Their rows stay, so a day's count (FR7) still sees
+/// them, and one that was turned down stays turned down.
+fn end_friend_invites(conn: &Connection, kind: &str, place_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO friend_invite_ends (invite_id)
+         SELECT id FROM friend_invites WHERE kind = ? AND place_id = ? AND declined_at IS NULL",
+        params![kind, place_id],
+    )?;
+    Ok(())
+}
+
+/// R5: whether someone lives in a house in this city other than `house_id`.
+fn lives_elsewhere_in_city(
+    conn: &Connection,
+    city_id: &str,
+    person_id: &str,
+    house_id: &str,
+) -> rusqlite::Result<bool> {
+    exists(
+        conn,
+        "SELECT 1 FROM residents r JOIN houses h ON h.id = r.house_id
+         WHERE h.city_id = ? AND r.person_id = ? AND r.house_id <> ?",
+        params![city_id, person_id, house_id],
+    )
+}
+
 /// Adds a person. Their colour is the next one in turn, so the first few people look distinct.
 fn insert_person(
     conn: &Connection,
@@ -2234,11 +2265,14 @@ impl Db {
     }
 
     pub fn set_invite_code(&self, hangout_id: &str, code: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "UPDATE hangouts SET invite_code = ? WHERE id = ?",
             params![code, hangout_id],
         )?;
-        Ok(())
+        end_friend_invites(&tx, "room", hangout_id)?;
+        tx.commit()
     }
 
     pub fn hangouts_for_person(&self, person_id: &str) -> rusqlite::Result<Vec<Hangout>> {
@@ -2375,10 +2409,17 @@ impl Db {
         rows.collect()
     }
 
+    /// A person's bots, without a house bot they made for a house they've since left. It's the
+    /// house's, and when it last ran would show them whether anyone is home (R30, R44).
     pub fn agents_of(&self, owner_id: &str, now: i64) -> rusqlite::Result<Vec<Agent>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {AGENT_COLS} FROM {AGENTS} WHERE a.owner_id = ? ORDER BY a.created_at, a.id"
+            "SELECT {AGENT_COLS} FROM {AGENTS} WHERE a.owner_id = ?1
+               AND NOT EXISTS (SELECT 1 FROM bot_homes home
+                   WHERE home.agent_id = a.id AND home.is_house = 1
+                     AND NOT EXISTS (SELECT 1 FROM residents r
+                         WHERE r.house_id = home.house_id AND r.person_id = ?1))
+             ORDER BY a.created_at, a.id"
         ))?;
         let rows = stmt.query_map([owner_id], |row| agent_from_row(row, now))?;
         rows.collect()
@@ -3098,11 +3139,14 @@ impl Db {
     }
 
     pub fn set_city_invite(&self, city_id: &str, code: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "UPDATE cities SET invite_code = ? WHERE id = ?",
             params![code, city_id],
         )?;
-        Ok(())
+        end_friend_invites(&tx, "city", city_id)?;
+        tx.commit()
     }
 
     pub fn cities_for_person(&self, person_id: &str) -> rusqlite::Result<Vec<City>> {
@@ -3213,9 +3257,14 @@ impl Db {
 
     /// Builds a house: its Living Room and Porch, the house itself, and the creator as a resident
     /// and a member of both rooms.
-    pub fn create_house(&self, house: &NewHouse) -> rusqlite::Result<House> {
+    /// The new house, or `None` with nothing made if its builder already lives in this city. That's
+    /// decided here so two requests at the same moment can't both get past it (R5).
+    pub fn create_house(&self, house: &NewHouse) -> rusqlite::Result<Option<House>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        if lives_elsewhere_in_city(&tx, house.city_id, house.created_by, house.id)? {
+            return Ok(None);
+        }
         let living_room_name = format!("{} Living Room", house.name);
         let porch_name = format!("{} Porch", house.name);
         insert_room(
@@ -3246,7 +3295,7 @@ impl Db {
             params![house.id, house.created_by, house.now],
         )?;
         tx.commit()?;
-        Ok(House {
+        Ok(Some(House {
             id: house.id.to_string(),
             city_id: house.city_id.to_string(),
             name: house.name.to_string(),
@@ -3255,7 +3304,7 @@ impl Db {
             porch_id: house.porch_id.to_string(),
             created_by: house.created_by.to_string(),
             created_at: house.now,
-        })
+        }))
     }
 
     pub fn house(&self, id: &str) -> rusqlite::Result<Option<House>> {
@@ -3284,6 +3333,16 @@ impl Db {
             params![code, house_id],
         )?;
         Ok(())
+    }
+
+    /// R5: uses up a house's link. True for the one caller whose code was still the link, however
+    /// many arrive at the same moment.
+    pub fn take_house_invite(&self, house_id: &str, code: &str, new_code: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE houses SET invite_code = ? WHERE id = ? AND invite_code = ?",
+            params![new_code, house_id, code],
+        )?;
+        Ok(changed > 0)
     }
 
     /// The house a Living Room or Porch belongs to. A Town Square has none.
@@ -3560,8 +3619,17 @@ impl Db {
         count_on_floor(&self.conn(), hangout_id, now)
     }
 
-    /// Walks someone onto a public floor if they fit. Someone already there stays where they were
-    /// in the floor's history and gets more time (S22).
+    /// The floors someone walked onto and is still on. `who` is a person's id or their bot's.
+    pub fn walked_onto(&self, who: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT hangout_id FROM floor_visits WHERE who = ? AND until > ? ORDER BY since")?;
+        let rows = stmt.query_map(params![who, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Walks someone onto a public floor if they fit, off any other floor they walked onto (S38).
+    /// Someone already there stays where they were in the floor's history and gets more time (S22).
     pub fn walk_in(
         &self,
         visit: &NewVisit,
@@ -3570,6 +3638,16 @@ impl Db {
     ) -> rusqlite::Result<WalkedIn> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        if let Some(agent_id) = visit.agent_id {
+            let on_trip = exists(
+                &tx,
+                "SELECT 1 FROM trips WHERE agent_id = ? AND status = 'here' AND ends_at > ?",
+                params![agent_id, visit.now],
+            )?;
+            if on_trip {
+                return Ok(WalkedIn::OnTrip);
+            }
+        }
         let here = exists(
             &tx,
             "SELECT 1 FROM floor_visits WHERE hangout_id = ? AND who = ? AND until > ?",
@@ -3591,6 +3669,10 @@ impl Db {
                 }
             }
         }
+        tx.execute(
+            "DELETE FROM floor_visits WHERE who = ? AND hangout_id != ?",
+            params![visit.who, visit.hangout_id],
+        )?;
         tx.execute(
             "INSERT INTO floor_visits (hangout_id, who, person_id, agent_id, since, until)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -3770,7 +3852,9 @@ impl Db {
     }
 
     /// Joining a house also joins its city, and both its rooms. Their bots come in separately.
-    pub fn add_resident(&self, house_id: &str, person_id: &str, now: i64) -> rusqlite::Result<()> {
+    /// False, with nothing changed, if they live in another house in this city. That's decided here
+    /// so two requests at the same moment can't both get past it (R5).
+    pub fn add_resident(&self, house_id: &str, person_id: &str, now: i64) -> rusqlite::Result<bool> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let (city_id, living_room, porch): (String, String, String) = tx.query_row(
@@ -3778,6 +3862,9 @@ impl Db {
             [house_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
+        if lives_elsewhere_in_city(&tx, &city_id, person_id, house_id)? {
+            return Ok(false);
+        }
         join_city(&tx, &city_id, person_id, now)?;
         tx.execute(
             "INSERT OR IGNORE INTO residents (house_id, person_id, joined_at) VALUES (?, ?, ?)",
@@ -3789,7 +3876,8 @@ impl Db {
                 params![room, person_id, now],
             )?;
         }
-        tx.commit()
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Takes the person and their bots out of both rooms and forgets where their bots lived in
@@ -4113,7 +4201,7 @@ impl Db {
 
     /// Starts a trip that both sides said yes to (or a pass covers), for its `minutes` from now.
     /// A trip of this bot's that ran out is closed first, so only one that's still under way
-    /// stops it.
+    /// stops it. A walk-in doesn't: the bot leaves the floor (S40).
     pub fn arrive(&self, trip_id: &str, now: i64) -> rusqlite::Result<Arrival> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
@@ -4149,6 +4237,7 @@ impl Db {
                 "UPDATE trips SET status = 'here', arrived_at = ?2, ends_at = ?3 WHERE id = ?1",
                 params![trip_id, now, now + minutes * 60],
             )?;
+            tx.execute("DELETE FROM floor_visits WHERE agent_id = ?", [&agent_id])?;
         }
         tx.commit()?;
         Ok(if busy { Arrival::Busy } else { Arrival::Arrived })
@@ -4304,6 +4393,16 @@ impl Db {
 
     pub fn remove_pass_key(&self, pass_id: &str, key: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM pass_keys WHERE pass_id = ? AND key = ?", params![pass_id, key])?;
+        Ok(())
+    }
+
+    /// H12: the keys this resident gave at this house. `granted_by` is a name, as on a pass.
+    pub fn remove_keys_given_by(&self, house_id: &str, name: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM pass_keys WHERE granted_by = ?
+             AND pass_id IN (SELECT id FROM passes WHERE house_id = ?)",
+            params![name, house_id],
+        )?;
         Ok(())
     }
 
@@ -5421,6 +5520,12 @@ impl Db {
                 "DELETE FROM vouches WHERE city_id = ? AND for_person = ?",
                 params![city_id, person_id],
             )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO friend_invite_ends (invite_id)
+                 SELECT id FROM friend_invites
+                 WHERE kind = 'city' AND place_id = ? AND to_person = ? AND declined_at IS NULL",
+                params![city_id, person_id],
+            )?;
         }
         tx.commit()?;
         Ok(changed > 0)
@@ -5434,6 +5539,13 @@ impl Db {
         tx.execute(
             "DELETE FROM vouches WHERE city_id = ?1 AND for_person IN
                (SELECT person_id FROM city_gate WHERE city_id = ?1 AND created_at > ?2)",
+            params![city_id, cutoff],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO friend_invite_ends (invite_id)
+             SELECT f.id FROM friend_invites f
+             JOIN city_gate g ON g.city_id = f.place_id AND g.person_id = f.to_person
+             WHERE f.kind = 'city' AND f.place_id = ?1 AND g.created_at > ?2 AND f.declined_at IS NULL",
             params![city_id, cutoff],
         )?;
         let cleared = tx.execute(
@@ -6531,7 +6643,9 @@ impl Db {
         now: i64,
         lapsed: i64,
     ) -> rusqlite::Result<bool> {
-        let changed = self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
             "INSERT INTO friend_invites (id, kind, place_id, from_person, to_person, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT (kind, place_id, to_person) DO UPDATE
@@ -6539,6 +6653,14 @@ impl Db {
                WHERE declined_at IS NULL AND created_at <= ?7",
             params![id, kind, place_id, from_person, to_person, now, lapsed],
         )?;
+        // FR6: sending again brings back one that ended. It isn't new, so nobody is pinged.
+        tx.execute(
+            "DELETE FROM friend_invite_ends WHERE invite_id IN
+               (SELECT id FROM friend_invites
+                WHERE kind = ? AND place_id = ? AND to_person = ? AND declined_at IS NULL)",
+            params![kind, place_id, to_person],
+        )?;
+        tx.commit()?;
         Ok(changed > 0)
     }
 
@@ -6550,8 +6672,8 @@ impl Db {
         )
     }
 
-    /// FR5: invites still waiting: not turned down, not lapsed, to a place the sender is still in
-    /// and the person isn't, with that place's link as it is now.
+    /// FR5: invites still waiting: not turned down, not ended, not lapsed, to a place the sender is
+    /// still in and the person isn't, with that place's link as it is now.
     pub fn friend_invites_for(
         &self,
         person_id: &str,
@@ -6566,6 +6688,9 @@ impl Db {
              LEFT JOIN hangouts h ON f.kind = 'room' AND h.id = f.place_id
              LEFT JOIN cities c ON f.kind = 'city' AND c.id = f.place_id
              WHERE f.to_person = ?1 AND f.declined_at IS NULL AND f.created_at > ?2
+               AND NOT EXISTS (SELECT 1 FROM friend_invite_ends e WHERE e.invite_id = f.id)
+               AND NOT EXISTS (SELECT 1 FROM floors fl JOIN turned_out t ON t.space_id = fl.space_id
+                               WHERE fl.hangout_id = f.place_id AND t.person_id = ?1)
                AND (h.id IS NOT NULL OR c.id IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM members m WHERE m.hangout_id = f.place_id AND m.person_id = ?1)
                AND NOT EXISTS (SELECT 1 FROM city_members m WHERE m.city_id = f.place_id AND m.person_id = ?1)
@@ -6764,6 +6889,15 @@ impl Db {
         let player = q_player(&tx, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         tx.commit()?;
         Ok(BotJoined::Done(player))
+    }
+
+    /// Whether a signed-in person has their own player yet. This makes nothing.
+    pub fn has_own_player(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM players WHERE person_id = ? AND token_hash IS NULL AND agent_id IS NULL",
+            [person_id],
+        )
     }
 
     /// A signed-in person's own player, made the first time they need it.
@@ -7175,7 +7309,9 @@ mod tests {
         assert!(relation.shares_a_city);
         assert!(!relation.lives_with);
         assert_eq!(db.relation("p1", "p2", 500).unwrap().plans_together, 2);
-        db.add_resident("hz", "p2", 0).unwrap();
+        // One house to a city (R5), so Bo moves out of their own first.
+        db.remove_resident("ha", "p2").unwrap();
+        assert!(db.add_resident("hz", "p2", 0).unwrap());
         assert!(db.relation("p1", "p2", 200).unwrap().lives_with);
     }
 

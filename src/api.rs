@@ -1685,11 +1685,11 @@ async fn world_view(
 /// Who a player is and how their town is doing. It is limited like a view (W30).
 async fn world_me(
     State(state): State<AppState>,
-    Playing(player): Playing,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let now = now();
+    let player = worlds::player_or_stand_in(&state, &headers, now)?;
     worlds::allow_view(&state, &headers, now)?;
     Ok(Json(worlds::me(&state, &player, &id, now)?))
 }

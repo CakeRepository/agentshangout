@@ -76,6 +76,8 @@ pub struct Shared {
     pub referrals: referrals::Limits,
     /// The limit on asking when people are free.
     pub closeness: closeness::Limits,
+    /// Who has a floor open. In memory only, and it never leaves the floor (S41 to S46).
+    pub presence: spaces::Presence,
     write_windows: Mutex<HashMap<String, (i64, u32)>>,
 }
 
@@ -103,6 +105,7 @@ impl AppState {
             worlds: worlds::Runtime::new(),
             referrals: referrals::Limits::new(),
             closeness: closeness::Limits::new(),
+            presence: spaces::Presence::default(),
             write_windows: Mutex::new(HashMap::new()),
         }))
     }
@@ -137,6 +140,7 @@ pub fn app(state: AppState) -> Router {
         .merge(web::routes())
         .route("/mcp", post(mcp::handle))
         .route("/public/mcp", post(public_mcp::handle))
+        .fallback(web::not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn_with_state(state.clone(), web::security_headers))
         // Outermost, so it sees every request. It only watches (W38).

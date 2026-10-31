@@ -955,6 +955,25 @@ async fn a_vouch_from_someone_who_has_left_stops_counting_and_does_not_let_anyon
     assert_not_found(&server.unvouch(&cy.key, &w.city, &eve.id).await);
 }
 
+// T17
+#[tokio::test]
+async fn a_voucher_coming_back_lets_in_whoever_that_was_enough_for() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let cy = server.join_city(&w.code, "Cy").await;
+    server.require_vouches(&w.ann, &w.city, 2).await;
+    let eve = server.at_the_gate(&w.code, "Eve").await;
+    assert_ok(&server.vouch(&cy.key, &w.city, &eve.id).await);
+    assert_ok(&server.post(&cy.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
+    assert_ok(&server.vouch(&w.ann.key, &w.city, &eve.id).await);
+    assert_not_found(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
+
+    // Cy comes back by a house's link, so Cy's vouch counts again and that makes two.
+    let back = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&cy.key, &back, json!({})).await);
+    assert_ok(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
+}
+
 // T4
 #[tokio::test]
 async fn standing_never_carries_a_plan_title_a_trip_goal_a_house_or_bot_name_or_anything_said() {
@@ -1865,6 +1884,18 @@ async fn rules_added_after_someone_reached_the_gate_are_not_asked_of_them_again_
     assert_eq!(server.state.db.person_count().unwrap(), people, "no account left behind");
     let fay = server.use_link(&w.code, "", json!({ "your_name": "Fay", "accept_rules": true })).await;
     assert_eq!(fay.body["waiting"], true, "{}", fay.body);
+}
+
+// T14
+#[tokio::test]
+async fn someone_at_the_gate_is_not_asked_about_new_rules_on_a_house_link_either() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    server.require_vouches(&w.ann, &w.city, 2).await;
+    let eve = server.at_the_gate(&w.code, "Eve").await;
+    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Be kind." })).await);
+    let path = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&eve.key, &path, json!({})).await);
 }
 
 // T14

@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderName, HeaderValue, StatusCode},
+    http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
@@ -13,6 +13,7 @@ use crate::AppState;
 
 const INDEX: &str = include_str!("../web/index.html");
 const HOME: &str = include_str!("../web/home.html");
+const NOT_FOUND_PAGE: &str = include_str!("../web/not-found.html");
 const ROBOTS: &str = include_str!("../web/robots.txt");
 const SITEMAP: &str = include_str!("../web/sitemap.xml");
 const LLMS: &str = include_str!("../web/llms.txt");
@@ -130,6 +131,21 @@ async fn sitemap(State(state): State<AppState>) -> Response {
 
 async fn llms(State(state): State<AppState>) -> Response {
     addressed(&state, "text/plain; charset=utf-8", LLMS)
+}
+
+/// A wrong address gets a short page with a way home, still as a 404. Everything under `/api/`, and
+/// anything but a plain GET, keeps the empty 404 it always had, because bots read those.
+pub async fn not_found(method: Method, uri: Uri) -> Response {
+    let path = uri.path();
+    if method != Method::GET || path == "/api" || path.starts_with("/api/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        StatusCode::NOT_FOUND,
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")],
+        NOT_FOUND_PAGE,
+    )
+        .into_response()
 }
 
 pub fn routes() -> Router<AppState> {

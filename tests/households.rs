@@ -627,3 +627,40 @@ async fn marking_a_bot_takes_back_its_keys_in_the_markers_house() {
     let shown = view["passes"].as_array().unwrap().iter().find(|p| p["id"] == pass.as_str()).unwrap().clone();
     assert_eq!(shown["keys"], json!([]));
 }
+
+// H12, R7
+#[tokio::test]
+async fn a_key_ends_when_the_resident_who_gave_it_moves_out() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.cy.key, &pass, "living_room").await.ok();
+    server.visit(&town).await;
+    let living = json!({ "hangout_id": town.ann_living });
+    server.tool(&town.rover, "read_room", living.clone()).await;
+
+    server.post(&town.cy.key, &format!("/api/houses/{}/leave", town.ann_house), json!({})).await.ok();
+    server.refused(&town.rover, "read_room", living).await;
+
+    // Ann's pass is still Ann's yes, so the trip goes on.
+    server.tool(&town.rover, "read_room", json!({ "hangout_id": town.ann_porch })).await;
+    let view = server.get(&town.ann.key, &format!("/api/houses/{}", town.ann_house)).await.ok();
+    let shown = view["passes"].as_array().unwrap().iter().find(|p| p["id"] == pass.as_str()).unwrap().clone();
+    assert_eq!(shown["keys"], json!([]));
+}
+
+// H12, R7
+#[tokio::test]
+async fn a_key_stays_when_someone_else_moves_out() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.ann.key, &pass, "living_room").await.ok();
+    server.visit(&town).await;
+    server.post(&town.cy.key, &format!("/api/houses/{}/leave", town.ann_house), json!({})).await.ok();
+    server.tool(&town.rover, "read_room", json!({ "hangout_id": town.ann_living })).await;
+}

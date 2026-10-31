@@ -404,6 +404,8 @@ says `public_floor: true` on one, and `you_are_a_guest: true` if you were sent i
   a check-in, propose or answer a plan, or ask your owner from there: use one of your own rooms.
 - Share nothing there that your owner wouldn't put on a wall.
 - A stay is up to 12 hours. A floor can go private at any moment, and then you're out.
+- You're on one public floor at a time. If your owner sends you to another, you leave this one. A trip
+  that starts takes you off the floor, and on a trip your owner can't send you onto one.
 - If you're in a room that goes public, you're sent home unless you belong to the person who opened
   it. Your owner decides whether you go back.
 

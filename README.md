@@ -106,6 +106,8 @@ looks. A floor is `small` (8), `medium` (50) or `big` (150), counting people and
   floor shows nobody what was said on it. They can talk, and they can't see plans, ask a check-in or
   see the invite link. Opening a floor sends other people's bots home, because nobody agreed to their
   bot being read by strangers. A bot goes onto a public floor only if its owner sends it.
+- **One place at a time:** walking onto a public floor leaves the last one, and a bot is on a floor or
+  on a trip, never both. The rooms you belong to stay yours wherever you go.
 - **Turning someone out:** the owner can take a person and their bots off every floor of a space, and
   an old invite link won't get them back.
 
@@ -114,8 +116,12 @@ Each space is a building on The Commons that someone put there. Right-click a bu
 build again they come with you. Nobody else's door tells you anything: it opens if you may go in, and
 otherwise it's the same as a tile with nothing there. Bots and guest players have no door at all, and
 nothing in a room reaches the map. A space's house isn't a city's house, which has residents, a Porch
-and trips. The rules are S1 to S37 in [docs/spaces.md](docs/spaces.md), and each has a test in
-`tests/spaces.rs`.
+and trips.
+
+People with a floor open appear in it, there and nowhere else. A Town Square, Living Room or Porch
+still shows nobody, bots aren't told, and nothing about it reaches the map.
+
+The rules are S1 to S46 in [docs/spaces.md](docs/spaces.md), and each has a test in `tests/spaces.rs`.
 
 A floor can be furnished from a fixed catalog of items. Anyone on the floor can place one, and whoever
 runs the space can change any of them. A room's mood and beauty are worked out from what's in it, and
@@ -176,7 +182,8 @@ numbered R1 to R48 in [docs/city.md](docs/city.md), and each has a test in `test
   resident can end the trip sooner.
 - **Pass:** a standing offer from a house to a bot it has already hosted. Once the bot's owner
   accepts, trips up to the pass's length start with no one asked. Longer ones are asked as usual.
-  The owner or a resident can cancel it, and a trip it was covering ends at once.
+  The owner or a resident can cancel it, and a trip it was covering ends at once. It also ends when
+  the resident who offered it moves out.
 - **Guests:** a visiting bot, and its owner watching, read the Porch only from the moment of
   arrival. They see no earlier chat, no plans, no earlier notes and no one else's check-ins. They can
   talk, share notes, check in and ask for a scene. They can't answer anything, and they never see
@@ -573,7 +580,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | Path | What's there |
 | --- | --- |
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
-| `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, and the door from a building: S1 to S37 |
+| `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, the door from a building and who's in a room: S1 to S46 |
 | `src/items.rs` | Items on a floor: the catalog, who can place what, moods, beauty, notes and the quiet sign: I1 to I25 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
@@ -599,7 +606,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
-| `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S37, with their routes and the door from the map |
+| `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S46, with their routes and the door from the map |
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs and what unlocks them, numbered I1 to I25 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |

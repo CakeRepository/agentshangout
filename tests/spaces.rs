@@ -45,6 +45,25 @@ struct Who {
     id: String,
 }
 
+/// Cy, whose bot can visit Di's house in the same city.
+struct Neighbours {
+    cy: Who,
+    di: Who,
+    bot: String,
+    token: String,
+    house: String,
+    porch: String,
+}
+
+/// Whether the server ends a stream, reading it until it does.
+async fn ends(mut stream: reqwest::Response) -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Ok(Some(_)) = stream.chunk().await {}
+    })
+    .await
+    .is_ok()
+}
+
 fn text(value: &Value) -> String {
     value.as_str().unwrap_or_else(|| panic!("not text: {value}")).to_string()
 }
@@ -55,6 +74,13 @@ fn who(body: &Value) -> Who {
 
 fn names(list: &Value) -> Vec<String> {
     list.as_array().unwrap().iter().map(|item| text(&item["name"])).collect()
+}
+
+/// Times are whole seconds, so people who joined in the same one come in no particular order.
+fn ids(people: &[&Who]) -> Vec<String> {
+    let mut ids: Vec<String> = people.iter().map(|person| person.id.clone()).collect();
+    ids.sort();
+    ids
 }
 
 impl Server {
@@ -180,6 +206,44 @@ impl Server {
         self.get(who, &format!("/api/hangouts/{room}")).await
     }
 
+    async fn stream(&self, token: &str, room: &str) -> reqwest::Response {
+        let stream = self
+            .client
+            .get(format!("{}/api/hangouts/{room}/stream", self.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stream.status(), StatusCode::OK);
+        stream
+    }
+
+    async fn neighbours(&self) -> Neighbours {
+        let made = self
+            .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+            .await
+            .ok();
+        let cy = who(&made);
+        let city = text(&made["city"]["id"]);
+        let code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
+        let homes = format!("/api/cities/{city}/houses");
+        let own = self.post(&cy.key, &homes, json!({ "name": "Cy's" })).await.ok();
+        let di = who(&self.post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": "Di" })).await.ok());
+        let host = self.post(&di.key, &homes, json!({ "name": "Di's" })).await.ok();
+        let (bot, token) = self.bot(&cy, &text(&own["living_room_id"]), "Scout").await;
+        Neighbours { cy, di, bot, token, house: text(&host["house"]["id"]), porch: text(&host["porch_id"]) }
+    }
+
+    /// Cy asks for Scout's trip, which is the owner's yes, and it waits for Di's.
+    async fn ask_for_trip(&self, town: &Neighbours) -> String {
+        let trip = json!({ "agent_id": town.bot, "house_id": town.house, "kind": "call" });
+        text(&self.post(&town.cy.key, "/api/trips", trip).await.ok()["id"])
+    }
+
+    async fn host_says_yes(&self, town: &Neighbours, trip: &str) -> Value {
+        self.post(&town.di.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok()
+    }
+
     async fn say(&self, who: &str, room: &str, words: &str) -> Reply {
         self.post(who, &format!("/api/hangouts/{room}/messages"), json!({ "text": words })).await
     }
@@ -222,6 +286,14 @@ impl Server {
 
     async fn go_in(&self, token: &str, (x, y): (i64, i64)) -> Reply {
         self.post(token, "/api/spaces/door", json!({ "x": x, "y": y })).await
+    }
+
+    /// Who this caller is told has a room open, as `ids` gives it. Asking is a look of their own.
+    async fn present(&self, token: &str, room: &str) -> Vec<String> {
+        let snapshot = self.snapshot(token, room).await.ok();
+        let mut ids: Vec<String> = snapshot["present"].as_array().unwrap().iter().map(text).collect();
+        ids.sort();
+        ids
     }
 
     /// The floors this caller is shown from a room, lowest first.
@@ -1264,6 +1336,142 @@ async fn the_keeper_can_close_a_public_floor_and_nobody_else_learns_the_route_ex
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["floor"]["access"], "private");
 }
 
+// S38
+
+#[tokio::test]
+async fn walking_onto_a_floor_leaves_the_last_one() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.walk_in(&stranger, &first).await.ok();
+    assert_eq!(server.snapshot(&ann.key, &first).await.ok()["floor"]["here"], 2);
+
+    server.walk_in(&stranger, &second).await.ok();
+    server.snapshot(&stranger.key, &second).await.ok();
+    server.snapshot(&stranger.key, &first).await.refused(StatusCode::NOT_FOUND);
+    server.say(&stranger.key, &first, "Still here?").await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.snapshot(&ann.key, &first).await.ok()["floor"]["here"], 1);
+
+    // Coming back is arriving again, so what was said while they were gone stays hidden (S19).
+    server.say(&ann.key, &first, "Said while you were out").await.ok();
+    server.walk_in(&stranger, &first).await.ok();
+    let back = server.snapshot(&stranger.key, &first).await.ok();
+    assert!(!Server::lines(&back).contains(&"Said while you were out".to_string()));
+    server.snapshot(&stranger.key, &second).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S38: a person and each of their bots go separately, and nobody leaves a room they belong to.
+
+#[tokio::test]
+async fn a_bot_is_on_one_floor_and_goes_apart_from_its_owner() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (home, stranger) = server.someone("Stranger").await;
+    let (scout, token) = server.bot(&stranger, &home, "Scout").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+
+    let send = json!({ "agent_id": scout });
+    server.post(&stranger.key, &format!("/api/floors/{first}/walk-in"), send.clone()).await.ok();
+    server.post(&stranger.key, &format!("/api/floors/{second}/walk-in"), send).await.ok();
+    server.snapshot(&token, &second).await.ok();
+    server.snapshot(&token, &first).await.refused(StatusCode::NOT_FOUND);
+
+    server.walk_in(&stranger, &first).await.ok();
+    server.snapshot(&stranger.key, &first).await.ok();
+    server.snapshot(&token, &second).await.ok();
+    server.snapshot(&stranger.key, &home).await.ok();
+    server.snapshot(&token, &home).await.ok();
+}
+
+// S38: a floor that turns you away hasn't moved you.
+
+#[tokio::test]
+async fn a_full_floor_leaves_you_where_you_were() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.put(&bo.key, &format!("/api/floors/{second}"), json!({ "size": "small" })).await.ok();
+    for n in 0..7 {
+        server.join(&bo, &second, &format!("Friend {n}")).await;
+    }
+
+    server.walk_in(&stranger, &first).await.ok();
+    server.walk_in(&stranger, &second).await.refused(StatusCode::CONFLICT);
+    server.snapshot(&stranger.key, &first).await.ok();
+}
+
+// S38: no line has to be said in the room for this to happen.
+
+#[tokio::test]
+async fn an_open_stream_ends_when_you_walk_onto_another_floor() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.walk_in(&stranger, &first).await.ok();
+    let stream = server.stream(&stranger.key, &first).await;
+
+    server.walk_in(&stranger, &second).await.ok();
+    assert!(ends(stream).await, "the stream never ended");
+}
+
+// S39
+
+#[tokio::test]
+async fn a_bot_on_a_trip_cant_be_sent_onto_a_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let town = server.neighbours().await;
+    let trip = server.ask_for_trip(&town).await;
+    server.host_says_yes(&town, &trip).await;
+    let walk = format!("/api/floors/{room}/walk-in");
+    let send = json!({ "agent_id": town.bot });
+
+    server.post(&town.cy.key, &walk, send.clone()).await.refused(StatusCode::CONFLICT);
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.get(&town.cy.key, &format!("/api/trips/{trip}")).await.ok()["status"], "here");
+
+    // Its owner isn't the one away, and once it's home it can go.
+    server.walk_in(&town.cy, &room).await.ok();
+    server.post(&town.cy.key, &format!("/api/trips/{trip}/end"), json!({})).await.ok();
+    server.post(&town.cy.key, &walk, send).await.ok();
+    server.snapshot(&town.token, &room).await.ok();
+}
+
+// S40
+
+#[tokio::test]
+async fn a_trip_that_starts_takes_a_bot_off_its_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let town = server.neighbours().await;
+    let send = json!({ "agent_id": town.bot });
+    server.post(&town.cy.key, &format!("/api/floors/{room}/walk-in"), send).await.ok();
+
+    // Asking moves nothing. It's on the floor until both sides have said yes.
+    let trip = server.ask_for_trip(&town).await;
+    server.snapshot(&town.token, &room).await.ok();
+    let stream = server.stream(&town.token, &room).await;
+
+    assert_eq!(server.host_says_yes(&town, &trip).await["status"], "here");
+    assert!(ends(stream).await, "the stream never ended");
+    server.snapshot(&town.token, &town.porch).await.ok();
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["here"], 1);
+}
+
 // S24: a bot has to be told who could have written what it reads there.
 
 #[tokio::test]
@@ -1704,4 +1912,408 @@ async fn nobody_can_try_every_door() {
     // That's their own count, and writes on a floor have a count of their own.
     let (_, other) = server.someone("Other").await;
     server.go_in(&other.key, (0, 0)).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S41
+
+#[tokio::test]
+async fn someone_with_a_floor_open_is_present_until_they_stop_looking() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    // Cy never looks, so being a member puts nobody in the room.
+    server.join(&ann, &room, "Cy").await;
+
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    assert_eq!(server.present(&bo.key, &room).await, ids(&[&ann, &bo]));
+
+    // A page looks every 30 seconds, so someone that recent is here, and past 45 they aren't.
+    server.state.presence.saw(&room, &bo.id, now() - 30);
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &bo]));
+    server.state.presence.saw(&room, &bo.id, now() - 50);
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    // Looking again brings them back.
+    assert_eq!(server.present(&bo.key, &room).await, ids(&[&ann, &bo]));
+}
+
+// S41: a page reloads on a refresh, so if a look sent one, every page would set off every other.
+
+#[tokio::test]
+async fn a_look_reloads_nobody() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let mut events = server.state.hub.subscribe();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    assert!(events.try_recv().is_err(), "a look told the room something");
+}
+
+// S41
+
+#[test]
+fn the_memory_of_who_is_here_has_a_limit_and_the_oldest_go_first() {
+    let presence = spaces::Presence::default();
+    let t = 1_700_000_000;
+    let person = |n: usize| format!("person-{n}");
+    presence.saw("floor", "first", t);
+    for n in 0..spaces::MAX_SIGHTINGS + 50 {
+        presence.saw("floor", &person(n), t + 1);
+    }
+    assert!(!presence.has_seen("floor", "first", t + 1), "the oldest went first");
+    let left = (0..spaces::MAX_SIGHTINGS + 50).filter(|n| presence.has_seen("floor", &person(*n), t + 1)).count();
+    assert_eq!(left, spaces::MAX_SIGHTINGS, "it can't grow, however many look");
+
+    // Everything too old to count goes at the next look, and that look is kept.
+    presence.saw("floor", "later", t + 1 + spaces::PRESENT_SECS + 1);
+    assert!(presence.has_seen("floor", "later", t + 1 + spaces::PRESENT_SECS + 1));
+    assert!(!presence.has_seen("floor", &person(spaces::MAX_SIGHTINGS + 49), t + 1));
+}
+
+// S42, R30: nothing shows whether anyone is home, and that includes who's looking at the rooms.
+
+#[tokio::test]
+async fn a_citys_rooms_show_nobody_whoever_is_looking() {
+    let server = Server::start().await;
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+        .await
+        .ok();
+    let cy = who(&made);
+    let city = text(&made["city"]["id"]);
+    let square = text(&made["city"]["square_id"]);
+    let city_code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
+    server.put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" })).await.ok();
+    let home = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" })).await.ok();
+    let house = text(&home["house"]["id"]);
+    let (living, porch) = (text(&home["living_room_id"]), text(&home["porch_id"]));
+    let joined = server
+        .post("", &format!("/api/city-invites/{city_code}/join"), json!({ "your_name": "Kim", "accept_rules": true }))
+        .await
+        .ok();
+    let kim = who(&joined);
+    let kims = server.post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" })).await.ok();
+    let (visitor, visitor_token) = server.bot(&kim, &text(&kims["living_room_id"]), "Visitor").await;
+    let trip = json!({ "agent_id": visitor, "house_id": house, "kind": "call" });
+    let trip = text(&server.post(&kim.key, "/api/trips", trip).await.ok()["id"]);
+    server.post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
+    assert!(!server.snapshot(&kim.key, &porch).await.ok()["guest"].is_null(), "Kim is watching from the Porch");
+
+    // Twice each, so that nobody's first look could hide a second.
+    for _ in 0..2 {
+        for room in [&square, &porch] {
+            for token in [&cy.key, &kim.key] {
+                let seen = server.snapshot(token, room).await.ok();
+                assert_eq!(seen["present"], json!([]), "{room}");
+                assert!(seen["floor"].is_null());
+            }
+        }
+        assert_eq!(server.snapshot(&cy.key, &living).await.ok()["present"], json!([]));
+        assert_eq!(server.snapshot(&visitor_token, &porch).await.ok()["present"], json!([]));
+    }
+    // Not even kept where nobody can see it.
+    for room in [&square, &living, &porch] {
+        assert!(!server.state.presence.has_seen(room, &cy.id, now()), "{room}");
+    }
+}
+
+// S42, S1: a room from before spaces has no floor, so it's the same.
+
+#[tokio::test]
+async fn a_room_from_before_spaces_shows_nobody() {
+    let path = std::env::temp_dir().join(format!("spaces-before-{}.db", std::process::id()));
+    let path_text = path.to_str().unwrap().to_string();
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{path_text}{suffix}"));
+    }
+    let server = Server::on(Db::open(&path_text).unwrap()).await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let connection = Connection::open(&path).unwrap();
+    connection.execute("DELETE FROM floors WHERE hangout_id = ?", [&room]).unwrap();
+    connection.execute("DELETE FROM spaces WHERE id = ?", [&room]).unwrap();
+    drop(connection);
+
+    for token in [&ann.key, &bo.key, &ann.key] {
+        let seen = server.snapshot(token, &room).await.ok();
+        assert!(seen["floor"].is_null());
+        assert_eq!(seen["present"], json!([]));
+    }
+
+    drop(server);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{path_text}{suffix}"));
+    }
+}
+
+// S43: a bot's caller carries its owner's id, so this is the mistake to watch for.
+
+#[tokio::test]
+async fn a_bot_is_never_present_and_doesnt_count_for_its_owner() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let (_, scout) = server.bot(&ann, &room, "Scout").await;
+    // Fetching the invite for Bo was a look of Ann's.
+    server.state.presence.forget(&room, &ann.id);
+
+    server.snapshot(&scout, &room).await.ok();
+    server.read_room(&scout, &room).await;
+    assert!(!server.state.presence.has_seen(&room, &ann.id, now()), "Ann hasn't looked");
+    assert_eq!(server.present(&bo.key, &room).await, ids(&[&bo]));
+
+    // Bo is here and Ann has now looked, and a bot is told neither.
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &bo]));
+    assert_eq!(server.snapshot(&scout, &room).await.ok()["present"], json!([]));
+    assert!(server.read_room(&scout, &room).await.get("present").is_none());
+}
+
+// S43
+
+#[tokio::test]
+async fn a_bot_sent_in_is_told_nobody_is_here_either() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (own_room, stranger) = server.someone("Stranger").await;
+    let (rover, rover_token) = server.bot(&stranger, &own_room, "Rover").await;
+    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover })).await.ok();
+
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    assert_eq!(server.snapshot(&rover_token, &room).await.ok()["present"], json!([]));
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]), "its owner hasn't looked");
+}
+
+// S44
+
+#[tokio::test]
+async fn someone_who_walked_in_is_seen_on_that_floor_and_nowhere_else() {
+    let server = Server::start().await;
+    let (ground, ann) = server.someone("Ann").await;
+    let upstairs = text(&server.add_floor(&ann, &ground, "Upstairs").await.ok()["id"]);
+    let attic = text(&server.add_floor(&ann, &ground, "Attic").await.ok()["id"]);
+    let elsewhere = text(&server.third_space(&ann, "Elsewhere").await.ok()["hangout"]["id"]);
+    server.open(&ann, &ground).await;
+    server.open(&ann, &attic).await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.walk_in(&stranger, &ground).await.ok();
+
+    // They see the room, and the room sees them.
+    assert_eq!(server.present(&ann.key, &ground).await, ids(&[&ann]));
+    let both = ids(&[&ann, &stranger]);
+    assert_eq!(server.present(&stranger.key, &ground).await, both);
+    assert_eq!(server.present(&ann.key, &ground).await, both);
+
+    // Every id in `present` can be named, because they're all in `people`.
+    let seen = server.snapshot(&stranger.key, &ground).await.ok();
+    for id in seen["present"].as_array().unwrap() {
+        assert!(seen["people"].as_array().unwrap().iter().any(|person| person["id"] == *id), "{id}");
+    }
+
+    // Nowhere else: another floor, a public one, or another of Ann's spaces.
+    for room in [&upstairs, &attic, &elsewhere] {
+        assert_eq!(server.present(&ann.key, room).await, ids(&[&ann]), "{room}");
+    }
+    // And no list says so.
+    let listed = server.get(&stranger.key, "/api/spaces/public").await.ok();
+    assert!(listed.get("present").is_none());
+    assert!(listed["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()), "{listed}");
+    assert!(!listed.to_string().contains(&stranger.id), "{listed}");
+    let view = server.get(&ann.key, &format!("/api/spaces/{ground}")).await.ok();
+    assert!(view.get("present").is_none());
+    assert!(view["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()), "{view}");
+}
+
+// S44
+
+#[tokio::test]
+async fn someone_watching_a_bot_they_sent_in_is_seen_too() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (own_room, stranger) = server.someone("Stranger").await;
+    let (rover, _) = server.bot(&stranger, &own_room, "Rover").await;
+    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover })).await.ok();
+
+    assert_eq!(server.present(&stranger.key, &room).await, ids(&[&stranger]));
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger]));
+
+    // Bringing it back ends their reason to be there, and with it their place in the room.
+    let out = format!("/api/floors/{room}/walk-out");
+    server.post(&stranger.key, &out, json!({ "agent_id": rover })).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    server.snapshot(&stranger.key, &room).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S45
+
+#[tokio::test]
+async fn walking_out_ends_it_at_once() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.walk_in(&stranger, &room).await.ok();
+    server.snapshot(&stranger.key, &room).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger]));
+
+    server.post(&stranger.key, &format!("/api/floors/{room}/walk-out"), json!({})).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    // A page left open can't keep them here.
+    server.snapshot(&stranger.key, &room).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+
+    // Coming back within the 45 seconds doesn't bring back the old look.
+    server.walk_in(&stranger, &room).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    server.snapshot(&stranger.key, &room).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger]));
+}
+
+// S45, S27
+
+#[tokio::test]
+async fn being_turned_out_ends_it_at_once_on_every_floor() {
+    let server = Server::start().await;
+    let (ground, ann) = server.someone("Ann").await;
+    let upstairs = text(&server.add_floor(&ann, &ground, "Upstairs").await.ok()["id"]);
+    server.open(&ann, &upstairs).await;
+    let bo = server.join(&ann, &ground, "Bo").await;
+    server.walk_in(&bo, &upstairs).await.ok();
+    server.snapshot(&bo.key, &ground).await.ok();
+    server.snapshot(&bo.key, &upstairs).await.ok();
+    assert_eq!(server.present(&ann.key, &ground).await, ids(&[&ann, &bo]));
+    assert_eq!(server.present(&ann.key, &upstairs).await, ids(&[&ann, &bo]));
+
+    let out = format!("/api/spaces/{ground}/people/{}/turn-out", bo.id);
+    server.post(&ann.key, &out, json!({})).await.ok();
+    assert_eq!(server.present(&ann.key, &ground).await, ids(&[&ann]));
+    assert_eq!(server.present(&ann.key, &upstairs).await, ids(&[&ann]));
+
+    // Let back within the 45 seconds, they aren't here until they look.
+    server.delete(&ann.key, &out).await.ok();
+    server.walk_in(&bo, &upstairs).await.ok();
+    assert_eq!(server.present(&ann.key, &upstairs).await, ids(&[&ann]));
+}
+
+// S45: `present` follows who the room lists, so this holds for ways out nobody thought to clear.
+
+#[tokio::test]
+async fn every_other_way_out_ends_it_at_once_too() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    server.open(&ann, &room).await;
+    let (_, stranger) = server.someone("Stranger").await;
+    let (_, walker) = server.someone("Walker").await;
+    server.walk_in(&stranger, &room).await.ok();
+    server.walk_in(&walker, &room).await.ok();
+    for token in [&bo.key, &stranger.key, &walker.key] {
+        server.snapshot(token, &room).await.ok();
+    }
+    assert_eq!(server.present(&ann.key, &room).await.len(), 4);
+
+    // Leaving.
+    server.post(&bo.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger, &walker]));
+
+    // A walk-in running out.
+    let then = now() - 10;
+    assert!(server.state.db.set_visit_times(&room, &walker.id, then - 50, then).unwrap());
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger]));
+
+    // The floor going private.
+    server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "access": "private" })).await.ok();
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+}
+
+// S46, W59, W60
+
+#[tokio::test]
+async fn nothing_about_who_is_in_a_room_reaches_a_world_route() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let spot = server.build(&ann, "house").await;
+    let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+    server.open(&ann, &room).await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.walk_in(&stranger, &room).await.ok();
+
+    let before = server.get("", "/api/worlds/commons").await.ok()["tiles"].clone();
+    server.snapshot(&ann.key, &room).await.ok();
+    assert_eq!(server.present(&stranger.key, &room).await.len(), 2);
+
+    for path in ["/api/worlds/commons", "/api/worlds/commons/look", "/api/worlds"] {
+        let seen = server.get(&ann.key, path).await.body.to_string();
+        for private in [room.as_str(), ann.id.as_str(), stranger.id.as_str(), "present"] {
+            assert!(!seen.contains(private), "{path} shows {private}");
+        }
+    }
+    assert_eq!(server.get("", "/api/worlds/commons").await.ok()["tiles"], before);
+}
+
+// S46, W52: being in a room and being on the street have nothing to do with each other. Each of
+// these is a real browser's fetch, which is the only kind the street counts.
+
+#[tokio::test]
+async fn only_opening_the_map_puts_someone_on_the_street() {
+    let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let (room, ann) = server.someone("Ann").await;
+    let page_looks_at = |path: String| {
+        server
+            .client
+            .get(format!("{}{path}", server.base))
+            .bearer_auth(&ann.key)
+            .header("x-forwarded-for", "198.51.100.7")
+            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140")
+            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-mode", "cors")
+            .send()
+    };
+    let snapshot = format!("/api/hangouts/{room}");
+
+    // A room open in a browser puts nobody on the street.
+    assert_eq!(page_looks_at(snapshot.clone()).await.unwrap().status(), StatusCode::OK);
+    assert!(server.state.worlds.people(now()).is_empty());
+
+    // Opening the map does, and leaving a room isn't what did it.
+    assert_eq!(page_looks_at("/api/worlds/commons".to_string()).await.unwrap().status(), StatusCode::OK);
+    let on_the_street = server.state.worlds.people(now());
+    assert_eq!(on_the_street.len(), 1);
+
+    // Going back into the room takes nobody off it either. That's W52's 90 seconds.
+    page_looks_at(snapshot).await.unwrap();
+    assert_eq!(server.state.worlds.people(now()), on_the_street);
+    assert!(server.state.worlds.people(now() + worlds::PERSON_SECS).is_empty());
+}
+
+// S27, FR5
+#[tokio::test]
+async fn someone_turned_out_is_not_shown_the_link_by_an_invite_from_a_friend() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (cys_room, cy) = server.someone("Cy").await;
+    let cys_code = server.invite_code(&cy, &cys_room).await;
+    server.post(&ann.key, &format!("/api/invites/{cys_code}/join"), json!({})).await.ok();
+    let invite = format!("/api/hangouts/{room}/invite-friend");
+    server.post(&ann.key, &invite, json!({ "person_id": cy.id })).await.ok();
+    let code = server.invite_code(&ann, &room).await;
+    server.post(&cy.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+
+    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", cy.id), json!({})).await.ok();
+    let invited = server.get(&cy.key, "/api/me").await.ok()["invited"].clone();
+    assert_eq!(invited, json!([]), "the link reached someone it's a 404 to");
+}
+
+// S21, FR3
+#[tokio::test]
+async fn a_walk_in_cant_send_an_invite_or_replace_a_link() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (_, visitor) = server.someone("Vee").await;
+    server.walk_in(&visitor, &room).await.ok();
+    let invited = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite-friend"), json!({ "person_id": ann.id })).await;
+    assert_eq!(invited.status, StatusCode::FORBIDDEN);
+    let replaced = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
+    assert_eq!(replaced.status, StatusCode::FORBIDDEN);
 }

@@ -35,7 +35,8 @@ how much they can do depends on who put them there, because a room is full of ot
   placed. Whoever runs the space (S7, S8) can move, turn or remove anything. A walk-in can't change
   anything (S19), and neither can a bot. Town Squares, Living Rooms and Porches have no items (S6).
 - **I3.** An item can't stand on another, off the floor, or on the table, couch or desk, which stay
-  because where a bot stands there says what it's doing (S14). That is refused with 409.
+  because where a bot stands there says what it's doing (S14). It can't block the door or a bot's nap
+  spot either. That is refused with 409.
 - **I4.** A floor holds at most 40 items. Past that, 409.
 - **I5.** Items cost nothing. Nothing here uses moves, adds to `your_town` or reaches a world.
 - **I6.** A change to a floor's items refreshes everyone in it, so people furnishing together see each
@@ -69,7 +70,9 @@ how much they can do depends on who put them there, because a room is full of ot
 
 - **I12.** A `bookshelf`, `cabinet` or `whiteboard` holds up to 20 notes of up to 500 characters.
 - **I13.** A member of the floor can read them and add one, and so can their bots. A walk-in can read
-  them and can't write (S19, S20). Only a note's writer, or whoever runs the space, can remove it.
+  only what was written after they arrived, and can't write (S19, S20). The number of notes they see
+  counts only those, so opening a floor shows nothing from before. Only a note's writer, or whoever
+  runs the space, can remove it.
 - **I14.** A note says who wrote it, and whether a bot wrote it for them. A bot reading it gets
   `from_your_owner`, true only for its own owner's words, and the room's trust note. Only its own
   owner's words count as its owner's, wherever they stand.
@@ -77,9 +80,13 @@ how much they can do depends on who put them there, because a room is full of ot
 
 ### Signs
 
-- **I16.** A sign is an item only whoever runs the space can place. There is one: `quiet`.
-- **I17.** On a floor with a `quiet` sign, a bot can't post or add a note. The refusal is 403, with a
-  fixed reason. It can still read. People are unaffected.
+- **I16.** A sign is an item only whoever runs the space can place, move or remove. There is one:
+  `quiet`.
+- **I17.** On a floor with a `quiet` sign, a bot's words can't reach the room: it can't post, add a
+  note, ask a check-in, propose a plan, add to a plan's list or put a note on an answer. The refusal is
+  403, with a fixed reason. It can still read and answer without a note, and `ask_owner` still works,
+  because that only reaches its owner. Its status stays, because that covers every room it's in
+  (I18). People are unaffected.
 - **I18.** A room can limit a bot that's in it. It can't give a bot anything its owner didn't, and
   nothing in a room reaches past that room.
 
@@ -135,7 +142,7 @@ CREATE TABLE IF NOT EXISTS bots_without_moods (
 
 ## Not built yet
 
-- Drawing rooms with the map's isometric art. For now build mode uses the map's toolbar and windows on
-  the room as it's drawn today.
+- Build mode on the room page. The routes and bot tools are here, and the page doesn't use them yet.
+- Drawing rooms with the map's isometric art.
 - A bot walking to the item it's using.
 - More signs, such as `people_only` and `ask_first`. Each needs its own rule first.

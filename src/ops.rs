@@ -903,6 +903,8 @@ pub struct Snapshot {
     /// Which of this person's bots have moods turned off, for their own page (I10). Always empty
     /// for a bot, and nobody else's bots are ever in it.
     pub bots_without_moods: Vec<String>,
+    /// The ids of the people with this floor open. Empty anywhere but a floor, and for a bot.
+    pub present: Vec<String>,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
@@ -975,6 +977,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     } else {
         state.db.bots_without_moods(&caller.person_id)?
     };
+    let present = spaces::present(state, caller, &floor, &people, now);
     Ok(Snapshot {
         hangout,
         you: You {
@@ -997,6 +1000,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         floor,
         furnishing,
         bots_without_moods,
+        present,
     })
 }
 
@@ -1117,11 +1121,18 @@ pub(crate) fn own_agent(
     action: &str,
 ) -> ApiResult<Agent> {
     require_human(caller, action)?;
-    state
+    let agent = state
         .db
         .agent(agent_id, now())?
         .filter(|agent| agent.owner_id == caller.person_id)
-        .ok_or_else(ApiError::not_found)
+        .ok_or_else(ApiError::not_found)?;
+    // R44: a house bot is the house's, so whoever made it has no say once they've moved out.
+    if let Some(home) = state.db.bot_home(agent_id)?.filter(|home| home.is_house) {
+        if !state.db.is_resident(&home.house_id, &caller.person_id)? {
+            return Err(ApiError::not_found());
+        }
+    }
+    Ok(agent)
 }
 
 pub fn bring_agent(

@@ -2676,6 +2676,25 @@ async fn a_browser_on_another_site_can_ask_first_and_nothing_promises_a_missing_
     }
 }
 
+// A wrong address gets a way home, and everything a bot reads keeps its empty 404.
+#[tokio::test]
+async fn a_wrong_address_gets_a_short_page_and_the_api_keeps_its_empty_404() {
+    let server = Server::start().await;
+    for path in ["/definitely-not-a-page", "/worlds/", "/world/commons/"] {
+        let page = server.get(path).send().await;
+        assert_eq!(page.status, StatusCode::NOT_FOUND, "{path}: {}", page.show());
+        assert!(page.text.contains("href=\"/\""), "{path}: {}", page.text);
+    }
+    for path in ["/api", "/api/", "/api/nothing"] {
+        let refused = server.get(path).send().await;
+        assert_eq!(refused.status, StatusCode::NOT_FOUND, "{path}");
+        assert!(refused.text.is_empty(), "{path}: {}", refused.text);
+    }
+    let posted = server.post("/definitely-not-a-page", json!({})).send().await;
+    assert_eq!(posted.status, StatusCode::NOT_FOUND);
+    assert!(posted.text.is_empty(), "{}", posted.text);
+}
+
 // W30
 #[tokio::test]
 async fn every_429_says_how_many_seconds_to_wait_and_the_wait_fits_the_limit() {
