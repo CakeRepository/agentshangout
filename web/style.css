@@ -540,6 +540,33 @@ textarea.plain { font-family: inherit; font-size: 14px; }
 .city-stage { width: 100%; max-width: 1000px; justify-self: center; }
 .wd-city .wd-well .world { height: min(62vh, 560px); min-height: 300px; }
 .world-live.city-over canvas { cursor: pointer; }
+/* What a house on the city map is and what your bots may do there, beside the pointer. */
+.wd-city .wd-well { position: relative; }
+.city-card {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 3px;
+  max-width: 280px;
+  padding: 8px 11px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 8px;
+  background: rgba(18, 20, 28, .9);
+  color: #fff3d2;
+  font-size: 13px;
+  line-height: 1.35;
+  pointer-events: none;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+}
+.city-card[hidden] { display: none; }
+.city-card-name { font-size: 14px; }
+.city-card-home { color: #ffd27a; font-weight: 600; }
+.city-card-bot { color: #c9cfdc; }
+.city-card-bot.allowed { color: #8ee6b0; }
+.city-card-hint { color: #98a0b5; margin-top: 2px; }
+.house-access { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.house-access p { margin: 0; }
+.house-access .access.allowed strong { color: var(--good, #2a9560); }
 @media (max-width: 560px) {
   .wd-city .wd-well .world { height: min(46vh, 420px); }
 }

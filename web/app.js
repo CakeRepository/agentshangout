@@ -1,5 +1,5 @@
 import { Room } from './room.js';
-import { City, PLOTS, windowFrame } from './city.js';
+import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
 import { planInviteView } from './plan-invite.js';
@@ -2663,9 +2663,15 @@ async function cityView(id) {
     }
     const mine = view.bots.filter((bot) => bot.owner_id === view.you.person_id && !bot.is_house);
     const ready = mine.filter((bot) => !bot.stays_home && !bot.away_at_house_id);
-    const title = `Send a bot to ${house.name}`;
+    const title = `Ask to visit ${house.name}`;
+    // H21: whose home it is, and what each of your bots may already do there.
+    const access = h('div', { class: 'house-access' },
+      h('p', {}, h('strong', {}, homeOf(view, house))),
+      houseAccess(view, house).map((bot) => h('p', { class: bot.allowed ? 'access allowed' : 'access' },
+        h('strong', {}, bot.name), ` ${bot.text}`)));
     if (!ready.length) {
       modal(title,
+        access,
         h('p', {}, mine.length
           ? 'None of your bots can go right now.'
           : `You don't have a bot yet. ${view.you.house_id ? 'Add one on your house page.' : 'Build your house, then add one there.'}`),
@@ -2675,8 +2681,8 @@ async function cityView(id) {
     const requirements = asked(house.requirements).length ? h('div', { class: 'stack' }) : null;
     tripDialog({
       title,
-      intro: `Asking isn't enough: someone who lives at ${house.name} has to say yes before your bot goes. Until then it stays home.`,
-      extra: requirements,
+      intro: `Asking isn't enough: someone who lives at ${house.name} has to say yes before your bot goes, unless it has a pass here. Until then it stays home.`,
+      extra: h('div', { class: 'stack' }, access, requirements),
       bots: ready,
       house,
       submitLabel: 'Ask to go',

@@ -47,6 +47,7 @@ struct Who {
 /// and Pip, in her Living Room. Bo's bot Rover lives in Bo House and is also in the Town Square.
 #[allow(dead_code)]
 struct Town {
+    city: String,
     square: String,
     ann: Who,
     bo: Who,
@@ -132,7 +133,7 @@ impl Server {
         let rover = self.bot(&bo, &bo_living, "Rover").await;
         let rover_id = self.bot_id(&rover).await;
         self.put(&bo.key, &format!("/api/hangouts/{square}/agents/{rover_id}"), json!({})).await.ok();
-        Town { square, ann, bo, cy, zed, scout, pip, rover, ann_house, ann_living, ann_porch }
+        Town { city, square, ann, bo, cy, zed, scout, pip, rover, ann_house, ann_living, ann_porch }
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> String {
@@ -663,4 +664,32 @@ async fn a_key_stays_when_someone_else_moves_out() {
     server.visit(&town).await;
     server.post(&town.cy.key, &format!("/api/houses/{}/leave", town.ann_house), json!({})).await.ok();
     server.tool(&town.rover, "read_room", json!({ "hangout_id": town.ann_living })).await;
+}
+
+// H21
+#[tokio::test]
+async fn the_city_map_tells_you_what_your_own_bots_may_do_at_each_house() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let path = format!("/api/cities/{}", town.city);
+    assert_eq!(server.get(&town.bo.key, &path).await.ok()["your_passes"], json!([]));
+
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.ann.key, &pass, "living_room").await.ok();
+
+    let bo = server.get(&town.bo.key, &path).await.ok();
+    let passes = bo["your_passes"].as_array().unwrap();
+    assert_eq!(passes.len(), 1, "{bo}");
+    assert_eq!(passes[0]["house_id"], town.ann_house.as_str());
+    assert_eq!(passes[0]["agent_name"], "Rover");
+    assert_eq!(passes[0]["keys"], json!(["living_room"]));
+    assert!(passes[0]["accepted_by"].is_string());
+
+    // A bot gets its own, and nobody gets anyone else's.
+    assert_eq!(server.get(&town.rover, &path).await.ok()["your_passes"].as_array().unwrap().len(), 1);
+    for who in [&town.ann.key, &town.cy.key, &town.scout] {
+        assert_eq!(server.get(who, &path).await.ok()["your_passes"], json!([]));
+    }
 }

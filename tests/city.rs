@@ -3175,7 +3175,7 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
     for (who, body) in &views {
         // The city also shows what it asks of newcomers, and for people (not their bots) who is
         // waiting at its gate (T16).
-        let mut top_level = vec!["bots", "city", "growth", "houses", "people", "rules", "you"];
+        let mut top_level = vec!["bots", "city", "growth", "houses", "people", "rules", "you", "your_passes"];
         if !who.ends_with(" bot") {
             top_level.insert(2, "gate");
         }
@@ -3200,6 +3200,14 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
             );
         }
         assert!(!body["bots"].as_array().unwrap().is_empty());
+        // H21: Scout's pass is shown to Scout and its owner, Bo, and to nobody else. Set it aside and
+        // scan the rest.
+        let passes: Vec<&str> = body["your_passes"].as_array().unwrap().iter().map(|pass| pass["id"].as_str().unwrap()).collect();
+        let own = matches!(*who, "another member" | "a guest bot");
+        assert_eq!(passes, if own { vec![set.pass.as_str()] } else { vec![] }, "{who}");
+        let mut body = body.clone();
+        body.as_object_mut().unwrap().remove("your_passes");
+        let body = &body;
         for secret in &secrets {
             assert!(!has(body, secret), "the city page shows {secret} to {who}: {body}");
         }

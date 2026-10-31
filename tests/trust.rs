@@ -3188,7 +3188,9 @@ async fn the_city_page_holds_the_rules_and_requirements_but_nothing_private_to_a
     let eve = server.at_the_gate(&w.code, "Eve").await;
 
     let view = server.city_view(&w.bo.key, &w.city).await.body;
-    assert_eq!(keys_of(&view), ["bots", "city", "gate", "growth", "houses", "people", "rules", "you"]);
+    assert_eq!(keys_of(&view), ["bots", "city", "gate", "growth", "houses", "people", "rules", "you", "your_passes"]);
+    // H21: only passes of Bo's own bots, and he has none here.
+    assert_eq!(view["your_passes"], json!([]));
     assert_eq!(keys_of(&view["rules"]), ["min_vouches", "rules_text"]);
     for house in view["houses"].as_array().unwrap() {
         assert_eq!(keys_of(house), ["id", "name", "requirements", "residents"]);
@@ -3203,7 +3205,8 @@ async fn the_city_page_holds_the_rules_and_requirements_but_nothing_private_to_a
     // The gate shows Eve to the people in the city, and the bot's page has neither the gate nor her.
     assert_eq!(view["gate"][0]["name"], "Eve");
     let by_bot = server.city_view(&w.scout.token, &w.city).await.body;
-    assert_eq!(keys_of(&by_bot), ["bots", "city", "growth", "houses", "people", "rules", "you"]);
+    assert_eq!(keys_of(&by_bot), ["bots", "city", "growth", "houses", "people", "rules", "you", "your_passes"]);
+    assert_eq!(by_bot["your_passes"], json!([]));
 }
 
 // A7
