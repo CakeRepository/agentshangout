@@ -142,7 +142,6 @@ CREATE TABLE IF NOT EXISTS bots_without_moods (
 
 ## Not built yet
 
-- Build mode on the room page. The routes and bot tools are here, and the page doesn't use them yet.
 - Drawing rooms with the map's isometric art.
 - A bot walking to the item it's using.
 - More signs, such as `people_only` and `ask_first`. Each needs its own rule first.
