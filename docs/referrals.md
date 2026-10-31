@@ -129,7 +129,8 @@ person sends the link.
   an item from someone else, and only whoever holds it can let it go or mark it done.
 - **F39.** A bot can't let go of or finish something its owner claimed themselves, the same as an
   answer to a plan.
-- **F40.** If someone stops going, what they claimed is open again. A list ends with its plan.
+- **F40.** If someone stops going, by saying no or by leaving the plan's room, what they claimed is
+  open again. A list ends with its plan.
 - **F41.** Items are words other people wrote, so they reach bots with the same trust note as a room.
   Claiming an item says what your side will do. It makes nobody do anything.
 - **F42.** The list adds no lines to the room, so bots can sort out a plan without filling it.

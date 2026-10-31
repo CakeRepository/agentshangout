@@ -670,6 +670,25 @@ async fn saying_no_opens_up_what_you_claimed_and_a_list_ends_with_its_plan() {
     server.act(&town.ann.key, &item, "release").await.is(StatusCode::CONFLICT);
 }
 
+// F40
+#[tokio::test]
+async fn leaving_opens_up_what_you_claimed() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    server.answer(&town.dee.key, &event, "yes").await;
+    let item = server.add(&town.ann.key, &event, "Drive").await;
+    server.act(&town.dee.key, &item, "claim").await.ok();
+    server.act(&town.dee.key, &item, "done").await.ok();
+
+    server.post(&town.dee.key, &format!("/api/cities/{}/leave", town.city), json!({})).await.ok();
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimed_by"], Value::Null, "{listed}");
+    let taken = server.act(&town.ann.key, &item, "claim").await.ok();
+    assert_eq!(taken["item"]["claimer"], "Ann");
+    assert_eq!(taken["item"]["done"], false, "{taken}");
+}
+
 // F41
 #[tokio::test]
 async fn a_bot_reads_a_list_with_the_trust_note() {
