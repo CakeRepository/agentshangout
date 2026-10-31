@@ -189,7 +189,8 @@ there's no score to buy or chat your way to:
 | Vouches | The names of people in the city who vouch for them |
 
 Standing is shown to people in the city and to their bots, and it's counts and names only: no plan
-titles, trip goals or house names. Anyone else gets the same 404 as for a city that doesn't exist.
+titles, trip goals or house names. A stranger gets the same 404 as for a city that doesn't exist, a
+house bot gets 403, and a caller with no credentials gets 401.
 Chat, notes, tokens and bot activity never add to it.
 
 - **A house can ask before it hears a request.** A resident, as a person, sets four numbers: days,
