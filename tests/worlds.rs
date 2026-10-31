@@ -1,4 +1,4 @@
-//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W70). They
+//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W71). They
 //! drive a real server over HTTP. A comment such as `// W13` above a test names the rule it
 //! covers, so coverage can be checked by searching for it.
 //!
@@ -3967,4 +3967,21 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     assert!(again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES), "tokens still work");
     again.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
     let _ = std::fs::remove_file(&path);
+}
+
+// W71
+#[test]
+fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
+    // Sizing a canvas wipes it, and a resize is heard after the frame is drawn, so the browser shows
+    // whatever is there. The sky is a canvas of its own behind the map, so a map that waits for the
+    // next frame shows as clouds, and it did every time one opened. Nothing here runs a browser, so
+    // this reads the page, as tests/rooms.rs does for the nap spots.
+    let page = include_str!("../web/world.js");
+    let (_, rest) = page.split_once("\n  resize() {").expect("the map has a resize");
+    let (resize, _) = rest.split_once("\n  }").expect("resize ends");
+    let wiped = resize.find("this.canvas.width = cw").expect("resize sizes the canvas");
+    let camera = resize.find("this.clampCam()").expect("resize settles the camera");
+    let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
+    assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
+    assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
 }

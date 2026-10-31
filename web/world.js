@@ -5211,17 +5211,21 @@ export class World {
     this.dpr = dpr;
     const cw = Math.round(w * dpr);
     const ch = Math.round(h * dpr);
-    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+    const wiped = this.canvas.width !== cw || this.canvas.height !== ch;
+    if (wiped) {
       this.canvas.width = cw;
       this.canvas.height = ch;
       this.skyCanvas.width = cw;
       this.skyCanvas.height = ch;
       this.skyDirty = true;
-      // A canvas that is resized is cleared, and this one is opaque: paint the sky now, not a frame later.
-      drawSky(this.sg, cw, ch, dpr, skyAt(this.hourNow()), this.calm ? 0 : this.time);
     }
     if (first && this.ready) this.frameTown();
     this.clampCam();
+    // W71: a canvas that is resized is cleared, and the browser shows that before the next frame comes.
+    // So it's all painted now, or the sky shows where the map was. The sky is opaque, so with no view
+    // yet it still goes on, alone.
+    if (wiped && this.ready) this.render();
+    else if (wiped) drawSky(this.sg, cw, ch, dpr, skyAt(this.hourNow()), this.calm ? 0 : this.time);
     this.kick();
   }
 
