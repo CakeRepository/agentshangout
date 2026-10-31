@@ -5052,6 +5052,7 @@ async fn a_line_written_in_the_same_second_a_guest_arrives_is_not_shown_to_it() 
             for word in ["just-before-4417", "note-just-before-4417", "check-just-before-4417"] {
                 assert!(!has(&snapshot.body, word), "round {round}: {who} saw {word}: {}", snapshot.body);
             }
+            assert_eq!(snapshot.body["stats"]["messages_24h"], 0, "round {round}: {who}: {}", snapshot.body);
             let messages = server.get(token, &format!("/api/hangouts/{porch}/messages?after=0")).await;
             assert!(!has(&messages.body, "just-before-4417"), "round {round}: {who}: {}", messages.body);
         }
