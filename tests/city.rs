@@ -4484,6 +4484,10 @@ async fn moving_out_takes_the_residents_bots_and_stream_out_of_the_house() {
     assert_not_found(&server.get(&w.ann.key, &format!("/api/houses/{}", w.ann_home.id)).await);
     assert_ok(&server.get(&w.ann.key, &format!("/api/hangouts/{}", w.square)).await);
     assert!(server.state.db.bot_home(&annie.id).unwrap().is_none());
+    // The map still says a bot told to stay home is staying home.
+    let map = server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await;
+    let listed = map.body["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == keys.id.as_str()).cloned();
+    assert_eq!(listed.unwrap()["stays_home"], true, "{}", map.body);
     // Her open stream closes on the next thing said there, without it.
     server.say(&ann2.key, &w.ann_home.living, "after-she-left-4417").await;
     let seen = read_until_closed(stream).await;
