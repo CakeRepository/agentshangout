@@ -1515,6 +1515,77 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .wd-game > .game-panel-room { height: calc(100% - 12px); }
 }
 
+/* Build mode. The dock takes a row of the window of its own, so the room shrinks to fit above it and
+   the dock is never over what's being placed. On a phone the window already has that row. */
+.wd-room.has-dock { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+.wd-room.has-dock > .wd-status { grid-row: 5; }
+.build-dock { grid-row: 4; grid-column: 1; align-items: center; gap: 4px 8px; }
+.build-dock[hidden] { display: none; }
+.build-say { flex: 1 1 240px; min-width: 0; padding: 0 6px; font-weight: 600; overflow-wrap: anywhere; }
+.build-dock-buttons { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px; }
+.build-nudge { display: flex; gap: 2px; }
+.build-nudge[hidden] { display: none; }
+.wd .build-dock .wd-btn { min-height: 36px; font-size: 13px; }
+.wd .build-nudge .wd-btn { min-width: 36px; padding: 0; font-size: 16px; }
+.stage.building { touch-action: none; }
+.stage.building .stage-empty { display: none; }
+.stage.over-item { cursor: pointer; }
+.stage.holding { cursor: crosshair; }
+
+.build-figures { font-weight: 700; color: #4d3620; }
+.build-tabs { display: flex; gap: 4px; }
+.wd .build-tabs .wd-btn { flex: 1 1 0; min-height: 34px; padding: 2px 6px; }
+.build-catalog { display: grid; gap: 14px; }
+.build-catalog[hidden], .build-placed[hidden] { display: none; }
+.build-group { display: grid; gap: 6px; }
+.build-group h3 {
+  padding-bottom: 3px;
+  color: #4d3620;
+  font: 700 11px/1.2 var(--ui);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  border-bottom: 2px groove rgba(120, 90, 44, .5);
+}
+.build-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.wd .build-tile { justify-content: flex-start; min-width: 0; padding: 5px 3px; line-height: 1.15; text-align: center; }
+.build-pic { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 66px; overflow: hidden; }
+.build-pic canvas { flex: none; image-rendering: pixelated; }
+.build-name { overflow-wrap: anywhere; }
+.build-tile small { font-size: 11px; font-weight: 500; }
+.build-tile.locked .build-pic { filter: grayscale(1); opacity: .5; }
+.build-tile .build-why { color: #8e2f18; font-weight: 700; text-shadow: none; }
+.build-placed { display: grid; gap: 6px; }
+.game-panel .build-placed .row { padding: 4px 0; border-bottom: 1px solid rgba(120, 90, 44, .35); }
+.game-panel-itemnotes .note .link { display: block; margin-top: 2px; }
+.game-panel-itemnotes form[hidden], .game-panel-notes .stack[hidden] { display: none; }
+.room-quiet { font-weight: 700; }
+.wd-game .wd-status .wd-seg.room-quiet { flex: 1 1 100%; }
+
+/* A floor's readouts are two more than a phone's row has room for, so they get a row of their own. */
+@media (max-width: 759px) and (min-height: 541px) {
+  .wd-game.wd-room.on-floor .wd-stats { flex-wrap: wrap; }
+  .wd-game.wd-room.on-floor .wd-stat { flex: 1 1 16%; }
+  .wd-game.wd-room.on-floor .wd-stat:has(.amber) { flex: 1.6 1 24%; }
+  .wd-game.wd-room.on-floor .wd-stat.room-feel { flex: 1 1 40%; }
+}
+@media (min-width: 760px) and (max-width: 1099px) {
+  .wd-game.wd-room.on-floor .wd-stats { flex-wrap: nowrap; }
+  .wd-game.wd-room.on-floor .wd-stat { flex: 1 1 0; min-width: 0; }
+  .wd-game.wd-room.on-floor .wd-stat-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}
+/* A phone keeps the room in view above the catalog, as it does above the chat. */
+@media (max-width: 759px) {
+  .wd-game > .game-panel-build { height: max(55%, calc(100% - 52.5vw - 18px)); }
+  .game-panel-build .game-panel-body { flex: 1; }
+  /* The dock changes height as the hand does, so the room stays put at the top. What the status bar
+     usually says gives way to it, and a rule the room is under doesn't. */
+  .wd-room.has-dock .room-host { align-items: start; }
+  .wd-room.has-dock .wd-status > :not(.room-quiet, .room-guest) { display: none; }
+}
+@media (max-width: 560px) {
+  .wd .build-dock .wd-btn.wide { padding-left: 8px; padding-right: 8px; white-space: nowrap; }
+}
+
 /* What the room's panels hold, with the square corners of the window around them. */
 .game-panel .event, .game-panel .check-in, .game-panel .ask, .game-panel .note, .game-panel .floor-card, .game-panel .checks,
 .game-panel .date, .game-panel .avatar, .game-panel .rsvp, .game-panel .doorbell, .game-panel .guest-tag { border-radius: 2px; }
