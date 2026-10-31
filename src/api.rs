@@ -28,7 +28,7 @@ use crate::{
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    friends, households, items, now,
+    friends, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals, routines, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -86,6 +86,7 @@ pub fn routes() -> Router<AppState> {
         .merge(friends::routes())
         .merge(spaces::routes())
         .merge(items::routes())
+        .merge(looks::routes())
         .merge(households::routes())
         .merge(routines::routes())
         .merge(city_routes())

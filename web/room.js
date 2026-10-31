@@ -1181,12 +1181,241 @@ function drawZ(g, x, y, alpha) {
   g.globalAlpha = 1;
 }
 
+// What the words in a look are drawn as (docs/looks.md). They're listed words on the server, so nothing
+// typed reaches the drawing, and a word this page doesn't know counts as one nobody chose.
+export const FABRICS = {
+  red: '#d6453f',
+  orange: '#ec8a2c',
+  yellow: '#e8c22e',
+  green: '#3fa35a',
+  teal: '#25a4a0',
+  blue: '#3a78d4',
+  indigo: '#4a52b8',
+  purple: '#8e56c9',
+  pink: '#e96fa4',
+  white: '#e8ecf4',
+  grey: '#8a909e',
+  black: '#2f3342',
+};
+const SKINS = {
+  cream: '#f4d6b8',
+  peach: '#f1c9a4',
+  tan: '#d9a77c',
+  caramel: '#b27a54',
+  umber: '#8a5a3c',
+  espresso: '#5e3a26',
+};
+const HAIRS = {
+  black: '#2b2118',
+  brown: '#6a4326',
+  honey: '#b9822f',
+  blond: '#d8c08a',
+  chestnut: '#4a2a22',
+  grey: '#8a8f9c',
+  red: '#b5472a',
+  pink: '#e96fa4',
+  teal: '#25a4a0',
+  violet: '#7b54d6',
+};
+const LEGS = {
+  navy: '#394666',
+  charcoal: '#4a4a52',
+  khaki: '#6a5a46',
+  pine: '#2f4a48',
+  denim: '#4f6f9c',
+  stone: '#b8ae98',
+};
+export const EYES = {
+  cyan: '#8be0ff',
+  amber: '#ffb84d',
+  pink: '#ff8ac0',
+  green: '#8cf08a',
+  white: '#ffffff',
+};
+// The parts that are only a colour, so the wardrobe can show a swatch.
+export const LOOK_COLOURS = { skin: SKINS, hair: HAIRS, shirt: FABRICS, trousers: LEGS, shell: FABRICS, eyes: EYES };
+
+// Hats fit a person or a bot: `half` is half the width of the top of the head, and `top` is its top
+// row. A cap and a beanie come in whatever the figure is wearing.
+const HATS = {
+  none: () => {},
+  cap: (g, x, top, half, color, dark) => {
+    r(g, color, x - half, top - 1, half * 2, 2);
+    r(g, color, x - half + 1, top - 2, half * 2 - 2, 1);
+    r(g, dark, x - half - 1, top + 1, half * 2 + 2, 1);
+  },
+  beanie: (g, x, top, half, color, dark) => {
+    r(g, '#f4f1e8', x - 1, top - 4, 2, 1);
+    r(g, color, x - half + 1, top - 3, half * 2 - 2, 1);
+    r(g, color, x - half, top - 2, half * 2, 2);
+    r(g, dark, x - half, top, half * 2, 2);
+  },
+  top_hat: (g, x, top, half) => {
+    r(g, '#22222e', x - half, top - 5, half * 2, 5);
+    r(g, '#b23a48', x - half, top - 2, half * 2, 1);
+    r(g, '#22222e', x - half - 1, top, half * 2 + 2, 1);
+  },
+  witch: (g, x, top, half) => {
+    for (let i = 0; i < half; i++) r(g, '#2b2140', x - half + i, top - 2 - i * 2, (half - i) * 2, 2);
+    r(g, '#2b2140', x, top - 1 - half * 2, 2, 1);
+    r(g, '#e8a02e', x - half, top - 1, half * 2, 1);
+    r(g, '#2b2140', x - half - 2, top, half * 2 + 4, 1);
+  },
+  crown: (g, x, top, half) => {
+    r(g, '#f0c23a', x - half, top - 1, half * 2, 2);
+    r(g, '#f0c23a', x - half, top - 2, 1, 1);
+    r(g, '#f0c23a', x - 1, top - 2, 2, 1);
+    r(g, '#f0c23a', x + half - 1, top - 2, 1, 1);
+    r(g, '#d6453f', x - 1, top, 2, 1);
+  },
+  party: (g, x, top, half) => {
+    for (let i = 0; i < half; i++) r(g, i % 2 ? '#ffd24d' : '#e96fa4', x - half + i, top - 2 - i * 2, (half - i) * 2, 2);
+    r(g, '#f4f1e8', x - 1, top - 2 - half * 2, 2, 1);
+  },
+};
+
+// A person's hair. `crown` is the top of it, which a hat covers, `front` is what hangs beside the face,
+// `side` is what shows behind the face from the side, starting at `behind`, and `back` is the rest.
+const SHORT_CROWN = (g, x, top, hair) => {
+  r(g, hair, x - 2, top - 1, 4, 1);
+  r(g, hair, x - 3, top, 6, 2);
+};
+const STYLES = {
+  short: {
+    crown: SHORT_CROWN,
+    front: () => {},
+    side: (g, behind, top, hair) => r(g, hair, behind, top + 2, 2, 2),
+    back: (g, x, top, hair) => {
+      r(g, hair, x - 3, top + 2, 6, 3);
+      r(g, hair, x - 2, top + 5, 4, 1);
+    },
+  },
+  long: {
+    crown: SHORT_CROWN,
+    front: (g, x, top, hair) => {
+      r(g, hair, x - 4, top + 1, 1, 7);
+      r(g, hair, x + 3, top + 1, 1, 7);
+    },
+    side: (g, behind, top, hair) => r(g, hair, behind, top + 2, 2, 6),
+    back: (g, x, top, hair) => {
+      r(g, hair, x - 4, top + 1, 8, 7);
+      r(g, hair, x - 3, top + 8, 6, 1);
+    },
+  },
+  curly: {
+    crown: (g, x, top, hair) => {
+      r(g, hair, x - 3, top - 2, 6, 1);
+      r(g, hair, x - 4, top - 1, 8, 3);
+    },
+    front: (g, x, top, hair) => {
+      r(g, hair, x - 4, top + 2, 1, 2);
+      r(g, hair, x + 3, top + 2, 1, 2);
+    },
+    side: (g, behind, top, hair) => r(g, hair, behind, top + 2, 2, 3),
+    back: (g, x, top, hair) => {
+      r(g, hair, x - 4, top + 2, 8, 3);
+      r(g, hair, x - 3, top + 5, 6, 1);
+    },
+  },
+  bun: {
+    crown: (g, x, top, hair) => {
+      SHORT_CROWN(g, x, top, hair);
+      r(g, hair, x - 1, top - 3, 2, 2);
+    },
+    front: () => {},
+    side: (g, behind, top, hair) => r(g, hair, behind, top + 2, 2, 1),
+    back: (g, x, top, hair) => r(g, hair, x - 3, top + 2, 6, 2),
+  },
+  mohawk: {
+    crown: (g, x, top, hair) => r(g, hair, x - 1, top - 3, 2, 4),
+    front: () => {},
+    side: () => {},
+    back: (g, x, top, hair) => r(g, hair, x - 1, top + 1, 2, 4),
+  },
+  bald: {
+    crown: () => {},
+    front: () => {},
+    side: () => {},
+    back: () => {},
+  },
+};
+
+// What's on a person's face. `ahead` is -1 or 1, the way they face from the side.
+const FACES = {
+  none: {
+    front: () => {},
+    side: () => {},
+  },
+  glasses: {
+    front: (g, x, top) => {
+      r(g, '#20242f', x - 3, top + 2, 6, 1);
+      r(g, '#20242f', x - 3, top + 3, 1, 1);
+      r(g, '#20242f', x + 2, top + 3, 1, 1);
+    },
+    side: (g, x, top, ahead) => r(g, '#20242f', ahead < 0 ? x - 3 : x, top + 2, 3, 1),
+  },
+  shades: {
+    front: (g, x, top) => {
+      r(g, '#15161c', x - 3, top + 2, 6, 2);
+      r(g, '#6d7890', x - 2, top + 2, 1, 1);
+      r(g, '#6d7890', x + 1, top + 2, 1, 1);
+    },
+    side: (g, x, top, ahead) => r(g, '#15161c', ahead < 0 ? x - 3 : x, top + 2, 3, 2),
+  },
+  moustache: {
+    front: (g, x, top, ahead, hair) => r(g, hair, x - 2, top + 4, 4, 1),
+    side: (g, x, top, ahead, hair) => r(g, hair, ahead < 0 ? x - 3 : x + 1, top + 4, 2, 1),
+  },
+  beard: {
+    front: (g, x, top, ahead, hair) => {
+      r(g, hair, x - 3, top + 4, 6, 1);
+      r(g, hair, x - 2, top + 5, 4, 1);
+      r(g, hair, x - 1, top + 6, 2, 1);
+    },
+    side: (g, x, top, ahead, hair) => r(g, hair, ahead < 0 ? x - 3 : x, top + 4, 3, 2),
+  },
+};
+
+// A bot's head: how wide it is, and whether it has an antenna each side or one in the middle.
+const HEADS = {
+  antenna: { wide: 10, twin: false },
+  twin: { wide: 10, twin: true },
+  wide: { wide: 12, twin: false },
+};
+
+// A picture on a bot's chest, on a dark plate so it can be seen on any shell. Lights are the bare chest.
+const plate = (g, x, y, color, rows) => {
+  r(g, '#1b2030', x - 3, y, 6, rows.length);
+  rows.forEach((row, i) => [...row].forEach((cell, j) => {
+    if (cell === '#') r(g, color, x - 2 + j, y + i, 1, 1);
+  }));
+};
+const CHESTS = {
+  plain: () => {},
+  heart: (g, x, y) => plate(g, x, y, '#ff5d7a', ['#..#', '####', '.##.']),
+  star: (g, x, y) => plate(g, x, y, '#ffd24d', ['.##.', '####', '.##.']),
+  bolt: (g, x, y) => plate(g, x, y, '#8be0ff', ['..##', '.##.', '##..']),
+};
+
+const pick = (table, word, otherwise) => (Object.hasOwn(table, word) ? table[word] : otherwise);
+
+function botLook(name, chosen = {}) {
+  return {
+    shell: pick(FABRICS, chosen.shell, null),
+    head: pick(HEADS, chosen.head, Object.values(HEADS)[hash(name) % 3]),
+    eyes: pick(EYES, chosen.eyes, null),
+    chest: pick(CHESTS, chosen.chest, CHESTS.plain),
+    hat: pick(HATS, chosen.hat, HATS.none),
+  };
+}
+
 function drawBot(g, bot, t) {
   const x = Math.round(bot.x);
   const y = Math.round(bot.y);
-  const color = bot.color;
+  const { shell: coat, head, eyes, chest, hat } = bot.wears;
+  const color = coat || bot.color;
   const dark = shade(color, -0.32);
-  const glow = shade(color, 0.45);
+  const glow = eyes || shade(color, 0.45);
   const shell = '#e8ecf4';
   const visor = '#1b2030';
 
@@ -1197,6 +1426,12 @@ function drawBot(g, bot, t) {
     r(g, '#2a2f44', x + 10, y - 3, 3, 4);
     r(g, shell, x - 12, y - 6, 9, 8);
     r(g, visor, x - 10, y - 4, 2, 4);
+    // Lying down, so the hat is on its side: up, for a hat, is to the left here.
+    g.save();
+    g.translate(x - 12, y - 2);
+    g.rotate(-Math.PI / 2);
+    hat(g, 0, 0, 4, color, dark);
+    g.restore();
     for (let i = 0; i < 3; i++) {
       const rise = (t / 70 + i * 13 + bot.phase * 40) % 36;
       drawZ(g, x - 10 + i * 3 + rise / 6, y - 10 - rise, 1 - rise / 36);
@@ -1218,17 +1453,20 @@ function drawBot(g, bot, t) {
 
   r(g, color, x - 4, base - 6, 8, 6);
   r(g, dark, x - 4, base - 1, 8, 1);
+  if (bot.facing !== 'back') chest(g, x, base - 5);
   const typing = sitting && Math.floor(t / 170 + bot.phase * 5) % 2;
   r(g, dark, x - 5, base - 6 + (typing ? 1 : 0), 1, 4);
   r(g, dark, x + 4, base - 6 + (typing ? 0 : 1), 1, 4);
 
-  const wide = bot.look % 3 === 2;
-  const headW = wide ? 12 : 10;
+  const headW = head.wide;
   const left = x - headW / 2;
   const top = base - 14 - breathe;
   r(g, shell, left + 1, top, headW - 2, 8);
   r(g, shell, left, top + 1, headW, 6);
-  if (bot.look % 3 === 1) {
+  // A hat goes on where the antennas would be.
+  if (hat !== HATS.none) {
+    hat(g, x, top, headW / 2 - 1, color, dark);
+  } else if (head.twin) {
     r(g, '#9aa3b8', left + 2, top - 3, 1, 3);
     r(g, '#9aa3b8', left + headW - 3, top - 3, 1, 3);
     r(g, color, left + 1, top - 4, 3, 1);
@@ -1256,13 +1494,17 @@ const SKIN = ['#f1c9a4', '#d9a77c', '#b27a54', '#8a5a3c', '#f4d6b8'];
 const HAIR = ['#2b2118', '#6a4326', '#b9822f', '#d8c08a', '#4a2a22', '#8a8f9c'];
 const TROUSERS = ['#394666', '#4a4a52', '#6a5a46', '#2f4a48'];
 
-function personLook(name) {
+// What they chose comes first (C4). A shirt nobody chose stays the person's own colour.
+function personLook(name, chosen = {}) {
   const h = hash(name);
   return {
-    skin: SKIN[(h >>> 3) % SKIN.length],
-    hair: HAIR[(h >>> 6) % HAIR.length],
-    hat: (h >>> 9) % 3 === 0,
-    trousers: TROUSERS[(h >>> 11) % TROUSERS.length],
+    skin: pick(SKINS, chosen.skin, SKIN[(h >>> 3) % SKIN.length]),
+    hair: pick(HAIRS, chosen.hair, HAIR[(h >>> 6) % HAIR.length]),
+    style: pick(STYLES, chosen.style, STYLES.short),
+    face: pick(FACES, chosen.face, FACES.none),
+    hat: pick(HATS, chosen.hat, (h >>> 9) % 3 === 0 ? HATS.cap : HATS.none),
+    shirt: pick(FABRICS, chosen.shirt, null),
+    trousers: pick(LEGS, chosen.trousers, TROUSERS[(h >>> 11) % TROUSERS.length]),
   };
 }
 
@@ -1271,8 +1513,9 @@ function personLook(name) {
 function drawPerson(g, person, t) {
   const x = Math.round(person.x);
   const y = Math.round(person.y);
-  const { color, facing } = person;
-  const { skin, hair, hat, trousers } = person.look;
+  const { facing } = person;
+  const { skin, hair, style, face, hat, shirt, trousers } = person.look;
+  const color = shirt || person.color;
   const dark = shade(color, -0.32);
   const shoe = '#2b2420';
 
@@ -1306,30 +1549,52 @@ function drawPerson(g, person, t) {
   const top = torso - 6 - breathe;
   r(g, skin, x - 2, top, 4, 6);
   r(g, skin, x - 3, top + 1, 6, 4);
-  if (hat) {
-    r(g, color, x - 3, top - 1, 6, 2);
-    r(g, color, x - 2, top - 2, 4, 1);
-    r(g, dark, x - 4, top + 1, 8, 1);
-  } else {
-    r(g, hair, x - 2, top - 1, 4, 1);
-    r(g, hair, x - 3, top, 6, 2);
-  }
+  const bare = hat === HATS.none;
+  if (bare) style.crown(g, x, top, hair);
   if (facing === 'back') {
-    r(g, hair, x - 3, top + 2, 6, 3);
-    r(g, hair, x - 2, top + 5, 4, 1);
+    style.back(g, x, top, hair);
+    hat(g, x, top, 3, color, dark);
     return;
   }
   r(g, skin, x - 1, torso, 2, 1);
   const blink = t > 0 && Math.sin(t / 2300 + person.phase * 11) > 0.985;
   if (facing === 'left' || facing === 'right') {
     const ahead = facing === 'left' ? -1 : 1;
-    if (!hat) r(g, hair, ahead < 0 ? x + 1 : x - 3, top + 2, 2, 2);
+    if (bare) style.side(g, ahead < 0 ? x + 1 : x - 3, top, hair);
+    hat(g, x, top, 3, color, dark);
     if (!blink) r(g, '#2a2433', x + ahead * 2 - (ahead < 0 ? 0 : 1), top + 3, 1, 1);
+    face.side(g, x, top, ahead, hair);
     return;
   }
-  if (blink) return;
-  r(g, '#2a2433', x - 2, top + 3, 1, 1);
-  r(g, '#2a2433', x + 1, top + 3, 1, 1);
+  style.front(g, x, top, hair);
+  hat(g, x, top, 3, color, dark);
+  if (!blink) {
+    r(g, '#2a2433', x - 2, top + 3, 1, 1);
+    r(g, '#2a2433', x + 1, top + 3, 1, 1);
+  }
+  face.front(g, x, top, 0, hair);
+}
+
+// A figure is { kind, name, color, chosen }, and big enough for its tallest hat.
+const FIGURE_WIDE = 26;
+const FIGURE_TALL = 36;
+const lookOf = ({ kind, name, chosen }) => (kind === 'bot' ? botLook(name, chosen) : personLook(name, chosen));
+
+// A figure on a canvas of its own, drawn still, for the wardrobe.
+export function figurePicture(figure, facing = 'front') {
+  const canvas = document.createElement('canvas');
+  canvas.width = FIGURE_WIDE;
+  canvas.height = FIGURE_TALL;
+  const still = { ...figure, x: FIGURE_WIDE / 2, y: FIGURE_TALL - 2, path: [], pose: 'stand', facing, phase: 0 };
+  const g = canvas.getContext('2d');
+  if (figure.kind === 'bot') drawBot(g, { ...still, wears: botLook(figure.name, figure.chosen) }, 0);
+  else drawPerson(g, { ...still, look: personLook(figure.name, figure.chosen) }, 0);
+  return canvas;
+}
+
+// Whether a figure has this word on now, whether it was chosen or worked out from the name.
+export function isWearing(figure, part, word) {
+  return lookOf(figure)[part] === lookOf({ ...figure, chosen: { ...figure.chosen, [part]: word } })[part];
 }
 
 // A bot's tag hangs under its feet. A person's sits over their head, and goes up a line at every
@@ -1461,8 +1726,8 @@ export class Room {
         person.name = data.name;
         person.label.textContent = data.name;
         person.chip.title = data.name;
-        person.look = personLook(data.name);
       }
+      person.look = personLook(data.name, data.look);
       if (person.color !== data.color) {
         person.color = data.color;
         person.dot.style.background = data.color;
@@ -1491,6 +1756,7 @@ export class Room {
       }
       bot.state = data.state;
       bot.color = data.color;
+      bot.wears = botLook(data.name, data.look);
       bot.chip.title = data.status ? `${data.name}: ${data.status}` : data.name;
       bot.doing.textContent = data.activity ? `· ${data.activity.via}` : data.asking ? '· waiting' : '';
     }
@@ -1582,7 +1848,7 @@ export class Room {
       working: Boolean(data.activity),
       wait: 0,
       phase: (hash(data.id) % 1000) / 1000,
-      look: hash(data.name),
+      wears: botLook(data.name, data.look),
       tag,
       chip,
       doing,

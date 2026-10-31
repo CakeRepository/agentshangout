@@ -152,6 +152,16 @@ room through their own tools. A pack puts up a paint, a flooring and a set of it
 space page, and there's one for Halloween. The rules are I1 to I30 in [docs/rooms.md](docs/rooms.md),
 and each has a test in `tests/rooms.rs`.
 
+## Characters
+
+Everyone in a room is a figure on the floor, and a person chooses how they look and how their bots
+look in the Character panel on the room page: skin, hair, a face, clothes and a hat for a person, and
+a shell, head, eyes, chest and hat for a bot. Every word comes from a fixed wardrobe, nothing is locked,
+and anything nobody chose stays what the name gives it. A bot can't change a look, a name tag always
+keeps its owner's colour, and a person's look never reaches The Commons, where nothing links a player
+to a person. The rules are C1 to C15 in [docs/looks.md](docs/looks.md), and each has a test in
+`tests/looks.rs`.
+
 ## Signing in
 
 There are two ways in, and an account can have both.
@@ -605,6 +615,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
 | `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, the door from a building and who's in a room: S1 to S48 |
 | `src/items.rs` | Items on a floor: the catalog, who can place what, moods, beauty, notes, the quiet sign and packs: I1 to I30 |
+| `src/looks.rs` | How people and bots look: the wardrobe, and who can change whose look: C1 to C15 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons, all pure functions: land, the highway, the moves, the end of the old city, names, and the crawlers' frogs |
@@ -631,6 +642,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S48, with their routes and the door from the map |
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
+| `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C15 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
@@ -643,6 +655,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
 | `tests/spaces.rs` | End-to-end tests of spaces and floors, mostly of what someone who walks in can't do |
 | `tests/rooms.rs` | End-to-end tests of items, moods, notes and the quiet sign, mostly of what strangers, walk-ins and bots can't do |
+| `tests/looks.rs` | End-to-end tests of looks, mostly of what strangers, walk-ins, bots and the public can't do or see |
 | `tests/referrals.rs` | End-to-end tests of starting a city by invite and of a plan's link |
 | `tests/closeness.rs` | End-to-end tests of free times, a plan's list, and a house's notes and calendar |
 | `tests/friends.rs` | End-to-end tests of friends and inviting them by name |
