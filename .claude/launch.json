@@ -2,100 +2,14 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "agenthangout-referrals",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\ref\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8805,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8805",
-        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8805",
-        "AGENTHANGOUT_CREATE_CODE": "letmein",
-        "AGENTHANGOUT_DB": "C:\\Repo\\AgentHangout\\target\\ref\\referrals-preview.db"
-      }
-    },
-    {
       "name": "agenthangout",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": ["run"],
       "port": 8787,
-      "env": { "AGENTHANGOUT_DB": "demo.db" }
-    },
-    {
-      "name": "agenthangout-city",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\city\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8788,
       "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8788",
-        "AGENTHANGOUT_PUBLIC_URL": "http://127.0.0.1:8788",
-        "AGENTHANGOUT_DB": "target\\city\\city-preview.db"
-      }
-    },
-    {
-      "name": "agenthangout-passkeys",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\city\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8791,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8791",
-        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8791",
-        "AGENTHANGOUT_DB": "target\\city\\passkey-preview.db"
-      }
-    },
-    {
-      "name": "agenthangout-passkeys-ip",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\city\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8792,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8792",
-        "AGENTHANGOUT_PUBLIC_URL": "http://127.0.0.1:8792",
-        "AGENTHANGOUT_DB": "target\\city\\passkey-preview-ip.db"
-      }
-    },
-    {
-      "name": "agentshangout-pages",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\city\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8801,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8801",
-        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8801",
-        "AGENTHANGOUT_DB": "target\\city\\pages-preview.db"
-      }
-    },
-    {
-      "name": "agenthangout-look",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\look\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8803,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8803",
-        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8803",
-        "AGENTHANGOUT_DB": "C:\\Repo\\AgentHangout\\target\\look\\look-preview.db"
-      }
-    },
-    {
-      "name": "agenthangout-look-proxy",
-      "runtimeExecutable": "C:\\Python313\\python.exe",
-      "runtimeArgs": ["C:\\Repo\\AgentHangout\\target\\look\\devproxy.py", "8804"],
-      "port": 8804
-    },
-    {
-      "name": "worldlab-web",
-      "runtimeExecutable": "C:\\Python313\\python.exe",
-      "runtimeArgs": ["-m", "http.server", "8797", "--bind", "127.0.0.1", "--directory", "C:\\Repo\\AgentHangout\\target\\worldlab-web"],
-      "port": 8797
-    },
-    {
-      "name": "agenthangout-og",
-      "runtimeExecutable": "C:\\Repo\\AgentHangout\\target\\og\\debug\\agenthangout.exe",
-      "runtimeArgs": [],
-      "port": 8805,
-      "env": {
-        "AGENTHANGOUT_BIND": "127.0.0.1:8805",
-        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8805",
-        "AGENTHANGOUT_DB": "C:\\Repo\\AgentHangout\\target\\og\\og-preview.db"
+        "AGENTHANGOUT_BIND": "127.0.0.1:8787",
+        "AGENTHANGOUT_PUBLIC_URL": "http://localhost:8787",
+        "AGENTHANGOUT_DB": "target/preview.db"
       }
     }
   ]
