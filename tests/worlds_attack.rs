@@ -3188,13 +3188,16 @@ async fn the_engine_makes_land_and_a_highway_for_thousands_of_seeds_without_pani
     }
     println!("MEASURED: 600 seeds took {:?}, the slowest {slowest:?} (a debug build)", started.elapsed());
 }
-/// A road and a house beside it, built by a person, and a tile of the old city for the clock to find:
-/// everything a step has on The Commons to leave alone.
+/// A road and a house beside it, built by a person: what a step has on The Commons to leave alone.
 async fn lay_out_a_town(server: &Server, ann: &Who) {
     let (first, last) = Map::from_db(server, COMMONS).line_from_road(3).unwrap();
     server.acts_ok(&ann.key, COMMONS, road_move(first, last)).await;
     let spot = Map::from_db(server, COMMONS).house_spots()[0];
     server.acts_ok(&ann.key, COMMONS, place_move("house", spot)).await;
+}
+
+/// A tile of the old city for the clock to find (W64).
+fn leave_an_old_tile(server: &Server) {
     let old = (4..60u16).map(|x| (x, 6u16)).find(|pos| !server.tiles(COMMONS).contains_key(pos)).unwrap();
     server.write(COMMONS, &[Change::Set(old, Tile { kind: Kind::Homes, level: 1, player: None })]);
 }
@@ -3217,10 +3220,13 @@ fn headers_with(agent: &str, address: Option<&str>) -> HeaderMap {
 // W37, W43, W64
 #[tokio::test]
 async fn crawlers_and_visitors_change_nothing_about_the_world_or_its_clock() {
-    async fn run(traffic: bool) -> (world::Tiles, u64, Option<(u64, Option<u64>, Option<u64>)>) {
+    async fn run(traffic: bool, old_city: bool) -> (world::Tiles, u64, Option<(u64, Option<u64>, Option<u64>)>) {
         let server = Server::start().await;
         let ann = server.person("Ann").await;
         lay_out_a_town(&server, &ann).await;
+        if old_city {
+            leave_an_old_tile(&server);
+        }
         let t = now();
         for round in 0..120 {
             if traffic {
@@ -3240,13 +3246,20 @@ async fn crawlers_and_visitors_change_nothing_about_the_world_or_its_clock() {
         let end = server.state.db.world_end(COMMONS).unwrap().map(|end| (end.clock_step, end.omen_step, end.ended_step));
         (server.tiles(COMMONS), row.step, end)
     }
-    let (quiet, quiet_step, quiet_end) = run(false).await;
-    let (busy, busy_step, busy_end) = run(true).await;
+    let (quiet, quiet_step, quiet_end) = run(false, false).await;
+    let (busy, busy_step, busy_end) = run(true, false).await;
     assert_eq!(quiet_step, busy_step);
     assert_eq!(quiet, busy, "frogs and visitors changed the tiles");
-    assert_eq!(quiet_end, busy_end, "frogs and visitors changed when the old city ends");
-    assert!(quiet_end.is_some(), "the old city's tile never started a clock");
+    assert_eq!((quiet_end, busy_end), (None, None), "a clock started with no old city on the map");
     assert!(quiet.values().any(|tile| tile.kind.is_building()), "the house is gone");
+
+    // With the old city there, 120 steps see it end, the same way with or without them.
+    let (quiet, quiet_step, quiet_end) = run(false, true).await;
+    let (busy, busy_step, busy_end) = run(true, true).await;
+    assert_eq!(quiet_step, busy_step);
+    assert_eq!(quiet, busy, "frogs and visitors changed what the disaster took");
+    assert_eq!(quiet_end, busy_end, "frogs and visitors changed when the old city ends");
+    assert!(quiet_end.is_some_and(|(_, _, ended)| ended.is_some()), "the old city never ended");
 }
 
 // W24, W27, W37, W43

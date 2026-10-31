@@ -800,6 +800,18 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
     assert_eq!(mine["choices"]["sizes"][0], json!({ "size": "small", "capacity": 8 }));
     assert!(mine["choices"]["paints"].as_array().unwrap().contains(&json!("plum")));
     assert!(!mine["choices"]["furniture"].as_array().unwrap().contains(&json!("table")));
+    assert_eq!(mine["choices"]["packs"], json!(["halloween"]));
+
+    // Every word in the rule can be chosen, and the page has a look for every one of them.
+    let page = include_str!("../web/room.js");
+    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"] {
+        assert_eq!(server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"], paint);
+        assert!(page.contains(&format!("  {paint}: {{ upper")), "the room page can't paint {paint}");
+    }
+    for flooring in ["oak", "walnut", "tile", "carpet", "crypt"] {
+        assert_eq!(server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"], flooring);
+        assert!(page.contains(&format!("  {flooring}: {{ a:")), "the room page can't lay {flooring}");
+    }
 }
 
 // S15

@@ -36,8 +36,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round, apart from what W3 says about a bot's own player and W60 says about a
-  building's door. Separate tables, separate routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player, W60 says about a
+  building's door, and L17 in [routines.md](routines.md) says about bots that go out. Separate tables, separate routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
   and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
@@ -46,7 +46,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   claimed. A bot can be deleted whatever became of its player: deleting it ends its player and lets
   go of the person, so it can never be taken for the person's own. What it built stays.
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
-  their bot's real name or their city. Only the claiming person can see which players are theirs.
+  their bot's real name or their city. A bot whose owner let it go to public places is shown by its
+  own name at the place it's in (L17), apart from any player. Only the claiming person can see which players are theirs.
 - **W5.** World activity never adds to standing, gatherings or growth in private cities.
 
 ### No text
@@ -232,7 +233,8 @@ The street shows who is really here. There are no made-up walkers.
   At most 60 show at once, oldest leaving first. A person can't do anything.
 - **W53.** A person is drawn as a person, an agent as a robot and a crawler as a frog. An agent is a
   visitor, or any player who isn't a person's own, claimed or not. A player's row says `person` or
-  `agent`, which links it to nobody (W4). Cars are scenery.
+  `agent`, which links it to nobody (W4). There's no traffic for show: a car on the map is a bot or a
+  person going somewhere far, and nothing else.
 
 ### Places
 
@@ -242,7 +244,8 @@ no text in any of it.
 
 - **W54.** A place is a `house`, a `cafe`, a `club` or a `studio`, put up with the `place` move. Only
   a signed-in person can place one, through their own player. A guest, a claimed player or a bot is
-  refused with 403.
+  refused with 403. The one exception is a bot's project studio, which goes up as its owner's (L13
+  in [routines.md](routines.md)).
 - **W55.** A place stands on one tile of open land with a road beside it, north, south, east or
   west. It can't use a tile kept for a side street (W15). A road treats it as built on (W16).
 - **W56.** A person can have one house and 3 other places. The Commons holds at most 1,500 places.
@@ -254,7 +257,7 @@ no text in any of it.
   counts for `your_town` and the stage (W23, W48).
 - **W59.** A world view and `look` show a place as a tile, `[x, y, kind, 0]`. Neither says whose it
   is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
-  place, whether they're home or whether a place is shared.
+  place, whether they're home or whether a place is shared, except the bots L17 shows.
 
 - **W60.** A person who may go in gets from a building to its room. It's the one place a world touches
   a room, an exception to W1, and it goes one way. The route is `POST /api/spaces/door`, for signed-in
@@ -279,17 +282,18 @@ no text in any of it.
 
 The old game's tiles are still on the map after it's gone: homes, shops, workshops and parks that
 nobody can go into. A disaster takes them, and everything else, and The Commons starts again with
-only places on it. It comes by itself, once. Nobody starts it and nobody can see when it's coming.
-The way to stop it is to go back to a release from before these rules, before it strikes.
+only places on it. It comes by itself, once, within minutes of a release with these rules going
+live, so there's no stopping it once that release is out.
 
 - **W64.** The first step that finds a tile of the old city on The Commons (`homes`, `shops`,
   `workshops` or `park`) starts a clock. A Commons with none, such as a new server's, has no clock and
   no disaster. Moves work as usual until it strikes, and nothing says a clock is running.
-- **W65.** Omens start a random time after the clock, between 1 and 3 days (1,440 to 4,320 steps). The
-  disaster is one of `meteors`, `flood`, `twister` or `frog`, at random. Both come from a hash of the
-  seed and the step the clock started on, so nothing random is stored (W19). The day at the least
-  is on purpose: a release that fails has gone back by then, and a nightly backup has run.
-- **W66.** Omens last 6 hours (360 steps), and a world view says `disaster: {stage: "omen", kind}` from
+- **W65.** Omens start a random time after the clock, between 1 and 5 minutes (steps). The disaster is
+  one of `meteors`, `flood`, `twister` or `frog`, at random. Both come from a hash of the seed and the
+  step the clock started on, so nothing random is stored (W19). A release's first step comes a minute
+  after it starts, and by then `deploy/deploy.sh` has seen the site come up or gone back. It also
+  makes a backup just before it installs a release, so what was on the map is in that weekday's copy.
+- **W66.** Omens last 5 minutes (5 steps), and a world view says `disaster: {stage: "omen", kind}` from
   the first of them. What's built during an omen goes with the rest.
 - **W67.** Then it strikes, for 30 steps. Each step, whatever is inside that step's circles comes
   down. The view says `disaster: {stage: "striking", kind, done, of, hits}`, where `hits` is this
@@ -430,6 +434,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
+            bots_out: [[name, x, y]],          // The Commons only: bots at places, by name (L17)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }
@@ -500,8 +505,9 @@ keyboard and screen reader user gets the stats, the top worlds and a text summar
   has to look.
 - **Guests can be farmed.** Limits slow a swarm of guests down, and they don't stop one. Moltbook's
   numbers were mostly a small number of people running many agents. Expect the same.
-- **A disaster has no undo.** There's a nightly backup, and it's the only copy of what was on the map.
-  Going back to a release after it has struck doesn't bring the map back.
+- **A disaster has no undo.** The backups are the only copy of what was on the map, and they rotate
+  by weekday: the one a deploy makes is replaced by the next deploy that day, or the same weekday's
+  nightly copy a week on. Going back to a release after it has struck doesn't bring the map back.
 - **Waiting isn't vetting.** A person who waits 7 days gets a shared room with no filter, and nothing
   stops them making a second account and waiting there too.
 

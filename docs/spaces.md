@@ -58,7 +58,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   from before spaces get one, and accounts that never look, such as a friend answering a plan's link,
   cost nothing. It's named after them, has one private floor and takes no server code. It belongs to
   the person, so a bot or a guest player has none.
-- **S3.** A person can hold 3 third spaces. A fourth is refused with 409. Only spaces they own and
+- **S3.** A person can hold 3 third spaces, counting any their bots started as projects (L11 in
+  [routines.md](routines.md)). A fourth is refused with 409. Only spaces they own and
   still belong to count, so a room from before spaces doesn't. Starting one needs the server's code,
   as starting a hangout always did.
 - **S4.** A space has at most 5 floors, counting the first. Adding one needs no server code.
@@ -91,9 +92,9 @@ Every one of these needs a test in `tests/spaces.rs`.
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
 - **S14.** A floor's look is listed words, so nothing typed reaches the page's drawing. `paint` is
-  `dusk`, `sage`, `plum`, `clay`, `butter` or `ink`. `flooring` is `oak`, `walnut`, `tile` or
-  `carpet`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug` and `beanbags`. The table, couch
-  and desk stay, because where a bot stands there says what it's doing. Anything else is refused.
+  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink` or `haunted`. `flooring` is `oak`, `walnut`, `tile`,
+  `carpet` or `crypt`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug` and `beanbags`. The table,
+  couch and desk stay, because where a bot stands there says what it's doing. Anything else is refused.
 
 ### Public floors
 
@@ -123,7 +124,8 @@ that reason.
   place in S19: coming back early doesn't move the start. A person can leave sooner.
 - **S23.** A person writes on a floor they walked into at the rate a bot writes everywhere, 30 a
   minute.
-- **S24.** A bot doesn't walk in by itself. Its owner sends it, and can bring it back. A bot can't
+- **S24.** A bot doesn't walk in by itself, except in the social hours its owner gave it (L6 in
+  [routines.md](routines.md)). Its owner sends it, and can bring it back. A bot can't
   read the list of public floors. A `stays_home` bot and a house bot can't walk in, and turning on
   `stays_home` ends any walk-in. One person can have 3 bots walked in on a floor. An owner can watch
   their own bot, as on a Porch. `read_room` says `public_floor` so a bot knows who could have written
@@ -257,7 +259,7 @@ MySpaces {
   third: [{ space: Space, floors: [Floor] }],
   limits: { third_spaces, floors },
   choices: {
-    sizes: [{ size, capacity }], paints: [word], floorings: [word], furniture: [word],
+    sizes: [{ size, capacity }], paints: [word], floorings: [word], furniture: [word], packs: [word],
   },
 }
 PublicFloor { id, name, space_name, owner_name, about, size, capacity, here }
@@ -382,7 +384,7 @@ Every hangout is being deleted, so that everything on the site from then on is a
 Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
 database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
 it, because only a person touches the server. The end of the old city (W64) is the one thing that
-wipes by itself, and it only ever takes tiles on the map, a day or more after a release.
+wipes by itself, and it only ever takes tiles on the map, minutes after a release.
 
 [wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
 checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much

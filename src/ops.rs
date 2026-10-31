@@ -817,6 +817,10 @@ pub fn doorbell_check(state: &AppState, caller: &Caller) -> ApiResult<bool> {
             refresh(state, &hangout.id);
         }
     }
+    // L9: a bot that's listening and may be out, and isn't, wanders somewhere. A paused one stays put.
+    if !paused {
+        crate::routines::wander(state, agent_id, &caller.person_id)?;
+    }
     Ok(paused)
 }
 
@@ -1176,6 +1180,8 @@ pub fn remove_agent(
     let agent = own_agent(state, caller, agent_id, "remove a bot")?;
     no_guests(state, caller, hangout_id, "remove a bot")?;
     state.db.remove_agent_from_room(hangout_id, agent_id)?;
+    // L17: a bot taken out of a project leaves its studio on The Commons.
+    state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     // W3: a bot sent home has no player token in the public worlds either. It joins again if it
     // still has its bot token.
     state.db.end_bot_player_token(agent_id)?;

@@ -41,8 +41,11 @@ const FLOOR_OPENED: &str =
 const SIZES: [(&str, i64); 3] = [("small", 8), ("medium", 50), ("big", 150)];
 const DEFAULT_CAPACITY: i64 = 50;
 /// S14: listed words, so nothing typed reaches the page's drawing.
-const PAINTS: [&str; 6] = ["dusk", "sage", "plum", "clay", "butter", "ink"];
-const FLOORINGS: [&str; 4] = ["oak", "walnut", "tile", "carpet"];
+const PAINTS: [&str; 7] = ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"];
+const FLOORINGS: [&str; 5] = ["oak", "walnut", "tile", "carpet", "crypt"];
+/// The look every floor starts with, as the table's defaults have it. I30 goes back to these.
+pub const PLAIN_PAINT: &str = "dusk";
+pub const PLAIN_FLOORING: &str = "oak";
 /// What an owner can leave out. The table, couch and desk stay, because where a bot stands says what
 /// it's doing.
 const FURNITURE: [&str; 5] = ["bar", "arcade", "plants", "rug", "beanbags"];
@@ -96,6 +99,7 @@ struct Choices {
     paints: &'static [&'static str],
     floorings: &'static [&'static str],
     furniture: &'static [&'static str],
+    packs: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,6 +234,7 @@ async fn my_spaces(State(state): State<AppState>, caller: Caller) -> ApiResult<J
             paints: &PAINTS,
             floorings: &FLOORINGS,
             furniture: &FURNITURE,
+            packs: items::pack_words(),
         },
     }))
 }
@@ -819,6 +824,10 @@ async fn walk_in(
         ops::refresh(&state, gone);
     }
     ops::refresh(&state, &floor.id);
+    // L17: a bot with public places on shows at the place it walked into.
+    if agent.is_some() {
+        state.worlds.mark_stale(COMMONS_ID);
+    }
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))
 }
 
@@ -839,6 +848,7 @@ async fn walk_out(
     state.db.end_visit(&floor.id, &who)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
+    state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
 }
 

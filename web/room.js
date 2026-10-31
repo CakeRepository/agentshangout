@@ -44,12 +44,14 @@ const PAINTS = {
   clay: { upper: '#8a5a44', stripe: '#94614a', lower: '#6b4333', panel: '#5a382a' },
   butter: { upper: '#b89a5e', stripe: '#c2a468', lower: '#8f7646', panel: '#7a643a' },
   ink: { upper: '#23293a', stripe: '#292f42', lower: '#1a1f2d', panel: '#141824' },
+  haunted: { upper: '#2c2042', stripe: '#33264c', lower: '#20172f', panel: '#2b1a2e', webs: true },
 };
 const FLOORINGS = {
   oak: { a: '#a97b4e', b: '#a27347', line: '#8b6039', style: 'planks' },
   walnut: { a: '#6e4a30', b: '#67442b', line: '#523521', style: 'planks' },
   tile: { a: '#c9c4b5', b: '#8d8a80', line: '#77746b', style: 'tile' },
   carpet: { a: '#4d6a78', b: '#4a6673', line: '#415a66', style: 'carpet' },
+  crypt: { a: '#57545f', b: '#4e4b56', line: '#34323c', style: 'flagstones' },
 };
 const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
 
@@ -89,7 +91,7 @@ function fillGrid(hidden, items = []) {
   const blocks = [
     ...BLOCKED,
     ...left.map(([, block]) => block),
-    ...items.map(({ x, y }) => [x - FLOOR_CELL / 2, y - FLOOR_CELL, FLOOR_CELL, FLOOR_CELL]),
+    ...items.map(({ left, top, wide, deep }) => [left, top, wide, deep]),
   ];
   for (let row = 0; row < ROWS; row++) {
     for (let col = 0; col < COLS; col++) {
@@ -206,7 +208,61 @@ function paintWindow(g, x, y, w, h, sky) {
   r(g, '#d8c7a3', x - 5, y + h + 3, w + 10, 2);
 }
 
+// Cobwebs in the top corners, and bats asleep on the wall in the gaps either side of the whiteboard.
+function paintWebs(g) {
+  const silk = 'rgba(226,222,240,.34)';
+  for (const [corner, away] of [[0, 1], [W - 1, -1]]) {
+    const dot = (angle, reach) =>
+      r(g, silk, corner + away * Math.round(Math.cos(angle) * reach), Math.round(Math.sin(angle) * reach), 1, 1);
+    for (const turn of [0.14, 0.4, 0.68, 0.94]) {
+      for (let reach = 0; reach < 38; reach++) dot((turn * Math.PI) / 2, reach);
+    }
+    for (const ring of [13, 24, 35]) {
+      for (let i = 0; i <= ring * 2; i++) {
+        const angle = ((i / (ring * 2)) * Math.PI) / 2;
+        dot(angle, ring - Math.abs(Math.round(Math.sin(angle * 8) * 1.5)));
+      }
+    }
+  }
+  const bat = '#120c1e';
+  for (const [x, y] of [[126, 16], [138, 30], [346, 12], [358, 26], [462, 34]]) {
+    r(g, bat, x - 1, y - 2, 3, 4);
+    r(g, bat, x - 1, y - 3, 1, 1);
+    r(g, bat, x + 1, y - 3, 1, 1);
+    r(g, bat, x - 5, y - 1, 4, 2);
+    r(g, bat, x + 2, y - 1, 4, 2);
+    r(g, bat, x - 6, y - 2, 2, 2);
+    r(g, bat, x + 5, y - 2, 2, 2);
+    r(g, bat, x - 4, y + 1, 1, 1);
+    r(g, bat, x + 3, y + 1, 1, 1);
+    r(g, '#ff8a3d', x - 1, y - 1, 1, 1);
+    r(g, '#ff8a3d', x + 1, y - 1, 1, 1);
+  }
+}
+
 function paintFloor(g, { a, b, line, style }) {
+  if (style === 'flagstones') {
+    r(g, a, 0, WALL + 1, W, H - WALL - 1);
+    for (let y = WALL + 1, row = 0; y < H; y += 20, row++) {
+      for (let x = (row % 2) * -18, col = 0; x < W; x += 36, col++) {
+        const worn = (row * 5 + col * 3) % 4;
+        if (worn === 0) r(g, b, x + 1, y, 35, 19);
+        r(g, line, x, y, 1, 19);
+        // A crack here and there, and moss where the stones meet.
+        if (worn === 1) {
+          r(g, line, x + 12, y + 4, 6, 1);
+          r(g, line, x + 17, y + 5, 1, 5);
+          r(g, line, x + 18, y + 9, 5, 1);
+        }
+        if (worn === 2) {
+          r(g, '#4f6b48', x + 1, y + 15, 7, 4);
+          r(g, '#61805a', x + 2, y + 17, 3, 2);
+        }
+      }
+      r(g, line, 0, y + 19, W, 1);
+    }
+    return;
+  }
   if (style === 'tile') {
     for (let y = WALL + 1, row = 0; y < H; y += 12, row++) {
       for (let x = 0, col = 0; x < W; x += 12, col++) r(g, (row + col) % 2 ? a : b, x, y, 12, 12);
@@ -240,6 +296,7 @@ function paintRoom(g, hour, look) {
 
   paintWindow(g, 36, 10, 72, 32, sky);
   paintWindow(g, 372, 10, 72, 32, sky);
+  if (paint.webs) paintWebs(g);
 
   // Floor
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
@@ -349,25 +406,148 @@ function paintPlant(g, x, y) {
   r(g, '#2f8f5b', x - 1, y - 26, 3, 6);
 }
 
-// What people can put on a floor. Each one stands on its cell the way paintPlant does: x is the
-// middle of the cell and y is its bottom edge, and it rises from there, so an item takes one cell of
-// floor however tall it is. `t` is 0 for someone who asked for less motion, so nothing moves then.
+// What people can put on a floor. Each one stands on its cells the way paintPlant does: x is the
+// middle of them and y is their bottom edge, and it rises from there, so what's tall leans over the
+// floor behind it. `wide` and `deep` are the cells it takes, in pixels, as it's turned now. A table
+// looks the same either way round, so it has one painting, and anything else has a `side` for when
+// it's seen from its end. `t` is 0 for someone who asked for less motion, so nothing moves then.
 
+const SHADOW = '#00000030';
 const BOOKS = ['#ff5d7a', '#4f9dff', '#ffb454', '#3ddc97', '#b388ff', '#f4f1e8'];
 
+// Seen from its end: its top runs back across the floor, above the end that faces the room.
+function paintEnd(g, x, y, wide, deep, tall, top, face) {
+  const left = x - wide / 2;
+  r(g, SHADOW, left, y - 2, wide, 2);
+  r(g, top, left, y - tall - deep, wide, deep);
+  r(g, shade(top, 0.16), left, y - tall - deep, wide, 1);
+  r(g, face, left, y - tall, wide, tall - 1);
+  r(g, shade(top, 0.16), left, y - tall, wide, 1);
+}
+
+// A `side` that's only an end, with whatever `detail` adds along its top.
+const endOf = (tall, top, face, detail) => (g, x, y, t, wide, deep) => {
+  paintEnd(g, x, y, wide - 2, deep, tall, top, face);
+  detail?.(g, x, y - tall - deep, deep, t);
+};
+
+// Something thin standing on its edge, like a board: feet at each end and a rail between them.
+const edgeOf = (tall, top, face) => (g, x, y, t, wide, deep) => {
+  paintEnd(g, x, y, 4, deep - 2, tall, top, face);
+  r(g, face, x - 5, y - 2, 10, 2);
+  r(g, face, x - 5, y - deep + 1, 10, 2);
+};
+
+// A table from above and in front, on two legs. Gives back the top's far edge, for what stands on it.
+function paintTop(g, x, y, wide, deep, tall, wood, edge, leg) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const back = y - tall - deep + 6;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, leg, left + 2, y - tall, 3, tall - 1);
+  r(g, leg, left + across - 5, y - tall, 3, tall - 1);
+  r(g, wood, left, back, across, deep - 6);
+  r(g, shade(wood, 0.14), left, back, across, 1);
+  r(g, edge, left, y - tall, across, 2);
+  return back;
+}
+
+const COUCH_CLOTH = ['#3f5f8c', '#35527a', '#5277ad'];
+const SOFA_CLOTH = ['#a85a44', '#8a4636', '#c9775c'];
+const LOVE_CLOTH = ['#a83f62', '#8a2f4e', '#cf5f84'];
+
+// A chair, sofa or love seat from the front, with one cushion for each two cells of its width.
+function paintSeat(g, x, y, wide, [cloth, dark, light]) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const seats = Math.floor(wide / 24);
+  const each = Math.floor((across - 12) / seats);
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, cloth, left + 3, y - 25, across - 6, 13);
+  r(g, shade(cloth, 0.12), left + 3, y - 25, across - 6, 1);
+  r(g, dark, left + 6, y - 13, across - 12, 3);
+  for (let seat = 0; seat < seats; seat++) r(g, light, left + 6 + seat * each, y - 12, each - 1, 6);
+  r(g, dark, left + 6, y - 6, across - 12, 4);
+  r(g, dark, left, y - 16, 6, 14);
+  r(g, dark, left + across - 6, y - 16, 6, 14);
+  r(g, shade(dark, -0.3), left + 2, y - 2, 3, 2);
+  r(g, shade(dark, -0.3), left + across - 5, y - 2, 3, 2);
+}
+
+// The same seat from its end: the back down one side, the cushions along the other.
+function paintSeatEnd(g, x, y, wide, deep, [cloth, dark, light]) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const seats = Math.floor(deep / 24);
+  const each = Math.floor((deep - 8) / seats);
+  const back = y - 14 - deep + 4;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, dark, left + 6, back, across - 6, deep - 2);
+  for (let seat = 0; seat < seats; seat++) r(g, light, left + 8, back + 4 + seat * each, across - 10, each - 1);
+  r(g, cloth, left, back - 6, 7, deep + 2);
+  r(g, shade(cloth, 0.12), left, back - 6, 7, 1);
+  r(g, dark, left, y - 16, across, 14);
+  r(g, shade(dark, 0.14), left, y - 16, across, 1);
+  r(g, shade(dark, -0.3), left + 2, y - 2, 3, 2);
+  r(g, shade(dark, -0.3), left + across - 5, y - 2, 3, 2);
+}
+
+const paintArmchair = (g, x, y, t, wide) => paintSeat(g, x, y, wide, COUCH_CLOTH);
+const paintSofa = (g, x, y, t, wide) => paintSeat(g, x, y, wide, SOFA_CLOTH);
+
+function paintHeart(g, x, y, color) {
+  r(g, color, x, y, 2, 1);
+  r(g, color, x + 3, y, 2, 1);
+  r(g, color, x, y + 1, 5, 1);
+  r(g, color, x + 1, y + 2, 3, 1);
+  r(g, color, x + 2, y + 3, 1, 1);
+}
+
+function paintLoveSeat(g, x, y, t, wide) {
+  paintSeat(g, x, y, wide, LOVE_CLOTH);
+  paintHeart(g, x - 2, y - 21, '#ffc2d4');
+}
+
+function paintStool(g, x, y) {
+  r(g, SHADOW, x - 5, y - 2, 10, 2);
+  r(g, '#6b4628', x - 4, y - 8, 2, 7);
+  r(g, '#6b4628', x + 2, y - 8, 2, 7);
+  r(g, '#6b4628', x - 3, y - 5, 6, 1);
+  r(g, '#8a5c37', x - 5, y - 11, 10, 3);
+  r(g, '#a0703f', x - 5, y - 11, 10, 1);
+}
+
 function paintBookshelf(g, x, y) {
-  r(g, '#00000030', x - 9, y - 2, 18, 2);
-  r(g, '#4a3120', x - 8, y - 28, 16, 27);
-  r(g, '#8a5c37', x - 9, y - 30, 18, 3);
-  r(g, '#a0703f', x - 9, y - 30, 18, 1);
+  const left = x - 23;
+  r(g, SHADOW, left, y - 2, 46, 2);
+  r(g, '#4a3120', left + 1, y - 28, 44, 27);
+  r(g, '#8a5c37', left, y - 30, 46, 3);
+  r(g, '#a0703f', left, y - 30, 46, 1);
   for (let shelf = 0; shelf < 3; shelf++) {
     const top = y - 26 + shelf * 8;
-    r(g, '#2c1d12', x - 7, top, 14, 7);
-    for (let i = 0; i < 6; i++) {
+    r(g, '#2c1d12', left + 2, top, 42, 7);
+    for (let i = 0; i < 21; i++) {
+      if ((i * 7 + shelf * 5) % 11 === 0) continue;
       const tall = 4 + ((i * 2 + shelf) % 3);
-      r(g, BOOKS[(i + shelf * 2) % BOOKS.length], x - 6 + i * 2, top + 7 - tall, 2, tall);
+      r(g, BOOKS[(i + shelf * 2) % BOOKS.length], left + 2 + i * 2, top + 7 - tall, 2, tall);
     }
   }
+}
+
+function paintCabinet(g, x, y) {
+  r(g, SHADOW, x - 17, y - 2, 34, 2);
+  r(g, '#4a3120', x - 16, y - 3, 3, 2);
+  r(g, '#4a3120', x + 13, y - 3, 3, 2);
+  r(g, '#6b4628', x - 16, y - 24, 32, 21);
+  r(g, '#8a5c37', x - 17, y - 26, 34, 3);
+  r(g, '#a0703f', x - 17, y - 26, 34, 1);
+  for (const door of [x - 15, x + 1]) {
+    r(g, '#7d5231', door, y - 22, 14, 17);
+    r(g, '#6f4728', door + 2, y - 20, 10, 13);
+    r(g, '#7d5231', door + 3, y - 19, 8, 11);
+  }
+  r(g, '#ffd24d', x - 3, y - 14, 2, 2);
+  r(g, '#ffd24d', x + 1, y - 14, 2, 2);
 }
 
 function paintLamp(g, x, y, t) {
@@ -384,7 +564,7 @@ function paintLamp(g, x, y, t) {
 }
 
 function paintMonitor(g, x, y, t) {
-  r(g, '#00000030', x - 8, y - 2, 16, 2);
+  r(g, SHADOW, x - 8, y - 2, 16, 2);
   r(g, '#20283e', x - 6, y - 2, 12, 2);
   r(g, '#20283e', x - 1, y - 9, 2, 7);
   r(g, '#20283e', x - 11, y - 25, 22, 16);
@@ -398,64 +578,240 @@ function paintMonitor(g, x, y, t) {
 }
 
 function paintServerRack(g, x, y, t) {
-  r(g, '#00000030', x - 8, y - 2, 16, 2);
-  r(g, '#1b2030', x - 7, y - 30, 14, 29);
-  r(g, '#3b4158', x - 7, y - 30, 14, 2);
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#1b2030', x - 10, y - 30, 20, 29);
+  r(g, '#3b4158', x - 10, y - 30, 20, 2);
   for (let i = 0; i < 5; i++) {
     const top = y - 27 + i * 5;
-    r(g, '#2b3045', x - 6, top, 12, 4);
-    r(g, '#0d1020', x, top + 1, 5, 1);
-    r(g, '#0d1020', x, top + 2, 5, 1);
+    r(g, '#2b3045', x - 9, top, 18, 4);
+    r(g, '#0d1020', x, top + 1, 8, 1);
+    r(g, '#0d1020', x, top + 2, 8, 1);
     const blink = Math.floor(t / 410 + i * 1.7) % 3;
-    r(g, blink ? '#3ddc97' : '#1f5c47', x - 5, top + 1, 2, 2);
-    r(g, blink === 2 ? '#ffb454' : '#5c4726', x - 2, top + 1, 1, 2);
+    r(g, blink ? '#3ddc97' : '#1f5c47', x - 8, top + 1, 2, 2);
+    r(g, blink === 2 ? '#ffb454' : '#5c4726', x - 5, top + 1, 2, 2);
   }
 }
 
 // Stands on its own legs and has the same frame and tray as the one on the wall.
 function paintWhiteboard(g, x, y) {
-  r(g, '#00000030', x - 10, y - 2, 20, 2);
-  r(g, '#20283e', x - 9, y - 8, 2, 7);
-  r(g, '#20283e', x + 7, y - 8, 2, 7);
-  r(g, '#20283e', x - 12, y - 27, 24, 19);
-  r(g, '#f4f1e8', x - 11, y - 26, 22, 16);
-  r(g, '#c9a86a', x - 13, y - 9, 26, 2);
-  r(g, '#4f9dff', x - 9, y - 24, 11, 1);
-  r(g, '#4f9dff', x - 9, y - 22, 15, 1);
-  r(g, '#ff5d7a', x - 9, y - 19, 7, 1);
-  r(g, '#ff5d7a', x - 9, y - 17, 5, 1);
-  r(g, '#3ddc97', x + 2, y - 19, 7, 5);
-  r(g, '#f4f1e8', x + 3, y - 18, 5, 3);
+  r(g, SHADOW, x - 26, y - 2, 52, 2);
+  r(g, '#20283e', x - 24, y - 8, 2, 7);
+  r(g, '#20283e', x + 22, y - 8, 2, 7);
+  r(g, '#20283e', x - 28, y - 32, 56, 24);
+  r(g, '#f4f1e8', x - 27, y - 31, 54, 21);
+  r(g, '#c9a86a', x - 29, y - 9, 58, 2);
+  r(g, '#4f9dff', x - 24, y - 28, 20, 1);
+  r(g, '#4f9dff', x - 24, y - 25, 27, 1);
+  r(g, '#4f9dff', x - 24, y - 22, 14, 1);
+  r(g, '#ff5d7a', x - 24, y - 18, 18, 1);
+  r(g, '#ff5d7a', x - 24, y - 15, 10, 1);
+  r(g, '#3ddc97', x + 9, y - 28, 14, 10);
+  r(g, '#f4f1e8', x + 10, y - 27, 12, 8);
+  r(g, '#ffb454', x + 12, y - 25, 5, 1);
+  r(g, '#ffb454', x + 12, y - 22, 8, 1);
 }
 
-// The couch's cloth, cut down to one seat.
-function paintArmchair(g, x, y) {
-  r(g, '#00000030', x - 11, y - 2, 22, 2);
-  r(g, '#3f5f8c', x - 8, y - 20, 16, 11);
-  r(g, '#35527a', x - 8, y - 11, 16, 3);
-  r(g, '#5277ad', x - 7, y - 10, 14, 6);
-  r(g, '#35527a', x - 11, y - 13, 5, 11);
-  r(g, '#35527a', x + 6, y - 13, 5, 11);
-  r(g, '#2c4466', x - 7, y - 5, 14, 3);
-  r(g, '#20334e', x - 9, y - 2, 3, 2);
-  r(g, '#20334e', x + 6, y - 2, 3, 2);
+function paintEasel(g, x, y) {
+  r(g, SHADOW, x - 9, y - 2, 18, 2);
+  r(g, '#6b4628', x - 9, y - 13, 2, 11);
+  r(g, '#6b4628', x + 7, y - 13, 2, 11);
+  r(g, '#4a3120', x - 1, y - 37, 2, 34);
+  r(g, '#c9a86a', x - 11, y - 34, 22, 21);
+  r(g, '#f4f1e8', x - 10, y - 33, 20, 19);
+  r(g, '#7fd4ff', x - 9, y - 32, 18, 9);
+  r(g, '#ffd24d', x + 3, y - 31, 4, 4);
+  r(g, '#3ddc97', x - 9, y - 23, 18, 5);
+  r(g, '#2f8f5b', x - 6, y - 25, 7, 3);
+  r(g, '#ff8a3d', x - 9, y - 18, 18, 3);
+  r(g, '#6b4628', x - 12, y - 13, 24, 2);
 }
 
 // The big table's wood, with a mug someone left on it.
-function paintCoffeeTable(g, x, y, t) {
-  r(g, '#00000030', x - 12, y - 2, 24, 2);
-  r(g, '#6b4628', x - 10, y - 7, 3, 6);
-  r(g, '#6b4628', x + 7, y - 7, 3, 6);
-  r(g, '#8a5c37', x - 12, y - 12, 24, 6);
-  r(g, '#a0703f', x - 12, y - 12, 24, 1);
-  r(g, '#6f4728', x - 12, y - 7, 24, 2);
-  r(g, '#7d5231', x - 11, y - 9, 22, 1);
-  r(g, '#4f9dff', x - 8, y - 12, 8, 1);
-  r(g, '#f4f1e8', x - 7, y - 13, 7, 1);
-  r(g, '#f4f1e8', x + 3, y - 16, 5, 5);
-  r(g, '#f4f1e8', x + 8, y - 15, 1, 3);
-  r(g, '#6b4628', x + 4, y - 16, 3, 1);
-  r(g, '#fff', x + 4 + Math.floor(t / 900) % 2 * 2, y - 19, 1, 2);
+function paintCoffeeTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 7, '#8a5c37', '#6f4728', '#6b4628');
+  r(g, '#7d5231', x - wide / 2 + 2, top + deep - 9, wide - 4, 1);
+  r(g, '#4f9dff', x - 9, top + 3, 8, 6);
+  r(g, '#f4f1e8', x - 8, top + 4, 6, 1);
+  r(g, '#f4f1e8', x + 3, top + 2, 5, 5);
+  r(g, '#f4f1e8', x + 8, top + 3, 1, 3);
+  r(g, '#6b4628', x + 4, top + 2, 3, 1);
+  r(g, '#fff', x + 4 + Math.floor(t / 900) % 2 * 2, top - 2, 1, 2);
+}
+
+function paintGameTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 9, '#6b4628', '#4a3120', '#4a3120');
+  r(g, '#2f7d5b', x - wide / 2 + 4, top + 3, wide - 8, deep - 12);
+  r(g, '#3a9d73', x - wide / 2 + 4, top + 3, wide - 8, 1);
+  r(g, '#f4f1e8', x - 8, top + 6, 6, 8);
+  r(g, '#ff5d7a', x - 7, top + 8, 4, 4);
+  r(g, '#f4f1e8', x, top + 7, 6, 8);
+  r(g, '#20283e', x + 1, top + 9, 4, 4);
+  r(g, '#fff', x + 8, top + 11, 4, 4);
+  r(g, '#20283e', x + 9, top + 12, 1, 1);
+  r(g, '#20283e', x + 11, top + 14, 1, 1);
+  r(g, '#ffb454', x - 14, top + 8, 3, 3);
+  r(g, '#ff5d7a', x - 14, top + 11, 3, 3);
+  r(g, '#4f9dff', x - 11, top + 8, 3, 3);
+}
+
+function paintStandingDesk(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 20, '#a0703f', '#6f4728', '#3b4158');
+  r(g, '#3b4158', x - wide / 2 + 3, y - 3, wide - 6, 2);
+  r(g, '#2b3045', x - 7, top + 3, 14, 9);
+  r(g, Math.floor(t / 1100) % 2 ? '#7fd4ff' : '#9fe0ff', x - 6, top + 4, 12, 7);
+  r(g, '#3b4158', x - 8, top + 12, 16, 2);
+  r(g, '#f4f1e8', x + 11, top + 6, 4, 5);
+}
+
+function paintCandlelitTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 10, '#f4f1e8', '#d9d3c3', '#4a3120');
+  r(g, '#e6e0d0', x - wide / 2 + 3, y - 8, wide - 6, 3);
+  r(g, 'rgba(255,214,120,.24)', x - 13, top + 1, 26, 15);
+  for (const [i, cx] of [-7, 5].entries()) {
+    const flick = Math.floor(t / 210 + i) % 2;
+    r(g, '#c9a86a', cx - 1, top + 12, 4, 2);
+    r(g, '#fff4c2', cx, top + 6, 2, 6);
+    r(g, '#ffb454', cx, top + 3 + flick, 2, 3 - flick);
+    r(g, '#ffde59', cx, top + 5, 1, 1);
+  }
+  r(g, '#ff5d7a', x - 2, top + 16, 3, 3);
+  r(g, '#2f8f5b', x + 1, top + 18, 3, 1);
+}
+
+function paintFountain(g, x, y, t) {
+  const ripple = Math.floor(t / 420) % 4;
+  const drop = Math.floor(t / 150) % 3;
+  r(g, SHADOW, x - 17, y - 2, 34, 2);
+  r(g, '#8d8a80', x - 17, y - 30, 34, 26);
+  r(g, '#c9c4b5', x - 17, y - 30, 34, 2);
+  r(g, '#77746b', x - 17, y - 8, 34, 7);
+  r(g, '#8d8a80', x - 17, y - 8, 34, 1);
+  r(g, '#3f8fc4', x - 14, y - 27, 28, 17);
+  r(g, '#7fd4ff', x - 12 + ripple, y - 24, 6, 1);
+  r(g, '#7fd4ff', x + 4 - ripple, y - 14, 7, 1);
+  r(g, '#c9c4b5', x - 3, y - 30, 6, 17);
+  r(g, '#8d8a80', x - 3, y - 15, 6, 2);
+  r(g, '#c9c4b5', x - 8, y - 33, 16, 3);
+  r(g, '#3f8fc4', x - 6, y - 33, 12, 1);
+  r(g, '#bfe6f5', x - 1, y - 41, 2, 8);
+  r(g, '#bfe6f5', x - 6, y - 37 + drop, 1, 2);
+  r(g, '#bfe6f5', x + 5, y - 37 + (drop + 1) % 3, 1, 2);
+}
+
+function paintPiano(g, x, y, t) {
+  const left = x - 29;
+  r(g, SHADOW, left, y - 2, 58, 2);
+  r(g, '#1b1820', left + 1, y - 37, 56, 28);
+  r(g, '#3a3342', left, y - 38, 58, 3);
+  r(g, '#2b2530', left + 3, y - 33, 52, 13);
+  r(g, '#f4f1e8', x - 7, y - 32, 14, 9);
+  r(g, '#9aa3b8', x - 5, y - 30, 10, 1);
+  r(g, '#9aa3b8', x - 5, y - 28, 10, 1);
+  r(g, '#9aa3b8', x - 5, y - 26, 7, 1);
+  r(g, '#f4f1e8', left + 1, y - 18, 56, 6);
+  for (let key = 0; key < 56; key += 3) {
+    r(g, '#b9b3a3', left + 1 + key, y - 18, 1, 6);
+    if (key % 21 !== 6 && key % 21 !== 18) r(g, '#1b1820', left + 2 + key, y - 18, 2, 3);
+  }
+  r(g, '#1b1820', left + 1, y - 12, 56, 3);
+  r(g, '#1b1820', left + 3, y - 9, 3, 8);
+  r(g, '#1b1820', left + 52, y - 9, 3, 8);
+  const rise = Math.floor(t / 240) % 9;
+  if (t) r(g, '#ffd24d', x + 12, y - 42 - rise, 2, 2);
+}
+
+function paintFireplace(g, x, y, t) {
+  const left = x - 35;
+  r(g, SHADOW, left, y - 2, 70, 2);
+  r(g, '#8a4a3a', left + 2, y - 31, 66, 30);
+  for (let row = 0; row < 7; row++) {
+    r(g, '#6f3a2d', left + 2, y - 28 + row * 4, 66, 1);
+    for (let col = (row % 2) * 5; col < 66; col += 10) r(g, '#6f3a2d', left + 2 + col, y - 31 + row * 4, 1, 3);
+  }
+  r(g, '#6b4628', left, y - 35, 70, 4);
+  r(g, '#a0703f', left, y - 35, 70, 1);
+  r(g, '#141014', x - 17, y - 26, 34, 25);
+  r(g, '#c9a86a', x - 18, y - 27, 36, 1);
+  r(g, '#4a3120', x - 12, y - 5, 24, 3);
+  r(g, '#2c1d12', x - 9, y - 3, 18, 2);
+  const flick = Math.floor(t / 140);
+  for (let i = 0; i < 6; i++) {
+    const tall = 8 + ((flick + i * 3) % 5) * 2;
+    const flame = x - 13 + i * 5;
+    r(g, '#ff8a3d', flame, y - 5 - tall, 4, tall);
+    r(g, '#ffde59', flame + 1, y - 5 - tall + 4, 2, tall - 4);
+  }
+  r(g, 'rgba(255,160,70,.13)', x - 30, y - 1, 60, 3);
+  r(g, '#c9a86a', x - 26, y - 41, 4, 6);
+  r(g, '#ffb454', x + 21, y - 39, 6, 4);
+}
+
+function paintAquarium(g, x, y, t) {
+  const left = x - 35;
+  r(g, SHADOW, left, y - 2, 70, 2);
+  r(g, '#4a3120', left + 1, y - 13, 68, 12);
+  r(g, '#6b4628', left + 1, y - 13, 68, 2);
+  r(g, '#20283e', left, y - 42, 70, 29);
+  r(g, '#2a86b8', left + 1, y - 41, 68, 27);
+  r(g, '#55b4de', left + 1, y - 41, 68, 3);
+  r(g, '#d8c7a3', left + 1, y - 17, 68, 3);
+  for (const [dx, tall] of [[6, 10], [10, 15], [13, 8], [50, 13], [54, 9], [61, 14]]) r(g, '#2f8f5b', left + dx, y - 17 - tall, 2, tall);
+  for (const [i, color] of ['#ffb454', '#ff5d7a', '#ffd24d', '#f4f1e8'].entries()) {
+    const swim = (t / (70 + i * 34) + i * 17) % 58;
+    const fish = left + 6 + Math.floor(swim);
+    const level = y - 36 + i * 5 + (Math.floor(swim / 9) % 2);
+    r(g, color, fish, level, 5, 3);
+    r(g, color, fish - 2, level - 1, 2, 5);
+    r(g, '#1b2030', fish + 3, level, 1, 1);
+  }
+  const bubble = Math.floor(t / 230) % 20;
+  r(g, '#bfe6f5', left + 34, y - 18 - bubble, 1, 1);
+  r(g, '#bfe6f5', left + 44, y - 18 - (bubble + 9) % 20, 2, 2);
+}
+
+function paintJukebox(g, x, y, t) {
+  const beat = Math.floor(t / 320);
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#7a2b3a', x - 10, y - 27, 20, 26);
+  r(g, '#7a2b3a', x - 8, y - 31, 16, 4);
+  r(g, '#a23a4e', x - 5, y - 33, 10, 2);
+  r(g, '#ffd24d', x - 10, y - 27, 1, 26);
+  r(g, '#ffd24d', x + 9, y - 27, 1, 26);
+  r(g, '#ffd24d', x - 8, y - 31, 16, 1);
+  r(g, '#0d1020', x - 6, y - 29, 12, 9);
+  r(g, '#f4f1e8', x - 4, y - 26, 8, 1);
+  r(g, '#f4f1e8', x - 4, y - 23, 8, 1);
+  for (let i = 0; i < 4; i++) r(g, BOOKS[(i + beat) % BOOKS.length], x - 7 + i * 4, y - 18, 3, 5);
+  r(g, '#20283e', x - 7, y - 11, 14, 7);
+  for (let i = 0; i < 3; i++) r(g, '#4a4f66', x - 6, y - 10 + i * 2, 12, 1);
+}
+
+function paintRoseArch(g, x, y, t) {
+  const left = x - 34;
+  const right = x + 30;
+  r(g, SHADOW, left, y - 2, 68, 2);
+  r(g, '#8a6b4a', left, y - 44, 4, 43);
+  r(g, '#8a6b4a', right, y - 44, 4, 43);
+  r(g, '#8a6b4a', left + 3, y - 49, 62, 5);
+  r(g, '#8a6b4a', left + 11, y - 54, 46, 5);
+  r(g, '#a0845f', left + 11, y - 54, 46, 1);
+  for (let i = 0; i < 9; i++) {
+    r(g, '#2f8f5b', left - 1, y - 8 - i * 5, 6, 3);
+    r(g, '#2f8f5b', right - 1, y - 6 - i * 5, 6, 3);
+    r(g, '#3fb573', left + 8 + i * 7, y - 53 + (i % 2) * 7, 6, 3);
+  }
+  const sway = Math.floor(t / 1300) % 2;
+  for (const post of [left, right]) {
+    for (const up of [12, 26, 38]) {
+      r(g, '#ff5d7a', post + sway, y - up, 4, 4);
+      r(g, '#c9344e', post + sway + 1, y - up + 1, 2, 2);
+    }
+  }
+  for (let i = 0; i < 8; i++) {
+    const rose = left + 9 + i * 7;
+    r(g, i % 2 ? '#ff8fa8' : '#ff5d7a', rose, y - 51 + (i % 2) * 5, 4, 4);
+    r(g, '#c9344e', rose + 1, y - 50 + (i % 2) * 5, 2, 2);
+  }
 }
 
 function paintRubberDuck(g, x, y, t) {
@@ -473,7 +829,7 @@ function paintRubberDuck(g, x, y, t) {
 }
 
 function paintTrophy(g, x, y, t) {
-  r(g, '#00000030', x - 7, y - 2, 14, 2);
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
   r(g, '#4a3120', x - 6, y - 7, 12, 6);
   r(g, '#6b4628', x - 6, y - 7, 12, 1);
   r(g, '#c9a86a', x - 2, y - 5, 4, 2);
@@ -493,20 +849,309 @@ function paintTrophy(g, x, y, t) {
   r(g, '#fff4c2', x - 3 + Math.floor(t / 700) % 6, y - 22, 1, 4);
 }
 
+// The word on the quiet sign, in dots twice the size of the room's own, because a phone draws the
+// room smaller than its pixels and a thinner letter would drop out. A sign stops bots, so it has to
+// be read by anyone who can see the room.
+const QUIET_WORD = [
+  '### # # ### ### ###',
+  '# # # #  #  #    # ',
+  '# # # #  #  ##   # ',
+  '### # #  #  #    # ',
+  '  # ### ### ###  # ',
+].flatMap((line, row) => [...line].flatMap((dot, col) => (dot === '#' ? [[col * 2, row * 2]] : [])));
+const SIGN_WIDE = 46;
+
+// Its board is wider than the cell it stands on, so at the edge of the room the board stays in view.
+function paintQuietSign(g, x, y) {
+  const board = Math.min(W - SIGN_WIDE / 2, Math.max(SIGN_WIDE / 2, x));
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#20283e', x - 5, y - 3, 10, 2);
+  r(g, '#3b4158', x - 1, y - 14, 3, 12);
+  r(g, '#20283e', board - 23, y - 32, SIGN_WIDE, 19);
+  r(g, '#fff', board - 22, y - 31, SIGN_WIDE - 2, 17);
+  r(g, '#c8342c', board - 21, y - 30, SIGN_WIDE - 4, 15);
+  for (const [dx, dy] of QUIET_WORD) r(g, '#fff', board - 19 + dx, y - 28 + dy, 2, 2);
+}
+
+// The Halloween pack. A flame holds still and a ghost stops bobbing for someone who asked for less
+// motion, the same as everything else here.
+
+const FLAME = ['#ffde59', '#ffb454', '#fff0b8'];
+
+function paintPumpkin(g, x, y, t) {
+  const flicker = Math.floor(t / 170) % 3;
+  const lit = FLAME[flicker];
+  const glow = `rgba(255,150,50,${flicker === 1 ? 0.07 : 0.11})`;
+  r(g, glow, x - 12, y - 11, 24, 8);
+  r(g, glow, x - 9, y - 15, 18, 15);
+  r(g, SHADOW, x - 9, y - 1, 18, 2);
+  r(g, '#b4501a', x - 9, y - 11, 18, 9);
+  r(g, '#b4501a', x - 7, y - 13, 14, 13);
+  r(g, '#e8802a', x - 8, y - 11, 16, 9);
+  r(g, '#e8802a', x - 6, y - 13, 12, 12);
+  r(g, '#d0691f', x - 4, y - 13, 1, 12);
+  r(g, '#d0691f', x + 3, y - 13, 1, 12);
+  r(g, '#ffae5c', x - 7, y - 11, 1, 4);
+  r(g, '#4f7a35', x - 1, y - 16, 3, 3);
+  r(g, '#3a5c28', x + 1, y - 17, 2, 2);
+  r(g, '#5a2a10', x - 6, y - 10, 4, 3);
+  r(g, '#5a2a10', x + 2, y - 10, 4, 3);
+  r(g, '#5a2a10', x - 6, y - 6, 12, 4);
+  r(g, lit, x - 5, y - 9, 3, 2);
+  r(g, lit, x - 4, y - 10, 1, 1);
+  r(g, lit, x + 2, y - 9, 3, 2);
+  r(g, lit, x + 3, y - 10, 1, 1);
+  r(g, lit, x - 5, y - 5, 10, 2);
+  r(g, '#5a2a10', x - 3, y - 5, 2, 1);
+  r(g, '#5a2a10', x + 1, y - 4, 2, 1);
+}
+
+function paintGhost(g, x, y, t) {
+  const bob = Math.round(Math.sin(t / 640) * 2);
+  const sway = Math.floor(t / 320) % 2;
+  const sheet = '#ece9f6';
+  const fold = '#c4c1da';
+  const top = y - 31 + bob;
+  r(g, SHADOW, x - 6, y - 1, 12, 2);
+  r(g, sheet, x - 4, top, 8, 1);
+  r(g, sheet, x - 6, top + 1, 12, 2);
+  r(g, sheet, x - 7, top + 3, 14, 18);
+  r(g, fold, x + 5, top + 5, 2, 16);
+  r(g, sheet, x - 9, top + 10 - sway, 2, 5);
+  r(g, sheet, x + 7, top + 10 - sway, 2, 5);
+  for (let i = 0; i < 3; i++) {
+    const tail = 2 + ((i + sway) % 2) * 2;
+    r(g, i === 2 ? fold : sheet, x - 7 + i * 5, top + 21, 4, tail);
+  }
+  r(g, '#1b2030', x - 4, top + 7, 2, 3);
+  r(g, '#1b2030', x + 2, top + 7, 2, 3);
+  r(g, '#1b2030', x - 1, top + 12, 2, 3);
+  r(g, '#f4b6c8', x - 6, top + 11, 2, 1);
+  r(g, '#f4b6c8', x + 4, top + 11, 2, 1);
+}
+
+function paintCauldron(g, x, y, t) {
+  const flicker = Math.floor(t / 150) % 3;
+  const glow = `rgba(120,240,140,${flicker === 1 ? 0.06 : 0.09})`;
+  r(g, glow, x - 11, y - 27, 22, 8);
+  r(g, glow, x - 7, y - 32, 14, 13);
+  r(g, SHADOW, x - 11, y - 1, 22, 2);
+  r(g, '#14121c', x - 8, y - 5, 2, 5);
+  r(g, '#14121c', x + 6, y - 5, 2, 5);
+  r(g, '#ff8a3d', x - 5, y - 3, 10, 3);
+  r(g, FLAME[flicker], x - 3 + flicker, y - 3, 3, 2);
+  r(g, '#2a2733', x - 10, y - 16, 20, 11);
+  r(g, '#2a2733', x - 8, y - 6, 16, 2);
+  r(g, '#191722', x + 6, y - 16, 4, 11);
+  r(g, '#454252', x - 8, y - 15, 2, 7);
+  r(g, '#3f3c4c', x - 11, y - 18, 22, 3);
+  r(g, '#5a5768', x - 11, y - 18, 22, 1);
+  r(g, '#5fe07a', x - 9, y - 19, 18, 2);
+  r(g, '#a6f5a0', x - 6 + flicker * 3, y - 19, 3, 1);
+  for (let i = 0; i < 3; i++) {
+    const rise = (t / 45 + i * 9) % 13;
+    r(g, '#8df09a', x - 5 + i * 4 + (Math.floor(rise / 4) % 2), y - 20 - rise, 2, 2);
+  }
+}
+
+// R, I and P, three pixels wide and five tall.
+const RIP = [[0, 7, 5, 6, 5, 5], [4, 7, 2, 2, 2, 7], [8, 7, 5, 7, 4, 4]];
+
+function paintGravestone(g, x, y) {
+  r(g, SHADOW, x - 9, y - 2, 18, 2);
+  r(g, '#5a4634', x - 9, y - 3, 18, 3);
+  r(g, '#8b8d99', x - 7, y - 20, 14, 18);
+  r(g, '#8b8d99', x - 5, y - 22, 10, 2);
+  r(g, '#a9abb8', x - 7, y - 20, 2, 17);
+  r(g, '#a9abb8', x - 5, y - 22, 10, 1);
+  r(g, '#6b6d79', x + 5, y - 20, 2, 17);
+  for (const [left, ...rows] of RIP) {
+    rows.forEach((bits, row) => {
+      for (let bit = 0; bit < 3; bit++) {
+        if (bits & (4 >> bit)) r(g, '#4c4e5a', x - 6 + left + bit, y - 18 + row, 1, 1);
+      }
+    });
+  }
+  r(g, '#4f7a35', x - 9, y - 5, 2, 3);
+  r(g, '#3f6a30', x - 4, y - 4, 2, 2);
+  r(g, '#4f7a35', x + 3, y - 4, 2, 2);
+  r(g, '#3f6a30', x + 7, y - 5, 2, 3);
+}
+
+function paintSkeleton(g, x, y, t) {
+  const bone = '#ece7d8';
+  const shadow = '#b9b4a2';
+  const hollow = '#1b2030';
+  const wave = Math.floor(t / 420) % 2;
+  r(g, SHADOW, x - 7, y - 1, 14, 2);
+  r(g, bone, x - 3, y - 11, 2, 10);
+  r(g, bone, x + 1, y - 11, 2, 10);
+  r(g, bone, x - 4, y - 2, 3, 2);
+  r(g, bone, x + 1, y - 2, 3, 2);
+  r(g, shadow, x - 4, y - 13, 8, 2);
+  r(g, shadow, x - 1, y - 22, 2, 9);
+  for (let i = 0; i < 3; i++) r(g, bone, x - 4, y - 22 + i * 3, 8, 2);
+  r(g, bone, x - 6, y - 22, 2, 1);
+  r(g, bone, x - 6, y - 22, 1, 10);
+  r(g, bone, x + 4, y - 22, 3, 1);
+  r(g, bone, x + 6, y - 28 + wave, 1, 7 - wave);
+  r(g, bone, x + 5 + wave * 2, y - 30 + wave, 2, 2);
+  r(g, bone, x - 4, y - 31, 8, 6);
+  r(g, bone, x - 3, y - 32, 6, 1);
+  r(g, shadow, x - 3, y - 25, 6, 2);
+  r(g, hollow, x - 3, y - 29, 2, 2);
+  r(g, hollow, x + 1, y - 29, 2, 2);
+  r(g, hollow, x, y - 27, 1, 1);
+  r(g, hollow, x - 2, y - 24, 1, 1);
+  r(g, hollow, x, y - 24, 1, 1);
+  r(g, hollow, x + 2, y - 24, 1, 1);
+}
+
 // These are listed words on the server. A word this page doesn't know is left out, so a newer
-// server can't break an older page.
+// server can't break an older page. `rise` is how far up from its front edge it's painted, and a
+// `sign` changes what bots can do, so it's painted over everything else.
 const ITEMS = {
-  bookshelf: paintBookshelf,
-  lamp: paintLamp,
-  plant: paintPlant,
-  monitor: paintMonitor,
-  server_rack: paintServerRack,
-  whiteboard: paintWhiteboard,
-  armchair: paintArmchair,
-  coffee_table: paintCoffeeTable,
-  rubber_duck: paintRubberDuck,
-  trophy: paintTrophy,
+  plant: { paint: paintPlant, rise: 26 },
+  lamp: { paint: paintLamp, rise: 39 },
+  rubber_duck: { paint: paintRubberDuck, rise: 15 },
+  stool: { paint: paintStool, rise: 11 },
+  coffee_table: { paint: paintCoffeeTable, rise: 25 },
+  bookshelf: {
+    paint: paintBookshelf,
+    side: endOf(30, '#8a5c37', '#4a3120', (g, x, top, deep) => {
+      for (let i = 0; i * 4 < deep - 3; i++) r(g, BOOKS[i % BOOKS.length], x + 2, top + 2 + i * 4, 2, 3);
+    }),
+    rise: 30,
+  },
+  cabinet: {
+    paint: paintCabinet,
+    side: endOf(26, '#8a5c37', '#6b4628', (g, x, top, deep) => {
+      r(g, '#a0703f', x + 3, top, 1, deep);
+      r(g, '#ffd24d', x + 3, top + deep + 13, 2, 2);
+    }),
+    rise: 26,
+  },
+  whiteboard: { paint: paintWhiteboard, side: edgeOf(30, '#f4f1e8', '#20283e'), rise: 32 },
+  quiet: { paint: paintQuietSign, rise: 32, sign: true },
+  monitor: { paint: paintMonitor, side: edgeOf(22, '#3b4158', '#20283e'), rise: 25 },
+  armchair: {
+    paint: paintArmchair,
+    side: (g, x, y, t, wide, deep) => paintSeatEnd(g, x, y, wide, deep, COUCH_CLOTH),
+    rise: 25,
+  },
+  easel: { paint: paintEasel, side: edgeOf(30, '#f4f1e8', '#6b4628'), rise: 37 },
+  game_table: { paint: paintGameTable, rise: 34 },
+  standing_desk: { paint: paintStandingDesk, rise: 38 },
+  sofa: {
+    paint: paintSofa,
+    side: (g, x, y, t, wide, deep) => paintSeatEnd(g, x, y, wide, deep, SOFA_CLOTH),
+    rise: 25,
+  },
+  fountain: { paint: paintFountain, rise: 41 },
+  piano: {
+    paint: paintPiano,
+    side: endOf(34, '#3a3342', '#1b1820', (g, x, top, deep) => {
+      r(g, '#f4f1e8', x + 5, top + 4, 5, deep - 8);
+      for (let key = 0; key < deep - 8; key += 3) r(g, '#b9b3a3', x + 5, top + 4 + key, 5, 1);
+    }),
+    rise: 38,
+  },
+  candlelit_table: { paint: paintCandlelitTable, rise: 34 },
+  server_rack: {
+    paint: paintServerRack,
+    side: endOf(30, '#3b4158', '#1b2030', (g, x, top, deep) => {
+      for (let i = 0; i < 3; i++) r(g, '#0d1020', x - 3, top + 5 + i * 5, 6, 2);
+    }),
+    rise: 30,
+  },
+  fireplace: {
+    paint: paintFireplace,
+    side: endOf(34, '#6b4628', '#8a4a3a', (g, x, top, deep, t) => {
+      r(g, '#a0703f', x - 5, top, 10, 1);
+      for (let row = 0; row < 7; row++) r(g, '#6f3a2d', x - 5, top + deep + 3 + row * 4, 10, 1);
+      r(g, Math.floor(t / 140) % 2 ? '#ff8a3d' : '#ffb454', x + 4, top + 8, 1, deep - 16);
+    }),
+    rise: 41,
+  },
+  aquarium: {
+    paint: paintAquarium,
+    side: endOf(40, '#55b4de', '#2a86b8', (g, x, top, deep) => {
+      r(g, '#20283e', x - 11, top, 22, 1);
+      r(g, '#4a3120', x - 11, top + deep + 27, 22, 12);
+      r(g, '#6b4628', x - 11, top + deep + 27, 22, 2);
+      r(g, '#d8c7a3', x - 11, top + deep + 23, 22, 3);
+    }),
+    rise: 42,
+  },
+  trophy: { paint: paintTrophy, rise: 24 },
+  jukebox: {
+    paint: paintJukebox,
+    side: endOf(30, '#a23a4e', '#7a2b3a', (g, x, top, deep) => {
+      r(g, '#ffd24d', x - 5, top + deep, 1, 29);
+      r(g, '#ffd24d', x + 4, top + deep, 1, 29);
+    }),
+    rise: 33,
+  },
+  love_seat: {
+    paint: paintLoveSeat,
+    side: (g, x, y, t, wide, deep) => paintSeatEnd(g, x, y, wide, deep, LOVE_CLOTH),
+    rise: 25,
+  },
+  rose_arch: {
+    paint: paintRoseArch,
+    side: (g, x, y, t, wide, deep) => {
+      paintEnd(g, x, y, 4, deep - 2, 48, '#8a6b4a', '#8a6b4a');
+      r(g, '#8a6b4a', x - 5, y - 2, 10, 2);
+      r(g, '#8a6b4a', x - 5, y - deep + 1, 10, 2);
+      for (let i = 0; i * 9 < deep - 6; i++) {
+        r(g, '#2f8f5b', x - 4, y - 54 - i * 9, 8, 5);
+        r(g, i % 2 ? '#ff8fa8' : '#ff5d7a', x - 2, y - 53 - i * 9, 4, 4);
+      }
+    },
+    rise: 54,
+  },
+  pumpkin: { paint: paintPumpkin, rise: 17 },
+  ghost: { paint: paintGhost, rise: 33 },
+  cauldron: { paint: paintCauldron, rise: 33 },
+  gravestone: { paint: paintGravestone, rise: 22, words: true },
+  skeleton: { paint: paintSkeleton, rise: 32 },
 };
+
+// Where an item stands, in the room's own pixels. `w` and `h` are cells as it's turned now, and
+// `x` and `y` are its back left corner, as the server has it.
+function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
+  const wide = w * FLOOR_CELL;
+  const deep = h * FLOOR_CELL;
+  const left = x * FLOOR_CELL;
+  const top = FLOOR_TOP + y * FLOOR_CELL;
+  return { ...ITEMS[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
+}
+
+// Facing 2 and 3 are the other way round. Words stay readable, so a sign or a kind with `words` never is.
+function paintItem(g, { paint, side, sign, words, x, y, wide, deep, facing }, t) {
+  const flip = facing >= 2 && !sign && !words;
+  if (flip) {
+    g.save();
+    g.translate(x * 2, 0);
+    g.scale(-1, 1);
+  }
+  (facing % 2 && side ? side : paint)(g, x, y, t, wide, deep);
+  if (flip) g.restore();
+}
+
+// A picture of a kind for the catalog, on a canvas of its own, drawn still. Null for a word this page
+// doesn't know.
+export function itemPicture(item, w, h) {
+  if (!Object.hasOwn(ITEMS, item)) return null;
+  const { paint, rise, sign } = ITEMS[item];
+  const wide = w * FLOOR_CELL;
+  const deep = h * FLOOR_CELL;
+  const canvas = document.createElement('canvas');
+  canvas.width = (sign ? SIGN_WIDE : Math.max(wide, 24)) + 2;
+  canvas.height = Math.max(rise, deep) + 2;
+  paint(canvas.getContext('2d'), canvas.width / 2, canvas.height - 1, 0, wide, deep);
+  return canvas;
+}
 
 function paintTable(g, lit) {
   r(g, '#00000030', 176, 168, 132, 4);
@@ -692,6 +1337,14 @@ function drawPerson(g, person, t) {
 const TAG_OVER_HEAD = '4.7cqw';
 const TAG_RAISED = 'calc(4.7cqw + 1.8em)';
 
+// A box drawn round the cells something takes.
+function outline(g, { left, top, wide, deep }, color) {
+  r(g, color, left, top, wide, 1);
+  r(g, color, left, top + deep - 1, wide, 1);
+  r(g, color, left, top, 1, deep);
+  r(g, color, left + wide - 1, top, 1, deep);
+}
+
 export class Room {
   constructor(stage) {
     this.stage = stage;
@@ -713,6 +1366,9 @@ export class Room {
     this.peopleSeen = false;
     this.items = [];
     this.itemsKey = '';
+    this.ghost = null;
+    this.kept = [];
+    this.chosen = null;
     this.confetti = [];
     this.last = performance.now();
     this.calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -739,14 +1395,11 @@ export class Room {
     const known = items.filter(({ item, x, y }) => Object.hasOwn(ITEMS, item)
       && Number.isInteger(x) && Number.isInteger(y)
       && x >= 0 && x < FLOOR_COLS && y >= 0 && y < FLOOR_ROWS);
-    const key = known.map(({ item, x, y }) => `${item}:${x}:${y}`).join();
+    const key = known.map(({ id, item, x, y, facing }) => `${id}:${item}:${x}:${y}:${facing}`).join();
     if (key === this.itemsKey) return;
     this.itemsKey = key;
-    this.items = known.map(({ item, x, y }) => ({
-      paint: ITEMS[item],
-      x: x * FLOOR_CELL + FLOOR_CELL / 2,
-      y: FLOOR_TOP + (y + 1) * FLOOR_CELL,
-    }));
+    this.items = known.map(standing);
+    this.describe();
     fillGrid(this.look.hidden, this.items);
     // Whoever's walking takes the new way round, and whoever something landed on steps off it.
     for (const who of [...this.bots.values(), ...this.people.values()]) {
@@ -762,6 +1415,34 @@ export class Room {
     const x = Math.floor(((clientX - box.left) / box.width) * W / FLOOR_CELL);
     const y = Math.floor((((clientY - box.top) / box.height) * H - FLOOR_TOP) / FLOOR_CELL);
     return x >= 0 && x < FLOOR_COLS && y >= 0 && y < FLOOR_ROWS ? { x, y } : null;
+  }
+
+  // The id of what's drawn at a place on the page, with the nearest thing first. A small item is
+  // tried a little wider than its cell, or nobody could put a finger on it.
+  itemAt(clientX, clientY) {
+    const box = this.canvas.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    const x = ((clientX - box.left) / box.width) * W;
+    const y = ((clientY - box.top) / box.height) * H;
+    const under = this.items.filter((item) => {
+      const spare = Math.max(0, (24 - item.wide) / 2);
+      const reach = item.facing % 2 ? item.deep + item.rise - item.wide : Math.max(item.rise, item.deep);
+      return x >= item.left - spare && x < item.left + item.wide + spare && y >= item.y - reach && y < item.y;
+    });
+    return under.sort((a, b) => Number(Boolean(b.sign)) - Number(Boolean(a.sign)) || b.y - a.y)[0]?.id ?? null;
+  }
+
+  // What someone is about to put down: { item, x, y, w, h, facing, ok, lifted }, in cells, or null.
+  // `lifted` is the id of the placed item it is, if it's being moved. `kept` is the boxes of cells
+  // that stay clear, to shade while something's in hand.
+  setGhost(ghost, kept = []) {
+    this.ghost = ghost && Object.hasOwn(ITEMS, ghost.item) ? { ...standing(ghost), ok: ghost.ok, lifted: ghost.lifted } : null;
+    this.kept = kept;
+  }
+
+  // The placed item that build mode has selected, by id.
+  setChosen(id) {
+    this.chosen = id;
   }
 
   // Called on every render, so it only moves someone who has just come in.
@@ -827,9 +1508,10 @@ export class Room {
     for (const bot of this.bots.values()) counts[bot.state] += 1;
     const people = this.people.size;
     const here = people ? ` ${people} ${people === 1 ? 'person' : 'people'} here.` : '';
+    const quiet = this.items.some((item) => item.sign) ? ' A quiet sign is up, so bots can\'t post here.' : '';
     this.canvas.setAttribute(
       'aria-label',
-      `Hangout room: ${counts.active} bots at the table, ${counts.idle} wandering, ${counts.offline} napping.${here}`,
+      `Hangout room: ${counts.active} bots at the table, ${counts.idle} wandering, ${counts.offline} napping.${here}${quiet}`,
     );
   }
 
@@ -1072,6 +1754,30 @@ export class Room {
     if (person.wait <= 0) this.placePerson(person, 'walk');
   }
 
+  // Something being moved stays faintly where it was until it lands.
+  drawItem(g, item, t) {
+    g.globalAlpha = item.id === this.ghost?.lifted ? 0.35 : 1;
+    paintItem(g, item, t);
+    g.globalAlpha = 1;
+  }
+
+  // What build mode adds over the room: the selected item, the cells that stay clear, and what's in
+  // hand, with its cells green where it fits and red where it doesn't.
+  drawHand(g, t) {
+    const chosen = this.items.find((item) => item.id === this.chosen);
+    if (chosen) outline(g, chosen, '#ffde59');
+    if (!this.ghost) return;
+    for (const { x, y, w, h } of this.kept) {
+      r(g, 'rgba(255,93,122,.14)', x * FLOOR_CELL, FLOOR_TOP + y * FLOOR_CELL, w * FLOOR_CELL, h * FLOOR_CELL);
+    }
+    const { ok, left, top, wide, deep } = this.ghost;
+    r(g, ok ? 'rgba(61,220,151,.4)' : 'rgba(255,60,90,.5)', left, top, wide, deep);
+    g.globalAlpha = 0.85;
+    paintItem(g, this.ghost, t);
+    g.globalAlpha = 1;
+    outline(g, this.ghost, ok ? '#3ddc97' : '#ff3c5a');
+  }
+
   frame(time) {
     if (!this.running) return;
     const dt = Math.min(0.1, (time - this.last) / 1000);
@@ -1111,12 +1817,15 @@ export class Room {
     const still = this.calm ? 0 : time;
     const scene = [
       ...props,
-      ...this.items.map((item) => ({ y: item.y, draw: () => item.paint(g, item.x, item.y, still) })),
+      ...this.items.filter((item) => !item.sign).map((item) => ({ y: item.y, draw: () => this.drawItem(g, item, still) })),
       ...bots.map((bot) => ({ y: bot.y, draw: () => drawBot(g, bot, time) })),
       ...people.map((person) => ({ y: person.y, draw: () => drawPerson(g, person, still) })),
     ];
     scene.sort((a, b) => a.y - b.y);
     for (const item of scene) item.draw();
+    // A sign changes what bots can do here, so nothing and nobody ever stands in front of it.
+    for (const item of this.items) if (item.sign) this.drawItem(g, item, still);
+    this.drawHand(g, still);
 
     this.confetti = this.confetti.filter((bit) => bit.life > 0);
     for (const bit of this.confetti) {

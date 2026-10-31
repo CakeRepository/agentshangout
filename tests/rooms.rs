@@ -337,7 +337,10 @@ async fn the_grid_is_forty_by_fourteen_and_the_catalog_has_the_kinds_with_art() 
     for corner in [(0, 0), (39, 0), (39, 13), (0, 13)] {
         server.item(&ann, &room, "plant", corner).await;
     }
-    for art in ["bookshelf", "lamp", "plant", "monitor", "server_rack", "whiteboard", "armchair", "coffee_table", "rubber_duck", "trophy"] {
+    for art in [
+        "bookshelf", "lamp", "plant", "monitor", "server_rack", "whiteboard", "armchair", "coffee_table", "rubber_duck", "trophy",
+        "pumpkin", "ghost", "cauldron", "gravestone", "skeleton",
+    ] {
         assert!(items::kind_of(art).is_some(), "{art} has art and isn't in the catalog");
     }
 }
@@ -529,6 +532,7 @@ async fn town_squares_living_rooms_and_porches_have_no_items() {
 
     for room in [&square, &living_room, &porch] {
         server.place(&ann.key, room, "plant", (30, 2)).await.refused(StatusCode::NOT_FOUND);
+        server.post(&ann.key, &pack_path(room), json!({})).await.refused(StatusCode::NOT_FOUND);
         let snapshot = server.snapshot(&ann.key, room).await;
         assert_eq!(snapshot["items"], json!([]));
         assert!(snapshot["room_mood"].is_null());
@@ -595,6 +599,16 @@ fn the_nap_spots_kept_clear_are_the_ones_in_the_room_page() {
         let cell = (x / 12, (y - 84) / 12);
         let kept = items::FIXED.iter().any(|fixed| (fixed.x, fixed.y, fixed.w, fixed.h) == (cell.0, cell.1, 1, 1));
         assert!(kept, "{cell:?} isn't kept clear");
+    }
+}
+
+// An item with no art doesn't draw, and a quiet sign nobody can see is a rule nobody knows about (I17).
+
+#[test]
+fn the_room_page_draws_every_kind_in_the_catalog() {
+    let page = include_str!("../web/room.js");
+    for kind in items::CATALOG {
+        assert!(page.contains(&format!("  {}: {{", kind.kind)), "web/room.js has no art for {}", kind.kind);
     }
 }
 
@@ -2122,6 +2136,254 @@ async fn nothing_ranks_or_lists_a_rooms_beauty() {
     let locked = catalog["items"].as_array().unwrap().iter().filter(|item| item["unlocked"] == false).count();
     assert!(locked > 0);
     server.place(&lonely.key, &lonely_room, "monitor", spot(20)).await.refused(StatusCode::FORBIDDEN);
+}
+
+// Packs
+
+fn halloween() -> &'static items::Pack {
+    items::pack_of("halloween").unwrap()
+}
+
+fn pack_path(room: &str) -> String {
+    format!("/api/floors/{room}/packs/halloween")
+}
+
+/// What stands on a floor and where, in an order that doesn't depend on when it was placed.
+async fn kinds_on(server: &Server, who: &Who, room: &str) -> Vec<(String, Value, Value)> {
+    let snapshot = server.snapshot(&who.key, room).await;
+    let mut found: Vec<(String, Value, Value)> = snapshot["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| (text(&item["kind"]), item["x"].clone(), item["y"].clone()))
+        .collect();
+    found.sort_by_key(|(kind, x, y)| (kind.clone(), x.to_string(), y.to_string()));
+    found
+}
+
+async fn look_of(server: &Server, who: &Who, room: &str) -> (Value, Value) {
+    let floor = server.snapshot(&who.key, room).await["floor"]["floor"].clone();
+    (floor["paint"].clone(), floor["flooring"].clone())
+}
+
+// I26
+
+#[test]
+fn a_pack_is_fixed_in_the_code_and_the_room_page_can_draw_all_of_it() {
+    let names: Vec<&str> = items::PACKS.iter().map(|pack| pack.pack).collect();
+    assert_eq!(names, ["halloween"]);
+    assert!(items::pack_of("<script>").is_none());
+
+    let page = include_str!("../web/room.js");
+    let pack = halloween();
+    assert!(page.contains(&format!("  {}: {{ upper", pack.paint)), "no art for {}", pack.paint);
+    assert!(page.contains(&format!("  {}: {{ a:", pack.flooring)), "no art for {}", pack.flooring);
+    for part in pack.items {
+        assert!(items::kind_of(part.kind).is_some(), "{} isn't in the catalog", part.kind);
+        assert!(page.contains(&format!("  {}: {{ paint: ", part.kind)), "no art for {}", part.kind);
+    }
+}
+
+// I27
+
+#[tokio::test]
+async fn only_someone_who_runs_the_space_and_is_on_the_floor_puts_a_pack_up_or_down() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let (_, eve) = server.someone("Eve").await;
+    let path = pack_path(&room);
+
+    for (token, status) in [
+        (&eve.key, StatusCode::NOT_FOUND),
+        (&bo.key, StatusCode::FORBIDDEN),
+        (&scout.token, StatusCode::FORBIDDEN),
+    ] {
+        server.post(token, &path, json!({})).await.refused(status);
+        server.delete(token, &path).await.refused(status);
+    }
+    assert!(kinds_on(&server, &ann, &room).await.is_empty());
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("dusk"), json!("oak")));
+
+    // Someone who walked in can't change anything here.
+    server.open(&ann, &room).await.ok();
+    server.walk_in(&eve, &room).await;
+    server.post(&eve.key, &path, json!({})).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&eve.key, &path).await.refused(StatusCode::FORBIDDEN);
+
+    // Who's asking comes before what they asked, and a word that isn't a pack is refused.
+    let (_, cy) = server.someone("Cy").await;
+    server.post(&cy.key, &format!("/api/floors/{room}/packs/easter"), json!({})).await.refused(StatusCode::NOT_FOUND);
+    server.post(&ann.key, &format!("/api/floors/{room}/packs/easter"), json!({})).await.refused(StatusCode::BAD_REQUEST);
+    server.delete(&ann.key, &format!("/api/floors/{room}/packs/easter")).await.refused(StatusCode::BAD_REQUEST);
+
+    server.post(&ann.key, &path, json!({})).await.ok();
+    assert_eq!(kinds_on(&server, &ann, &room).await.len(), halloween().items.len());
+}
+
+// I27: running a space from another floor reaches the look and nothing else (I2).
+
+#[tokio::test]
+async fn running_a_space_from_another_floor_isnt_enough_to_put_a_pack_up() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    server.leave(&ann, &room).await;
+
+    // Bo runs the space from the first floor and has never been upstairs.
+    server.post(&bo.key, &pack_path(&upstairs), json!({})).await.refused(StatusCode::FORBIDDEN);
+    server.delete(&bo.key, &pack_path(&upstairs)).await.refused(StatusCode::FORBIDDEN);
+    let space = server.get(&bo.key, &format!("/api/spaces/{room}")).await.ok().to_string();
+    assert!(!space.contains(halloween().paint), "{space}");
+}
+
+// I28
+
+#[tokio::test]
+async fn a_pack_sets_the_look_and_places_its_items_around_whats_already_there() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let pack = halloween();
+    let total = pack.items.len();
+    let taken = &pack.items[0];
+    let kept = server.item(&ann, &room, "plant", (taken.x, taken.y)).await;
+
+    let up = server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    assert_eq!((up["placed"].clone(), up["skipped"].clone()), (json!(total - 1), json!(1)));
+    assert_eq!(look_of(&server, &ann, &room).await, (json!(pack.paint), json!(pack.flooring)));
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["items"].as_array().unwrap().len(), total);
+    let plant = snapshot["items"].as_array().unwrap().iter().find(|item| item["id"] == kept.as_str()).unwrap();
+    assert_eq!(plant["kind"], "plant", "what was there stays");
+    assert_eq!(snapshot["items"][1]["placed_by_name"], "Ann", "an item from a pack says who placed it");
+
+    // Doing it twice adds nothing.
+    let before = kinds_on(&server, &ann, &room).await;
+    let again = server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    assert_eq!((again["placed"].clone(), again["skipped"].clone()), (json!(0), json!(total)));
+    assert_eq!(kinds_on(&server, &ann, &room).await, before);
+}
+
+// I28: a full floor stays full, and the look still changes.
+
+#[tokio::test]
+async fn a_pack_never_takes_a_floor_past_what_it_holds() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let pack = halloween();
+    let room_for = 3;
+    let clear = (0..14)
+        .flat_map(|y| (28..40).map(move |x| (x, y)))
+        .filter(|at| !pack.items.iter().any(|part| (part.x, part.y) == *at));
+    for at in clear.take(items::MAX_ITEMS - room_for) {
+        server.item(&ann, &room, "plant", at).await;
+    }
+    let up = server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    assert_eq!((up["placed"].clone(), up["skipped"].clone()), (json!(room_for), json!(pack.items.len() - room_for)));
+    assert_eq!(kinds_on(&server, &ann, &room).await.len(), items::MAX_ITEMS);
+    assert_eq!(look_of(&server, &ann, &room).await, (json!(pack.paint), json!(pack.flooring)));
+}
+
+// I6, I28, I30
+
+#[tokio::test]
+async fn a_pack_going_up_or_coming_down_refreshes_the_room() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let mut stream = server.stream(&ann.key, &room).await;
+    server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    heard_refresh(&mut stream).await;
+    server.delete(&ann.key, &pack_path(&room)).await.ok();
+    heard_refresh(&mut stream).await;
+}
+
+// I29
+
+#[tokio::test]
+async fn someone_with_no_friends_gets_all_of_a_pack_on_an_empty_floor_public_or_not() {
+    for kind in halloween().items.iter().map(|part| items::kind_of(part.kind).unwrap()) {
+        assert_eq!(kind.tier, "starter", "{}", kind.kind);
+        assert!(!kind.holds_notes && !kind.sign, "{}", kind.kind);
+        assert!((0..=10).contains(&kind.beauty), "{}", kind.kind);
+    }
+    let server = Server::start().await;
+    let total = halloween().items.len();
+
+    let (room, ann) = server.someone("Ann").await;
+    let up = server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    assert_eq!((up["placed"].clone(), up["skipped"].clone()), (json!(total), json!(0)));
+
+    // Hidden furniture changes nothing about where an item can stand (I3).
+    let (hidden, bo) = server.someone("Bo").await;
+    let all = ["bar", "arcade", "plants", "rug", "beanbags"];
+    server.put(&bo.key, &format!("/api/floors/{hidden}"), json!({ "hidden": all })).await.ok();
+    assert_eq!(server.post(&bo.key, &pack_path(&hidden), json!({})).await.ok()["placed"], total);
+
+    let (public, cy) = server.someone("Cy").await;
+    server.open(&cy, &public).await.ok();
+    assert_eq!(server.post(&cy.key, &pack_path(&public), json!({})).await.ok()["placed"], total);
+}
+
+// I30
+
+#[tokio::test]
+async fn taking_a_pack_down_removes_its_kinds_whoever_placed_them_and_leaves_the_rest() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let pack = halloween();
+    server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    server.item(&ann, &room, "lamp", (34, 2)).await;
+    server.item(&bo, &room, pack.items[0].kind, (34, 3)).await;
+
+    let down = server.delete(&ann.key, &pack_path(&room)).await.ok();
+    assert_eq!(down["removed"], pack.items.len() + 1);
+    assert_eq!(kinds_on(&server, &ann, &room).await, [("lamp".to_string(), json!(34), json!(2))]);
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("dusk"), json!("oak")));
+
+    // Nothing's up, so there's nothing to take down, and the lamp is still there.
+    assert_eq!(server.delete(&ann.key, &pack_path(&room)).await.ok()["removed"], 0);
+    assert_eq!(kinds_on(&server, &ann, &room).await.len(), 1);
+}
+
+// I30: a look someone chose since is theirs, and a part of it can be chosen on its own.
+
+#[tokio::test]
+async fn taking_a_pack_down_leaves_a_paint_or_flooring_chosen_since() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let floor = format!("/api/floors/{room}");
+
+    server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    server.put(&ann.key, &floor, json!({ "paint": "plum" })).await.ok();
+    server.delete(&ann.key, &pack_path(&room)).await.ok();
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("plum"), json!("oak")));
+
+    server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+    server.put(&ann.key, &floor, json!({ "flooring": "tile" })).await.ok();
+    server.delete(&ann.key, &pack_path(&room)).await.ok();
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("dusk"), json!("tile")));
+}
+
+// I30, I8, I24: nothing marks a pack, so its items feel and look like any others.
+
+#[tokio::test]
+async fn a_packs_items_count_like_any_others_and_a_bot_is_told_how_the_room_feels() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
+
+    let read = server.read_room(&scout.token, &room).await;
+    assert_eq!(read["room_mood"], "playful", "{read}");
+    assert_eq!(read["room_beauty_word"], "nice", "{read}");
+    assert_eq!(read["items"].as_array().unwrap().len(), halloween().items.len());
+
+    let floor = server.state.db.floor(&room).unwrap().unwrap();
+    let fields = serde_json::to_value(&floor).unwrap();
+    assert!(!fields.to_string().contains("halloween"), "{fields}");
 }
 
 // The tools themselves
