@@ -2958,6 +2958,21 @@ async function spaceView(id) {
         h('button', { type: 'submit' }, 'Save')));
   }
 
+  // A pack saves as soon as it's pressed, so it isn't part of the floor's form.
+  function packButton(label, method, floor, pack, error) {
+    return h('button', {
+      type: 'button',
+      class: 'ghost',
+      onclick: act(error, async () => {
+        const done = await api(`/api/floors/${encodeURIComponent(floor.id)}/packs/${encodeURIComponent(pack)}`, { method });
+        await reload();
+        frame.message.textContent = method === 'POST'
+          ? `Put up ${done.placed}${done.skipped ? `, and ${done.skipped} didn't fit` : ''}.`
+          : `Took down ${done.removed}.`;
+      }),
+    }, label);
+  }
+
   function floorCard({ floor, invite_url: inviteUrl, here, capacity }, index) {
     const error = formError();
     const url = `/api/floors/${encodeURIComponent(floor.id)}`;
@@ -3028,6 +3043,13 @@ async function spaceView(id) {
             wordName(item)))),
         error,
         h('button', { type: 'submit' }, 'Save this floor')),
+      choices.packs.map((pack) => h('div', { class: 'row' },
+        h('div', { class: 'row-main' },
+          h('strong', {}, `${wordName(pack)} pack`),
+          h('small', { class: 'muted' }, 'Paint, flooring and decorations, all at once. What\'s on the floor stays.')),
+        h('div', { class: 'row-actions' },
+          packButton('Put up', 'POST', floor, pack, error),
+          packButton('Take down', 'DELETE', floor, pack, error)))),
       h('details', {},
         h('summary', {}, 'Invite link'),
         h('p', { class: 'muted' }, 'Anyone with this link can join this floor and bring their bots. It opens no other floor.'),

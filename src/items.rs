@@ -1,6 +1,7 @@
-//! Items on a floor (docs/rooms.md): a fixed catalog, who can put what where, and what a room's items
-//! add up to. Everything an item is comes from the catalog, so nothing typed reaches the drawing. The
-//! only words here that anyone typed are notes, and those are written with who wrote them.
+//! Items on a floor (docs/rooms.md): a fixed catalog, who can put what where, what a room's items add
+//! up to, and the packs that put up a whole look at once. Everything an item is comes from the catalog,
+//! so nothing typed reaches the drawing. The only words here that anyone typed are notes, and those are
+//! written with who wrote them.
 
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
@@ -12,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::{self, Caller},
-    db::{Floor, FloorItem, ItemNote, NewFloorItem, NewItemNote, Visit},
+    db::{Floor, FloorChange, FloorItem, ItemNote, NewFloorItem, NewItemNote, Visit},
     error::{ApiError, ApiResult},
     mcp::TRUST_NOTE,
     now,
@@ -130,7 +131,7 @@ const fn feels(mood: &'static str) -> Option<&'static str> {
 
 /// Everything a floor can hold. Nothing else can be placed, and nothing typed is part of any of it.
 /// A size is in grid cells. The room page draws a kind only once it has art for that word.
-pub const CATALOG: [Kind; 25] = [
+pub const CATALOG: [Kind; 30] = [
     piece("plant", "Potted plant", STARTER, 2, feels("calm"), (1, 1)),
     piece("lamp", "Lamp", STARTER, 2, feels("cozy"), (1, 1)),
     piece("rubber_duck", "Rubber duck", STARTER, 2, feels("playful"), (1, 1)),
@@ -156,10 +157,72 @@ pub const CATALOG: [Kind; 25] = [
     piece("jukebox", "Jukebox", SIX_FRIENDS, 7, feels("playful"), (2, 1)),
     piece("love_seat", "Love seat", SIX_FRIENDS, 8, feels("flirty"), (5, 2)),
     piece("rose_arch", "Rose arch", SIX_FRIENDS, 10, feels("flirty"), (6, 1)),
+    // The Halloween pack. All starter, because a pack is for anyone who can put it up (I29).
+    piece("pumpkin", "Jack-o'-lantern", STARTER, 3, feels("playful"), (1, 1)),
+    piece("ghost", "Friendly ghost", STARTER, 3, feels("playful"), (1, 1)),
+    piece("skeleton", "Skeleton", STARTER, 2, feels("playful"), (1, 1)),
+    piece("cauldron", "Cauldron", STARTER, 3, feels("inspired"), (1, 1)),
+    piece("gravestone", "Gravestone", STARTER, 2, feels("calm"), (1, 1)),
 ];
 
 pub fn kind_of(word: &str) -> Option<&'static Kind> {
     CATALOG.iter().find(|entry| entry.kind == word)
+}
+
+/// One thing a pack puts down, facing 0, and which cell it stands on.
+#[derive(Clone, Copy, Debug)]
+pub struct PackItem {
+    pub kind: &'static str,
+    pub x: i64,
+    pub y: i64,
+}
+
+/// I26: a whole look, with nothing in it that anyone typed.
+#[derive(Clone, Copy, Debug)]
+pub struct Pack {
+    pub pack: &'static str,
+    pub paint: &'static str,
+    pub flooring: &'static str,
+    pub items: &'static [PackItem],
+}
+
+const fn at(kind: &'static str, x: i64, y: i64) -> PackItem {
+    PackItem { kind, x, y }
+}
+
+/// Everything that can be put up in one go. The places keep clear of the bar, the arcade and the way
+/// in from the door, so a floor that's showing all of those looks right too.
+pub const PACKS: [Pack; 1] = [Pack {
+    pack: "halloween",
+    paint: "haunted",
+    flooring: "crypt",
+    items: &[
+        // Either side of the door.
+        at("pumpkin", 17, 13),
+        at("pumpkin", 22, 13),
+        // A small graveyard along the back wall.
+        at("gravestone", 21, 0),
+        at("gravestone", 24, 0),
+        at("gravestone", 27, 0),
+        // Round the table, where the bots can see it.
+        at("skeleton", 29, 4),
+        at("pumpkin", 11, 6),
+        at("skeleton", 10, 9),
+        // The open side of the room.
+        at("cauldron", 31, 10),
+        at("pumpkin", 29, 11),
+        at("ghost", 32, 7),
+        at("ghost", 14, 11),
+    ],
+}];
+
+pub fn pack_of(word: &str) -> Option<&'static Pack> {
+    PACKS.iter().find(|entry| entry.pack == word)
+}
+
+/// The words for what a space's page can offer.
+pub fn pack_words() -> Vec<&'static str> {
+    PACKS.iter().map(|entry| entry.pack).collect()
 }
 
 /// I11: the kinds that keep a floor from opening to the public.
@@ -417,16 +480,31 @@ fn place_item(state: &AppState, caller: &Caller, place: &Place, body: &NewItem) 
     if kind.friends > state.db.friend_count(&caller.person_id)? {
         return Err(ApiError::forbidden(format!("that needs {}", friends_text(kind.friends))));
     }
-    let spot = footprint(kind, body.x, body.y, body.facing);
+    let id = store_item(state, caller, &place.floor.id, kind, (body.x, body.y, body.facing))??;
+    ops::refresh(state, &place.floor.id);
+    let item = state.db.floor_item(&id)?.ok_or_else(ApiError::not_found)?;
+    Ok(placed(item, kind, 0))
+}
+
+/// Stores an item this caller may place, if the floor has room for it there (I3, I4, I11), and gives
+/// back its id. The inner error is why it doesn't fit, which a pack can step past (I28).
+fn store_item(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    kind: &Kind,
+    (x, y, facing): (i64, i64, i64),
+) -> ApiResult<ApiResult<String>> {
+    let spot = footprint(kind, x, y, facing);
     let id = auth::new_id();
-    state.db.place_item(
+    let stored = state.db.place_item(
         &NewFloorItem {
             id: &id,
-            hangout_id: &place.floor.id,
+            hangout_id: floor_id,
             kind: kind.kind,
-            x: body.x,
-            y: body.y,
-            facing: body.facing,
+            x,
+            y,
+            facing,
             placed_by: &caller.person_id,
             now: now(),
         },
@@ -439,10 +517,8 @@ fn place_item(state: &AppState, caller: &Caller, place: &Place, body: &NewItem) 
             }
             check_fits(&spot, items)
         },
-    )??;
-    ops::refresh(state, &place.floor.id);
-    let item = state.db.floor_item(&id)?.ok_or_else(ApiError::not_found)?;
-    Ok(placed(item, kind, 0))
+    )?;
+    Ok(stored.map(|()| id))
 }
 
 #[derive(Default, Deserialize)]
@@ -475,6 +551,74 @@ fn remove_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<()
     state.db.remove_item(&item.id)?;
     ops::refresh(state, &place.floor.id);
     Ok(())
+}
+
+// Packs
+
+/// I27: a pack changes the look and the items, so this takes someone who could do both by hand. Who's
+/// asking comes before what they asked, as it does for an item.
+fn pack_for(state: &AppState, caller: &Caller, floor_id: &str, word: &str) -> ApiResult<(Place, &'static Pack)> {
+    let place = place_of(state, caller, floor_id)?;
+    may_furnish(state, caller, &place)?;
+    if !place.runs {
+        return Err(ApiError::forbidden("only whoever runs the space can put a pack up or take it down"));
+    }
+    if !state.db.is_member(&place.floor.id, &caller.person_id)? {
+        return Err(ApiError::forbidden("only someone on this floor can furnish it"));
+    }
+    let pack = pack_of(word).ok_or_else(|| ApiError::bad_request("that's not a pack"))?;
+    Ok((place, pack))
+}
+
+fn set_look(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    paint: Option<&str>,
+    flooring: Option<&str>,
+) -> ApiResult<()> {
+    state.db.change_floor(&FloorChange {
+        id: floor_id,
+        name: None,
+        access: None,
+        size: None,
+        paint,
+        flooring,
+        hidden: None,
+        keep_bots_of: &caller.person_id,
+        private_only: &[],
+    })?;
+    Ok(())
+}
+
+/// I28: anything that doesn't fit is left out, so what's there stays and doing this twice adds nothing.
+fn put_up(state: &AppState, caller: &Caller, place: &Place, pack: &Pack) -> ApiResult<Value> {
+    set_look(state, caller, &place.floor.id, Some(pack.paint), Some(pack.flooring))?;
+    let mut went_up = 0;
+    for part in pack.items {
+        let Some(kind) = kind_of(part.kind) else { continue };
+        if store_item(state, caller, &place.floor.id, kind, (part.x, part.y, 0))?.is_ok() {
+            went_up += 1;
+        }
+    }
+    ops::refresh(state, &place.floor.id);
+    Ok(json!({ "placed": went_up, "skipped": pack.items.len() - went_up }))
+}
+
+/// I30: whoever placed them, as whoever runs a space can remove anything (I2). These hold no notes
+/// (I29), so nobody's words go with them.
+fn take_down(state: &AppState, caller: &Caller, place: &Place, pack: &Pack) -> ApiResult<Value> {
+    let mut removed = 0;
+    for item in state.db.floor_items(&place.floor.id)? {
+        if pack.items.iter().any(|part| part.kind == item.kind) && state.db.remove_item(&item.id)? {
+            removed += 1;
+        }
+    }
+    let paint = (place.floor.paint == pack.paint).then_some(spaces::PLAIN_PAINT);
+    let flooring = (place.floor.flooring == pack.flooring).then_some(spaces::PLAIN_FLOORING);
+    set_look(state, caller, &place.floor.id, paint, flooring)?;
+    ops::refresh(state, &place.floor.id);
+    Ok(json!({ "removed": removed }))
 }
 
 // Notes
@@ -591,6 +735,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/items/{id}/notes", get(notes).post(add))
         .route("/api/item-notes/{id}", delete(remove_one_note))
         .route("/api/floors/{id}/items", post(place))
+        .route("/api/floors/{id}/packs/{pack}", post(put_up_pack).delete(take_down_pack))
         .route("/api/agents/{id}/moods", put(set_moods))
 }
 
@@ -659,6 +804,24 @@ async fn remove(
 ) -> ApiResult<Json<Value>> {
     remove_item(&state, &caller, &id)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn put_up_pack(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((id, word)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let (place, pack) = pack_for(&state, &caller, &id, &word)?;
+    Ok(Json(put_up(&state, &caller, &place, pack)?))
+}
+
+async fn take_down_pack(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((id, word)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let (place, pack) = pack_for(&state, &caller, &id, &word)?;
+    Ok(Json(take_down(&state, &caller, &place, pack)?))
 }
 
 async fn notes(
