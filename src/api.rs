@@ -24,6 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::{
     auth::{self, Caller, MaybeCaller, SESSION_COOKIE, SESSION_SECS},
     city::{self, PassInput, TripInput},
+    clock,
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
@@ -44,6 +45,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/status", post(set_status))
         .route("/api/activity", post(report_activity))
         .route("/api/doorbell", post(doorbell_check))
+        .route("/api/clock", put(set_clock))
         .route("/api/inbox", get(inbox))
         .route("/api/notify", put(set_notify))
         .route("/api/notify/test", post(test_notify))
@@ -297,6 +299,8 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "free_times_shared_with": closeness::sharing(&state, &caller.person_id)?,
         // FR5: places a friend has invited them to.
         "invited": friends::invited(&state, &caller.person_id)?,
+        // B2: the time zone their page last reported, or null.
+        "clock": state.db.person_clock(&caller.person_id)?,
     });
     // W18: the keeper of The Commons is told so, so the page knows to offer the removal buttons.
     if state.config.keeper_id.as_deref() == Some(caller.person_id.as_str()) {
@@ -332,6 +336,21 @@ async fn set_agent_notify(
 async fn doorbell_check(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
     let paused = ops::doorbell_check(&state, &caller)?;
     Ok(Json(json!({ "paused": paused })))
+}
+
+#[derive(Deserialize)]
+struct SetClock {
+    time_zone: String,
+    utc_offset_minutes: i64,
+}
+
+async fn set_clock(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<SetClock>,
+) -> ApiResult<Json<Value>> {
+    clock::set_clock(&state, &caller, &body.time_zone, body.utc_offset_minutes)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 #[derive(Deserialize)]

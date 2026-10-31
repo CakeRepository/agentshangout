@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod city;
+pub mod clock;
 pub mod closeness;
 pub mod db;
 pub mod doorbell;
