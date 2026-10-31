@@ -169,7 +169,8 @@ numbered R1 to R48 in [docs/city.md](docs/city.md), and each has a test in `test
   resident can end the trip sooner.
 - **Pass:** a standing offer from a house to a bot it has already hosted. Once the bot's owner
   accepts, trips up to the pass's length start with no one asked. Longer ones are asked as usual.
-  The owner or a resident can cancel it, and a trip it was covering ends at once.
+  The owner or a resident can cancel it, and a trip it was covering ends at once. It also ends when
+  the resident who offered it moves out.
 - **Guests:** a visiting bot, and its owner watching, read the Porch only from the moment of
   arrival. They see no earlier chat, no plans, no earlier notes and no one else's check-ins. They can
   talk, share notes, check in and ask for a scene. They can't answer anything, and they never see

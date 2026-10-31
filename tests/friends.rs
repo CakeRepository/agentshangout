@@ -299,7 +299,7 @@ async fn an_invite_gets_nobody_past_a_citys_rules_or_its_gate() {
 
 // FR5
 #[tokio::test]
-async fn replacing_a_link_does_not_break_an_invite_and_the_old_link_is_never_shown() {
+async fn replacing_a_link_ends_the_invites_waiting_for_it_and_the_old_link_is_never_shown() {
     let server = Server::start().await;
     let (room, code, ann) = server.room("Ann").await;
     let (_, other, _) = server.room("Dee").await;
@@ -308,6 +308,10 @@ async fn replacing_a_link_does_not_break_an_invite_and_the_old_link_is_never_sho
     server.invite_to_room(&ann, &room, &cy.id).await.ok();
     assert_eq!(text(&server.invited(&cy).await[0]["path"]), format!("/join/{code}"));
     let fresh = code_of(&server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok()["invite_url"]);
+    assert!(server.invited(&cy).await.is_empty(), "the new link reached someone it wasn't given to");
+
+    // Someone who can see the link can ask again, and then it's the new link they're shown.
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
     assert_eq!(text(&server.invited(&cy).await[0]["path"]), format!("/join/{fresh}"));
 }
 
@@ -387,4 +391,109 @@ async fn a_person_can_send_twenty_invites_a_day() {
     let reply = server.invite_to_room(&ann, &room, &one_more.id).await;
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.body);
     assert!(server.invited(&one_more).await.is_empty());
+}
+
+/// Ann's city with Bo in it, and Cy, a friend of Ann's from a room who isn't in the city.
+async fn city_and_friend(server: &Server) -> (String, Who, Who) {
+    let (city, code, ann) = server.city("Ann").await;
+    server.join_city(&code, "Bo").await;
+    server.post(&ann.key, "/api/hangouts", json!({ "name": "Side", "create_code": CODE })).await.ok();
+    let side = server.get(&ann.key, "/api/me").await.ok()["hangouts"].as_array().unwrap().iter().find(|h| h["name"] == "Side").unwrap().clone();
+    let side_code = text(&server.get(&ann.key, &format!("/api/hangouts/{}", text(&side["id"]))).await.ok()["hangout"]["invite_code"]);
+    let cy = server.join(&side_code, "Cy").await;
+    (city, ann, cy)
+}
+
+async fn ask_for_vouches(server: &Server, ann: &Who, city: &str) {
+    let rules = json!({ "min_vouches": 1, "rules_text": "" });
+    let set = server.send(&ann.key, Method::PUT, &format!("/api/cities/{city}/rules"), Some(rules)).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.body);
+}
+
+async fn wait_at_the_gate(server: &Server, who: &Who) {
+    let path = text(&server.invited(who).await[0]["path"]);
+    let link = path.strip_prefix("/join-city/").unwrap();
+    let joined = server.post(&who.key, &format!("/api/city-invites/{link}/join"), json!({ "accept_rules": true })).await.ok();
+    assert_eq!(joined["waiting"], true, "{joined}");
+}
+
+// FR5, T17
+#[tokio::test]
+async fn replacing_a_citys_link_keeps_out_someone_it_invited() {
+    let server = Server::start().await;
+    let (city, ann, cy) = city_and_friend(&server).await;
+    server.invite_to_city(&ann, &city, &cy.id).await.ok();
+    assert_eq!(server.invited(&cy).await.len(), 1);
+    server.post(&ann.key, &format!("/api/cities/{city}/invite/rotate"), json!({})).await.ok();
+    assert!(server.invited(&cy).await.is_empty(), "the new link reached someone it was replaced to keep out");
+    assert_eq!(server.get(&cy.key, &format!("/api/cities/{city}")).await.status, StatusCode::NOT_FOUND);
+}
+
+// FR5
+#[tokio::test]
+async fn someone_who_left_a_room_is_not_shown_its_new_link() {
+    let server = Server::start().await;
+    let (room, ann, cy) = invited_friend(&server).await;
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
+    let path = text(&server.invited(&cy).await[0]["path"]);
+    let link = path.strip_prefix("/join/").unwrap();
+    server.post(&cy.key, &format!("/api/invites/{link}/join"), json!({})).await.ok();
+    server.post(&cy.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok();
+    assert!(server.invited(&cy).await.is_empty());
+}
+
+// FR6, T17
+#[tokio::test]
+async fn being_turned_away_at_the_gate_ends_an_invite() {
+    let server = Server::start().await;
+    let (city, ann, cy) = city_and_friend(&server).await;
+    ask_for_vouches(&server, &ann, &city).await;
+    server.invite_to_city(&ann, &city, &cy.id).await.ok();
+    wait_at_the_gate(&server, &cy).await;
+    server.post(&ann.key, &format!("/api/cities/{city}/gate/{}/decline", cy.id), json!({})).await.ok();
+    assert!(server.invited(&cy).await.is_empty());
+
+    // Asking again counts as changing your mind, and so does clearing the whole gate afterwards.
+    server.invite_to_city(&ann, &city, &cy.id).await.ok();
+    wait_at_the_gate(&server, &cy).await;
+    server.post(&ann.key, &format!("/api/cities/{city}/gate/clear"), json!({})).await.ok();
+    assert!(server.invited(&cy).await.is_empty());
+}
+
+// FR6
+#[tokio::test]
+async fn sending_again_after_a_link_was_replaced_brings_an_invite_back_with_no_second_ping() {
+    let server = Server::start().await;
+    let (room, ann, cy) = invited_friend(&server).await;
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok();
+    // `send` pings only when this says the invite is new.
+    let at = now();
+    let fresh = server.state.db.add_friend_invite("unused", "room", &room, &ann.id, &cy.id, at, at - friends::INVITE_SECS).unwrap();
+    assert!(!fresh, "that would have pinged them a second time");
+    assert_eq!(server.invited(&cy).await.len(), 1);
+}
+
+// FR6
+#[tokio::test]
+async fn no_thanks_still_sticks_after_a_link_is_replaced() {
+    let server = Server::start().await;
+    let (room, ann, cy) = invited_friend(&server).await;
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
+    let id = text(&server.invited(&cy).await[0]["id"]);
+    server.post(&cy.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok();
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
+    assert!(server.invited(&cy).await.is_empty(), "their no didn't stick");
+}
+
+// FR7
+#[tokio::test]
+async fn replacing_a_link_gives_nobody_a_days_invites_back() {
+    let server = Server::start().await;
+    let (room, ann, cy) = invited_friend(&server).await;
+    server.invite_to_room(&ann, &room, &cy.id).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok();
+    assert_eq!(server.state.db.friend_invites_sent_since(&ann.id, now() - 60).unwrap(), 1);
 }

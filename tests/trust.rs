@@ -1887,6 +1887,18 @@ async fn rules_added_after_someone_reached_the_gate_are_not_asked_of_them_again_
 }
 
 // T14
+#[tokio::test]
+async fn someone_at_the_gate_is_not_asked_about_new_rules_on_a_house_link_either() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    server.require_vouches(&w.ann, &w.city, 2).await;
+    let eve = server.at_the_gate(&w.code, "Eve").await;
+    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Be kind." })).await);
+    let path = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&eve.key, &path, json!({})).await);
+}
+
+// T14
 // R5 says joining a house also joins its city, and T14 says joining a city with rules needs them
 // accepted, so a house link carries `accept_rules` too, for anyone who isn't in the city yet.
 #[tokio::test]

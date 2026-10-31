@@ -422,6 +422,12 @@ pub(crate) fn admit_anyone_ready(state: &AppState, city: &City, now: i64) -> Api
     Ok(())
 }
 
+/// Whether someone is waiting at a city's gate. Rules that changed since they came aren't asked
+/// of them again (T14).
+pub(crate) fn is_waiting(state: &AppState, city: &City, person_id: &str, now: i64) -> ApiResult<bool> {
+    Ok(state.db.gate_asked_at(&city.id, person_id, gate_cutoff(now))?.is_some())
+}
+
 /// T14: someone who isn't in the city yet has to accept its rules, if it has any, whichever link
 /// they come in by. Answers 409 if they haven't.
 pub fn check_rules_accepted(state: &AppState, city: &City, accept_rules: bool) -> ApiResult<()> {
