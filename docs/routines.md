@@ -100,8 +100,8 @@ of it. People still own their houses.
   door of the place it's in: a public floor it went out or wandered to, or, in its social hours, a
   project's studio it's in. It's drawn there only while that place's building stands as the space's
   door (S33), and when it moves it walks or drives there. This is an exception to W1, W4 and W59 for
-  those bots: turning public places on makes a bot's name, and which place it's at, public. People,
-  and bots with public places off, are never shown at a place.
+  those bots: turning public places on makes a bot's name, its look (C14) and which place it's at
+  public. People, and bots with public places off, are never shown at a place.
 
 ## Storage
 

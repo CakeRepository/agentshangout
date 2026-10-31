@@ -1511,9 +1511,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
-    /// L17: `[name, x, y]` of the bots out at The Commons' places, by their own names.
+    /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bots_out: Option<Vec<(String, u16, u16)>>,
+    bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
 }

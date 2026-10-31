@@ -417,7 +417,7 @@ export class City {
         const [x, y] = SQUARE_ORDER[(homeless.length - 1) % SQUARE_ORDER.length];
         at = [x, y];
       }
-      players.push([bot.id, bot.name, at[0], at[1], bot.state === 'offline' ? 'sleep' : null]);
+      players.push([bot.id, bot.name, at[0], at[1], bot.state === 'offline' ? 'sleep' : null, null, this.view.bot_looks[bot.id]]);
     }
     return players;
   }

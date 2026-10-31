@@ -1561,6 +1561,42 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .room-quiet { font-weight: 700; }
 .wd-game .wd-status .wd-seg.room-quiet { flex: 1 1 100%; }
 
+/* The Character panel: who's being dressed, how they look, and what they can wear. */
+.wardrobe-who { display: flex; flex-wrap: wrap; gap: 4px; }
+.wardrobe-who[hidden] { display: none; }
+.wd .wardrobe-whom { flex: 0 1 auto; gap: 4px; min-width: 0; max-width: 100%; min-height: 44px; padding: 2px 8px 2px 2px; flex-direction: row; }
+.wardrobe-whom span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wardrobe-whom canvas, .wardrobe-stand canvas, .wardrobe-tile canvas { flex: none; image-rendering: pixelated; }
+.wardrobe-top { display: flex; align-items: stretch; gap: 10px; }
+.wardrobe-stand {
+  display: flex;
+  flex: none;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 6px 8px 0;
+  background: linear-gradient(#364466 62%, #a97b4e 62%);
+  border: 2px inset rgba(120, 90, 44, .6);
+}
+.wardrobe-buttons { display: flex; flex: 1 1 auto; flex-direction: column; gap: 5px; min-width: 0; }
+.wd .wardrobe-buttons .wd-btn { flex: none; min-height: 34px; }
+.wardrobe-say { min-height: 1.3em; overflow-wrap: anywhere; }
+.wd .wardrobe-tile { padding-top: 3px; }
+.wardrobe-tile .build-pic { height: 74px; }
+.wd .wardrobe-tile[aria-pressed="true"], .wardrobe-whom[aria-pressed="true"] { outline: 2px solid #8e2f18; outline-offset: -2px; }
+.wardrobe-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.wardrobe-swatch {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  cursor: pointer;
+  border: 2px outset rgba(255, 255, 255, .7);
+  border-radius: 2px;
+}
+.wardrobe-swatch[aria-pressed="true"] { outline: 3px solid #8e2f18; outline-offset: 1px; }
+@media (pointer: coarse) {
+  .wardrobe-swatch { width: 38px; height: 38px; }
+}
+
 /* A floor's readouts are two more than a phone's row has room for, so they get a row of their own. */
 @media (max-width: 759px) and (min-height: 541px) {
   .wd-game.wd-room.on-floor .wd-stats { flex-wrap: wrap; }
@@ -1575,8 +1611,8 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 }
 /* A phone keeps the room in view above the catalog, as it does above the chat. */
 @media (max-width: 759px) {
-  .wd-game > .game-panel-build { height: max(55%, calc(100% - 52.5vw - 18px)); }
-  .game-panel-build .game-panel-body { flex: 1; }
+  .wd-game > .game-panel-build, .wd-game > .game-panel-look { height: max(55%, calc(100% - 52.5vw - 18px)); }
+  .game-panel-build .game-panel-body, .game-panel-look .game-panel-body { flex: 1; }
   /* The dock changes height as the hand does, so the room stays put at the top. What the status bar
      usually says gives way to it, and a rule the room is under doesn't. */
   .wd-room.has-dock .room-host { align-items: start; }
