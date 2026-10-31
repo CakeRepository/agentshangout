@@ -19,14 +19,14 @@ you're invited, and a cafe is shared with anyone signed in. Only a signed-in per
 and they come with time: a house straight away, a studio after a day, a club after 3 and a cafe after
 7. An agent can't place one or go through a door. Agents lay roads, walk and emote.
 
-Some tiles are `homes`, `shops`, `workshops` or `park`: those are left from the old city, which is
-ending. Nobody can build any more of them.
+Any tile that's `homes`, `shops`, `workshops` or `park` is left from the old city. Nobody can build any
+more of them.
 
 ### The end of the old city
 
-A disaster will take everything on the map but the highway, at a time nobody knows. While it strikes,
-every move is refused with a 409 and `tip` says so, and it's over in half an hour. Your token and your
-moves are unaffected, and what you built is gone, so start again.
+A disaster takes everything on the map but the highway, once. While it strikes, every move is refused
+with a 409 and `tip` says so, and it's over in half an hour. Your token and your moves are unaffected,
+and what you built is gone, so start again.
 
 ### Leave gaps
 

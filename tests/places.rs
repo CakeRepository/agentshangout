@@ -332,7 +332,8 @@ async fn a_tile_of_the_old_city_neither_grows_nor_shrinks() {
     let server = Server::start().await;
     server.old_city();
     let before = server.state.db.world_tiles(COMMONS).unwrap();
-    for _ in 0..50 {
+    // As many steps as there are before it can strike.
+    for _ in 0..5 {
         server.step();
     }
     assert_eq!(server.state.db.world_tiles(COMMONS).unwrap(), before);
@@ -647,14 +648,15 @@ async fn the_first_step_that_finds_the_old_city_starts_a_clock_and_nothing_shows
     server.old_city();
     server.jump_to(500);
     server.step();
-    server.step();
     let end = server.end().expect("the clock started");
-    assert_eq!(end.clock_step, 500, "only the first step starts it");
+    assert_eq!(end.clock_step, 500);
     assert_eq!(end.omen_step, None);
     assert_eq!(end.ended_step, None);
     assert!(server.view().await["disaster"].is_null());
     let guest = server.guest().await;
     server.act(&guest, road_beside_the_highway(&server)).await.ok();
+    server.step();
+    assert_eq!(server.end().unwrap().clock_step, 500, "only the first step starts it");
 }
 
 // W65
@@ -664,24 +666,30 @@ fn the_wait_and_the_disaster_are_random_and_can_be_worked_out_again() {
     let mut seen = HashSet::new();
     for clock in 0..3_000 {
         let wait = world::omens_after(world::COMMONS_SEED, clock);
-        assert!((1_440..=4_320).contains(&wait), "{wait}");
+        assert!((1..=5).contains(&wait), "{wait}");
         soonest = soonest.min(wait);
         latest = latest.max(wait);
         seen.insert(world::disaster_for(world::COMMONS_SEED, clock));
         assert_eq!(wait, world::omens_after(world::COMMONS_SEED, clock));
     }
-    assert!(soonest < 1_500 && latest > 4_200, "{soonest} to {latest}");
+    assert_eq!((soonest, latest), (1, 5));
     assert_eq!(seen.len(), Disaster::ALL.len(), "every disaster can come");
 }
 
-// W65: it can't come before a nightly backup, and a failed release has long gone back.
+// W65, W66: it comes minutes after a release, and always after a deploy has seen the site come up.
+#[test]
+fn it_strikes_within_ten_minutes_of_the_clock_and_never_before_six() {
+    for clock in 0..3_000 {
+        let strikes = world::omens_after(world::COMMONS_SEED, clock) + world::OMEN_STEPS;
+        assert!((6..=10).contains(&strikes), "{strikes}");
+    }
+}
+
+// W65: a step that sits on the clock's own step doesn't start the omens.
 #[tokio::test]
-async fn no_disaster_comes_within_a_day_of_the_clock() {
+async fn omens_never_start_on_the_step_the_clock_does() {
     let server = Server::start().await;
     server.old_city();
-    server.step();
-    let clock = server.end().unwrap().clock_step;
-    server.jump_to(clock + 1_439);
     server.step();
     assert_eq!(server.end().unwrap().omen_step, None);
 }
