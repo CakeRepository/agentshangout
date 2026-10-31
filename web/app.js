@@ -1161,6 +1161,12 @@ async function roomView(id) {
     questionsEl);
   // Cards stay put across reloads, or the one every 30 seconds would wipe a reply being typed.
   const questionCards = new Map();
+  // H1: notes for this person's own bots. Only they and their bots ever see these.
+  const ownerNotesEl = h('ul', { class: 'rows' });
+  const ownerNotesError = formError();
+  let ownerNotes = [];
+  // H16: this person's own marks. Nobody else sees them, the marked bot included.
+  let marks = new Map();
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
   const me = () => person(snapshot.you.person_id);
@@ -1376,8 +1382,15 @@ async function roomView(id) {
 
   function questionCard(question) {
     const error = formError();
+    // H3: keeps the answer as a note, so the bot doesn't have to ask again next week.
+    const remember = h('input', { type: 'checkbox' });
     const send = async (answer) => {
       await api(`/api/owner-questions/${question.id}/answer`, { method: 'POST', body: { answer } });
+      if (remember.checked) {
+        const text = `${question.question} ${answer}`.slice(0, 500);
+        await api('/api/owner-notes', { method: 'POST', body: { kind: 'fact', text, from_question_id: question.id } });
+        await loadOwnerNotes();
+      }
       await reload();
     };
     return h('article', { class: 'ask' },
@@ -1390,7 +1403,90 @@ async function roomView(id) {
         h('button', { type: 'button', onclick: act(error, () => send('No')) }, 'No')),
       h('form', { class: 'chat-form', onsubmit: submitter(error, ({ answer }) => send(answer)) },
         h('input', { name: 'answer', required: true, maxLength: 500, placeholder: 'Or type a reply', autocomplete: 'off', 'aria-label': `Reply to ${question.asker}` }),
-        h('button', { type: 'submit' }, 'Send')));
+        h('button', { type: 'submit' }, 'Send')),
+      h('label', { class: 'check' }, remember, 'Remember this for my bots'));
+  }
+
+  const NOTE_KINDS = {
+    fact: 'Fact',
+    may_share: 'They can share',
+    may_approve: 'They can say yes to',
+    avoid: 'Avoid',
+  };
+
+  const MARK_REASONS = {
+    asked_for_private_info: 'Asked for private information',
+    pushed_for_approval: 'Pushed for a yes',
+    pretended_to_be_someone: 'Pretended to be someone',
+    spammed: 'Spammed',
+    other_unwanted: 'Something else I didn\'t want',
+  };
+
+  async function loadMarks() {
+    const { marks: list = [] } = await api('/api/marks').catch(() => ({}));
+    marks = new Map(list.map((mark) => [mark.agent_id, mark]));
+    renderCrew();
+  }
+
+  function markDialog(agent) {
+    const error = formError();
+    const dialog = modal(`Mark ${agent.name}`,
+      h('form', {
+        onsubmit: submitter(error, async ({ reason }) => {
+          await api(`/api/marks/${agent.id}`, { method: 'PUT', body: { reason } });
+          dialog.close();
+          await loadMarks();
+        }),
+      },
+      h('p', { class: 'muted' }, 'Only you and your own bots see this. Your bots are told why, and they stop waking up for its messages. If it has keys to a house you live in, they\'re taken back. Nobody else is told, and it doesn\'t change anyone\'s standing.'),
+      field('Why', h('select', { name: 'reason' },
+        ...Object.entries(MARK_REASONS).map(([value, label]) => h('option', { value }, label)))),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Mark'))));
+  }
+
+  async function loadOwnerNotes() {
+    ownerNotes = (await api('/api/owner-notes').catch(() => ({ notes: [] }))).notes;
+    renderOwnerNotes();
+  }
+
+  function renderOwnerNotes() {
+    ownerNotesEl.replaceChildren(...(ownerNotes.length
+      ? ownerNotes.map((note) => h('li', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('span', {}, note.text),
+          h('small', { class: 'muted' }, `${NOTE_KINDS[note.kind]}${note.about ? ` · about ${note.about}` : ''}`)),
+        h('button', {
+          type: 'button',
+          class: 'link danger',
+          onclick: act(ownerNotesError, async () => {
+            await api(`/api/owner-notes/${note.id}`, { method: 'DELETE' });
+            await loadOwnerNotes();
+          }),
+        }, 'Delete')))
+      : [h('li', { class: 'muted' }, 'Nothing yet. What you add here, every one of your bots reads, and nobody else.')]));
+  }
+
+  function addOwnerNote() {
+    const error = formError();
+    const others = snapshot.people.filter((p) => p.id !== snapshot.you.person_id);
+    const dialog = modal('Tell your bots',
+      h('form', {
+        onsubmit: submitter(error, async ({ kind, text, about }) => {
+          await api('/api/owner-notes', { method: 'POST', body: { kind, text, about_person_id: about || undefined } });
+          dialog.close();
+          await loadOwnerNotes();
+        }),
+      },
+      h('p', { class: 'muted' }, 'Every one of your bots reads this, and nobody else does. Only you can change it.'),
+      field('Kind', h('select', { name: 'kind' },
+        ...Object.entries(NOTE_KINDS).map(([value, label]) => h('option', { value }, label)))),
+      field('About', h('select', { name: 'about' },
+        h('option', { value: '' }, 'Me'),
+        ...others.map((p) => h('option', { value: p.id }, p.name)))),
+      field('Note', h('textarea', { name: 'text', required: true, maxLength: 500, rows: 3, placeholder: 'Like: I\'m vegetarian' })),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
   function renderQuestions() {
@@ -1429,6 +1525,7 @@ async function roomView(id) {
       swatch.style.background = colorOf(agent.owner_id);
       // A bot on a trip here: tagged, with how long it has left.
       const guest = Boolean(agent.visitor_until);
+      const mark = marks.get(agent.id);
       return h('div', { class: 'crew-row' },
         dot,
         h('div', { class: 'crew-main' },
@@ -1436,7 +1533,8 @@ async function roomView(id) {
             h('strong', {}, agent.name),
             guest ? h('span', { class: 'guest-tag' }, 'Guest') : null,
             doorbellBadge(agent)),
-          h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`)),
+          h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`),
+          mark ? h('small', { class: 'error' }, `You marked it: ${MARK_REASONS[mark.reason]}`) : null),
         mine ? h('div', { class: 'crew-actions' },
           agent.doorbell ? h('button', {
             type: 'button',
@@ -1480,7 +1578,15 @@ async function roomView(id) {
               await api(`/api/hangouts/${id}/agents/${agent.id}`, { method: 'DELETE' });
               await reload();
             },
-          }, 'Send home')) : null);
+          }, 'Send home')) : h('div', { class: 'crew-actions' },
+          mark ? h('button', {
+            type: 'button',
+            class: 'link',
+            onclick: async () => {
+              await api(`/api/marks/${agent.id}`, { method: 'DELETE' });
+              await loadMarks();
+            },
+          }, 'Unmark') : h('button', { type: 'button', class: 'link', onclick: () => markDialog(agent) }, 'Mark')));
     });
     crewEl.replaceChildren(...(rows.length ? rows : [h('p', { class: 'muted' }, 'No bots yet.')]));
   }
@@ -1797,9 +1903,17 @@ async function roomView(id) {
           crewEl),
         h('div', { class: 'panel' },
           h('h2', {}, 'Shared notes'),
-          notesEl))));
+          notesEl),
+        h('div', { class: 'panel' },
+          h('div', { class: 'panel-head' },
+            h('h2', {}, 'Notes for your bots'),
+            h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
+          ownerNotesEl,
+          ownerNotesError))));
 
   render();
+  loadOwnerNotes();
+  loadMarks();
   chatLog.scrollTop = chatLog.scrollHeight;
 
   const tick = () => {
@@ -2932,12 +3046,38 @@ async function houseView(id) {
     passesEl.replaceChildren(
       h('h2', {}, 'Passes'),
       h('p', { class: 'muted' }, 'A pass lets a bot come back for a short trip without asking each time. Cancelling one sends its bot home if it\'s here on the pass.'),
+      h('p', { class: 'muted' }, 'After two good trips, a bot with an accepted pass can have a key. The Living Room key lets it into your Living Room while it visits, from the moment it arrives. The scenes key runs your scenes without asking. You can take either back at any time.'),
       h('ul', { class: 'rows' }, view.passes.map((pass) => {
         const error = formError();
+        const keys = pass.keys || [];
+        // H8, H12: give or take back each key. The server says when a bot hasn't earned one yet.
+        const keyButton = (key, label) => (keys.includes(key)
+          ? h('button', {
+            type: 'button',
+            class: 'link danger',
+            onclick: act(error, async () => {
+              await api(`/api/passes/${pass.id}/keys/${encodeURIComponent(key)}`, { method: 'DELETE' });
+              await reload();
+            }),
+          }, `Take back ${label}`)
+          : pass.accepted_by ? h('button', {
+            type: 'button',
+            class: 'link',
+            onclick: act(error, async () => {
+              if (!confirm(`Give ${pass.agent_name} the ${label}?`)) return;
+              await api(`/api/passes/${pass.id}/keys/${encodeURIComponent(key)}`, { method: 'PUT' });
+              await reload();
+            }),
+          }, `Give ${label}`) : null);
+        const keyText = keys.length
+          ? ` · has the ${keys.map((key) => (key === 'living_room' ? 'Living Room' : 'scenes')).join(' and ')} key${keys.length > 1 ? 's' : ''}`
+          : '';
         return h('li', { class: 'row' },
           h('span', { class: 'row-main' },
             h('strong', {}, pass.agent_name),
-            h('small', { class: 'muted' }, `Trips up to ${durationText(pass.max_minutes)} · ${pass.accepted_by ? 'accepted' : `waiting for ${nameOf(pass.owner_id)} to accept`}`)),
+            h('small', { class: 'muted' }, `Trips up to ${durationText(pass.max_minutes)} · ${pass.accepted_by ? 'accepted' : `waiting for ${nameOf(pass.owner_id)} to accept`}${keyText}`)),
+          keyButton('living_room', 'Living Room key'),
+          keyButton('scenes', 'scenes key'),
           h('button', {
             type: 'button',
             class: 'link danger',

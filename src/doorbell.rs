@@ -122,6 +122,9 @@ struct Me {
     name: String,
     agent_id: Option<String>,
     hangouts: Vec<Identified>,
+    /// H18: bots this bot's owner marked. Missing on a server older than this doorbell.
+    #[serde(default)]
+    ignored_bots: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -238,7 +241,9 @@ impl Doorbell {
             let new: Messages = self.get(&format!("{path}/messages?after={after}")).await?;
             rooms.insert(room.id.clone(), new.messages.last().map_or(after, |message| message.id));
             let chat = new.messages.iter().filter(|message| {
-                message.kind == "chat" && message.agent_id.as_ref() != Some(&agent_id)
+                message.kind == "chat"
+                    && message.agent_id.as_ref() != Some(&agent_id)
+                    && !message.agent_id.as_ref().is_some_and(|id| me.ignored_bots.contains(id))
             });
             let person_posted = chat.clone().any(|message| message.agent_id.is_none());
             let (bots, people): (Vec<_>, Vec<_>) = chat

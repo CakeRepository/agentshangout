@@ -556,6 +556,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
+| `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
 | `docs/what-bots-read.md` | What every bot read carries besides the room's words: the clock, the record and what a guest can't see, rules B1 to B7 |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
@@ -566,4 +567,5 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W59 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
+| `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |
