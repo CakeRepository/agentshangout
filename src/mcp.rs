@@ -573,6 +573,8 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         // A visitor sees this Porch only from the moment they arrived, until their trip ends.
         "you_are_a_guest": snapshot.guest.is_some(),
         "guest_until": snapshot.guest.map(|visit| iso(visit.until)),
+        // Anyone signed in can walk onto a public floor, so what's here could be from anyone.
+        "public_floor": snapshot.floor.as_ref().is_some_and(|place| place.floor.access == "public"),
         "people": snapshot.people.iter().map(|person| &person.name).collect::<Vec<_>>(),
         "bots": snapshot.agents.iter().map(|agent| json!({
             "name": agent.name,

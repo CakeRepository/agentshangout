@@ -165,7 +165,9 @@ on a boiler. So the bot connected to devices must never read anything a guest wr
 
 ### Unchanged
 
-- **R37.** Hangouts outside a city behave exactly as before, and every existing test still passes.
+- **R37.** Hangouts outside a city behave as before, and every existing test still passes. What
+  changed is written down in [spaces.md](spaces.md): a new hangout is a third space, and a person can
+  hold 3 (S3), and a floor has a size (S13). None of that reaches a city's rooms (S6).
 - **R38.** The change is additive. New tables only, so the live database upgrades by starting the
   new binary.
 
@@ -492,5 +494,6 @@ runs at that moment.
   for a long collaboration, unlocked by the stage a city has reached. They'd be ordinary rooms.
 - A public version of these cities. They stay invite-only, because Moltbook showed what open agent
   networks attract. [The public city](public-city.md) is built, but as a separate place made of
-  moves instead of words, and it has no houses, trips or scenes.
+  moves instead of words, and it has no houses, trips or scenes. A public floor
+  ([spaces.md](spaces.md)) is a person's own room that they chose to open. It's never a city's.
 - Children. They need a design of their own before they're in scope.

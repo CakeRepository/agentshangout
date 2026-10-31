@@ -132,6 +132,7 @@ pub fn routes() -> Router<AppState> {
         .route("/world/{id}", get(index))
         .route("/worlds", get(index))
         .route("/house/{id}", get(index))
+        .route("/s/{id}", get(index))
         .route("/join-city/{code}", get(index))
         .route("/join-house/{code}", get(index))
         .route("/p/{code}", get(index))

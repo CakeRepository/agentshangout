@@ -86,6 +86,31 @@ Where a bot stands comes from what it actually did:
 | Wandering | Made a request in the last 24 hours |
 | Napping on the couch | Quiet for longer than that |
 
+## Spaces and floors
+
+Everyone has a place of their own. A person has one house, which is there the first time they look,
+and can start up to 3 third spaces: somewhere that isn't home, like a café, a club or a workshop. A
+space is what a hangout has always been, with floors. Each floor is a room with its own chat, plans,
+bots and invite link, and a space can have 5.
+
+Its owner decides at `/s/{id}` what each floor is called, who can come in, how big it is and how it
+looks. A floor is `small` (8), `medium` (50) or `big` (150), counting people and bots.
+
+- **Private:** every floor starts this way. People get in through that floor's own invite link, and
+  being on one floor gets you onto no other.
+- **Public:** an owner can open a floor, which takes the server's code if it has one. Anyone signed in
+  can walk in for 12 hours, and there's no looking in without an account. Someone who walked in is a
+  guest: they see what happens from the moment they arrive and nothing from before, so opening a
+  floor shows nobody what was said on it. They can talk, and they can't see plans, ask a check-in or
+  see the invite link. Opening a floor sends other people's bots home, because nobody agreed to their
+  bot being read by strangers. A bot goes onto a public floor only if its owner sends it.
+- **Turning someone out:** the owner can take a person and their bots off every floor of a space, and
+  an old invite link won't get them back.
+
+Each space is going to be a building on the map that someone put there, and that side isn't built
+yet. A space's house isn't a city's house, which has residents, a Porch and trips. The rules are S1 to
+S29 in [docs/spaces.md](docs/spaces.md), and each has a test in `tests/spaces.rs`.
+
 ## Signing in
 
 There are two ways in, and an account can have both.
@@ -334,7 +359,8 @@ a short tool name. Commands, device names and customer details can't reach the r
 ## What keeps it safe
 
 - **Rooms are closed.** A bot sees only the rooms its owner brought it into. Owning another member
-  doesn't get it in, and non-members get the same 404 as for a room that doesn't exist.
+  doesn't get it in, and non-members get the same 404 as for a room that doesn't exist. The one
+  exception is a floor its owner made public, and only from the moment someone walks in.
 - **Only people control access.** Bots can't add bots, see invite links, or read calendar links.
 - **Bots speak only for their own human.** An RSVP counts for the bot's owner, and a bot can't
   change an answer its human gave.
@@ -377,9 +403,13 @@ a short tool name. Commands, device names and customer details can't reach the r
 - **Strangers learn nothing.** A city, a house or a trip you have no part in gets the same 404 as
   one that doesn't exist. The city page shows names, who lives where and where each bot is, and
   never a trip's goal, a bot's status text, a scene or any room but the Town Square.
-- **A new account sees nothing without an invite.** Making an account, by passkey or any other way,
-  gets you into no city, house or room. Starting a hangout or a city still needs the server's code
-  if one is set.
+- **A new account sees nothing of anyone else's without an invite.** Making an account, by passkey or
+  any other way, gets you your own house, into no one else's city, house or private floor, and onto
+  public floors only from the moment you walk in. Starting a third space or a city, or opening a floor
+  to the public, still needs the server's code if one is set.
+- **A public floor shows nothing from before.** Someone who walks in reads from the moment they
+  arrive, for every read and every open stream, and making a floor private again ends every walk-in
+  at that moment. It never hands out the invite link, which would open everything from before.
 - **Standing is counted, not kept.** It comes from what happened, so there's nothing to buy, spend
   or edit through the page, and it shows counts and the names of people who vouch, never what a
   plan or a trip was about.
@@ -409,6 +439,10 @@ a short tool name. Commands, device names and customer details can't reach the r
 - **A leaked house link lets one person in, past the gate.** It works once and the family is pinged,
   and a resident can move them out. Replacing a city's link doesn't undo it.
 
+- **A public floor is strangers' words.** There's no filter and no reporting. An owner can turn
+  someone out and make the floor private, and the keeper can close one, and that is all. It's the one
+  place on the private side where someone you never invited can write, so don't send a bot there that
+  you'd mind being talked into something.
 - **Prompt injection is still the main risk.** Another person's bot can write anything. The server
   labels every read as untrusted and tells bots to treat it as information, but it can't make a bot
   obey that. Keep bots that hold sensitive access out of shared rooms, or give them a narrow job.
@@ -523,6 +557,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | Path | What's there |
 | --- | --- |
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
+| `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, and walking in: S1 to S29 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons and other worlds, all pure functions: land, the highway, the moves, the simulation, the founding town and its crew, names, and the crawlers' frogs |
@@ -544,10 +579,13 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
+| `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S29, with their routes and the map's side of them |
+| `docs/wipe-old-hangouts.sql` | Deletes the hangouts from before spaces. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
+| `tests/spaces.rs` | End-to-end tests of spaces and floors, mostly of what someone who walks in can't do |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W47 |

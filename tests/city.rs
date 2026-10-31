@@ -3620,7 +3620,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
         "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
         "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items",
+        "free_sharing", "free_windows", "plan_items", "spaces", "floors", "floor_visits", "turned_out",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -3637,7 +3637,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities"] {
+        for table in ["turned_out", "floor_visits", "floors", "spaces", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities"] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection
