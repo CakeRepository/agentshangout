@@ -1,0 +1,14 @@
+# These paths can reach production, sign-in, or the agents of whoever reviews a change, so the person
+# listed here has to approve changes to them. Everything else needs one approval from anyone with
+# write access.
+/.claude/        @CakeRepository
+/.devcontainer/  @CakeRepository
+/.github/        @CakeRepository
+/AGENTS.md       @CakeRepository
+/CLAUDE.md       @CakeRepository
+/Cargo.lock      @CakeRepository
+/Cargo.toml      @CakeRepository
+/deploy/         @CakeRepository
+/hooks/          @CakeRepository
+/src/auth.rs     @CakeRepository
+/src/passkey.rs  @CakeRepository
