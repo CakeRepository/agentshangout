@@ -24,9 +24,10 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::{
     auth::{self, Caller, MaybeCaller, SESSION_COOKIE, SESSION_SECS},
     city::{self, PassInput, TripInput},
-    db::{Pass, Person, Scene, SceneRequest, Trip},
+    closeness::{self, FindTime, WindowInput},
+    db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    now,
+    friends, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -73,8 +74,14 @@ pub fn routes() -> Router<AppState> {
         .route("/api/plan-invites/{code}", get(plan_invite_preview))
         .route("/api/plan-invites/{code}/answer", post(answer_plan_invite))
         .route("/api/plan-invites/{code}/plan.ics", get(plan_invite_ics))
+        .route("/api/events/{id}/items", get(plan_list).post(add_plan_item))
+        .route("/api/plan-items/{id}", post(change_plan_item))
+        .route("/api/sharing", put(set_sharing))
+        .route("/api/free-times", get(my_free_times).put(set_free_times))
+        .route("/api/cities/{id}/find-a-time", post(find_a_time))
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
+        .merge(friends::routes())
         .merge(city_routes())
         .merge(world_routes())
 }
@@ -286,6 +293,10 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "waiting": trust::waiting(&state, &caller.person_id)?,
         // F6: true when they can start a city without the server code.
         "may_start_city": referrals::may_start_city(&state, &caller.person_id)?,
+        // F26: who can see when they're free: off, house or city.
+        "free_times_shared_with": closeness::sharing(&state, &caller.person_id)?,
+        // FR5: places a friend has invited them to.
+        "invited": friends::invited(&state, &caller.person_id)?,
     });
     // W18: the keeper of The Commons is told so, so the page knows to offer the removal buttons.
     if state.config.keeper_id.as_deref() == Some(caller.person_id.as_str()) {
@@ -869,6 +880,85 @@ async fn plan_invite_ics(
         calendar,
     )
         .into_response())
+}
+
+// Closeness
+
+#[derive(Deserialize)]
+struct Sharing {
+    free_times: String,
+}
+
+async fn set_sharing(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<Sharing>,
+) -> ApiResult<Json<Value>> {
+    closeness::set_sharing(&state, &caller, &body.free_times)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn my_free_times(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "times": closeness::my_free_times(&state, &caller)? })))
+}
+
+#[derive(Deserialize)]
+struct FreeTimes {
+    windows: Vec<WindowInput>,
+}
+
+async fn set_free_times(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<FreeTimes>,
+) -> ApiResult<Json<Value>> {
+    let windows = closeness::set_free_times(&state, &caller, &body.windows)?;
+    Ok(Json(json!({ "ok": true, "windows": windows })))
+}
+
+async fn find_a_time(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<FindTime>,
+) -> ApiResult<Json<closeness::Found>> {
+    Ok(Json(closeness::find_a_time(&state, &caller, &id, &body)?))
+}
+
+async fn plan_list(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "items": closeness::plan_list(&state, &caller, &id)? })))
+}
+
+#[derive(Deserialize)]
+struct NewItem {
+    text: String,
+}
+
+async fn add_plan_item(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<NewItem>,
+) -> ApiResult<Json<PlanItem>> {
+    Ok(Json(closeness::add_item(&state, &caller, &id, &body.text)?))
+}
+
+#[derive(Deserialize)]
+struct ChangeItem {
+    action: String,
+}
+
+async fn change_plan_item(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<ChangeItem>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(json!({ "item": closeness::change_item(&state, &caller, &id, &body.action)? })))
 }
 
 // Bots

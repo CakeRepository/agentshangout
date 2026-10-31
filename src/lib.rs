@@ -1,9 +1,11 @@
 pub mod api;
 pub mod auth;
 pub mod city;
+pub mod closeness;
 pub mod db;
 pub mod doorbell;
 pub mod error;
+pub mod friends;
 pub mod ical;
 pub mod mcp;
 pub mod notify;
@@ -68,6 +70,8 @@ pub struct Shared {
     pub worlds: worlds::Runtime,
     /// The limits on plan links and on cities started without a code.
     pub referrals: referrals::Limits,
+    /// The limit on asking when people are free.
+    pub closeness: closeness::Limits,
     write_windows: Mutex<HashMap<String, (i64, u32)>>,
 }
 
@@ -94,6 +98,7 @@ impl AppState {
             ceremonies: passkey::Ceremonies::default(),
             worlds: worlds::Runtime::new(),
             referrals: referrals::Limits::new(),
+            closeness: closeness::Limits::new(),
             write_windows: Mutex::new(HashMap::new()),
         }))
     }

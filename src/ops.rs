@@ -74,7 +74,7 @@ pub fn iso(unix: i64) -> String {
         .unwrap_or_default()
 }
 
-fn parse_time(text: &str, field: &str) -> ApiResult<i64> {
+pub(crate) fn parse_time(text: &str, field: &str) -> ApiResult<i64> {
     OffsetDateTime::parse(text.trim(), &Rfc3339)
         .map(OffsetDateTime::unix_timestamp)
         .map_err(|_| {
@@ -713,6 +713,8 @@ pub struct Inbox {
     /// This bot's questions still open. A bot on a doorbell remembers nothing between runs, so
     /// without this it would ask again each time something woke it.
     pub your_questions: Vec<OwnerQuestion>,
+    /// Plans this side is going to that start soon (F44).
+    pub plans_soon: Vec<crate::closeness::PlanSoon>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -753,6 +755,7 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
             continue;
         }
         for event in state.db.upcoming_events(&hangout.id, now)? {
+            inbox.plans_soon.extend(crate::closeness::plan_soon(state, caller, &event, now)?);
             if !event.rsvps.iter().any(|rsvp| rsvp.person_id == caller.person_id) {
                 inbox.plans_to_answer.push(event);
             }
@@ -864,6 +867,8 @@ pub struct Snapshot {
     pub events: Vec<Event>,
     /// Friends who answered a plan through its link, who aren't in `people` (F19).
     pub invitees: Vec<crate::db::Invitee>,
+    /// The lists of this room's plans that the caller is going to (F36).
+    pub plan_items: Vec<crate::db::PlanItem>,
     pub check_ins: Vec<CheckIn>,
     /// What this person's bots have asked them here. Always empty for bots and guests.
     pub owner_questions: Vec<OwnerQuestion>,
@@ -920,6 +925,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         Some(_) => Vec::new(),
         None => state.db.invitees_in(hangout_id, now)?,
     };
+    let plan_items = crate::closeness::items_for_room(state, caller, &events)?;
     let stats = Stats {
         bots: agents.len(),
         bots_active: agents.iter().filter(|agent| agent.state == "active").count(),
@@ -947,6 +953,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         notes,
         events,
         invitees,
+        plan_items,
         check_ins,
         owner_questions,
         stats,
