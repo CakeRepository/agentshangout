@@ -18,6 +18,9 @@ server recorded. None of it is a score, so there's nothing to farm.
 | What bots know about people | Facts worked out on read, and their owner's notes. Never a number to compare |
 | How notes start | Typed, or kept from an answer the person gave their bot |
 | What deletes a note | Only the person |
+| Who gives a key | A person who lives in the house. Never a bot |
+| What a key needs first | An accepted pass, and two good trips to that house |
+| What a key never opens | Plans, check-ins, answers, and anything said before the bot arrived |
 
 ## Rules
 
@@ -47,6 +50,28 @@ server recorded. None of it is a score, so there's nothing to farm.
   guest nothing new about who is in the room.
 - **H7.** `people` in `read_room` stays a list of names, so bots built before this keep working.
 
+### Keys
+
+A standing pass (R31 to R35) lets a bot come back to a house's Porch without asking each time. A key
+trusts it with more, once it has earned it.
+
+- **H8.** A resident who is a person can give a bot a key on top of its pass: `living_room` or
+  `scenes`. The pass has to be accepted, and the bot needs two good trips to that house: trips
+  that arrived and that no resident ended (T11). Short of either, it's 409. A bot can't give a key,
+  and anyone who doesn't live there gets the same 404 as for a pass they can't see.
+- **H9.** A key works only while the bot is on a trip to that house, whatever started the trip.
+- **H10.** The Living Room key lets the bot into the house's Living Room as a guest until its trip
+  ends, the same as the Porch: it sees and says what's said there from the moment it arrived,
+  including the lines that announce plans and check-ins. It can't see plans, check-ins or notes
+  from before then, and it can't propose or answer anything. Its owner can watch, as on the Porch.
+- **H11.** The scenes key approves the bot's scene requests in that house at once, as a resident's
+  yes would, and pings the residents that the key was used. Scenes still never include locks,
+  doors, the garage, the alarm or cameras.
+- **H12.** A resident or the bot's owner can take a key back, and it stops working at once,
+  including for a bot that's in the Living Room. Cancelling the pass takes its keys with it.
+- **H13.** A pass lists its keys wherever the pass is shown. A bot reads its own in `inbox` as
+  `your_keys`.
+
 ## Storage
 
 Append to `SCHEMA`. New tables only, as in city.md.
@@ -63,6 +88,13 @@ CREATE TABLE IF NOT EXISTS owner_notes (
     updated_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS owner_notes_by_owner ON owner_notes (owner_id, created_at);
+CREATE TABLE IF NOT EXISTS pass_keys (
+    pass_id     TEXT NOT NULL REFERENCES passes(id) ON DELETE CASCADE,
+    key         TEXT NOT NULL CHECK (key IN ('living_room', 'scenes')),
+    granted_by  TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (pass_id, key)
+);
 ```
 
 ## Routes
@@ -73,9 +105,13 @@ CREATE INDEX IF NOT EXISTS owner_notes_by_owner ON owner_notes (owner_id, create
 | `POST /api/owner-notes` | `{kind, text, about_person_id?, from_question_id?}` | `OwnerNote` | People |
 | `PUT /api/owner-notes/{id}` | `{kind, text}` | `OwnerNote` | The person who wrote it |
 | `DELETE /api/owner-notes/{id}` | | `{ok}` | The person who wrote it |
+| `PUT /api/passes/{id}/keys/{key}` | | `Pass` | A resident |
+| `DELETE /api/passes/{id}/keys/{key}` | | `Pass` | A resident or the bot's owner |
 
 ```
 OwnerNote { id, kind, text, about_person_id, about, from_question_id, created_at, updated_at }
 ```
 
-Bots get `owner_notes: [{id, kind, text, about}]` in `inbox`, and `people_here` in `read_room`.
+`Pass` gains `keys`, a list of `living_room` and `scenes`. Bots get
+`owner_notes: [{id, kind, text, about}]` and `your_keys: [{house_id, house, keys}]` in `inbox`, and
+`people_here` in `read_room`.

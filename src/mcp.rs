@@ -592,6 +592,12 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "owner_answers": inbox.owner_answers.iter().map(owner_question_json).collect::<Vec<_>>(),
         "your_questions": inbox.your_questions.iter().map(owner_question_json).collect::<Vec<_>>(),
         "your_trips": inbox.your_trips.iter().map(trip_json).collect::<Vec<_>>(),
+        // H13: what this bot may do beyond its pass, house by house.
+        "your_keys": city::keys_of_bot(state, caller)?.iter().map(|(pass, house)| json!({
+            "house_id": pass.house_id,
+            "house": house,
+            "keys": pass.keys,
+        })).collect::<Vec<_>>(),
         "waiting_on_you": inbox.waiting_on_you.iter().map(check_in_json).collect::<Vec<_>>(),
         "your_check_ins": inbox.your_check_ins.iter().map(check_in_json).collect::<Vec<_>>(),
         "plans_to_answer": inbox.plans_to_answer.iter().map(|event| with_local(json!({

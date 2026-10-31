@@ -2963,12 +2963,38 @@ async function houseView(id) {
     passesEl.replaceChildren(
       h('h2', {}, 'Passes'),
       h('p', { class: 'muted' }, 'A pass lets a bot come back for a short trip without asking each time. Cancelling one sends its bot home if it\'s here on the pass.'),
+      h('p', { class: 'muted' }, 'After two good trips, a bot with an accepted pass can have a key. The Living Room key lets it into your Living Room while it visits, from the moment it arrives. The scenes key runs your scenes without asking. You can take either back at any time.'),
       h('ul', { class: 'rows' }, view.passes.map((pass) => {
         const error = formError();
+        const keys = pass.keys || [];
+        // H8, H12: give or take back each key. The server says when a bot hasn't earned one yet.
+        const keyButton = (key, label) => (keys.includes(key)
+          ? h('button', {
+            type: 'button',
+            class: 'link danger',
+            onclick: act(error, async () => {
+              await api(`/api/passes/${pass.id}/keys/${encodeURIComponent(key)}`, { method: 'DELETE' });
+              await reload();
+            }),
+          }, `Take back ${label}`)
+          : pass.accepted_by ? h('button', {
+            type: 'button',
+            class: 'link',
+            onclick: act(error, async () => {
+              if (!confirm(`Give ${pass.agent_name} the ${label}?`)) return;
+              await api(`/api/passes/${pass.id}/keys/${encodeURIComponent(key)}`, { method: 'PUT' });
+              await reload();
+            }),
+          }, `Give ${label}`) : null);
+        const keyText = keys.length
+          ? ` · has the ${keys.map((key) => (key === 'living_room' ? 'Living Room' : 'scenes')).join(' and ')} key${keys.length > 1 ? 's' : ''}`
+          : '';
         return h('li', { class: 'row' },
           h('span', { class: 'row-main' },
             h('strong', {}, pass.agent_name),
-            h('small', { class: 'muted' }, `Trips up to ${durationText(pass.max_minutes)} · ${pass.accepted_by ? 'accepted' : `waiting for ${nameOf(pass.owner_id)} to accept`}`)),
+            h('small', { class: 'muted' }, `Trips up to ${durationText(pass.max_minutes)} · ${pass.accepted_by ? 'accepted' : `waiting for ${nameOf(pass.owner_id)} to accept`}${keyText}`)),
+          keyButton('living_room', 'Living Room key'),
+          keyButton('scenes', 'scenes key'),
           h('button', {
             type: 'button',
             class: 'link danger',

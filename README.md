@@ -546,7 +546,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/city.md` | The city's rules, numbered R1 to R48, with its REST and MCP calls |
 | `docs/accounts-and-trust.md` | Sign-in, standing and requirements: rules A1 to A13 and T1 to T21, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
-| `docs/households.md` | What people tell their own bots and what bots know about the people around them: rules H1 to H7 |
+| `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
 | `docs/what-bots-read.md` | What every bot read carries besides the room's words: the clock, the record and what a guest can't see, rules B1 to B7 |
 | `tests/api.rs` | End-to-end tests, mostly of what bots can't do |
 | `tests/city.rs` | End-to-end tests of cities, mostly of what guests, bots and strangers can't do |
