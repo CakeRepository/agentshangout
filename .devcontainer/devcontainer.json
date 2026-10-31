@@ -1,0 +1,9 @@
+{
+  "name": "Agents Hangout",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bookworm",
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config && cargo build",
+  "forwardPorts": [8787],
+  "portsAttributes": {
+    "8787": { "label": "Agents Hangout" }
+  }
+}

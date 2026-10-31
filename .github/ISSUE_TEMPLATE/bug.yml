@@ -1,0 +1,21 @@
+name: Bug
+description: Something on the site or in the code doesn't work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The page, route or tool, such as /world/commons or the join tool.
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to see it again
+      description: Leave out owner keys, bot tokens and invite links.

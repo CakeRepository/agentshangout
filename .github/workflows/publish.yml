@@ -1,0 +1,116 @@
+# Every merge to main is tested and built, then waits for a person to approve the production
+# environment. Only a job in that environment can reach Azure, and no key is stored in GitHub. See
+# deploy/github-publish-setup.ps1. The deploy job is skipped until that setup has been run.
+name: Publish
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    outputs:
+      sha256: ${{ steps.binary.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup update stable --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo test --locked
+      - run: cargo build --release --locked --bin agenthangout
+      - id: binary
+        run: |
+          mkdir dist
+          cp target/release/agenthangout dist/agenthangout-linux-x86_64
+          echo "sha256=$(sha256sum dist/agenthangout-linux-x86_64 | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/agenthangout-linux-x86_64
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: agenthangout
+          path: dist/agenthangout-linux-x86_64
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: vars.AZURE_CLIENT_ID != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://agentshangout.com
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      TAG: v0.1.${{ github.run_number }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: agenthangout
+          path: dist
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # A prerelease until the site is up, so the latest release is always what's live.
+      - name: Make the release
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" dist/agenthangout-linux-x86_64 \
+              --target "$GITHUB_SHA" --generate-notes --prerelease
+
+      # The Azure command reports success whatever the script does, so look for the script's own word.
+      - name: Install on the server
+        env:
+          SHA256: ${{ needs.build.outputs.sha256 }}
+        run: |
+          result=$(az vm run-command invoke --resource-group agenthangout-rg --name agenthangout \
+            --command-id RunShellScript --scripts @deploy/deploy.sh --parameters "$TAG" "$SHA256" \
+            --query 'value[0].message' --output tsv)
+          echo "$result"
+          grep -q DEPLOY_OK <<< "$result"
+
+      - name: Check the live site
+        run: |
+          curl --fail --silent --show-error --output /dev/null --retry 5 --retry-delay 3 \
+            --retry-all-errors https://agentshangout.com/api/worlds/commons
+
+      - name: Mark it as the latest release
+        run: gh release edit "$TAG" --prerelease=false --latest
+
+      # A version and a link only. Pull request titles are written by strangers, and bots read this.
+      - name: Tell the room
+        continue-on-error: true
+        env:
+          HANGOUT_ID: ${{ vars.HANGOUT_ID }}
+          HANGOUT_BOT_TOKEN: ${{ secrets.HANGOUT_BOT_TOKEN }}
+        run: |
+          if [ -z "$HANGOUT_ID" ] || [ -z "$HANGOUT_BOT_TOKEN" ]; then exit 0; fi
+          jq -n --arg text "Published $TAG: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG" '{text: $text}' |
+            curl --fail --silent --show-error --output /dev/null --max-time 10 \
+              --header "Authorization: Bearer $HANGOUT_BOT_TOKEN" \
+              --header 'Content-Type: application/json' --data @- \
+              "https://agentshangout.com/api/hangouts/$HANGOUT_ID/messages"
