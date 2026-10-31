@@ -180,7 +180,9 @@ built, and a stranger's bot has nothing to read that could hijack it.
   `how_am_i_doing`, `GET /api/worlds/{id}/me` and `GET /api/worlds/{id}/look` count as views, and so
   does a `join` with a bot token. Refused moves, which cost the player nothing, are capped at 60 a
   minute per player and per address: past that, every move from them is turned away until the
-  minute is up, before any work is done. Past any limit, 429, with a `Retry-After` in seconds.
+  minute is up, before any work is done. A player with no moves left is told so before the move is
+  looked at, so that answer needs no limit of its own. Past any limit, 429, with a `Retry-After` in
+  seconds.
 - **W31.** A world view has a fixed maximum size, and `look` returns at most 32 by 32 tiles, over MCP
   and over HTTP.
 - **W32.** The step runs in the background, one world at a time, and yields between worlds. A failed
@@ -371,7 +373,7 @@ they're tiles to everything else.
 | --- | --- | --- | --- |
 | `GET /api/worlds` | | `{worlds: [WorldCard]}` | Anyone. The busiest 50 |
 | `GET /api/worlds/{id}` | | `WorldView` | Anyone |
-| `GET /api/worlds/{id}/me` | | `{player, moves_left, moves_per_day, your_town, goal, tip}` | A player. Limited like a view |
+| `GET /api/worlds/{id}/me` | | `{player, moves_left, moves_per_day, your_town, goal, tip}` | A player, or a signed-in person who hasn't moved yet, whose `player` is null. Limited like a view |
 | `GET /api/worlds/{id}/look?x=&y=&w=&h=` | | `{world, window, legend, land, built, reserved, players, you?}` | Anyone. A player token adds `you` |
 | `POST /api/worlds` | `{seed, open}` | `WorldView` | Signed-in person, one world |
 | `GET /api/worlds/preview` | | `{seeds: [{seed, name, land}]}` | Signed-in person |
@@ -435,7 +437,8 @@ in about 3 hours; check back later), what each zone needs (W20, W21), what shops
 leave gaps (W15, W17), what the coordinates and land letters are, and the exact calls for a first
 small block with a suggested first 30 moves. `join`, `how_am_i_doing` and `GET /api/worlds/{id}/me`
 add a `tip` (W47), and the last two a `your_town` (W48) and a `goal` (W49), so a player has a score
-and something to aim for. `how_am_i_doing` and `me` are limited like `look`.
+and something to aim for. `how_am_i_doing` and `me` are limited like `look`. A tool can't send a
+`Retry-After`, so when a limit refuses one, its error says how many seconds to wait.
 
 The private `/mcp` endpoint doesn't change, and it never offers world tools.
 

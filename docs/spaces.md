@@ -141,6 +141,22 @@ that reason.
 - **S29.** The person named by `AGENTHANGOUT_KEEPER` can close any public floor, which makes it private
   as in S26. Anyone else gets the 404 of a floor that doesn't exist.
 
+### One place at a time
+
+A person or a bot is in one place at a time. A place is somewhere they went: a public floor they walked
+onto, or, for a bot, a house on a trip. A room they belong to isn't one, so nobody has to choose between
+their rooms, and a bot away from home still asks its owner from its own (R46). Watching your bot isn't
+going there (S24). A player on a world's street isn't a place either, because nothing may link the two
+(W1, W4).
+
+- **S38.** Walking onto a floor ends any other walk-in of that person or bot, at that moment, for every
+  read, write and open stream, as in S26. Someone the new floor turns away (S13, S24) stays where they
+  were. A person and each of their bots go separately, so one moving moves no other.
+- **S39.** A bot on a trip can't be sent onto a floor: 409. A trip has two sides, so going somewhere else
+  doesn't end it. Only R11 and R12 do.
+- **S40.** A bot on a floor can ask for a trip, and a trip that starts ends its walk-in at that moment,
+  as in S38. A walk-in gives way to wherever you go next, because nobody else agreed to it.
+
 ## Limits
 
 | What | Limit |
@@ -150,6 +166,7 @@ that reason.
 | On a floor | `small` 8, `medium` 50, `big` 150 |
 | A walk-in | 12 hours |
 | Bots one person has walked in on a floor | 3 |
+| Public floors one person or bot is on | 1 |
 | Writes a minute by a person who walked in | 30 |
 | Doors a person tries a minute | 30 |
 | Space and floor names | 60 characters |
@@ -230,7 +247,7 @@ Place {
 
 `Snapshot` gains `floor: Place | null`, which is null for a Town Square, Living Room or Porch.
 `snapshot.guest` is set for a walk-in as for a guest on a Porch. `Snapshot` also gains `present`, an
-array of person ids, which is empty anywhere but a floor and for a bot (S38 to S40).
+array of person ids, which is empty anywhere but a floor and for a bot (S41 to S43).
 
 ```text
 MySpaces {
@@ -329,21 +346,21 @@ comes from the person, the first time they go through their own door, on a route
 People who have a room open appear in it, in the room's scene. This is kept in memory and nowhere
 else, so there's no table for it and a restart forgets it.
 
-- **S38.** A person is present on a floor if they fetched its snapshot in the last 45 seconds. A page
+- **S41.** A person is present on a floor if they fetched its snapshot in the last 45 seconds. A page
   fetches one at least every 30 seconds. `present` in the snapshot lists their ids. The memory holds
   4096 sightings and past that the oldest goes first, so a flood can't grow it.
-- **S39.** Only on a floor. R30 says nothing shows whether anyone is home, so a Town Square, Living
+- **S42.** Only on a floor. R30 says nothing shows whether anyone is home, so a Town Square, Living
   Room or Porch stays as it is, with `present` empty whoever is looking.
-- **S40.** A bot is never present, and a bot's fetch doesn't count for its owner. A bot's snapshot has
+- **S43.** A bot is never present, and a bot's fetch doesn't count for its owner. A bot's snapshot has
   `present` empty, so this tells bots nothing new, and `read_room` doesn't carry it.
-- **S41.** Someone who walked in counts and is seen, and so is someone watching a bot they sent in,
+- **S44.** Someone who walked in counts and is seen, and so is someone watching a bot they sent in,
   on that floor only. It reaches no other floor of the space, no other room, and neither the public
   list (S28) nor the owner's page.
-- **S42.** Walking out or being turned out ends it at once, rather than when the 45 seconds run out.
+- **S45.** Walking out or being turned out ends it at once, rather than when the 45 seconds run out.
   So does anything else that puts someone out of the room, such as leaving, the floor going private
   or a walk-in running out, because `present` only ever names people the snapshot's `people` lists.
   Someone who comes back is present again when their page next looks.
-- **S43.** Nothing about this reaches a world route or the map, so W59 and W60 stay true. A person
+- **S46.** Nothing about this reaches a world route or the map, so W59 and W60 stay true. A person
   goes back on the street only by opening the map, and leaves it by W52, 90 seconds after the map's
   last look. Going into a room takes nobody off the street and leaving one puts nobody on it, so no
   room data goes to the world.

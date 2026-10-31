@@ -45,9 +45,9 @@ const FLOORINGS: [&str; 4] = ["oak", "walnut", "tile", "carpet"];
 const FURNITURE: [&str; 5] = ["bar", "arcade", "plants", "rug", "beanbags"];
 /// S37: the doors a person can try in a minute.
 const MAX_DOORS_PER_MINUTE: u32 = 30;
-/// S38: a page looks at least every 30 seconds, so this forgives one late look and no more.
+/// S41: a page looks at least every 30 seconds, so this forgives one late look and no more.
 pub const PRESENT_SECS: i64 = 45;
-/// S38: however many people look at however many floors, this is all that's remembered.
+/// S41: however many people look at however many floors, this is all that's remembered.
 pub const MAX_SIGHTINGS: usize = 4096;
 
 pub fn routes() -> Router<AppState> {
@@ -759,10 +759,13 @@ async fn walk_in(
         None if is_member => return Ok(Json(json!({ "hangout_id": floor.id, "until": null }))),
         None => None,
     };
+    let who = agent.as_ref().map_or(caller.person_id.as_str(), |agent| agent.id.as_str());
+    // Read first: once they've walked in, nothing says which floor they left.
+    let left = state.db.walked_onto(who, now)?;
     let walked = state.db.walk_in(
         &NewVisit {
             hangout_id: &floor.id,
-            who: agent.as_ref().map_or(caller.person_id.as_str(), |agent| agent.id.as_str()),
+            who,
             person_id: &caller.person_id,
             agent_id: agent.as_ref().map(|agent| agent.id.as_str()),
             until: now + WALK_IN_SECS,
@@ -779,6 +782,10 @@ async fn walk_in(
                 "you have {MAX_BOTS_WALKED_IN} bots on this floor already"
             )))
         }
+        WalkedIn::OnTrip => return Err(ApiError::conflict("that bot is on a trip: bring it home first")),
+    }
+    for gone in left.iter().filter(|gone| **gone != floor.id) {
+        ops::refresh(&state, gone);
     }
     ops::refresh(&state, &floor.id);
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))
@@ -833,7 +840,7 @@ async fn keeper_close(
     Ok(Json(state.db.floor(&id)?.ok_or_else(ApiError::not_found)?))
 }
 
-// Who is in the room (S38 to S43). This is memory and it stays on the floor. Nothing here goes to a
+// Who is in the room (S41 to S46). This is memory and it stays on the floor. Nothing here goes to a
 // world, a list or another room, and a person is on the street only by opening the map (W52).
 
 /// When each person last looked at each floor, by (floor, person).
@@ -847,7 +854,7 @@ impl Presence {
         self.sightings.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Notes a look at a floor. S38: anything too old to count goes first, and if it's still full of
+    /// Notes a look at a floor. S41: anything too old to count goes first, and if it's still full of
     /// people who really are here, the oldest of them goes, so a flood costs nothing but a few
     /// sightings.
     pub fn saw(&self, floor_id: &str, person_id: &str, now: i64) {
@@ -869,14 +876,14 @@ impl Presence {
         self.sightings().get(&key).is_some_and(|seen| now - *seen <= PRESENT_SECS)
     }
 
-    /// S42: gone at once, rather than when the look runs out.
+    /// S45: gone at once, rather than when the look runs out.
     pub fn forget(&self, floor_id: &str, person_id: &str) {
         self.sightings().remove(&(floor_id.to_string(), person_id.to_string()));
     }
 }
 
-/// Notes this look, and says who else has this floor open. S39: only on a floor. S40: a bot's look
-/// counts for nobody, though its caller carries its owner's id, and a bot isn't told. S42: only the
+/// Notes this look, and says who else has this floor open. S42: only on a floor. S43: a bot's look
+/// counts for nobody, though its caller carries its owner's id, and a bot isn't told. S45: only the
 /// people the room lists right now, so anyone who has gone is gone, however they went.
 pub fn present(
     state: &AppState,

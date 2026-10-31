@@ -1094,11 +1094,18 @@ pub(crate) fn own_agent(
     action: &str,
 ) -> ApiResult<Agent> {
     require_human(caller, action)?;
-    state
+    let agent = state
         .db
         .agent(agent_id, now())?
         .filter(|agent| agent.owner_id == caller.person_id)
-        .ok_or_else(ApiError::not_found)
+        .ok_or_else(ApiError::not_found)?;
+    // R44: a house bot is the house's, so whoever made it has no say once they've moved out.
+    if let Some(home) = state.db.bot_home(agent_id)?.filter(|home| home.is_house) {
+        if !state.db.is_resident(&home.house_id, &caller.person_id)? {
+            return Err(ApiError::not_found());
+        }
+    }
+    Ok(agent)
 }
 
 pub fn bring_agent(

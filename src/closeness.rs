@@ -395,7 +395,13 @@ pub fn change_item(
     let event = plan_you_are_going_to(state, caller, &item.event_id)?;
     let yours = item.claimed_by.as_deref() == Some(caller.person_id.as_str());
     match action {
-        "claim" if yours => return Ok(Some(item)),
+        "claim" if yours => {
+            // F39: once a person claims it themselves, their bot can't let it go.
+            if caller.is_agent() || item.claimed_via.is_none() {
+                return Ok(Some(item));
+            }
+            state.db.keep_plan_item(&item.id)?;
+        }
         "claim" => {
             ops::note_agent_write(state, caller)?;
             let via = caller.is_agent().then_some(caller.name.as_str());

@@ -71,7 +71,8 @@ trusts it with more, once it has earned it.
   yes would, and pings the residents that the key was used. Scenes still never include locks,
   doors, the garage, the alarm or cameras.
 - **H12.** A resident or the bot's owner can take a key back, and it stops working at once,
-  including for a bot that's in the Living Room. Cancelling the pass takes its keys with it.
+  including for a bot that's in the Living Room. Cancelling the pass takes its keys with it. A key
+  is its giver's yes, so it ends when the resident who gave it moves out (R7).
 - **H13.** A pass lists its keys wherever the pass is shown. A bot reads its own in `inbox` as
   `your_keys`.
 

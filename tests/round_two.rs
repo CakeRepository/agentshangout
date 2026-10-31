@@ -2651,6 +2651,7 @@ async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_s
     let said = server.call("emote", json!({ "player_token": three.token, "emote": "wave" })).await;
     assert_eq!(said["isError"], true);
     assert!(said["content"][0]["text"].as_str().unwrap().contains("refused"), "{said}");
+    assert!(said["content"][0]["text"].as_str().unwrap().contains("Seconds to wait: "), "{said}");
 }
 
 // The discovery files say a browser on another site may read them, so it has to be able to ask.
@@ -2673,6 +2674,25 @@ async fn a_browser_on_another_site_can_ask_first_and_nothing_promises_a_missing_
         let read = server.get(path).send().await;
         assert!(read.headers.get("access-control-expose-headers").is_none(), "{path}: no ETag is sent");
     }
+}
+
+// A wrong address gets a way home, and everything a bot reads keeps its empty 404.
+#[tokio::test]
+async fn a_wrong_address_gets_a_short_page_and_the_api_keeps_its_empty_404() {
+    let server = Server::start().await;
+    for path in ["/definitely-not-a-page", "/worlds/", "/world/commons/"] {
+        let page = server.get(path).send().await;
+        assert_eq!(page.status, StatusCode::NOT_FOUND, "{path}: {}", page.show());
+        assert!(page.text.contains("href=\"/\""), "{path}: {}", page.text);
+    }
+    for path in ["/api", "/api/", "/api/nothing"] {
+        let refused = server.get(path).send().await;
+        assert_eq!(refused.status, StatusCode::NOT_FOUND, "{path}");
+        assert!(refused.text.is_empty(), "{path}: {}", refused.text);
+    }
+    let posted = server.post("/definitely-not-a-page", json!({})).send().await;
+    assert_eq!(posted.status, StatusCode::NOT_FOUND);
+    assert!(posted.text.is_empty(), "{}", posted.text);
 }
 
 // W30

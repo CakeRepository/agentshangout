@@ -633,6 +633,24 @@ async fn two_sides_claiming_at_once_cannot_both_get_it() {
 
 // F39
 #[tokio::test]
+async fn an_owner_claiming_what_their_bot_holds_takes_it_over() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    let item = server.add(&town.ann.key, &event, "Salsa").await;
+    let claimed = server.tool(&town.scout, "update_plan_item", json!({ "item_id": item, "action": "claim" })).await;
+    assert!(claimed["isError"].is_null(), "{claimed}");
+
+    server.act(&town.ann.key, &item, "claim").await.ok();
+    let refused = server.tool(&town.scout, "update_plan_item", json!({ "item_id": item, "action": "release" })).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimer"], "Ann", "{listed}");
+    assert_eq!(listed[0]["claimed_via"], Value::Null, "{listed}");
+}
+
+// F39
+#[tokio::test]
 async fn a_bot_cannot_change_what_its_owner_claimed_themselves() {
     let server = Server::start().await;
     let town = server.town().await;
@@ -645,6 +663,24 @@ async fn a_bot_cannot_change_what_its_owner_claimed_themselves() {
     let again = server.act(&town.scout, &item, "claim").await.ok();
     assert_eq!(again["item"]["claimed_via"], Value::Null, "still theirs, not the bot's");
     server.act(&town.ann.key, &item, "done").await.ok();
+}
+
+// F40
+#[tokio::test]
+async fn saying_no_lets_an_item_go_so_saying_yes_again_does_not_bring_it_back() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    server.answer(&town.bo.key, &event, "yes").await;
+    let item = server.add(&town.ann.key, &event, "Drive").await;
+    server.act(&town.bo.key, &item, "claim").await.ok();
+    server.act(&town.bo.key, &item, "done").await.ok();
+
+    server.answer(&town.bo.key, &event, "no").await;
+    server.answer(&town.bo.key, &event, "maybe").await;
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimed_by"], Value::Null, "{listed}");
+    assert_eq!(listed[0]["done"], false, "{listed}");
 }
 
 // F40
@@ -668,6 +704,25 @@ async fn saying_no_opens_up_what_you_claimed_and_a_list_ends_with_its_plan() {
     let gone = server.get(&town.ann.key, &format!("/api/events/{event}/items")).await;
     gone.is(StatusCode::CONFLICT);
     server.act(&town.ann.key, &item, "release").await.is(StatusCode::CONFLICT);
+}
+
+// F40
+#[tokio::test]
+async fn leaving_opens_up_what_you_claimed() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    server.answer(&town.dee.key, &event, "yes").await;
+    let item = server.add(&town.ann.key, &event, "Drive").await;
+    server.act(&town.dee.key, &item, "claim").await.ok();
+    server.act(&town.dee.key, &item, "done").await.ok();
+
+    server.post(&town.dee.key, &format!("/api/cities/{}/leave", town.city), json!({})).await.ok();
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimed_by"], Value::Null, "{listed}");
+    let taken = server.act(&town.ann.key, &item, "claim").await.ok();
+    assert_eq!(taken["item"]["claimer"], "Ann");
+    assert_eq!(taken["item"]["done"], false, "{taken}");
 }
 
 // F41
