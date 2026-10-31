@@ -1,4 +1,4 @@
-//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W71). They
+//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W74). They
 //! drive a real server over HTTP. A comment such as `// W13` above a test names the rule it
 //! covers, so coverage can be checked by searching for it.
 //!
@@ -3977,7 +3977,7 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     let _ = std::fs::remove_file(&path);
 }
 
-// W71
+// W73
 #[test]
 fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
     // Sizing a canvas wipes it, and a resize is heard after the frame is drawn, so the browser shows
@@ -3992,4 +3992,23 @@ fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
     let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
     assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
     assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
+}
+
+// W74
+#[test]
+fn the_status_bar_under_the_map_stays_one_line_tall() {
+    // The map gets the height the bar leaves, so a goal that wrapped when the mouse came onto the map
+    // resized the map each time, in a window of an ordinary size. Nothing here runs a browser, so this
+    // reads the page. Rooms stack rows in the same bar and have no map, so they keep them.
+    let app = include_str!("../web/app.js");
+    assert!(app.contains("frame.root.classList.add('wd-game', 'wd-map');"), "the map's window says it's the map");
+    let css = include_str!("../web/style.css");
+    assert!(css.contains(".wd-map > .wd-status { flex-wrap: nowrap; }"), "the bar is one row on a wide screen");
+    assert!(
+        css.contains(".wd-map .wd-status .wd-seg[role=\"status\"], .wd-map .wd-status .wd-town { white-space: nowrap; overflow-wrap: normal; }"),
+        "the two cells that say whole sentences stay on one line, on every screen",
+    );
+    assert!(css.contains(".wd-map .wd-status .wd-town { order: 1; }"), "on a narrow screen the readout can't add a row");
+    assert!(app.contains("frame.message.title = text;"), "a message that doesn't fit can still be read");
+    assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
 }
