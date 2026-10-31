@@ -3281,7 +3281,7 @@ function moveSentence(body, done) {
   if (!done.changed) return `Nothing changed. ${left}`;
   const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
-  const skipped = done.skipped ? `, leaving ${done.skipped} that were already built on` : '';
+  const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
 }
 
