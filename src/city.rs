@@ -564,7 +564,7 @@ pub fn join_house(
     let city = state.db.city(&house.city_id)?.ok_or_else(ApiError::not_found)?;
     // The gate doesn't stop them (T19), but the city's rules still need accepting (T14).
     let was_in_city = state.db.is_city_member(&city.id, &person.id)?;
-    if !was_in_city {
+    if !was_in_city && !trust::is_waiting(state, &city, &person.id, now)? {
         trust::check_rules_accepted(state, &city, accept_rules)?;
     }
     let family = resident_ids(state, &house.id)?;
