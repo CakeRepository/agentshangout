@@ -1741,7 +1741,7 @@ async function roomView(id) {
     const bots = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Send a bot in',
-      h('p', {}, 'Anyone here can write to it, so send a bot with nothing to lose. It stays 12 hours, or until you bring it home.'),
+      h('p', {}, 'Anyone here can write to it, so send a bot with nothing to lose. It stays 12 hours, or until you bring it home. A bot on another public floor leaves that one.'),
       error,
       bots.length ? h('div', { class: 'also' }, bots.map((bot) => h('button', {
         type: 'button',

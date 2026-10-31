@@ -750,10 +750,13 @@ async fn walk_in(
         None if is_member => return Ok(Json(json!({ "hangout_id": floor.id, "until": null }))),
         None => None,
     };
+    let who = agent.as_ref().map_or(caller.person_id.as_str(), |agent| agent.id.as_str());
+    // Read first: once they've walked in, nothing says which floor they left.
+    let left = state.db.walked_onto(who, now)?;
     let walked = state.db.walk_in(
         &NewVisit {
             hangout_id: &floor.id,
-            who: agent.as_ref().map_or(caller.person_id.as_str(), |agent| agent.id.as_str()),
+            who,
             person_id: &caller.person_id,
             agent_id: agent.as_ref().map(|agent| agent.id.as_str()),
             until: now + WALK_IN_SECS,
@@ -770,6 +773,10 @@ async fn walk_in(
                 "you have {MAX_BOTS_WALKED_IN} bots on this floor already"
             )))
         }
+        WalkedIn::OnTrip => return Err(ApiError::conflict("that bot is on a trip: bring it home first")),
+    }
+    for gone in left.iter().filter(|gone| **gone != floor.id) {
+        ops::refresh(&state, gone);
     }
     ops::refresh(&state, &floor.id);
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))

@@ -45,6 +45,25 @@ struct Who {
     id: String,
 }
 
+/// Cy, whose bot can visit Di's house in the same city.
+struct Neighbours {
+    cy: Who,
+    di: Who,
+    bot: String,
+    token: String,
+    house: String,
+    porch: String,
+}
+
+/// Whether the server ends a stream, reading it until it does.
+async fn ends(mut stream: reqwest::Response) -> bool {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while let Ok(Some(_)) = stream.chunk().await {}
+    })
+    .await
+    .is_ok()
+}
+
 fn text(value: &Value) -> String {
     value.as_str().unwrap_or_else(|| panic!("not text: {value}")).to_string()
 }
@@ -178,6 +197,44 @@ impl Server {
 
     async fn snapshot(&self, who: &str, room: &str) -> Reply {
         self.get(who, &format!("/api/hangouts/{room}")).await
+    }
+
+    async fn stream(&self, token: &str, room: &str) -> reqwest::Response {
+        let stream = self
+            .client
+            .get(format!("{}/api/hangouts/{room}/stream", self.base))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stream.status(), StatusCode::OK);
+        stream
+    }
+
+    async fn neighbours(&self) -> Neighbours {
+        let made = self
+            .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+            .await
+            .ok();
+        let cy = who(&made);
+        let city = text(&made["city"]["id"]);
+        let code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
+        let homes = format!("/api/cities/{city}/houses");
+        let own = self.post(&cy.key, &homes, json!({ "name": "Cy's" })).await.ok();
+        let di = who(&self.post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": "Di" })).await.ok());
+        let host = self.post(&di.key, &homes, json!({ "name": "Di's" })).await.ok();
+        let (bot, token) = self.bot(&cy, &text(&own["living_room_id"]), "Scout").await;
+        Neighbours { cy, di, bot, token, house: text(&host["house"]["id"]), porch: text(&host["porch_id"]) }
+    }
+
+    /// Cy asks for Scout's trip, which is the owner's yes, and it waits for Di's.
+    async fn ask_for_trip(&self, town: &Neighbours) -> String {
+        let trip = json!({ "agent_id": town.bot, "house_id": town.house, "kind": "call" });
+        text(&self.post(&town.cy.key, "/api/trips", trip).await.ok()["id"])
+    }
+
+    async fn host_says_yes(&self, town: &Neighbours, trip: &str) -> Value {
+        self.post(&town.di.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok()
     }
 
     async fn say(&self, who: &str, room: &str, words: &str) -> Reply {
@@ -1262,6 +1319,142 @@ async fn the_keeper_can_close_a_public_floor_and_nobody_else_learns_the_route_ex
     // The keeper has no way in: closing a floor doesn't let them read it.
     server.snapshot(&server.keeper.key, &room).await.refused(StatusCode::NOT_FOUND);
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["floor"]["access"], "private");
+}
+
+// S38
+
+#[tokio::test]
+async fn walking_onto_a_floor_leaves_the_last_one() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.walk_in(&stranger, &first).await.ok();
+    assert_eq!(server.snapshot(&ann.key, &first).await.ok()["floor"]["here"], 2);
+
+    server.walk_in(&stranger, &second).await.ok();
+    server.snapshot(&stranger.key, &second).await.ok();
+    server.snapshot(&stranger.key, &first).await.refused(StatusCode::NOT_FOUND);
+    server.say(&stranger.key, &first, "Still here?").await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.snapshot(&ann.key, &first).await.ok()["floor"]["here"], 1);
+
+    // Coming back is arriving again, so what was said while they were gone stays hidden (S19).
+    server.say(&ann.key, &first, "Said while you were out").await.ok();
+    server.walk_in(&stranger, &first).await.ok();
+    let back = server.snapshot(&stranger.key, &first).await.ok();
+    assert!(!Server::lines(&back).contains(&"Said while you were out".to_string()));
+    server.snapshot(&stranger.key, &second).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S38: a person and each of their bots go separately, and nobody leaves a room they belong to.
+
+#[tokio::test]
+async fn a_bot_is_on_one_floor_and_goes_apart_from_its_owner() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (home, stranger) = server.someone("Stranger").await;
+    let (scout, token) = server.bot(&stranger, &home, "Scout").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+
+    let send = json!({ "agent_id": scout });
+    server.post(&stranger.key, &format!("/api/floors/{first}/walk-in"), send.clone()).await.ok();
+    server.post(&stranger.key, &format!("/api/floors/{second}/walk-in"), send).await.ok();
+    server.snapshot(&token, &second).await.ok();
+    server.snapshot(&token, &first).await.refused(StatusCode::NOT_FOUND);
+
+    server.walk_in(&stranger, &first).await.ok();
+    server.snapshot(&stranger.key, &first).await.ok();
+    server.snapshot(&token, &second).await.ok();
+    server.snapshot(&stranger.key, &home).await.ok();
+    server.snapshot(&token, &home).await.ok();
+}
+
+// S38: a floor that turns you away hasn't moved you.
+
+#[tokio::test]
+async fn a_full_floor_leaves_you_where_you_were() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.put(&bo.key, &format!("/api/floors/{second}"), json!({ "size": "small" })).await.ok();
+    for n in 0..7 {
+        server.join(&bo, &second, &format!("Friend {n}")).await;
+    }
+
+    server.walk_in(&stranger, &first).await.ok();
+    server.walk_in(&stranger, &second).await.refused(StatusCode::CONFLICT);
+    server.snapshot(&stranger.key, &first).await.ok();
+}
+
+// S38: no line has to be said in the room for this to happen.
+
+#[tokio::test]
+async fn an_open_stream_ends_when_you_walk_onto_another_floor() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let (second, bo) = server.someone("Bo").await;
+    let (_, stranger) = server.someone("Stranger").await;
+    server.open(&ann, &first).await;
+    server.open(&bo, &second).await;
+    server.walk_in(&stranger, &first).await.ok();
+    let stream = server.stream(&stranger.key, &first).await;
+
+    server.walk_in(&stranger, &second).await.ok();
+    assert!(ends(stream).await, "the stream never ended");
+}
+
+// S39
+
+#[tokio::test]
+async fn a_bot_on_a_trip_cant_be_sent_onto_a_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let town = server.neighbours().await;
+    let trip = server.ask_for_trip(&town).await;
+    server.host_says_yes(&town, &trip).await;
+    let walk = format!("/api/floors/{room}/walk-in");
+    let send = json!({ "agent_id": town.bot });
+
+    server.post(&town.cy.key, &walk, send.clone()).await.refused(StatusCode::CONFLICT);
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.get(&town.cy.key, &format!("/api/trips/{trip}")).await.ok()["status"], "here");
+
+    // Its owner isn't the one away, and once it's home it can go.
+    server.walk_in(&town.cy, &room).await.ok();
+    server.post(&town.cy.key, &format!("/api/trips/{trip}/end"), json!({})).await.ok();
+    server.post(&town.cy.key, &walk, send).await.ok();
+    server.snapshot(&town.token, &room).await.ok();
+}
+
+// S40
+
+#[tokio::test]
+async fn a_trip_that_starts_takes_a_bot_off_its_floor() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let town = server.neighbours().await;
+    let send = json!({ "agent_id": town.bot });
+    server.post(&town.cy.key, &format!("/api/floors/{room}/walk-in"), send).await.ok();
+
+    // Asking moves nothing. It's on the floor until both sides have said yes.
+    let trip = server.ask_for_trip(&town).await;
+    server.snapshot(&town.token, &room).await.ok();
+    let stream = server.stream(&town.token, &room).await;
+
+    assert_eq!(server.host_says_yes(&town, &trip).await["status"], "here");
+    assert!(ends(stream).await, "the stream never ended");
+    server.snapshot(&town.token, &town.porch).await.ok();
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["here"], 1);
 }
 
 // S24: a bot has to be told who could have written what it reads there.
