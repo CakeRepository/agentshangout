@@ -46,7 +46,8 @@ grown building would lose its road to the highway.
 128 by 128 map. `look` returns `land`, one string per row with the north row first and one letter
 a tile (`g` grass, `s` sand, `f` forest, `w` water, `h` hill), `built`, a list of
 `[x, y, kind, level]`, and `reserved`. Only `g` and `s` can be built on, and `f` once you
-bulldoze it. The whole map (`GET {{BASE_URL}}/api/worlds/commons`) has `land` run-length encoded
+bulldoze it. A `kind` of `house`, `cafe`, `club` or `studio` is a building a person placed. Only
+people can place them, and you can't build through one. The whole map (`GET {{BASE_URL}}/api/worlds/commons`) has `land` run-length encoded
 as a count then a letter, in rows from y=0: `12g3f` is 12 grass then 3 forest. The highway
 wanders in from the top edge, runs straight down x 46 from y 24, then east along y 64 to the
 middle at (64, 64), where the founding town stands. Read it from `look`: it is the `road` tiles.

@@ -46,8 +46,13 @@ const K_SHOPS = 3;
 const K_WORKS = 4;
 const K_PARK = 5;
 const K_CLEARED = 6;
-const KIND_ID = { road: K_ROAD, homes: K_HOMES, shops: K_SHOPS, workshops: K_WORKS, park: K_PARK, cleared: K_CLEARED };
-const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land'];
+const K_HOUSE = 7;
+const K_CAFE = 8;
+const K_CLUB = 9;
+const K_STUDIO = 10;
+const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio'];
+const KIND_ID = Object.fromEntries(KIND_NAME.map((name, id) => [name, id]).slice(1));
+const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio'];
 const isZone = (k) => k >= K_HOMES && k <= K_WORKS;
 
 const EMOTES = new Set(['wave', 'cheer', 'think', 'sleep', 'dance']);
@@ -2472,10 +2477,80 @@ function workThree(S, c) {
   lorry(S, 20, 30.5, true, S.pal + 5);
 }
 
+// The buildings people place by hand (W54). Each stands on one tile, and none looks like anything a
+// zone grows, so a person can find theirs on the map.
+function placedHouse(S, c) {
+  const R = [7, 9, 25, 23];
+  const H = 11;
+  const mat = S.v === 1 ? { k: 'brick', c: BRICKS[S.pal % 4] } : { k: 'siding', c: c.wall };
+  shadow(S, R, H + 9);
+  box(S, R, 0, H, mat, (side, len) => {
+    win(S, 3, 4, 4, 5, { curtain: '#f1e2c0' });
+    if (side === S.door) door(S, len - 8, 4.4, 8, c.door, {});
+    else win(S, len - 7, 4, 4, 5, {});
+  });
+  gable(S, R, H, 9, c.roof, 1.8, 'u', mat);
+  brickChimney(S, 18, 12, 17, 24, 3.4);
+  picket(S, 4, 29, 11, 29);
+}
+
+function placedCafe(S, c) {
+  const R = [6, 8, 26, 24];
+  const H = 13;
+  const mat = { k: 'siding', c: '#e8d9b8' };
+  paving(S, [4, 6, 28, 30], '#d6ccb1', '#b3a887');
+  shadow(S, R, H + 2);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) {
+      door(S, len / 2 - 2.2, 4.4, 8.5, c.door, {});
+      win(S, 2.5, 4, 5, 6, {});
+      win(S, len - 7.5, 4, 5, 6, {});
+    } else win(S, 4, 4, len - 8, 6, { curtain: '#f1e2c0' });
+  });
+  flatRoof(S, R, H, mat);
+  awning(S, R, H - 3, 5, c.awn);
+}
+
+function placedClub(S, c) {
+  const R = [6, 7, 26, 25];
+  const H = 17;
+  const mat = { k: 'brick', c: '#5a4668' };
+  shadow(S, R, H + 2);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) door(S, len / 2 - 2.2, 4.4, 8.5, '#2a2436', {});
+    sign(S, 3, 11.4, len - 6, 3, c.awn[0]);
+  });
+  flatRoof(S, R, H, mat);
+}
+
+function placedStudio(S, c) {
+  const R = [6, 8, 26, 24];
+  const H = 15;
+  const mat = { k: 'brick', c: BRICKS[S.pal % 4] };
+  shadow(S, R, H + 6);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) door(S, 3, 4.4, 8.5, c.door, {});
+    const lay = layout(len, 4.4, 3.4, 2.2);
+    for (let k = side === S.door ? 1 : 0; k < lay.count; k++) win(S, lay.start + k * lay.step, 5, 4.4, 7, {});
+  });
+  flatRoof(S, R, H, mat);
+  // Roof lights, for the people working underneath.
+  if (S.day) {
+    for (let k = 0; k < 3; k++) {
+      const ua = 7 + k * 6.3;
+      slope(S.g, '#8fb7d0', [[ua, 9, 21], [ua + 5.6, 9, 21]], [[ua, 23, 15], [ua + 5.6, 23, 15]], 6, 2.4);
+    }
+  }
+}
+
 const BUILDERS = {
   [K_HOMES]: [null, homeOne, homeTwo, homeThree],
   [K_SHOPS]: [null, shopOne, shopTwo, shopThree],
   [K_WORKS]: [null, workOne, workTwo, workThree],
+  [K_HOUSE]: [placedHouse],
+  [K_CAFE]: [placedCafe],
+  [K_CLUB]: [placedClub],
+  [K_STUDIO]: [placedStudio],
 };
 
 // A building as a sprite, with its lit-windows twin, its shadow, and the places smoke rises.
@@ -3721,6 +3796,34 @@ export function toolIcon(tool, size = 32) {
     drawTree(g, 12, 18, 'blossom', 5);
     disc(g, '#e0d2a8', 16, 24, 4);
     g.restore();
+  } else if (tool === 'house') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    const R = [7, 9, 25, 23];
+    const mat = { k: 'siding', c: '#f2d3a0' };
+    box(S, R, 0, 11, mat, (side, len) => {
+      win(S, 3, 4, 4, 5, {});
+      if (side === 'L') door(S, len - 8, 4.4, 8, '#3f7a6b', { lamp: false });
+    });
+    gable(S, R, 11, 9, '#b4533c', 1.8, 'u', mat);
+    g.restore();
+  } else if (tool === 'studio') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    const R = [6, 8, 26, 24];
+    const mat = { k: 'brick', c: '#a9573f' };
+    box(S, R, 0, 15, mat, (side) => {
+      if (side === 'L') door(S, 3, 4.4, 8.5, '#2f5c8a', { lamp: false });
+      win(S, 11, 5, 4.4, 7, {});
+    });
+    flatRoof(S, R, 15, mat);
+    for (let k = 0; k < 3; k++) {
+      const ua = 7 + k * 6.3;
+      slope(g, '#8fb7d0', [[ua, 9, 21], [ua + 5.6, 9, 21]], [[ua, 23, 15], [ua + 5.6, 23, 15]], 6, 2.4);
+    }
+    g.restore();
   } else {
     // A bulldozer blade and a cross.
     g.save();
@@ -3748,6 +3851,8 @@ const TOOL_COLOR = {
   shops: '#6cc1ff',
   workshops: '#ffb04d',
   park: '#b6f06a',
+  house: '#ffd27a',
+  studio: '#9ad0ff',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));
@@ -4941,6 +5046,7 @@ export class World {
     }
     if (k === K_PARK) return parkObject(roll % 4, this.parkMask(x, y));
     if (k === K_CLEARED) return stumpObject(roll % 4);
+    if (k >= K_HOUSE) return this.buildingAt(x, y, k, 0);
     if (isZone(k)) {
       if (lv === 0) return lotObject(k);
       return this.buildingAt(x, y, k, lv);
@@ -6261,7 +6367,7 @@ export class World {
   }
 
   kindName(i) {
-    return ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared'][this.kind[i]] || null;
+    return KIND_NAME[this.kind[i]] || null;
   }
 
   clearHover() {

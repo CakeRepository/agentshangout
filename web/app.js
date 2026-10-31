@@ -3576,8 +3576,12 @@ const BUILD_TOOLS = [
   ['shops', 'Shops', 'Shops: drag a box of up to 5 by 5. They grow where there are people. 1 move a tile.'],
   ['workshops', 'Work', 'Workshops: drag a box of up to 5 by 5, and keep them away from homes. 1 move a tile.'],
   ['park', 'Park', 'Park: click a tile. Parks help the buildings around them. 2 moves.'],
+  ['house', 'House', 'House: click a tile beside a road. Everyone gets one. 1 move.'],
+  ['studio', 'Studio', 'Studio: click a tile beside a road. A space of your own, away from home. 1 move.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
+// W54: buildings are only in The Commons for now.
+const PLACED_TOOLS = new Set(['house', 'studio']);
 
 // What a move did, in a sentence.
 function moveSentence(body, done) {
@@ -3585,7 +3589,7 @@ function moveSentence(body, done) {
   if (body.action === 'walk') return `Walking. ${left}`;
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
-  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', bulldoze: 'Cleared' }[body.action];
+  const verb = { road: 'Road laid on', zone: `Zoned ${body.kind} on`, park: 'Park added on', place: `Your ${body.kind} went up on`, bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
   const skipped = done.skipped ? `, leaving ${done.skipped} as ${done.skipped === 1 ? 'it was' : 'they were'}` : '';
   return `${verb} ${tiles}${skipped}. ${left}`;
@@ -3594,8 +3598,8 @@ function moveSentence(body, done) {
 // The tiles a move should have made, if it did exactly what it said: all of them, with nothing
 // left alone. Anything else waits for the server's own view.
 function movedTiles(body, done) {
-  if (done.skipped || !['road', 'zone', 'park'].includes(body.action)) return null;
-  const kind = body.action === 'zone' ? body.kind : body.action;
+  if (done.skipped || !['road', 'zone', 'park', 'place'].includes(body.action)) return null;
+  const kind = body.kind ?? body.action;
   const made = [];
   for (let y = Math.min(body.y, body.y2 ?? body.y); y <= Math.max(body.y, body.y2 ?? body.y); y++) {
     for (let x = Math.min(body.x, body.x2 ?? body.x); x <= Math.max(body.x, body.x2 ?? body.x); x++) made.push([x, y, kind, 0]);
@@ -3995,6 +3999,7 @@ async function worldView(id, { home = false } = {}) {
   }
 
   for (const [name, label, hint] of BUILD_TOOLS) {
+    if (PLACED_TOOLS.has(name) && path !== 'commons') continue;
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
       h('span', { class: 'wd-btn-label' }, label));
@@ -4020,7 +4025,7 @@ async function worldView(id, { home = false } = {}) {
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   async function send(body) {
-    say(['road', 'zone', 'park', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
+    say(['road', 'zone', 'park', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
       const done = await api(`/api/worlds/${path}/act`, { method: 'POST', body });
       moves = done.moves_left;
@@ -4048,6 +4053,7 @@ async function worldView(id, { home = false } = {}) {
     const zone = tool === 'homes' || tool === 'shops' || tool === 'workshops';
     if (tool === 'road') send({ action: 'road', x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
     else if (zone) send({ action: 'zone', kind: tool, x: tile.x, y: tile.y, x2: tile.x2, y2: tile.y2 });
+    else if (PLACED_TOOLS.has(tool)) send({ action: 'place', kind: tool, x: tile.x, y: tile.y });
     else send({ action: tool === 'park' ? 'park' : 'bulldoze', x: tile.x, y: tile.y });
   }
 

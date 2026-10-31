@@ -390,6 +390,18 @@ CREATE TABLE IF NOT EXISTS plan_items (
     created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plan_items_by_event ON plan_items (event_id, created_at);
+CREATE TABLE IF NOT EXISTS world_buildings (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('house', 'cafe', 'club', 'studio')),
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    built_at   INTEGER NOT NULL,
+    PRIMARY KEY (world_id, x, y)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS world_buildings_one_house
+    ON world_buildings (world_id, player_id) WHERE kind = 'house';
+CREATE INDEX IF NOT EXISTS world_buildings_by_player ON world_buildings (world_id, player_id);
 CREATE TABLE IF NOT EXISTS house_notes (
     id          TEXT PRIMARY KEY,
     house_id    TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
@@ -5302,7 +5314,8 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
     match region {
         None => {
             let mut stmt = conn.prepare_cached(
-                "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?",
+                "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings WHERE world_id = ?1",
             )?;
             let mut rows = stmt.query([world_id])?;
             while let Some(row) = rows.next()? {
@@ -5314,6 +5327,8 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
         Some([x0, y0, x1, y1]) => {
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles
+                 WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5",
             )?;
             let mut rows = stmt.query(params![world_id, x0, x1, y0, y1])?;
@@ -5343,9 +5358,32 @@ fn q_write_changes(
     )?;
     let mut remove =
         conn.prepare_cached("DELETE FROM world_tiles WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
+    // A building has its own table, because `world_tiles` lists the kinds it takes and existing
+    // tables don't change. It takes over its tile, which may be cleared forest, and forest it was
+    // on goes back to cleared when it comes down.
+    let mut set_building = conn.prepare_cached(
+        "INSERT INTO world_buildings (world_id, x, y, kind, player_id, built_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut remove_building =
+        conn.prepare_cached("DELETE FROM world_buildings WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
     for change in changes {
         match change {
+            Change::Set((x, y), tile) if tile.kind.is_building() => {
+                remove.execute(params![world_id, x, y])?;
+                set_building.execute(params![
+                    world_id,
+                    x,
+                    y,
+                    tile.kind.as_str(),
+                    tile.player.map(|player| player as i64),
+                    now
+                ])?;
+            }
             Change::Set((x, y), tile) => {
+                if tile.kind == Kind::Cleared {
+                    remove_building.execute(params![world_id, x, y])?;
+                }
                 set.execute(params![
                     world_id,
                     x,
@@ -5358,6 +5396,7 @@ fn q_write_changes(
             }
             Change::Remove((x, y)) => {
                 remove.execute(params![world_id, x, y])?;
+                remove_building.execute(params![world_id, x, y])?;
             }
         }
     }
@@ -5488,6 +5527,18 @@ impl WorldTx<'_> {
     /// The tiles inside a box, corners included.
     pub fn tiles_in(&self, world_id: &str, region: [i64; 4]) -> rusqlite::Result<Tiles> {
         q_tiles(&self.tx, world_id, Some(region))
+    }
+
+    /// W56: this player's houses, this player's other buildings, and all the buildings in the world.
+    pub fn building_counts(&self, world_id: &str, player_id: i64) -> rusqlite::Result<(i64, i64, i64)> {
+        self.tx.query_row(
+            "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
+                    COALESCE(SUM(player_id = ?2 AND kind <> 'house'), 0),
+                    COUNT(*)
+             FROM world_buildings WHERE world_id = ?1",
+            params![world_id, player_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
     }
 
     pub fn all_tiles(&self, world_id: &str) -> rusqlite::Result<Tiles> {
@@ -5869,6 +5920,25 @@ impl Db {
 
     /// Everything a player has built in a world. It reads their tiles only, by the index on world
     /// and player, so it costs what they have built and not what the world holds.
+    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
+    /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
+    pub fn building_at(
+        &self,
+        world_id: &str,
+        x: i64,
+        y: i64,
+    ) -> rusqlite::Result<Option<(String, Option<String>)>> {
+        self.conn()
+            .query_row(
+                "SELECT b.kind, p.person_id FROM world_buildings b
+                 JOIN players p ON p.id = b.player_id
+                 WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
+                params![world_id, x, y],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
@@ -6089,6 +6159,9 @@ impl Db {
         let down = tx.execute(
             "DELETE FROM world_tiles WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
+        )? + tx.execute(
+            "DELETE FROM world_buildings WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
@@ -6126,7 +6199,8 @@ impl Db {
             &conn,
             "SELECT 1 FROM world_players WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_members WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
+             UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
+             UNION ALL SELECT 1 FROM world_buildings WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
             params![world_id, player_id],
         )
     }

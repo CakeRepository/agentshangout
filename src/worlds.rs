@@ -69,6 +69,9 @@ pub const MAX_LISTED_PLAYERS: i64 = 64;
 pub const MAX_OWN_WORLDS: i64 = 200;
 /// W11: a person can claim this many guests.
 pub const MAX_CLAIMS: i64 = 20;
+/// W56: buildings a person can have beside their house, and all the buildings The Commons holds.
+pub const MAX_THIRD_SPACES: i64 = 3;
+pub const MAX_BUILDINGS: i64 = 1_500;
 /// A walk goes at most this many tiles.
 pub const WALK_RANGE: i64 = 16;
 /// W31: `look` shows at most this many tiles across and down.
@@ -747,6 +750,27 @@ fn may_build(tx: &WorldTx, world: &WorldRow, player: &PlayerRow) -> ApiResult<()
     }
 }
 
+/// W54, W56: a building is for a person, in The Commons, within what they and the world can hold.
+fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind) -> ApiResult<()> {
+    if world.kind != "public" {
+        return Err(ApiError::bad_request("buildings are only in The Commons for now"));
+    }
+    if player.kind() != PlayerKind::Person {
+        return Err(ApiError::forbidden("only a person can place a building: sign in on the site"));
+    }
+    let (houses, others, everyone) = tx.building_counts(&world.id, player.id)?;
+    if kind == Kind::House && houses >= 1 {
+        return Err(ApiError::conflict("you already have a house"));
+    }
+    if kind != Kind::House && others >= MAX_THIRD_SPACES {
+        return Err(ApiError::conflict("you already have as many of those as a person can"));
+    }
+    if everyone >= MAX_BUILDINGS {
+        return Err(ApiError::conflict("The Commons has no room for more buildings right now"));
+    }
+    Ok(())
+}
+
 // The moves
 
 /// W6: a move is numbers and listed words. Anything else in it is refused, and nothing it says is
@@ -767,6 +791,7 @@ enum Parsed {
     Road(Span),
     Zone(Kind, Span),
     Park(i64, i64),
+    Place(Kind, i64, i64),
     Bulldoze(i64, i64),
     Walk(i64, i64),
     Emote(&'static str),
@@ -828,6 +853,17 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
             let (x, y) = point()?;
             Ok(Parsed::Park(x, y))
         }
+        "place" => {
+            only(&["x", "y", "kind"])?;
+            let (x, y) = point()?;
+            let kind = mv
+                .kind
+                .as_deref()
+                .and_then(Kind::parse)
+                .filter(|kind| kind.is_building())
+                .ok_or("a building needs a kind: house, cafe, club or studio")?;
+            Ok(Parsed::Place(kind, x, y))
+        }
         "bulldoze" => {
             only(&["x", "y"])?;
             let (x, y) = point()?;
@@ -847,7 +883,7 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
                 .ok_or("that isn't an emote: wave, cheer, think, sleep or dance")?;
             Ok(Parsed::Emote(word))
         }
-        _ => Err("that isn't a move: road, zone, park, bulldoze, walk or emote"),
+        _ => Err("that isn't a move: road, zone, park, place, bulldoze, walk or emote"),
     }
 }
 
@@ -946,6 +982,12 @@ fn apply_move(
             let tiles =
                 tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
             plan_parts(world::plan_park(land, &tiles, builder, *x, *y))?
+        }
+        Parsed::Place(kind, x, y) => {
+            may_place(tx, world, &player, *kind)?;
+            let tiles =
+                tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
+            plan_parts(world::plan_place(land, &tiles, builder, *kind, *x, *y))?
         }
         Parsed::Bulldoze(x, y) => {
             let near = tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, 1)?;
@@ -1946,7 +1988,8 @@ pub fn look(
         "window": { "x": x0, "y": y0, "w": wide, "h": high },
         "legend": "land rows are one letter a tile: g grass, f forest, w water, s sand, h hill. \
                    Row 0 of land is the window's top row, and its first letter is its left column. \
-                   built is [x, y, kind, level]. players is [id, name, x, y, emote]. reserved is \
+                   built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
+                   building a person placed. players is [id, name, x, y, emote]. reserved is \
                    [x, y] for each open tile kept for a side street: zones and parks skip it and \
                    roads may use it.",
         "land": rows,
