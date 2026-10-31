@@ -5908,8 +5908,7 @@ pub struct Snapshot {
     pub active: i64,
 }
 
-/// W64: how far the end of the old city has got. A world has a row from its clock starting, and a
-/// world with none has nothing coming.
+/// W64: the last disaster a world had, or the one under way. A world with no row has never had one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorldEnd {
     pub clock_step: u64,
@@ -6406,42 +6405,23 @@ impl WorldTx<'_> {
         q_world_end(&self.tx, world_id)
     }
 
-    /// W64: whether a tile of the old city is on this world.
-    pub fn has_old_city(&self, world_id: &str) -> rusqlite::Result<bool> {
-        self.tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM world_tiles
-                            WHERE world_id = ?1 AND kind IN ('homes', 'shops', 'workshops', 'park'))",
-            [world_id],
-            |row| row.get(0),
-        )
-    }
-
-    /// W64: the clock starts, once.
-    pub fn start_end_clock(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
+    /// W64: a disaster starts on this step, omens first, in place of any that's over.
+    pub fn start_disaster(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
         self.tx.execute(
-            "INSERT INTO world_ends (world_id, clock_step) VALUES (?1, ?2)
-             ON CONFLICT (world_id) DO NOTHING",
+            "INSERT INTO world_ends (world_id, clock_step, omen_step) VALUES (?1, ?2, ?2)
+             ON CONFLICT (world_id) DO UPDATE SET
+                 clock_step = ?2, omen_step = ?2, ended_step = NULL",
             params![world_id, step as i64],
         )?;
         Ok(())
     }
 
-    /// W66: the omens start.
-    pub fn start_omens(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
-        self.tx.execute(
-            "UPDATE world_ends SET omen_step = ?2 WHERE world_id = ?1",
-            params![world_id, step as i64],
-        )?;
-        Ok(())
-    }
-
-    /// W68, W69: it's over, and everyone's wait starts again.
+    /// W69: it's over.
     pub fn finish_end(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
         self.tx.execute(
             "UPDATE world_ends SET ended_step = ?2 WHERE world_id = ?1",
             params![world_id, step as i64],
         )?;
-        self.tx.execute("DELETE FROM place_clocks WHERE world_id = ?", [world_id])?;
         Ok(())
     }
 

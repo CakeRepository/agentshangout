@@ -865,10 +865,6 @@ impl Kind {
         matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio)
     }
 
-    /// W64: what the old game left on the map, which nobody can go into or build any more.
-    pub fn is_old_city(self) -> bool {
-        matches!(self, Kind::Homes | Kind::Shops | Kind::Workshops | Kind::Park)
-    }
 }
 
 /// One built tile. `player` is who built it, and is `None` for the highway.
@@ -1314,12 +1310,12 @@ const TIP_NO_HOUSE: &str = "No house yet: put one on a tile beside a road.";
 const TIP_PLACES_COME: &str = "More places come with time: a studio after a day, a club after 3 and a cafe after 7.";
 const TIP_NO_ROAD: &str = "No road yet: lay one that starts beside the highway.";
 const TIP_MORE_ROADS: &str = "Roads give people somewhere to build: lay them out towards open land.";
-/// W47: said instead of any other while the old city is ending.
-pub const TIP_ENDING: &str = "The Commons is ending: nothing can be built until it is over.";
+/// W47: said instead of any other while a disaster strikes.
+pub const TIP_STRIKING: &str = "A disaster is striking The Commons: nothing can be built until it is over.";
 
 /// Every tip there is. A tip is always one of these.
 pub const TIPS: [&str; 6] =
-    [TIP_OUT_OF_MOVES, TIP_NO_HOUSE, TIP_PLACES_COME, TIP_NO_ROAD, TIP_MORE_ROADS, TIP_ENDING];
+    [TIP_OUT_OF_MOVES, TIP_NO_HOUSE, TIP_PLACES_COME, TIP_NO_ROAD, TIP_MORE_ROADS, TIP_STRIKING];
 
 /// W47: the one thing most worth doing next, given what this player built themselves.
 pub fn tip(own: &Tiles, person: bool, moves_left: u32) -> &'static str {
@@ -1424,27 +1420,25 @@ fn joined_roads(grid: &Grid) -> Vec<bool> {
     joined
 }
 
-// The end of the old city (W64 to W70). Everything about it comes from the seed and the step the
-// clock started on, so a disaster can be worked out again and nothing random is stored (W19).
+// Disasters (W64 to W70). Everything about one comes from the seed and the step it was asked for on,
+// so it can be worked out again and nothing random is stored (W19).
 
-/// W65: omens start this long after the clock, in minutes. A release's first step comes a minute after
-/// it starts, and by then a deploy has seen the site come up or gone back.
-pub const MIN_CLOCK_STEPS: u64 = 1;
-pub const MAX_CLOCK_STEPS: u64 = 5;
 /// W66: 5 minutes of omens, so nobody's map goes without a word.
 pub const OMEN_STEPS: u64 = 5;
 /// W67: it strikes for this many steps, and the last takes everything left.
-pub const STRIKE_STEPS: u64 = 30;
+pub const STRIKE_STEPS: u64 = 24;
 /// W69: a view says it's over for an hour.
 pub const OVER_STEPS: u64 = 60;
 /// W31: a view has a fixed size, so a step strikes in at most this many circles.
 pub const MAX_HITS: usize = 16;
 
-const SALT_CLOCK: u64 = 230;
 const SALT_DISASTER: u64 = 240;
 const SALT_STRIKE: u64 = 250;
 
-const METEORS_A_STEP: u64 = 8;
+/// W67: this many meteors, one a step. Each starts a fire this wide, which spreads this far a step.
+const METEORS: u64 = 8;
+const FIRE_START: i64 = 3;
+const FIRE_SPREAD: i64 = 4;
 const TWISTER_STOPS_A_STEP: u64 = 3;
 const TWISTER_STRIDE: i64 = 5;
 const TWISTER_REACH: i64 = 5;
@@ -1475,21 +1469,16 @@ impl Disaster {
     }
 }
 
-/// W65: how long after the clock the omens start.
-pub fn omens_after(seed: u64, clock_step: u64) -> u64 {
-    MIN_CLOCK_STEPS + hash(&[seed, clock_step, SALT_CLOCK]) % (MAX_CLOCK_STEPS - MIN_CLOCK_STEPS + 1)
-}
-
-/// W65: which disaster it is.
-pub fn disaster_for(seed: u64, clock_step: u64) -> Disaster {
-    let pick = hash(&[seed, clock_step, SALT_DISASTER]) % Disaster::ALL.len() as u64;
+/// W65: which disaster it is, from the step it was asked for on.
+pub fn disaster_for(seed: u64, asked_step: u64) -> Disaster {
+    let pick = hash(&[seed, asked_step, SALT_DISASTER]) % Disaster::ALL.len() as u64;
     Disaster::ALL[pick as usize]
 }
 
-/// Where the end of the old city has got to at a step.
+/// Where a disaster has got to at a step.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
-    /// Nothing to show: no clock, a clock nobody can see, or long over.
+    /// Nothing to show: none was asked for, or it's long over.
     Quiet,
     Omen(Disaster),
     /// How many of its steps have struck.
@@ -1501,12 +1490,12 @@ pub enum Phase {
 /// was, because this is all there is to know (W70).
 pub fn phase(
     seed: u64,
-    clock_step: u64,
+    asked_step: u64,
     omen_step: Option<u64>,
     ended_step: Option<u64>,
     step: u64,
 ) -> Phase {
-    let disaster = disaster_for(seed, clock_step);
+    let disaster = disaster_for(seed, asked_step);
     match (omen_step, ended_step) {
         (_, Some(ended)) if step < ended + OVER_STEPS => Phase::Over(disaster),
         (_, Some(_)) | (None, None) => Phase::Quiet,
@@ -1548,19 +1537,21 @@ fn wander(seed: u64, disaster: Disaster, stops: u64, stride: i64, size: i64) -> 
     (bounce(x, size), bounce(y, size))
 }
 
-/// W67: the circles a disaster strikes on its `done`th step. Meteors fall all over, more often near
-/// the middle, a flood comes in as a wall from one side, and a twister and a giant frog cross the
-/// map and turn at its edges.
+/// W67: the circles a disaster strikes on its `done`th step. Meteors come down on the middle of the
+/// map, one a step, and the fire each one starts keeps spreading, so a circle is how far it has got.
+/// A flood comes in as a wall from one side, and a twister and a giant frog cross the map and turn
+/// at its edges.
 pub fn strike(seed: u64, disaster: Disaster, done: u64, size: usize) -> Vec<Hit> {
     let done = done.min(STRIKE_STEPS - 1);
     let n = size as i64;
     match disaster {
-        Disaster::Meteors => (0..METEORS_A_STEP)
+        Disaster::Meteors => (0..METEORS.min(done + 1))
             .map(|meteor| {
-                let roll = |salt: u64| hash(&[seed, SALT_STRIKE, done, meteor, salt]);
-                // Two rolls added fall nearer the middle.
-                let near_middle = |a: u64, b: u64| (a % size as u64 + b % size as u64) as i64 / 2;
-                let reach = 3 + (roll(4) % 4) as i64;
+                let roll = |salt: u64| hash(&[seed, SALT_STRIKE, meteor, salt]);
+                // Two rolls added fall nearer the middle, and all of them in the middle half.
+                let half = (size as u64 / 2).max(1);
+                let near_middle = |a: u64, b: u64| n / 4 + ((a % half + b % half) / 2) as i64;
+                let reach = FIRE_START + (done - meteor) as i64 * FIRE_SPREAD;
                 (near_middle(roll(0), roll(1)), near_middle(roll(2), roll(3)), reach)
             })
             .collect(),
@@ -1596,11 +1587,14 @@ pub fn strike(seed: u64, disaster: Disaster, done: u64, size: usize) -> Vec<Hit>
 }
 
 /// W67, W68: what comes down on a step of a strike: everything in its circles, or on the last step
-/// everything at all, but never the highway. Changes come in position order.
+/// everything at all, but never the highway. A circle's edge is rough, so nothing burns in a perfect
+/// ring. Changes come in position order.
 pub fn strike_changes(tiles: &Tiles, highway: &[Pos], hits: &[Hit], last: bool) -> Vec<Change> {
     let inside = |&(x, y): &Pos| {
+        let rough = (hash(&[u64::from(x), u64::from(y)]) % 3) as i64;
         hits.iter().any(|&(hx, hy, reach)| {
             let (dx, dy) = (i64::from(x) - hx, i64::from(y) - hy);
+            let reach = (reach - rough).max(0);
             dx * dx + dy * dy <= reach * reach
         })
     };

@@ -33,6 +33,11 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 const COMMONS: &str = "commons";
+
+/// What the old game left on a map.
+fn old_city(kind: Kind) -> bool {
+    matches!(kind, Kind::Homes | Kind::Shops | Kind::Workshops | Kind::Park)
+}
 const CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
 const GOOGLEBOT: &str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
 const CHATGPT_USER: &str = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0";
@@ -1009,7 +1014,7 @@ async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_t
         .enumerate()
         .map(|(n, pos)| {
             let kind = kinds[n % kinds.len()];
-            Change::Set(pos, tile(kind, if kind.is_old_city() { (n % 4) as u8 } else { 0 }, Some(builders[n / kinds.len()])))
+            Change::Set(pos, tile(kind, if old_city(kind) { (n % 4) as u8 } else { 0 }, Some(builders[n / kinds.len()])))
         })
         .collect();
     {
@@ -1081,9 +1086,9 @@ async fn a_step_changes_nothing_in_a_world_somebody_started_and_never_starts_the
         .map(|n| (16 + n % 10, 8 + n / 10))
         .filter(|&pos| land.at(pos).is_some_and(|ground| ground.is_open()))
         .enumerate()
-        .map(|(n, pos)| Change::Set(pos, tile(kinds[n % kinds.len()], if kinds[n % kinds.len()].is_old_city() { (n % 4) as u8 } else { 0 }, Some(builder))))
+        .map(|(n, pos)| Change::Set(pos, tile(kinds[n % kinds.len()], if old_city(kinds[n % kinds.len()]) { (n % 4) as u8 } else { 0 }, Some(builder))))
         .collect();
-    assert!(old.iter().any(|c| matches!(c, Change::Set(_, t) if t.kind.is_old_city())));
+    assert!(old.iter().any(|c| matches!(c, Change::Set(_, t) if old_city(t.kind))));
     put_tiles(&server, id, &old);
     let before = server.tiles(id);
     let at0 = now();
@@ -1259,7 +1264,7 @@ fn random_town(rng: &mut Rng, side: u16, players: u64) -> Tiles {
             Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cleared, Kind::House, Kind::Studio,
             Kind::Club, Kind::Cafe, Kind::Road, Kind::House,
         ]);
-        let level = if kind.is_old_city() { rng.below(4) as u8 } else { 0 };
+        let level = if old_city(kind) { rng.below(4) as u8 } else { 0 };
         let owner = if rng.below(10) == 0 { None } else { Some(1 + rng.below(players)) };
         tiles.insert(pos, tile(kind, level, owner));
     }
@@ -1285,7 +1290,7 @@ fn a_tip_is_always_one_of_the_fixed_sentences_for_any_town_and_any_player() {
                     let tip = world::tip(&own, person, moves);
                     assert!(world::TIPS.contains(&tip), "{tip:?} is not a fixed tip");
                     // The one for the end of the old city is said by the server, never worked out from tiles.
-                    assert_ne!(tip, world::TIP_ENDING);
+                    assert_ne!(tip, world::TIP_STRIKING);
                     if moves == 0 {
                         assert_eq!(tip, world::TIPS[0], "out of moves says so first");
                     }

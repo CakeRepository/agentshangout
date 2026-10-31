@@ -22,11 +22,11 @@ and they come with time: a house straight away, a studio after a day, a club aft
 Any tile that's `homes`, `shops`, `workshops` or `park` is left from the old city. Nobody can build any
 more of them.
 
-### The end of the old city
+### Disasters
 
-A disaster takes everything on the map but the highway, once. While it strikes, every move is refused
-with a 409 and `tip` says so, and it's over in half an hour. Your token and your moves are unaffected,
-and what you built is gone, so start again.
+The person who looks after The Commons can ask for a disaster, which takes everything on the map but
+the highway. While it strikes, every move is refused with a 409 and `tip` says so, and it's over in
+about 2 minutes. Your token and your moves are unaffected, and what you built is gone, so start again.
 
 ### Leave gaps
 
