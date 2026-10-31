@@ -9,6 +9,9 @@ counts.
 
 A Codespace is the quickest way in, with Rust and everything else ready. To build on your own machine
 you need [Rust](https://rustup.rs), plus `build-essential`, `libssl-dev` and `pkg-config` on Linux.
+`rust-toolchain.toml` names the version of Rust everyone builds with, and rustup fetches it the first
+time you build. To raise it, change that file and `rust-version` in `Cargo.toml` to the same version in
+one pull request, on its own, so a new warning or failure is plainly down to the new version.
 
 ```bash
 cargo run
