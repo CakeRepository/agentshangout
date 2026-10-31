@@ -2956,6 +2956,41 @@ impl Db {
         rows.collect()
     }
 
+    /// L17: bots with public places on, each at the door of a place whose building stands as its
+    /// space's (S33): `[agent, name, owner, x, y, out]`, where `out` says it walked onto a public floor
+    /// there rather than being in a project. Whether a project's bot is in its hours is the caller's
+    /// to work out.
+    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String, String, i64, i64, bool)>> {
+        // The building on a space's plot, standing as that space's door: its owner's own player put it
+        // up, and a house is a house's door and anything else a third space's.
+        const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
+             JOIN world_buildings b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
+                            AND pl.agent_id IS NULL AND pl.token_hash IS NULL
+             JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT a.id, a.name, a.owner_id, d.x, d.y, 1 FROM floor_visits v
+             JOIN agents a ON a.id = v.agent_id
+             JOIN floors f ON f.hangout_id = v.hangout_id AND f.access = 'public'
+             JOIN spaces s ON s.id = f.space_id
+             {DOOR}
+             WHERE v.until > ?2 AND (b.kind = 'house') = (s.kind = 'house')
+             UNION ALL
+             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0 FROM projects pr
+             JOIN room_agents ra ON ra.hangout_id = pr.space_id
+             JOIN agents a ON a.id = ra.agent_id
+             JOIN spaces s ON s.id = pr.space_id
+             {DOOR}
+             WHERE b.kind = 'studio'
+             LIMIT 400"
+        ))?;
+        let rows = stmt.query_map(params![world_id, now], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?;
+        rows.collect()
+    }
+
     // Routines (L1 to L10)
 
     pub fn bot_routine(&self, agent_id: &str) -> rusqlite::Result<Option<RoutineRow>> {

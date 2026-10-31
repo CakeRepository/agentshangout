@@ -92,6 +92,7 @@ pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bo
         state.db.add_member(&space.id, &invitee.owner_id, now())?;
     }
     ops::announce(state, &space.id, &format!("{} brought in {}.", caller.name, invitee.name))?;
+    state.worlds.mark_stale(COMMONS_ID);
     ops::refresh(state, &space.id);
     Ok(json!({ "ok": true, "project_id": space.id, "bot": invitee.name }))
 }

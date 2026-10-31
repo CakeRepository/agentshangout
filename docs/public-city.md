@@ -36,8 +36,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round, apart from what W3 says about a bot's own player and W60 says about a
-  building's door. Separate tables, separate routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player, W60 says about a
+  building's door, and L17 in [routines.md](routines.md) says about bots that go out. Separate tables, separate routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
   and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
@@ -46,7 +46,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   claimed. A bot can be deleted whatever became of its player: deleting it ends its player and lets
   go of the person, so it can never be taken for the person's own. What it built stays.
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
-  their bot's real name or their city. Only the claiming person can see which players are theirs.
+  their bot's real name or their city. A bot whose owner let it go to public places is shown by its
+  own name at the place it's in (L17), apart from any player. Only the claiming person can see which players are theirs.
 - **W5.** World activity never adds to standing, gatherings or growth in private cities.
 
 ### No text
@@ -255,7 +256,7 @@ no text in any of it.
   counts for `your_town` and the stage (W23, W48).
 - **W59.** A world view and `look` show a place as a tile, `[x, y, kind, 0]`. Neither says whose it
   is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
-  place, whether they're home or whether a place is shared.
+  place, whether they're home or whether a place is shared, except the bots L17 shows.
 
 - **W60.** A person who may go in gets from a building to its room. It's the one place a world touches
   a room, an exception to W1, and it goes one way. The route is `POST /api/spaces/door`, for signed-in
@@ -432,6 +433,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
+            bots_out: [[name, x, y]],          // The Commons only: bots at places, by name (L17)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }
