@@ -4891,6 +4891,12 @@ impl Db {
         Ok(())
     }
 
+    /// F39: what a bot claimed is its owner's own from now on.
+    pub fn keep_plan_item(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("UPDATE plan_items SET claimed_via = NULL WHERE id = ?", [id])?;
+        Ok(())
+    }
+
     pub fn finish_plan_item(&self, id: &str) -> rusqlite::Result<()> {
         self.conn().execute("UPDATE plan_items SET done = 1 WHERE id = ?", [id])?;
         Ok(())

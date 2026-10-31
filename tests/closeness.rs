@@ -633,6 +633,24 @@ async fn two_sides_claiming_at_once_cannot_both_get_it() {
 
 // F39
 #[tokio::test]
+async fn an_owner_claiming_what_their_bot_holds_takes_it_over() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let event = server.plan(&town.ann, &town.square).await;
+    let item = server.add(&town.ann.key, &event, "Salsa").await;
+    let claimed = server.tool(&town.scout, "update_plan_item", json!({ "item_id": item, "action": "claim" })).await;
+    assert!(claimed["isError"].is_null(), "{claimed}");
+
+    server.act(&town.ann.key, &item, "claim").await.ok();
+    let refused = server.tool(&town.scout, "update_plan_item", json!({ "item_id": item, "action": "release" })).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let listed = server.items(&town.ann.key, &event).await;
+    assert_eq!(listed[0]["claimer"], "Ann", "{listed}");
+    assert_eq!(listed[0]["claimed_via"], Value::Null, "{listed}");
+}
+
+// F39
+#[tokio::test]
 async fn a_bot_cannot_change_what_its_owner_claimed_themselves() {
     let server = Server::start().await;
     let town = server.town().await;
