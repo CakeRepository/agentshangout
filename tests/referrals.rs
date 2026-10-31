@@ -159,6 +159,11 @@ impl Server {
         text(&made["token"])
     }
 
+    async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
+        let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": name, "arguments": arguments } });
+        self.post(token, "/mcp", call).await.ok()["result"].clone()
+    }
+
     async fn start_city(&self, who: &Who) -> Reply {
         self.post(&who.key, "/api/cities", json!({ "name": "Elm" })).await
     }
@@ -399,6 +404,20 @@ async fn cities_started_without_a_code_are_limited_across_the_server() {
     let friend = server.join(&room.invite, "One more").await;
     let over = server.start_city(&friend).await;
     assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.show());
+}
+
+// F7
+#[tokio::test]
+async fn a_city_refused_for_its_name_uses_up_none_of_the_limit() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let friend = server.join(&room.invite, "Bo").await;
+    let blank = json!({ "name": "   " });
+    for _ in 0..4 {
+        let refused = server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(blank.clone())).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.show());
+    }
+    server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(json!({ "name": "Elm" }))).await.ok();
 }
 
 // A plan's link
@@ -762,6 +781,27 @@ async fn a_cancelled_plan_stops_showing_its_invitees() {
     server.invitee(&link, "Dee", "yes").await;
     server.post(&room.ann.key, &format!("/api/events/{event}/cancel"), json!({})).await.ok();
     assert_eq!(server.room_view(&room.ann, &room.id).await["invitees"], json!([]));
+}
+
+// F19
+#[tokio::test]
+async fn a_bot_is_told_by_name_who_answered_through_a_link() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let event = server.plan(&room.ann, &room.id, 3).await;
+    let link = server.link(&room.ann, &event).await;
+    server.invitee(&link, "Dee", "yes").await;
+    let bot = server.bot(&room.ann, &room.id).await;
+
+    let calendar = server.tool(&bot, "list_calendar", json!({})).await;
+    let responses = calendar["structuredContent"]["calendar"][0]["responses"].as_array().unwrap();
+    let answer = |name: &str| responses.iter().find(|response| response["person"] == name).cloned();
+    assert_eq!(answer("Dee").unwrap()["invited"], true, "{calendar}");
+    assert_eq!(answer("Ann").unwrap()["invited"], false, "{calendar}");
+
+    let read = server.tool(&bot, "read_room", json!({})).await;
+    let invitees = &read["structuredContent"]["invitees"];
+    assert_eq!(*invitees, json!([{ "event_id": event, "name": "Dee" }]), "{read}");
 }
 
 // F20

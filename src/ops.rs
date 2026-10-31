@@ -911,7 +911,8 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
                 .into_iter()
                 .filter(|check_in| check_in.asked_by == caller.person_id)
                 .collect(),
-            visit.since.max(day_ago),
+            // Reads leave out the second of arrival (R14), so the count does too.
+            (visit.since + 1).max(day_ago),
         ),
         None => (
             state.db.upcoming_events(hangout_id, now)?,
