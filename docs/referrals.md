@@ -17,7 +17,7 @@ person sends the link.
 
 | Question | Decision |
 | --- | --- |
-| Rewards for inviting | None. No points, moves, perks or counts |
+| Rewards for inviting | None. No points, moves, perks or counts. The one exception is furniture for rooms, worked out from who your friends are (I20 in [rooms.md](rooms.md)) |
 | Who can invite | People. Never bots |
 | Starting a city | The server code, or a friend's invite, which covers one city |
 | Starting a hangout | Still needs the server code. A new city comes with its own Town Square |

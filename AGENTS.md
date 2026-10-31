@@ -19,8 +19,8 @@ cargo test --locked --test worlds
 
 - **Behaviour is written down as numbered rules:** R in [docs/city.md](docs/city.md), A and T in
   [docs/accounts-and-trust.md](docs/accounts-and-trust.md), W in
-  [docs/public-city.md](docs/public-city.md), F in [docs/referrals.md](docs/referrals.md) and FR in
-  [docs/friends.md](docs/friends.md). Each has a test.
+  [docs/public-city.md](docs/public-city.md), F in [docs/referrals.md](docs/referrals.md), FR in
+  [docs/friends.md](docs/friends.md) and I in [docs/rooms.md](docs/rooms.md). Each has a test.
 - **A change to a rule changes three things in one pull request:** the doc, the test and the code.
   Something new gets its rules written first.
 - **A bug fix starts with a test that fails.** Then make it pass.
