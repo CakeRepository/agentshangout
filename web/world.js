@@ -6,8 +6,8 @@
 // land, roads and buildings in a cell are painted into a cached canvas the first time it comes on
 // screen, and repainted only when a tile in it changes. Every sprite is painted once at the
 // screen's own resolution, so nothing is scaled up and edges stay clean, and tall sprites are
-// trimmed to what they cover. Each frame blits the visible cells, then draws people, robots, frogs,
-// cars and smoke live on top. Sprites for tiles just off screen are made in spare moments, offscreen
+// trimmed to what they cover. Each frame blits the visible cells, then draws people, robots (in their
+// cars when they go far), frogs and smoke live on top. Sprites for tiles just off screen are made in spare moments, offscreen
 // things aren't drawn, and the loop stops when the page is hidden or scrolled out of view.
 
 import { hash, skyFor } from './room.js';
@@ -3430,30 +3430,9 @@ function drawFrog(bg, f, t, clock, hovered, calm) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Cars. They keep to the right of the road, and turn corners on the lane.
+// Cars. There's no traffic for show: a car is a bot or a person on its way somewhere far.
 
 const CAR_COLORS = ['#d9433f', '#2f78d0', '#e8a822', '#eeeae0', '#2a9560', '#8a52d0', '#e5772a', '#4a5568'];
-
-// Where something travelling along the road's lane is now. `lane` is how far off the middle it keeps.
-function carPosition(car, lane = 0.13) {
-  const [ix, iy] = car.din;
-  const [ox, oy] = car.dout;
-  const ri = [-iy * lane, ix * lane];
-  const ro = [-oy * lane, ox * lane];
-  const a = [0.5 - ix * 0.5 + ri[0], 0.5 - iy * 0.5 + ri[1]];
-  let b;
-  if (ix === ox && iy === oy) b = [0.5 + ri[0], 0.5 + ri[1]];
-  else if (ix === -ox && iy === -oy) b = [0.5, 0.5];
-  else b = [0.5 + ri[0] + ro[0], 0.5 + ri[1] + ro[1]];
-  const d = [0.5 + ox * 0.5 + ro[0], 0.5 + oy * 0.5 + ro[1]];
-  const first = car.t < 0.5;
-  const q = first ? car.t * 2 : (car.t - 0.5) * 2;
-  const from = first ? a : b;
-  const to = first ? b : d;
-  const dir = first ? car.din : car.dout;
-  const heading = dir[0] === 1 ? 0 : dir[1] === 1 ? 1 : dir[0] === -1 ? 2 : 3;
-  return [car.x + lerp(from[0], to[0], q), car.y + lerp(from[1], to[1], q), heading];
-}
 
 function carSprite(heading, colorIdx) {
   const alongU = heading === 0 || heading === 2;
@@ -3513,7 +3492,7 @@ function carSprite(heading, colorIdx) {
   });
 }
 
-// Which way a car points for each way a figure can face (see carPosition's headings).
+// Which way a car points for each way a figure can face: 0 along +x, 1 along +y, 2 along -x, 3 along -y.
 const FACE_HEADING = { fr: 0, fl: 1, bl: 2, br: 3 };
 
 // A way from one tile to another along one side and then the other, for a car with no route.
@@ -3848,7 +3827,6 @@ const DIRS4 = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // bit order: north-east, sout
 const BUILD_TIME = 0.8;
 const MAX_ANIMS = 60;
 const MAX_PLAYERS = 400;
-const MAX_CARS = 56;
 // A figure going this many tiles or more takes a car instead of walking. A ride is only how the move
 // looks: the server has already put them where they're going.
 const DRIVE_TILES = 8;
@@ -3922,7 +3900,6 @@ export class World {
     this.frameNo = 0;
     this.players = new Map();
     this.frogs = new Map();
-    this.cars = [];
     this.people = new Map();
     this.visitors = new Map();
     this.anims = new Map();
@@ -4163,7 +4140,7 @@ export class World {
       chunkMB: Math.round(([...this.chunks.values()].reduce((a, c) => a + c.canvas.width * c.canvas.height + (c.lights ? c.lights.width * c.lights.height : 0), 0) * 4) / 1048576),
       bots: this.players.size,
       frogs: this.frogs.size,
-      cars: this.cars.length,
+      cars: [...this.players.values(), ...this.people.values(), ...this.visitors.values()].filter((p) => p.ride).length,
       zoom: this.cam.zoom,
       buffer: `lod ${LOD}`,
       people: this.people.size,
@@ -4218,7 +4195,6 @@ export class World {
     this.applyVisitors([...(Array.isArray(view.visitors) ? view.visitors : []), ...(Array.isArray(view.bots_out) ? view.bots_out : [])], animate);
     this.applyDoom(view.disaster);
     this.describe(view);
-    this.ensureCars();
     if (fresh) this.frameTown();
     this.kick();
   }
@@ -4367,7 +4343,6 @@ export class World {
     this.chunks.clear();
     this.players.clear();
     this.frogs.clear();
-    this.cars.length = 0;
     this.people.clear();
     this.visitors.clear();
     this.stopFollow('other');
@@ -4818,69 +4793,10 @@ export class World {
     }
   }
 
-  // --- Cars ---------------------------------------------------------------------------------
+  // --- Roads --------------------------------------------------------------------------------
 
   roadAt(x, y) {
     return x >= 0 && y >= 0 && x < this.n && y < this.n && this.kind[y * this.n + x] === K_ROAD;
-  }
-
-  ensureCars() {
-    const roads = this.counts.roads;
-    const wantCars = this.calm ? Math.min(MAX_CARS, Math.round(roads / 14)) : Math.min(MAX_CARS, Math.round(roads * 0.05 + this.counts.buildings * 0.025));
-    if (this.cars.length >= wantCars) {
-      if (this.cars.length > wantCars) this.cars.length = wantCars;
-      return;
-    }
-    const roadTiles = [];
-    for (let i = 0; i < this.n * this.n; i++) if (this.kind[i] === K_ROAD) roadTiles.push(i);
-    let guard = 0;
-    while (this.cars.length < wantCars && roadTiles.length && guard++ < wantCars * 4) {
-      const i = roadTiles[Math.floor(Math.random() * roadTiles.length)];
-      const x = i % this.n;
-      const y = (i - x) / this.n;
-      const car = { type: 'car', x, y, din: [1, 0], dout: [1, 0], t: Math.random(), speed: 1.1 + Math.random() * 0.8, color: ih(this.cars.length, 3, 5) % 8 };
-      if (this.pickDir(car, null)) this.cars.push(car);
-    }
-  }
-
-  pickDir(car, reverse) {
-    const options = [];
-    for (const [dx, dy] of DIRS4) {
-      if (!this.roadAt(car.x + dx, car.y + dy)) continue;
-      if (reverse && dx === -reverse[0] && dy === -reverse[1]) continue;
-      options.push([dx, dy]);
-    }
-    if (!options.length) {
-      if (!reverse) return false;
-      car.dout = [-reverse[0], -reverse[1]];
-      return true;
-    }
-    const straight = reverse && options.find(([dx, dy]) => dx === reverse[0] && dy === reverse[1]);
-    car.dout = straight && Math.random() < 0.7 ? straight : options[Math.floor(Math.random() * options.length)];
-    if (!reverse) car.din = [-car.dout[0], -car.dout[1]];
-    return true;
-  }
-
-  updateCars(dt) {
-    const list = this.cars;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const car = list[i];
-      if (!this.roadAt(car.x, car.y)) {
-        list.splice(i, 1);
-        continue;
-      }
-      car.t += car.speed * dt;
-      while (car.t >= 1) {
-        car.t -= 1;
-        car.x += car.dout[0];
-        car.y += car.dout[1];
-        car.din = car.dout;
-        if (!this.roadAt(car.x, car.y) || !this.pickDir(car, car.din)) {
-          list.splice(i, 1);
-          break;
-        }
-      }
-    }
   }
 
   cellKey(cx, cy) {
@@ -5413,7 +5329,6 @@ export class World {
     if (!dt) return;
     this.updatePlayers(dt);
     this.updateFrogs(dt);
-    this.updateCars(dt);
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const p = this.puffs[i];
       p.life += dt;
@@ -5972,12 +5887,6 @@ export class World {
       place(f, ...screenOf(f.px, f.py));
       if (inView(f.sx, f.sy) && ready(f.sx, f.sy)) ents.push(f);
     }
-    for (const car of this.cars) {
-      const pos = carPosition(car);
-      place(car, ...screenOf(pos[0], pos[1]));
-      car.heading = pos[2];
-      if (inView(car.sx, car.sy, 40) && ready(car.sx, car.sy)) ents.push(car);
-    }
     for (const a of this.anims.values()) {
       const [X, Y] = screenOf(a.x + 0.5, a.y + 0.5);
       a.sx = X;
@@ -5998,9 +5907,6 @@ export class World {
           break;
         case 'frog':
           r4 = drawFrog(bg, e, t, this.time, this.hoverEnt === e, this.calm);
-          break;
-        case 'car':
-          r4 = drawCar(bg, e, night);
           break;
         default:
           r4 = this.drawBuildAnim(bg, e);
@@ -6098,10 +6004,13 @@ export class World {
     }
   }
 
+  // Headlights on the cars of anyone driving somewhere.
   drawLights(bg, t, night) {
-    for (const car of this.cars) {
-      if (car.heading === undefined || car.dx === undefined) continue;
-      carLights(bg, car);
+    for (const map of [this.players, this.people, this.visitors]) {
+      for (const p of map.values()) {
+        if (!p.ride || p.dx === undefined) continue;
+        carLights(bg, { dx: p.dx, dy: p.dy, heading: FACE_HEADING[p.face] ?? 0 });
+      }
     }
   }
 
