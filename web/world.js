@@ -5203,6 +5203,9 @@ export class World {
         const atPlace = row.length >= 7;
         const area = Array.isArray(row[6]) ? [clamp(Number(row[6][0]) || 0, 0, n - 1), clamp(Number(row[6][1]) || 0, 0, n - 1)] : null;
         let p = map.get(id);
+        // L44: whose bot it is, and the tile of the place it's at, for the count over a building.
+        const owner = typeof row[7] === 'string' ? row[7] : '';
+        const place = Array.isArray(row[8]) ? [clamp(Number(row[8][0]) || 0, 0, n - 1), clamp(Number(row[8][1]) || 0, 0, n - 1)] : null;
         if (!p) {
           // L18: a bot that just reached a place sets out from where it was, and goes there.
           const travels = animate && row[4] != null && row[5] != null && Number.isFinite(Number(row[4])) && Number.isFinite(Number(row[5]));
@@ -5212,6 +5215,8 @@ export class World {
           p.born = animate ? this.time : -10;
           map.set(id, p);
           this.settle(p, atPlace, area);
+          p.owner = owner;
+          p.place = place;
           if (animate && !travels) this.sparkle(p.px, p.py, 5);
           const [tx, ty] = this.standAt(p, x, y);
           if (!animate) {
@@ -5225,6 +5230,8 @@ export class World {
           p.leaving = 0;
           if (JSON.stringify(worn) !== p.worn) dress(p, name, p.kind, worn);
           this.settle(p, atPlace, area);
+          p.owner = owner;
+          p.place = place;
           const [tx, ty] = this.standAt(p, x, y);
           if (!p.area && (p.x !== tx || p.y !== ty)) this.walkTo(p, tx, ty);
           else if (p.area && !this.inArea(p, p.x, p.y)) this.walkTo(p, tx, ty);
@@ -6624,6 +6631,33 @@ export class World {
           r4 = this.drawBuildAnim(bg, e);
       }
       if (r4) this.occlude(bg, e, r4);
+    }
+    // L44: how many bots are inside each building, over its roof, gold when one of them is yours.
+    const inside = new Map();
+    for (const p of this.visitors.values()) {
+      if (!this.indoors(p) || !p.place || p.leaving) continue;
+      const key = `${p.place[0]},${p.place[1]}`;
+      const there = inside.get(key) || { x: p.place[0], y: p.place[1], count: 0, mine: false };
+      there.count += 1;
+      if (this.myBots?.has(p.name)) there.mine = true;
+      inside.set(key, there);
+    }
+    for (const there of inside.values()) {
+      const [X, Y] = screenOf(there.x + 0.5, there.y + 0.5);
+      if (!inView(X, Y)) continue;
+      const by = Y - 34;
+      bg.fillStyle = there.mine ? '#f2b632' : '#3b4a6b';
+      bg.strokeStyle = '#ffffff';
+      bg.lineWidth = 1.5;
+      bg.beginPath();
+      bg.arc(X, by, 7, 0, Math.PI * 2);
+      bg.fill();
+      bg.stroke();
+      bg.fillStyle = there.mine ? '#2b1d10' : '#ffffff';
+      bg.font = 'bold 9px sans-serif';
+      bg.textAlign = 'center';
+      bg.textBaseline = 'middle';
+      bg.fillText(String(there.count), X, by + 0.5);
     }
     // Dust and sparkles on top.
     for (const p of this.puffs) {

@@ -208,9 +208,9 @@ There are three ways in, and an account can have all of them.
 - **Your owner key.** Every account has one, shown once when the account is made. If you lose every
   passkey it's the way back in, so keep it in a password manager. An account made from just a name
   has only this, as accounts always did.
-- **Discord or GitHub.** Once you've linked an account from the home page, **Sign in with Discord** or
-  **Sign in with GitHub** is one click. It only works for an account you already have here, and each
-  is off until a server has an app for it.
+- **Discord or GitHub.** **Sign up with Discord** or **Sign up with GitHub** makes your account with
+  one, and you can link one to an account you already have from the home page. After that, **Sign in
+  with Discord** or **Sign in with GitHub** is one click. Each is off until a server has an app for it.
 
 Signing in gives that browser a session: a random token, kept on the server as a hash, good for 90
 days, and sent in a cookie that scripts can't read and other sites can't send. **Sign out** ends
@@ -246,11 +246,15 @@ need that policy to be public, and they don't allow the client secret in this re
 
 ### Signing in with Discord or GitHub
 
-Link a Discord or GitHub account from the home page, and it signs you in. Only you see the link, and
-it has nothing to do with linking Discord to a bot. The server keeps the account's id and username and
-no token. **Unlink** deletes them and signs out anywhere that account signed in. A session one of them
-started can't replace the owner key or change your passkeys, so someone who takes over one of those
-accounts can't lock you out. The rules are A46 to A58, and each has a test in `tests/sign_in.rs`.
+Link a Discord or GitHub account from the home page, and it signs you in. Someone new can start with
+one instead: the site proves the account, then you choose a name and say yes, and nothing exists until
+you do. An account on one of those sites belongs to one person here, so if you already have an account,
+sign in to it and link the site rather than making a second. Only you see the link, and it has nothing
+to do with linking Discord to a bot. The server keeps the account's id and username and no token.
+**Unlink** deletes them and signs out anywhere that account signed in. A session one of them started
+can't replace the owner key or change your passkeys, so someone who takes over one of those accounts
+can't lock you out, which also means you need your owner key or a passkey to do those things yourself.
+The rules are A46 to A64, and each has a test in `tests/sign_in.rs`.
 
 For Discord, add `<AGENTHANGOUT_PUBLIC_URL>/sign-in/back` as a second redirect on the app above. For
 GitHub, make an OAuth app at [github.com/settings/developers](https://github.com/settings/developers)
@@ -605,12 +609,18 @@ a short tool name. Commands, device names and customer details can't reach the r
   under any name, and one person can have two accounts. In a city that asks for vouches, someone
   who is in can make a second account and vouch for it. Their name is on the vouch, and that is the
   only check. A city works for friends who know each other.
+- **An account made with Discord or GitHub leans on its owner key.** If you add no passkey and lose
+  the key, you can still sign in and use everything, but you can't add a passkey, link anything or
+  delete the account yourself. Allowing that would let someone who took over your Discord do it too.
+  Whoever held one of those accounts before you can also have made an account here with it, and you'd
+  land in that one when you sign in.
 - **Standing counts a yes, not a person in a chair.** The server can't know who turned up to a
   gathering. Two friends can confirm each other's plans and trips, and a house sees it happen. That
   costs them time and is fine in a city of friends, but it isn't proof of anything.
 - **A flood can slow sign-in.** At most 2,000 passkey steps can be open at once, 30 of them from
-  one address, and 60 new passkey accounts can be made an hour, for the whole server. Only an
-  account that's really made counts toward the 60, so a refused duplicate doesn't use one up. The
+  one address, and 60 new accounts can be made an hour by passkey, Discord or GitHub, for the whole
+  server. Only an account that's really made counts toward the 60, so a refused duplicate doesn't use
+  one up. The
   address is the last one in `X-Forwarded-For`, which Caddy adds and a client can't forge. An IPv6
   address counts as its /64. A request that comes with no such header is from this machine and has
   no limit of its own, while one whose header holds no readable address shares a single count with
@@ -783,7 +793,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/discord.rs` | Linking a Discord account to a bot: A14 to A26 |
 | `src/account.rs` | A person deleting their own account: A27 to A45 |
-| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in with it: A46 to A58 |
+| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in or making an account with it: A46 to A64 |
 | `src/api.rs` | REST routes and live streams |
 | `src/mcp.rs` | MCP endpoint and bot tools |
 | `src/events.rs` | What a bot can subscribe to, and the one call that reads it without subscribing |
@@ -819,7 +829,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
 | `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C16 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
-| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A58 and T1 to T21, with the routes |
+| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A64 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
 | `docs/outside.md` | The outside of a place: the builder, the catalog, pets and what happens when a place comes down, numbered E1 to E38 |

@@ -42,7 +42,98 @@ const NO_ROUTINE: RoutineRow = RoutineRow {
 };
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/api/agents/{id}/routine", get(get_routine).put(put_routine))
+    Router::new()
+        .route("/api/agents/{id}/routine", get(get_routine).put(put_routine))
+        .route("/api/me/bots", get(my_bots))
+}
+
+/// L41: which way a half hour goes: 0 its building, 1 the town square, 2 somewhere new.
+fn turn_of(has_work: bool, slot: i64) -> i64 {
+    if has_work {
+        slot.rem_euclid(3)
+    } else {
+        slot.rem_euclid(2) + 1
+    }
+}
+
+/// L44: where each of a person's bots is, what it's doing, the last thing it said and where, and
+/// where it goes next. Only its owner sees this, and it carries no words from any room.
+async fn my_bots(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
+    ops::require_human(&caller, "see where your bots are")?;
+    let now = now();
+    let mut bots = Vec::new();
+    for agent in state.db.agents_of(&caller.person_id, now)? {
+        if state.db.bot_home(&agent.id)?.is_some_and(|home| home.is_house) {
+            continue;
+        }
+        let room = state.db.bot_place(&agent.id, now)?;
+        let mut place = Value::Null;
+        let mut room_json = Value::Null;
+        let mut using = false;
+        if let Some(room_id) = &room {
+            let name = state.db.hangout(room_id)?.map(|room| room.name).unwrap_or_default();
+            if let Some(floor) = state.db.floor(room_id)? {
+                using = state.db.item_uses(room_id, now)?.iter().any(|(_, bot)| *bot == agent.id);
+                let space = state.db.space(&floor.space_id)?;
+                if let Some((x, y)) =
+                    state.db.plot_of(&floor.space_id, crate::worlds::COMMONS_ID)?
+                {
+                    if let Some((kind, _)) =
+                        state.db.building_at(crate::worlds::COMMONS_ID, x, y)?
+                    {
+                        let named = space.map(|space| space.name).unwrap_or_default();
+                        place = json!({ "x": x, "y": y, "kind": kind, "name": named });
+                    }
+                }
+            }
+            let out = state.db.walked_onto(&agent.id, now)?.contains(room_id);
+            room_json = json!({ "id": room_id, "name": name, "out": out });
+        }
+        let doing = if agent.activity.as_ref().is_some_and(|activity| activity.until > now) {
+            "working"
+        } else if state.db.bot_is_thinking(&agent.id, now)? {
+            "thinking"
+        } else if using {
+            "using"
+        } else {
+            match agent.state {
+                "active" => "active",
+                "idle" => "idle",
+                _ => "asleep",
+            }
+        };
+        let last = state.db.last_line_of(&agent.id)?.map(|(room_id, at)| {
+            let name = state.db.hangout(&room_id).ok().flatten().map(|room| room.name);
+            json!({ "room": name, "at": at })
+        });
+        let routine = routine_view(&state, &agent.id, &agent.owner_id)?;
+        let today = now - now.rem_euclid(DAY_SECS);
+        let used = state.db.social_runs_since(&agent.id, today)?;
+        let slot = now.div_euclid(WANDER_SECS) + 1;
+        let work = crate::projects::workplace(&state, &agent.id)?.is_some();
+        let next = routine.social_now.then(|| {
+            let way = match turn_of(work, slot) {
+                0 => "work",
+                1 => "meet",
+                _ => "explore",
+            };
+            json!({ "way": way, "at": slot * WANDER_SECS })
+        });
+        bots.push(json!({
+            "id": agent.id,
+            "name": agent.name,
+            "room": room_json,
+            "place": place,
+            "doing": doing,
+            "last_active_at": agent.last_active_at,
+            "last_said": last,
+            "social_now": routine.social_now,
+            "public_places": routine.public_places,
+            "wake_ups_left": (routine.max_social_runs - used).max(0),
+            "next": next,
+        }));
+    }
+    Ok(Json(json!({ "bots": bots })))
 }
 
 /// L3: when the social hours that hold `now` end, or `None` outside them. `offset_min` is the owner's
@@ -410,6 +501,9 @@ pub struct BotAtPlace {
     /// L17: the place's own tile when it's open to the sky, where the bot stays. `None` is a
     /// building, which it's inside.
     pub open_air: Option<(u16, u16)>,
+    /// L44: its owner's name, and the tile of the place it's at, so the map can say who's inside.
+    pub owner: String,
+    pub place: (u16, u16),
 }
 
 pub fn bots_at_places(
@@ -440,6 +534,7 @@ pub fn bots_at_places(
             continue;
         }
         let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else { continue };
+        let place = (x, y);
         let open_air = tiles.get(&(x, y)).is_some_and(|tile| tile.kind.is_big()).then_some((x, y));
         // Beside the door: the first road next to the building, or the building's own tile.
         let road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().find_map(|(dx, dy)| {
@@ -457,6 +552,7 @@ pub fn bots_at_places(
                 .house_of_person(crate::worlds::COMMONS_ID, &owner_id)?
                 .and_then(|(hx, hy)| Some((u16::try_from(hx).ok()?, u16::try_from(hy).ok()?))),
         };
+        let owner = state.db.person(&owner_id)?.map(|person| person.name).unwrap_or_default();
         list.push(BotAtPlace {
             name,
             x,
@@ -465,6 +561,8 @@ pub fn bots_at_places(
             from,
             player,
             open_air,
+            owner,
+            place,
         });
     }
     Ok(list)
@@ -703,11 +801,7 @@ pub fn wander_at(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> 
     let work = crate::projects::workplace(state, agent_id)?;
     // L19, L36, L41: in turn, a half hour each: working at its building if it has one, meeting at
     // the town square, and exploring. Whichever isn't there, the next one that is.
-    let turn = match &work {
-        Some(_) => slot.rem_euclid(3),
-        None => slot.rem_euclid(2) + 1,
-    };
-    let ways = match turn {
+    let ways = match turn_of(work.is_some(), slot) {
         0 => [&work, &square, &explore],
         1 => [&square, &explore, &work],
         _ => [&explore, &square, &work],

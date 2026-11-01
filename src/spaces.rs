@@ -126,6 +126,8 @@ pub struct Place {
     pub here: i64,
     /// Whether this caller can change it (S7, S8).
     pub runs_it: bool,
+    /// W98: whether its place is open to the sky, a town square or a park, so the room has no walls.
+    pub outdoors: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -826,10 +828,20 @@ pub fn place(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<O
             floors.push(other);
         }
     }
+    // W98: a town square or a park is out of doors.
+    let open_air = match state.db.plot_of(&space.id, COMMONS_ID)? {
+        Some((x, y)) => state
+            .db
+            .building_at(COMMONS_ID, x, y)?
+            .is_some_and(|(kind, _)| kind == "square" || kind == "green"),
+        None => false,
+    };
+    let outdoors = open_air || state.db.is_town_square_room(&space.id)?;
     Ok(Some(Place {
         capacity: capacity(&floor.size),
         here: state.db.on_floor(&floor.id, now())?,
         runs_it: runs(state, caller, &space)?,
+        outdoors,
         space,
         floor,
         floors,

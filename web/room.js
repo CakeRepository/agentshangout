@@ -82,6 +82,8 @@ const SEATS = [
 
 // Where a bot sits while it's controlling something through another tool.
 const DESKS = [44, 70, 96].map((x) => ({ x, y: 146, ax: x, ay: 158, pose: 'sit', facing: 'back', drop: 0 }));
+// I66: what a bot working through another tool sits at in a room with no desk.
+const DESK_KINDS = new Set(['computer', 'monitor', 'workbench', 'research_bench', 'standing_desk', 'sewing_table']);
 
 const NAPS = [
   { x: 40, y: 206, ax: 40, ay: 232, pose: 'sleep' },
@@ -429,39 +431,93 @@ function paintFloor(g, { a, b, line, style }) {
   if (style === 'leaves') paintFallenLeaves(g);
 }
 
+// I66: the rug under the table goes with the walls, so rooms painted differently don't share one:
+// its edge, its trim and its middle.
+const RUGS = {
+  dusk: ['#6a2a3c', '#c9a86a', '#7b3346'],
+  sage: ['#7a5a2e', '#e8d9a8', '#8f6b38'],
+  plum: ['#2e5a6b', '#d9c48a', '#38707f'],
+  clay: ['#2f4f6f', '#e2c27a', '#3b6185'],
+  butter: ['#5b2e4f', '#f0d78c', '#6e3a60'],
+  ink: ['#8a6a2a', '#1b2236', '#a07c34'],
+  sky: ['#b5543a', '#fbe3b4', '#c96a4c'],
+  haunted: ['#3b2a4a', '#9be36a', '#4a3560'],
+  harvest: ['#7a4a1e', '#f2c45a', '#8f5a26'],
+};
+
 // Under the table.
-function paintRug(g) {
-  r(g, '#6a2a3c', 128, 104, 224, 100);
-  r(g, '#c9a86a', 132, 108, 216, 1);
-  r(g, '#c9a86a', 132, 199, 216, 1);
-  r(g, '#c9a86a', 132, 108, 1, 92);
-  r(g, '#c9a86a', 347, 108, 1, 92);
-  r(g, '#7b3346', 138, 114, 204, 80);
+function paintRug(g, paint = 'dusk') {
+  const [edge, trim, middle] = RUGS[paint] || RUGS.dusk;
+  r(g, edge, 128, 104, 224, 100);
+  r(g, trim, 132, 108, 216, 1);
+  r(g, trim, 132, 199, 216, 1);
+  r(g, trim, 132, 108, 1, 92);
+  r(g, trim, 347, 108, 1, 92);
+  r(g, middle, 138, 114, 204, 80);
+}
+
+// W98: an open-air place has sky where a room has its wall, with trees along the back and the
+// whiteboard on two posts.
+function paintOutdoors(g, sky, turned) {
+  const gradient = g.createLinearGradient(0, 0, 0, WALL);
+  gradient.addColorStop(0, sky.top);
+  gradient.addColorStop(1, sky.low);
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, W, WALL);
+  if (sky.stars) {
+    for (let i = 0; i < 40; i++) r(g, '#fff', (i * 53) % W, (i * 17) % 40, 1, 1);
+  }
+  const leaf = sky.stars ? '#16243a' : turned ? '#9a6a2a' : '#3f7a4c';
+  const dark = sky.stars ? '#0f1a2c' : turned ? '#7a4f1e' : '#2f5f3a';
+  // A line of trees, round tops overlapping, darker behind.
+  for (let x = -10; x < W + 20; x += 22) {
+    const tall = 18 + ((x * 7) % 11);
+    g.fillStyle = dark;
+    g.beginPath();
+    g.arc(x + 11, WALL - tall + 4, 14, 0, Math.PI * 2);
+    g.fill();
+  }
+  for (let x = 0; x < W + 20; x += 26) {
+    const tall = 14 + ((x * 5) % 9);
+    g.fillStyle = leaf;
+    g.beginPath();
+    g.arc(x, WALL - tall + 8, 12, 0, Math.PI * 2);
+    g.fill();
+  }
+  r(g, dark, 0, WALL - 4, W, 4);
 }
 
 function paintRoom(g, hour, look) {
   const sky = skyFor(hour);
   const paint = PAINTS[look.paint] || PAINTS.dusk;
-  // Wall
-  r(g, paint.upper, 0, 0, W, WALL);
-  for (let x = 0; x < W; x += 16) r(g, paint.stripe, x, 0, 8, 46);
-  r(g, paint.lower, 0, 46, W, 18);
-  for (let x = 6; x < W; x += 24) r(g, paint.panel, x, 48, 18, 14);
-  r(g, '#c9a86a', 0, 45, W, 1);
-  r(g, '#1b2236', 0, 64, W, 3);
+  if (look.outdoors) {
+    paintOutdoors(g, sky, paint.turned);
+  } else {
+    // Wall
+    r(g, paint.upper, 0, 0, W, WALL);
+    for (let x = 0; x < W; x += 16) r(g, paint.stripe, x, 0, 8, 46);
+    r(g, paint.lower, 0, 46, W, 18);
+    for (let x = 6; x < W; x += 24) r(g, paint.panel, x, 48, 18, 14);
+    r(g, '#c9a86a', 0, 45, W, 1);
+    r(g, '#1b2236', 0, 64, W, 3);
 
-  paintWindow(g, 36, 10, 72, 32, sky, paint.turned);
-  paintWindow(g, 372, 10, 72, 32, sky, paint.turned);
-  if (paint.webs) paintWebs(g);
-  if (paint.turned) paintGarland(g);
+    paintWindow(g, 36, 10, 72, 32, sky, paint.turned);
+    paintWindow(g, 372, 10, 72, 32, sky, paint.turned);
+    if (paint.webs) paintWebs(g);
+    if (paint.turned) paintGarland(g);
+  }
 
   // Floor
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
   r(g, 'rgba(30,20,50,.20)', 0, WALL + 1, W, 3);
 
-  if (!look.hidden.includes('rug')) paintRug(g);
+  if (!look.hidden.includes('rug')) paintRug(g, look.paint);
 
-  // Whiteboard frame; the words on it are an HTML overlay
+  // Whiteboard frame; the words on it are an HTML overlay. Out of doors it stands on two posts.
+  if (look.outdoors) {
+    r(g, '#5a3a24', 156, 50, 5, WALL - 46);
+    r(g, '#5a3a24', 319, 50, 5, WALL - 46);
+  }
   r(g, '#20283e', 148, 5, 184, 52);
   r(g, '#f4f1e8', 151, 8, 178, 46);
   r(g, '#c9a86a', 146, 56, 188, 2);
@@ -3146,7 +3202,7 @@ function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
   const deep = h * FLOOR_CELL;
   const left = x * FLOOR_CELL;
   const top = FLOOR_TOP + y * FLOOR_CELL;
-  return { ...ITEMS[item], use: USES[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
+  return { ...ITEMS[item], kind: item, use: USES[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
 }
 
 // Where bots go to use an item, one place for each that can. Its front is the side towards the room,
@@ -3750,6 +3806,7 @@ export class Room {
     this.people = new Map();
     this.peopleSeen = false;
     this.items = [];
+    this.deskSpots = [];
     this.itemsKey = '';
     this.ghost = null;
     this.kept = [];
@@ -3767,11 +3824,11 @@ export class Room {
   }
 
   // A room that isn't a floor keeps the plain look.
-  setLook({ paint, flooring, hidden } = PLAIN_LOOK) {
-    if (paint === this.look.paint && flooring === this.look.flooring
+  setLook({ paint, flooring, hidden, outdoors = false } = PLAIN_LOOK) {
+    if (paint === this.look.paint && flooring === this.look.flooring && outdoors === Boolean(this.look.outdoors)
       && hidden.join() === this.look.hidden.join()) return;
     const moved = hidden.join() !== this.look.hidden.join();
-    this.look = { paint, flooring, hidden };
+    this.look = { paint, flooring, hidden, outdoors };
     fillGrid(hidden, this.items);
     this.paintedHour = -1;
     if (!moved) return;
@@ -3802,6 +3859,12 @@ export class Room {
     this.describe();
     fillGrid(this.look.hidden, this.items);
     for (const item of this.items) item.spots = spotsOf(item);
+    // I66: with no desk, whatever serves as one: a working bot sits in front of it.
+    this.deskSpots = this.items.filter((item) => DESK_KINDS.has(item.kind)).map((item) => {
+      const [ax, ay] = clearOf(item.left + item.wide / 2, item.y + 3);
+      return { x: ax, y: ay - 12, ax, ay, pose: 'sit', facing: 'back', drop: 0 };
+    });
+    for (const bot of this.bots.values()) if (bot.working) this.place(bot, bot.state, 'walk');
     this.clearTheWay();
     // A bot using something goes with it, wherever it went (I38).
     for (const bot of this.bots.values()) if (bot.using) this.place(bot, bot.state, 'walk');
@@ -4041,7 +4104,7 @@ export class Room {
     // door. Where the beanbags were is floor too.
     const { hidden } = this.look;
     if (bot.working) {
-      goal = hidden.includes('desk') ? null : this.claim(DESKS, 'desk');
+      goal = this.claim(hidden.includes('desk') ? this.deskSpots : DESKS, 'desk');
       bot.desk = goal || null;
     }
     if (!goal && bot.using) {
@@ -4050,7 +4113,7 @@ export class Room {
     }
     if (goal) {
       // Already placed at the desk or an item.
-    } else if (state === 'active' || (bot.working && hidden.includes('desk'))) {
+    } else if (state === 'active' || (bot.working && !bot.desk)) {
       goal = this.claim(SEATS, 'seat');
       bot.seat = goal || null;
       if (goal) this.vacate(goal);

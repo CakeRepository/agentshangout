@@ -482,8 +482,12 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Study",
         paint: "sage",
         flooring: "carpet",
-        hidden: &["bar", "arcade", "beanbags", "couch"],
+        hidden: &["bar", "arcade", "beanbags", "couch", "desk"],
         items: &[
+            // I66: a computer to work at where the desk would be, and a globe, so it still feels
+            // inspired.
+            at("computer", 3, 3),
+            at("globe", 7, 3),
             // Shelves along the back wall, and a corner for reading where the couch would be.
             at("bookshelf", 28, 0),
             at("bookshelf", 32, 0),
@@ -582,8 +586,12 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Workshop",
         paint: "clay",
         flooring: "oak",
-        hidden: &["bar", "arcade", "beanbags", "couch"],
+        hidden: &["bar", "arcade", "beanbags", "couch", "desk"],
         items: &[
+            // I66: somewhere to work at the front, where the desk would be.
+            at("computer", 2, 3),
+            at("tool_chest", 6, 3),
+            at("workbench", 2, 5),
             // Benches along the back wall, and the board to plan on.
             at("workbench", 28, 0),
             at("workbench", 33, 0),
@@ -641,8 +649,13 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Office",
         paint: "sky",
         flooring: "carpet",
-        hidden: &["bar", "arcade", "plants", "beanbags", "couch"],
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
+            // I66: two more desks where the old one stood.
+            at("computer", 3, 2),
+            at("computer", 6, 2),
+            at("dining_chair", 4, 3),
+            at("dining_chair", 7, 3),
             at("computer", 28, 0),
             at("computer", 31, 0),
             at("computer", 34, 0),

@@ -119,11 +119,16 @@ function field(label, input, hint) {
   return h('label', { class: 'field' }, h('span', {}, label), input, hint && h('small', {}, hint));
 }
 
-// With a passkey the owner key is the way back in after losing every one, not the only way in.
-function showOwnerKey(key, then, { passkey = false } = {}) {
+// With a passkey the owner key is the way back in after losing every one, not the only way in. With
+// Discord or GitHub it's also what A54 asks for, which they should know before they say they saved it.
+function showOwnerKey(key, then, { passkey = false, site } = {}) {
+  const once = 'It\'s shown only this once, so put it in your password manager.';
+  const text = site
+    ? `You'll need this or a passkey to change how you sign in or delete your account, and it's your way back in if you ever lose your ${site} account. ${once}`
+    : `This is your way back in if you ever lose every passkey. ${once}`;
   const dialog = modal('Save your owner key',
-    h('p', {}, passkey
-      ? 'This is your way back in if you ever lose every passkey. It\'s shown only this once, so put it in your password manager.'
+    h('p', {}, passkey || site
+      ? text
       : 'This is the only way back into your account on another device, and it won\'t be shown again. Put it in your password manager.'),
     secretRow(key),
     h('div', { class: 'modal-actions' },
@@ -193,13 +198,13 @@ const NO_PASSKEYS = {
   server: 'Passkeys aren\'t switched on at this address.',
 };
 
-// An account made from just a name has no passkey. Show its owner key, offer a passkey if this
-// browser can use one, then carry on.
-function afterNewAccount(ownerKey, enter) {
+// An account made from just a name, or with Discord or GitHub, has no passkey. Show its owner key,
+// offer a passkey if this browser can use one, then carry on.
+function afterNewAccount(ownerKey, enter, { site } = {}) {
   showOwnerKey(ownerKey, async () => {
     if ((await passkeyStatus()).usable) await offerPasskey();
     enter();
-  });
+  }, { site });
 }
 
 // Resolves when the person has added a passkey or said not now.
@@ -273,7 +278,8 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
         onclick: act(createError, async () => {
           if (nameInput.reportValidity()) await nameOnly.run(nameInput.value);
         }),
-      }, nameOnly.text)));
+      }, nameOnly.text)),
+    signInElsewhere('Sign up', '?new=true'));
 
   const toggle = h('button', {
     type: 'button',
@@ -306,15 +312,42 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
 }
 
 // Plain links to this server, which redirects to the site. It stays empty until the server says
-// which sites it has (A58), and someone whose account has no link is told so when they come back.
-function signInElsewhere() {
+// which sites it has (A58). Both words lead to the same place: an account with a link signs in, and
+// one without is offered a new account when they come back (A51).
+function signInElsewhere(verb = 'Sign in', query = '') {
   const links = h('div', { class: 'sign-in-elsewhere' });
   api('/api/sign-in').then(({ sites }) => links.replaceChildren(...sites.map(({ site, name }) => h('a', {
     class: 'button',
-    href: `/api/sign-in/${site}`,
+    href: `/api/sign-in/${site}${query}`,
     onclick: leaving,
-  }, `Sign in with ${name}`)))).catch(() => {});
+  }, `${verb} with ${name}`)))).catch(() => {});
   return links;
+}
+
+// A59, A60: nothing exists until they say yes here, and the name is theirs to choose.
+function newAccountView({ step, name: site, account }, back) {
+  const error = formError();
+  return h('main', { class: 'home' }, h('form', {
+    class: 'card access',
+    onsubmit: submitter(error, async ({ your_name: yourName }) => {
+      const { owner_key: key } = await api('/api/sign-in/new-account', {
+        method: 'POST',
+        body: { step, your_name: yourName },
+      });
+      sessionStorage.removeItem(WAY_BACK);
+      history.replaceState({}, '', back);
+      afterNewAccount(key, route, { site });
+    }),
+  },
+    h('h2', {}, `Make an account with ${site}?`),
+    h('p', { class: 'muted' }, `There's no account here for ${account} yet. Choose the name people will see, and you'll sign in with ${site} from now on.`),
+    field('Your name', h('input', { name: 'your_name', required: true, maxLength: 60, autocomplete: 'given-name', value: account }),
+      `It needn't match ${site}, and only you see which account you used.`),
+    error,
+    h('div', { class: 'form-actions' },
+      h('button', { type: 'submit', class: 'primary' }, 'Create account'),
+      link(back, 'Not now')),
+    h('p', { class: 'muted note' }, `Already have an account here? Sign in to it, then link ${site} from your home page.`)));
 }
 
 // A56: this is the only place a link shows, and only to its own person.
@@ -329,7 +362,9 @@ function signInCard(me) {
       type: 'button',
       class: 'link danger',
       onclick: act(error, async () => {
-        if (!confirm(`Unlink ${name}? It will stop signing you in, and anywhere signed in with it gets signed out.`)) return;
+        const last = !me.passkeys && me.sign_in.filter((other) => other.linked).length === 1;
+        const warning = last ? ' It\'s your only way in besides your owner key, so make sure you have that first.' : '';
+        if (!confirm(`Unlink ${name}? It will stop signing you in, and anywhere signed in with it gets signed out.${warning}`)) return;
         await api(`/api/sign-in/${encodeURIComponent(site)}`, { method: 'DELETE' });
         await route();
       }),
@@ -348,6 +383,8 @@ function signInCard(me) {
 // page already fetched, or null if that failed.
 function passkeysCard(me, status, first) {
   if (!status.usable && !me.passkeys) return null;
+  // A54: a session a site started can't change these, so it isn't offered the chance.
+  const limited = me.sign_in_session;
   const card = h('section', { class: 'card passkeys', 'aria-label': 'Passkeys' });
   const error = formError();
   let list = first;
@@ -365,7 +402,7 @@ function passkeysCard(me, status, first) {
       h('div', { class: 'passkey-main' },
         h('strong', {}, passkey.label),
         h('small', { class: 'muted' }, `Added ${dateFormat.format(fromUnix(passkey.created_at))} · ${used}`)),
-      h('button', {
+      limited ? null : h('button', {
         type: 'button',
         class: 'link danger',
         'aria-label': `Remove ${passkey.label}`,
@@ -387,13 +424,14 @@ function passkeysCard(me, status, first) {
       h('h2', {}, 'Passkeys'),
       status.usable || have ? h('p', { class: 'muted' }, PASSKEY_EXPLAINER) : null,
       list === null ? h('p', { class: 'muted' }, 'Couldn\'t load your passkeys. Reload the page to try again.') : null,
-      status.usable && list && !have ? h('p', {}, 'Add one, and you won\'t need your owner key to sign in next time.') : null,
+      status.usable && list && !have && !limited ? h('p', {}, 'Add one, and you won\'t need your owner key to sign in next time.') : null,
       have ? h('ul', { class: 'passkey-list' }, list.map(row)) : null,
-      status.usable && have === 1 ? h('p', { class: 'muted' }, 'Add one on a second device too, in case you lose this one.') : null,
+      status.usable && have === 1 && !limited ? h('p', { class: 'muted' }, 'Add one on a second device too, in case you lose this one.') : null,
+      limited ? h('p', { class: 'muted' }, have ? 'Sign in with a passkey or your owner key to change these.' : 'Sign in with your owner key to add one.') : null,
       !status.usable ? h('p', { class: 'muted' }, `${NO_PASSKEYS[status.reason]} You can't add one from here.`) : null,
       notice ? h('p', { class: 'muted', role: 'status' }, notice) : null,
       error,
-      status.usable && list ? h('form', {
+      status.usable && list && !limited ? h('form', {
         class: 'add-passkey',
         onsubmit: submitter(error, async ({ label }) => {
           if (!await registerPasskey({ label })) return;
@@ -454,7 +492,11 @@ async function homeParts(me) {
     h('p', { class: 'muted' }, 'You\'re signed in. Build in any world, claim bots, and start private rooms and cities.'),
     freeTimesField(me),
     housePlansField(me),
-    h('button', {
+    // A54: what a session a site started can't do, and how to get to it.
+    me.sign_in_session ? h('p', { class: 'muted' },
+      'You signed in with Discord or GitHub. To replace your owner key, change your passkeys or delete your account, sign in with a passkey or your owner key. If you\'ve lost both, ',
+      h('a', { href: '/privacy', target: '_blank' }, 'here\'s how to reach us'),
+      '.') : h('button', {
       type: 'button',
       class: 'ghost',
       onclick: async () => {
@@ -468,7 +510,7 @@ async function homeParts(me) {
       class: 'ghost',
       onclick: async () => { await api('/api/session', { method: 'DELETE' }); route(); },
     }, 'Sign out'),
-    h('button', { type: 'button', class: 'ghost danger', onclick: () => deleteAccountDialog(me) }, 'Delete account'));
+    me.sign_in_session ? null : h('button', { type: 'button', class: 'ghost danger', onclick: () => deleteAccountDialog(me) }, 'Delete account'));
 
   // A person's house and third spaces, and the way to change each.
   const owned = spaces ? [spaces.house, ...spaces.third] : [];
@@ -2987,7 +3029,8 @@ async function roomView(id) {
     ].filter(Boolean));
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
     // The items go first, because a bot using one is sent to it.
-    room.setLook(snapshot.floor?.floor);
+    // W98: an open-air place is out of doors.
+    room.setLook(snapshot.floor?.floor && { ...snapshot.floor.floor, outdoors: Boolean(snapshot.floor.outdoors) });
     room.setItems(snapshot.items);
     // S55: only the bots really here stand in the room. The crew list has the rest.
     const inRoom = snapshot.agents.filter((agent) => !agent.away);
@@ -5787,6 +5830,69 @@ async function worldView(id, { home = false } = {}) {
   let requestsRow = null;
   let moreToggle = null;
 
+  // L44: where each of your bots is, what it's doing and where it goes next, and everyone else's
+  // bots out on the map. Another person's bot shows only where it is, as the map does.
+  const DOING = {
+    working: 'working through another tool',
+    thinking: 'thinking',
+    using: 'using something in the room',
+    active: 'active',
+    idle: 'idle',
+    asleep: 'asleep: nothing from it in a day',
+  };
+  const NEXT = { work: 'work at its building', meet: 'meet at the town square', explore: 'explore somewhere new' };
+  let botsTab = 'yours';
+  let myBots = [];
+  const botsBody = panels.add('bots', 'Bots', { onOpen: () => loadBots(true) });
+  const where = (bot) => {
+    if (!bot.room) return 'Not in any room right now';
+    const at = bot.place ? `${bot.place.name || KIND_WORDS[bot.place.kind] || bot.place.kind}` : null;
+    const room = bot.room.name;
+    const text = at && at !== room ? `${at} \u00b7 ${room}` : room;
+    return bot.room.out ? `Visiting ${text}` : `In ${text}`;
+  };
+  function renderBots() {
+    const tabs = h('div', { class: 'row-actions', role: 'tablist' },
+      ...[['yours', 'Yours'], ['everyone', 'Everyone out']].map(([tab, label]) =>
+        h('button', { type: 'button', class: botsTab === tab ? 'primary' : '', role: 'tab', 'aria-selected': String(botsTab === tab), onclick: () => { botsTab = tab; renderBots(); } }, label)));
+    let rows;
+    if (botsTab === 'yours') {
+      rows = myBots.length ? myBots.map((bot) => h('div', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('strong', {}, bot.name),
+          h('small', {}, where(bot)),
+          h('small', { class: 'muted' }, `${DOING[bot.doing] || bot.doing}${bot.last_said ? ` \u00b7 last said something${bot.last_said.room ? ` in ${bot.last_said.room}` : ''} ${agoText(bot.last_said.at)}` : ''}`),
+          h('small', { class: 'muted' }, bot.next
+            ? `Next: ${NEXT[bot.next.way] || bot.next.way} ${untilText(bot.next.at)} \u00b7 ${bot.wake_ups_left} wake-ups left today`
+            : bot.public_places ? 'Outside its social hours, so it stays where it is' : 'Public places are off, so it stays where it is')),
+        bot.place ? h('button', { type: 'button', class: 'link', 'aria-label': `Show ${bot.name} on the map`, onclick: () => world.focus(bot.place.x, bot.place.y, { zoom: 1.5 }) }, 'Show') : null,
+        bot.room ? link(`/h/${bot.room.id}`, 'Go in', { class: 'link' }) : null))
+        : [h('p', { class: 'muted' }, 'You have no bots yet.')];
+    } else {
+      const out = latest?.bots_out || [];
+      rows = out.length ? out.map((row) => {
+        const at = Array.isArray(row[8]) ? row[8] : [row[1], row[2]];
+        const placeName = nameAt(at[0], at[1]) || 'a place';
+        return h('div', { class: 'row' },
+          h('span', { class: 'row-main' },
+            h('strong', {}, row[0]),
+            h('small', { class: 'muted' }, `${row[7] ? `${row[7]}\u2019s bot \u00b7 ` : ''}at ${placeName}`)),
+          h('button', { type: 'button', class: 'link', 'aria-label': `Show ${row[0]} on the map`, onclick: () => world.focus(at[0], at[1], { zoom: 1.5 }) }, 'Show'));
+      }) : [h('p', { class: 'muted' }, 'No bots are out on the map right now.')];
+    }
+    botsBody.replaceChildren(tabs, ...rows);
+  }
+  let botsAt = 0;
+  async function loadBots(force = false) {
+    if (!me || me.kind !== 'person' || (!force && Date.now() - botsAt < 30000)) return;
+    botsAt = Date.now();
+    const { bots = [] } = await api('/api/me/bots').catch(() => ({}));
+    myBots = bots;
+    // The count over a building turns gold for one of these.
+    world.myBots = new Set(bots.map((bot) => bot.name));
+    renderBots();
+  }
+
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
       if (!aboutBody.firstChild) aboutBody.replaceChildren(aboutText());
@@ -5869,6 +5975,7 @@ async function worldView(id, { home = false } = {}) {
   frame.actions.append(...[
     guide?.toggle,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
+    me && me.kind === 'person' ? panels.toggle('bots', 'Bots', { className: 'sec' }) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
@@ -5888,6 +5995,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     guide ? h('button', { type: 'button', class: 'wd-btn wide mid', onclick: () => panels.open('tutorial') }, 'Tutorial') : null,
     me?.kind === 'person' ? (requestsRow = moreRow('requests', 'Requests')) : null,
+    me?.kind === 'person' ? moreRow('bots', 'Bots') : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) => moreRow(name, label)),
     repoLink('wd-btn wide'),
     link('/docs', 'Docs', { class: 'wd-btn wide' }),
@@ -6258,6 +6366,11 @@ async function worldView(id, { home = false } = {}) {
       // A new owner would not otherwise find the builder, which is only in the menu.
       details?.yours ? h('small', { class: 'city-card-hint' }, matchMedia('(pointer: coarse)').matches ? 'Press and hold to build outside' : 'Right-click to build outside') : null,
     ];
+    // L44: who's inside, by name and whose, as the map already shows them going in.
+    const inside = (latest?.bots_out || []).filter((row) => Array.isArray(row[8]) && row[8][0] === place.x && row[8][1] === place.y);
+    if (inside.length) {
+      lines.push(h('small', { class: 'city-card-hint' }, `Inside: ${inside.map((row) => (row[7] ? `${row[0]} (${row[7]}\u2019s)` : row[0])).join(', ')}`));
+    }
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
       lines.push(h('span', { class: allowed ? 'city-card-bot allowed' : 'city-card-bot' },
@@ -6470,6 +6583,9 @@ async function worldView(id, { home = false } = {}) {
       spokeAt = Date.now();
     }
     renderAround(view);
+    if (botsTab === 'everyone' && !botsBody.closest('[hidden]')) renderBots();
+    // L44: where your bots are changes as the map does, asked at most every 30 seconds.
+    loadBots();
     // The message about slowing down has done its job once a view gets through.
     if (trouble) {
       trouble = false;
@@ -6491,6 +6607,7 @@ async function worldView(id, { home = false } = {}) {
   });
   arrive(latest);
   loadRequests();
+  loadBots();
   say(mover?.trouble || idle);
 
   // --- Keys, and leaving -----------------------------------------------------------------------
@@ -6580,16 +6697,19 @@ function saveClock() {
 
 // A17, A48: Discord and GitHub send people back here with a code. The session cookie stayed behind
 // on that redirect, so the server can't tell who this is until this page asks from its own site.
-// Null means it worked, and the page they came from is the address again.
+// Null means it worked, and the page they came from is the address again. An account nobody has
+// linked isn't an error: it's the offer of a new one (A51).
 async function backFromElsewhere(finishPath) {
   const query = new URLSearchParams(location.search);
   const back = sessionStorage.getItem(WAY_BACK) || '/';
-  sessionStorage.removeItem(WAY_BACK);
   history.replaceState({}, '', location.pathname);
   let problem = 'Nothing changed, because you didn\'t say yes there.';
   if (query.get('code')) {
     try {
-      await api(finishPath, { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      const { new_account: offer } = await api(finishPath, { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      // The way back stays until they're through it, so reloading the offer doesn't lose it.
+      if (offer) return newAccountView(offer, back);
+      sessionStorage.removeItem(WAY_BACK);
       history.replaceState({}, '', back);
       return null;
     } catch (error) {
