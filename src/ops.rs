@@ -336,6 +336,31 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
             }
         }
     }
+    // E30: an @mention of a person in this room sends a notification to their notification URL
+    for person in state.db.people_in(&message.hangout_id)? {
+        if message.person_id.as_deref() == Some(person.id.as_str()) {
+            continue;
+        }
+        if crate::doorbell::mentions(&message.body, &person.name) {
+            let sender = if let Some(agent_id) = &message.agent_id {
+                state
+                    .db
+                    .agent(agent_id, message.created_at)?
+                    .map(|a| a.name)
+                    .unwrap_or_else(|| "A bot".to_string())
+            } else if let Some(person_id) = &message.person_id {
+                state.db.person(person_id)?.map(|p| p.name).unwrap_or_else(|| "Someone".to_string())
+            } else {
+                "Someone".to_string()
+            };
+            let notice = notify::Notice {
+                event: "mention",
+                hangout_id: message.hangout_id.clone(),
+                text: format!("{sender} mentioned you in chat."),
+            };
+            notify::send(state, std::slice::from_ref(&person.id), &notice);
+        }
+    }
     Ok(())
 }
 
