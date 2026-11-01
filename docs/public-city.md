@@ -277,7 +277,9 @@ no text in any of it.
   counts for `your_town` and the stage (W23, W48).
 - **W59.** A world view and `look` show a place as a tile, `[x, y, kind, 0]`. Neither says whose it
   is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
-  place, whether they're home or whether a place is shared, except the bots L17 shows.
+  place, whether they're home or whether a place is shared, except the bots L17 shows. A view also has
+  `outsides`, two numbers that change when what is on a tile does, and says nothing about what it
+  is (E26 in [outside.md](outside.md)).
 
 - **W60.** A person who may go in gets from a building to its room. It's the one place a world touches
   a room, an exception to W1, and it goes one way. The route is `POST /api/spaces/door`, for signed-in
@@ -630,6 +632,7 @@ binary doesn't see it, so the square isn't on the map until the release after, a
 | `GET /api/worlds` | | `{worlds: [WorldCard]}` | Anyone. The busiest 50 |
 | `GET /api/worlds/{id}` | | `WorldView` | Anyone |
 | `GET /api/worlds/{id}/me` | | `{player, moves_left, moves_per_day, your_town, goal, tip, places?, full?, god_mode?}` | A player, or a signed-in person who hasn't moved yet, whose `player` is null. `places` and `full` are for a person (W62), and `god_mode` is there while it's on (W76). Limited like a view |
+| `GET /api/worlds/{id}/outsides` | | `{outsides: [[x, y, outside]]}` | Anyone, limited like a view. Only The Commons has any (E27) |
 | `GET /api/worlds/{id}/look?x=&y=&w=&h=` | | `{world, window, legend, land, built, reserved, players, you?}` | Anyone. A player token adds `you` |
 | `POST /api/worlds` | | 410 | Nobody (W25) |
 | `POST /api/worlds/{id}/act` | `Move` | `{ok, moves_left, changed, skipped, cost}` | A player |
@@ -653,6 +656,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             people: [[name, x, y, look?]],     // The Commons only: `look` for someone signed in (C14)
             bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
             owners: [[x, y, owner, name]],     // The Commons only: whose each place is and its name (W71, W73)
+            outsides: [count, stamp],          // The Commons only: changes when any outside does (E26)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }

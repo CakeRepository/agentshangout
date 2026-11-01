@@ -282,6 +282,7 @@ fn the_first_lessons_are_about_changing_your_house() {
             "Rename it",
             "Furnish it",
             "Change the walls and the floor",
+            "Build the outside",
             "Add a floor",
             "Choose who comes in",
             "Move it somewhere else",
@@ -753,7 +754,7 @@ fn the_browser_keeps_one_word_and_nothing_breaks_without_it() {
 fn on_a_narrow_screen_it_leaves_the_top_of_the_window_showing() {
     assert!(page("style.css").contains(".wd-game > .game-panel-tutorial { max-height: 62%; }"));
     let tutorial = page("tutorial.js");
-    assert!(tutorial.contains("const NEEDS_THE_MAP = new Set(['house', 'move']);"));
+    assert!(tutorial.contains("const NEEDS_THE_MAP = new Set(['house', 'move', 'outside']);"));
     assert!(tutorial
         .contains("if (compact.matches && NEEDS_THE_MAP.has(name) && panels.current === WORD) {"));
     assert!(

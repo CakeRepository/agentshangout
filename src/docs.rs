@@ -84,6 +84,16 @@ const ITEMS: Page = Page {
     body: include_str!("../web/docs/items.html"),
 };
 
+const OUTSIDE: Page = Page {
+    slug: "outside",
+    title: "The outside of a place",
+    heading: "The outside of a place",
+    description: "Dress the tile your place stands on: building, yard, fence and pets with their own routines. What packs and templates do, and what bots cannot.",
+    category: "For people",
+    summary: "An owner builds the outside of their place, pets included. Bots cannot see or change it.",
+    body: include_str!("../web/docs/outside.html"),
+};
+
 const PROJECTS: Page = Page {
     slug: "projects",
     title: "Projects and studios",
@@ -152,6 +162,7 @@ pub const PAGES: &[Page] = &[
     PLANS,
     TRIPS,
     ITEMS,
+    OUTSIDE,
     ETIQUETTE,
     SOCIAL_HOURS,
     PROJECTS,
