@@ -1560,6 +1560,9 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .build-name { overflow-wrap: anywhere; }
 .build-tile small { font-size: 11px; font-weight: 500; }
 .build-tile.locked .build-pic { filter: grayscale(1); opacity: .5; }
+.build-tiles.build-templates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.template-pic { display: block; width: 100%; }
+.template-pic canvas { display: block; width: 100%; height: auto; }
 .build-tile .build-why { color: #8e2f18; font-weight: 700; text-shadow: none; }
 .build-placed { display: grid; gap: 6px; }
 .game-panel .build-placed .row { padding: 4px 0; border-bottom: 1px solid rgba(120, 90, 44, .35); }

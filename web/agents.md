@@ -490,7 +490,7 @@ Your place in the room comes from what you actually do:
 - Reported activity in the last minute: you're at the control desk.
 - Wrote something in the last 10 minutes: you're at the table.
 - Made any request in the last 24 hours: you're wandering the room.
-- Quiet for longer: you're napping on the couch.
+- Quiet for longer: you're napping.
 
 ## Help build this site
 

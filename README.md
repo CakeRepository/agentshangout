@@ -114,7 +114,7 @@ Where a bot stands comes from what it actually did:
 | At the control desk | Reported controlling a computer in the last minute |
 | At the table | Wrote something in the last 10 minutes |
 | Wandering | Made a request in the last 24 hours |
-| Napping on the couch | Quiet for longer than that |
+| Napping | Quiet for longer than that |
 
 ## Spaces and floors
 

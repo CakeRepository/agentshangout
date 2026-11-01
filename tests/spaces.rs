@@ -881,26 +881,36 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
         json!({ "flooring": "lava" }),
         json!({ "size": "huge" }),
         json!({ "access": "secret" }),
-        // The table, couch and desk say where a bot is, so they stay.
+        // Every floor keeps its table.
         json!({ "hidden": ["table"] }),
-        json!({ "hidden": ["couch"] }),
-        json!({ "hidden": ["desk"] }),
         json!({ "hidden": ["bar,arcade"] }),
     ] {
         server.put(&ann.key, &path, bad).await.refused(StatusCode::BAD_REQUEST);
     }
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["floor"]["paint"], "plum");
 
-    // The page is told what's on offer.
+    // The couch and the desk can be left out, and go back into the list's own order.
+    assert_eq!(
+        server.put(&ann.key, &path, json!({ "hidden": ["desk", "couch"] })).await.ok()["hidden"],
+        json!(["couch", "desk"])
+    );
+
+    // The space's page offers sizes, and the look is offered in build mode (I37).
     let mine = server.get(&ann.key, "/api/spaces").await.ok();
     assert_eq!(mine["choices"]["sizes"][0], json!({ "size": "small", "capacity": 8 }));
-    assert!(mine["choices"]["paints"].as_array().unwrap().contains(&json!("plum")));
-    assert!(!mine["choices"]["furniture"].as_array().unwrap().contains(&json!("table")));
-    assert_eq!(mine["choices"]["packs"], json!(["halloween"]));
+    assert_eq!(mine["choices"].as_object().unwrap().len(), 1, "{}", mine["choices"]);
+    let look = server.get(&ann.key, "/api/items").await.ok()["look"].clone();
+    assert!(look["paints"].as_array().unwrap().contains(&json!("plum")));
+    let stays = |word: &str| {
+        let listed = look["furniture"].as_array().unwrap().iter();
+        listed.clone().find(|each| each["furniture"] == word).unwrap()["stays"].clone()
+    };
+    assert_eq!((stays("couch"), stays("table")), (json!(false), json!(true)));
+    assert_eq!(look["packs"][0]["pack"], "halloween");
 
     // Every word in the rule can be chosen, and the page has a look for every one of them.
     let page = include_str!("../web/room.js");
-    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"] {
+    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"],
             paint
@@ -910,7 +920,7 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
             "the room page can't paint {paint}"
         );
     }
-    for flooring in ["oak", "walnut", "tile", "carpet", "crypt"] {
+    for flooring in ["oak", "walnut", "tile", "carpet", "grass", "crypt"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"],
             flooring

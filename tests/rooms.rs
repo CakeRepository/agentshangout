@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use agenthangout::{app, db::Db, items, now, worlds, AppState, Config};
+use agenthangout::{app, db::Db, items, now, spaces, worlds, AppState, Config};
 use futures_util::future::join_all;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
@@ -298,7 +298,7 @@ async fn an_item_is_a_listed_kind_a_place_on_the_grid_and_a_facing() {
     );
 
     for bad in [
-        json!({ "kind": "throne", "x": 31, "y": 2 }),
+        json!({ "kind": "not_a_kind", "x": 31, "y": 2 }),
         json!({ "kind": "Plant", "x": 31, "y": 2 }),
         json!({ "kind": " plant", "x": 31, "y": 2 }),
         json!({ "kind": "<img src=x onerror=alert(1)>", "x": 31, "y": 2 }),
@@ -771,6 +771,77 @@ async fn hiding_and_showing_furniture_never_leaves_an_item_where_it_cant_be() {
     server.snapshot(&ann.key, &room).await;
 }
 
+// I3: the couch and the desk keep their cells only while a floor shows them, and can't come back over
+// something standing there.
+
+#[tokio::test]
+async fn the_couch_and_desk_keep_their_cells_only_while_a_floor_shows_them() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let floor = format!("/api/floors/{room}");
+    let (couch_cell, desk_cell) = ((0, 9), (2, 3));
+    server.place(&ann.key, &room, "plant", couch_cell).await.refused(StatusCode::CONFLICT);
+    server.place(&ann.key, &room, "plant", desk_cell).await.refused(StatusCode::CONFLICT);
+
+    server.put(&ann.key, &floor, json!({ "hidden": ["couch", "desk"] })).await.ok();
+    let on_couch = server.item(&ann, &room, "plant", couch_cell).await;
+    let on_desk = server.item(&ann, &room, "plant", desk_cell).await;
+    let moved_over = server.item(&ann, &room, "stool", (29, 5)).await;
+    server.change(&ann.key, &moved_over, json!({ "x": 1, "y": 10 })).await.ok();
+
+    // What stays on every floor still does.
+    for kept in [(20, 5), (19, 12), (11, 12)] {
+        server.place(&ann.key, &room, "plant", kept).await.refused(StatusCode::CONFLICT);
+    }
+
+    for (hidden, word) in [(json!(["desk"]), "couch"), (json!(["couch"]), "desk")] {
+        let refused = server
+            .put(&ann.key, &floor, json!({ "hidden": hidden }))
+            .await
+            .refused(StatusCode::CONFLICT);
+        assert!(text(&refused["error"]).contains(word), "{refused}");
+    }
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(snapshot["floor"]["floor"]["hidden"], json!(["couch", "desk"]));
+
+    // What's still left out stays free, and leaving out one more thing asks nothing of it.
+    server.put(&ann.key, &floor, json!({ "hidden": ["rug", "couch", "desk"] })).await.ok();
+
+    for item in [&on_couch, &moved_over] {
+        server.remove(&ann.key, item).await.ok();
+    }
+    server.put(&ann.key, &floor, json!({ "hidden": ["desk"] })).await.ok();
+    server.place(&ann.key, &room, "plant", couch_cell).await.refused(StatusCode::CONFLICT);
+    server.remove(&ann.key, &on_desk).await.ok();
+    server.put(&ann.key, &floor, json!({ "hidden": [] })).await.ok();
+    server.place(&ann.key, &room, "plant", desk_cell).await.refused(StatusCode::CONFLICT);
+}
+
+// I3: something stored there by another release doesn't stop an owner changing anything else.
+
+#[tokio::test]
+async fn an_item_already_on_the_couch_only_stops_the_couch_coming_back() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let stored = agenthangout::db::NewFloorItem {
+        id: "on-the-couch",
+        hangout_id: &room,
+        kind: "plant",
+        x: 0,
+        y: 9,
+        facing: 0,
+        placed_by: &ann.id,
+        now: now(),
+    };
+    let nothing_checked =
+        |_: &str, _: &[String], _: &[agenthangout::db::FloorItem]| Ok::<(), ()>(());
+    server.state.db.place_item(&stored, nothing_checked).unwrap().unwrap();
+    let floor = format!("/api/floors/{room}");
+    server.put(&ann.key, &floor, json!({ "hidden": ["rug"] })).await.ok();
+    server.put(&ann.key, &floor, json!({ "hidden": ["rug", "couch"] })).await.ok();
+    server.put(&ann.key, &floor, json!({ "hidden": [] })).await.refused(StatusCode::CONFLICT);
+}
+
 // I3: a floor loads whatever is stored on it. Rows from another release can't be ruled out, because a
 // deploy that fails goes back to the previous binary on the same database, and the cells kept clear
 // can change. An item left where it can't be stays visible, can leave, and can't be turned there.
@@ -791,7 +862,8 @@ async fn a_floor_still_loads_with_an_item_stored_where_it_cant_be() {
             placed_by: &ann.id,
             now: now(),
         };
-    let nothing_checked = |_: &str, _: &[agenthangout::db::FloorItem]| Ok::<(), ()>(());
+    let nothing_checked =
+        |_: &str, _: &[String], _: &[agenthangout::db::FloorItem]| Ok::<(), ()>(());
     let db = &server.state.db;
     db.place_item(&stored("on-the-table", "plant", 20, 5), nothing_checked).unwrap().unwrap();
     db.place_item(&stored("off-the-floor", "plant", 90, 90), nothing_checked).unwrap().unwrap();
@@ -2353,7 +2425,8 @@ async fn the_catalog_says_what_this_person_has_unlocked_and_what_the_rest_need()
     let catalog = server.get(&ann.key, "/api/items").await.ok();
     let listed = catalog["items"].as_array().unwrap();
     assert_eq!(listed.len(), items::CATALOG.len());
-    assert!((20..=30).contains(&listed.len()), "about 24 kinds, not {}", listed.len());
+    // I39: it's meant to grow, so this is only a floor under how much there is to choose from.
+    assert!(listed.len() >= 80, "only {} kinds", listed.len());
 
     let entry = |kind: &str| listed.iter().find(|item| item["kind"] == kind).unwrap();
     assert_eq!(entry("plant")["unlocked"], true);
@@ -2777,6 +2850,442 @@ async fn a_packs_items_count_like_any_others_and_a_bot_is_told_how_the_room_feel
     let floor = server.state.db.floor(&room).unwrap().unwrap();
     let fields = serde_json::to_value(&floor).unwrap();
     assert!(!fields.to_string().contains("halloween"), "{fields}");
+}
+
+// Templates
+
+fn template(word: &str) -> &'static items::Template {
+    items::template_of(word).unwrap()
+}
+
+fn template_path(room: &str, word: &str) -> String {
+    format!("/api/floors/{room}/templates/{word}")
+}
+
+async fn use_template(server: &Server, who: &Who, room: &str, word: &str) -> (Value, Value, Value) {
+    let done = server.post(&who.key, &template_path(room, word), json!({})).await.ok();
+    (done["placed"].clone(), done["skipped"].clone(), done["removed"].clone())
+}
+
+async fn hidden_on(server: &Server, who: &Who, room: &str) -> Value {
+    server.snapshot(&who.key, room).await["floor"]["floor"]["hidden"].clone()
+}
+
+// I31, I32
+
+#[test]
+fn a_template_is_fixed_in_the_code_and_the_room_page_can_draw_all_of_it() {
+    let names: Vec<&str> = items::TEMPLATES.iter().map(|each| each.template).collect();
+    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden"]);
+    assert!(items::template_of("<script>").is_none());
+
+    let page = include_str!("../web/room.js");
+    for each in items::TEMPLATES {
+        let name = each.template;
+        assert!(spaces::PAINTS.contains(&each.paint), "{name} has a paint nobody can choose");
+        assert!(
+            spaces::FLOORINGS.contains(&each.flooring),
+            "{name} has a flooring nobody can choose"
+        );
+        assert!(page.contains(&format!("  {}: {{ upper", each.paint)), "no art for {name}'s paint");
+        assert!(page.contains(&format!("  {}: {{ a:", each.flooring)), "no art for {name}'s floor");
+        // In the list's own order, which is how a floor stores it, and so how the page can tell
+        // which template a floor looks like. The table isn't in that list, so no template drops it.
+        let listed: Vec<&str> =
+            spaces::FURNITURE.iter().copied().filter(|word| each.hidden.contains(word)).collect();
+        assert_eq!(listed, each.hidden, "{name}");
+        assert!(!each.hidden.contains(&"table"), "{name}");
+        for part in each.items {
+            assert!(items::kind_of(part.kind).is_some(), "{} isn't in the catalog", part.kind);
+            assert!(page.contains(&format!("  {}: {{", part.kind)), "no art for {}", part.kind);
+        }
+    }
+}
+
+// I31: every floor already looks like the first one, so nothing about starting out has to change.
+
+#[tokio::test]
+async fn every_floor_starts_as_the_hangout_template() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let hangout = template("hangout");
+    assert!(hangout.hidden.is_empty() && hangout.items.is_empty());
+    assert_eq!(
+        look_of(&server, &ann, &room).await,
+        (json!(hangout.paint), json!(hangout.flooring))
+    );
+    assert_eq!(hidden_on(&server, &ann, &room).await, json!([]));
+    assert!(kinds_on(&server, &ann, &room).await.is_empty());
+}
+
+// I32: only the look changes. The table stays, and everything else in a template can be changed.
+
+#[tokio::test]
+async fn a_template_keeps_the_table_and_the_size_and_its_items_are_ordinary_items() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let floor = format!("/api/floors/{room}");
+    server.put(&ann.key, &floor, json!({ "size": "big" })).await.ok();
+    for each in items::TEMPLATES {
+        use_template(&server, &ann, &room, each.template).await;
+        server.place(&ann.key, &room, "plant", (20, 5)).await.refused(StatusCode::CONFLICT);
+        let shown = server.snapshot(&ann.key, &room).await["floor"]["floor"].clone();
+        assert_eq!(shown["size"], "big", "{}", each.template);
+    }
+
+    use_template(&server, &ann, &room, "cafe").await;
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    let tables = snapshot["items"].as_array().unwrap().iter();
+    let first = text(&tables.clone().find(|item| item["kind"] == "coffee_table").unwrap()["id"]);
+    server.change(&ann.key, &first, json!({ "y": 0 })).await.ok();
+    server.change(&ann.key, &first, json!({ "facing": 1 })).await.ok();
+    server.remove(&ann.key, &first).await.ok();
+
+    // What came with the room goes back as it would by hand. The couch and the desk have this
+    // template's tables where they'd go, so those wait (I3).
+    server.put(&ann.key, &floor, json!({ "hidden": ["couch", "desk"] })).await.ok();
+    assert_eq!(hidden_on(&server, &ann, &room).await, json!(["couch", "desk"]));
+}
+
+// I33
+
+#[tokio::test]
+async fn only_someone_who_runs_the_space_and_is_on_the_floor_uses_a_template() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let (_, eve) = server.someone("Eve").await;
+    let path = template_path(&room, "cafe");
+
+    for (token, status) in [
+        (&eve.key, StatusCode::NOT_FOUND),
+        (&bo.key, StatusCode::FORBIDDEN),
+        (&scout.token, StatusCode::FORBIDDEN),
+    ] {
+        server.post(token, &path, json!({})).await.refused(status);
+    }
+    assert!(kinds_on(&server, &ann, &room).await.is_empty());
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("dusk"), json!("oak")));
+
+    // Someone who walked in can't change anything here.
+    server.open(&ann, &room).await.ok();
+    server.walk_in(&eve, &room).await;
+    server.post(&eve.key, &path, json!({})).await.refused(StatusCode::FORBIDDEN);
+
+    // Who's asking comes before what they asked, and a word that isn't a template is refused.
+    let (_, cy) = server.someone("Cy").await;
+    let castle = template_path(&room, "castle");
+    server.post(&cy.key, &castle, json!({})).await.refused(StatusCode::NOT_FOUND);
+    server.post(&ann.key, &castle, json!({})).await.refused(StatusCode::BAD_REQUEST);
+}
+
+// I33: running a space from another floor reaches the look and nothing else (I2).
+
+#[tokio::test]
+async fn running_a_space_from_another_floor_isnt_enough_to_use_a_template() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
+    server.leave(&ann, &room).await;
+
+    let path = template_path(&upstairs, "garden");
+    server.post(&bo.key, &path, json!({})).await.refused(StatusCode::FORBIDDEN);
+    server.put(&bo.key, &format!("/api/floors/{upstairs}"), json!({ "paint": "sky" })).await.ok();
+}
+
+// I34: the look changes, and what people put here stays.
+
+#[tokio::test]
+async fn a_template_sets_the_look_and_places_its_items_around_whats_already_there() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let cafe = template("cafe");
+    let total = cafe.items.len();
+    let taken = cafe.items.iter().find(|part| part.x >= 28).unwrap();
+    let kept = server.item(&ann, &room, "rubber_duck", (taken.x, taken.y)).await;
+
+    assert_eq!(
+        use_template(&server, &ann, &room, "cafe").await,
+        (json!(total - 1), json!(1), json!(0))
+    );
+    assert_eq!(look_of(&server, &ann, &room).await, (json!(cafe.paint), json!(cafe.flooring)));
+    assert_eq!(hidden_on(&server, &ann, &room).await, json!(cafe.hidden));
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    let items = snapshot["items"].as_array().unwrap();
+    assert_eq!(items.len(), total);
+    assert_eq!(items[0]["id"], kept.as_str(), "what was there stays");
+    assert_eq!(items[1]["placed_by_name"], "Ann", "an item from a template says who placed it");
+
+    // Doing it twice adds nothing.
+    let before = kinds_on(&server, &ann, &room).await;
+    assert_eq!(use_template(&server, &ann, &room, "cafe").await, (json!(0), json!(1), json!(0)));
+    assert_eq!(kinds_on(&server, &ann, &room).await, before);
+}
+
+// I34: a full floor stays full, and the look still changes.
+
+#[tokio::test]
+async fn a_template_never_takes_a_floor_past_what_it_holds() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let garden = template("garden");
+    let room_for = 3;
+    // Clear of everything any template places, so what's here is what someone put here (I35).
+    let places = items::TEMPLATES.iter().flat_map(|each| each.items);
+    let clear = (0..14)
+        .flat_map(|y| (28..40).map(move |x| (x, y)))
+        .filter(|at| !places.clone().any(|part| (part.x, part.y) == *at));
+    for at in clear.take(items::MAX_ITEMS - room_for) {
+        server.item(&ann, &room, "lamp", at).await;
+    }
+    let (placed, ..) = use_template(&server, &ann, &room, "garden").await;
+    assert_eq!(placed, json!(room_for));
+    assert_eq!(kinds_on(&server, &ann, &room).await.len(), items::MAX_ITEMS);
+    assert_eq!(look_of(&server, &ann, &room).await, (json!(garden.paint), json!(garden.flooring)));
+}
+
+// I34: the couch and the desk don't come back over something, and the rest of the template still does.
+
+#[tokio::test]
+async fn a_template_leaves_the_couch_out_if_an_item_stands_where_it_goes() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    use_template(&server, &ann, &room, "cafe").await;
+    let on_couch = server.item(&ann, &room, "rubber_duck", (0, 12)).await;
+
+    let (placed, skipped, removed) = use_template(&server, &ann, &room, "hangout").await;
+    assert_eq!((placed, skipped), (json!(0), json!(1)));
+    assert_eq!(removed, json!(template("cafe").items.len()));
+    assert_eq!(hidden_on(&server, &ann, &room).await, json!(["couch"]));
+    assert_eq!(look_of(&server, &ann, &room).await, (json!("dusk"), json!("oak")));
+
+    server.remove(&ann.key, &on_couch).await.ok();
+    assert_eq!(use_template(&server, &ann, &room, "hangout").await, (json!(0), json!(0), json!(0)));
+    assert_eq!(hidden_on(&server, &ann, &room).await, json!([]));
+}
+
+// I34, I6
+
+#[tokio::test]
+async fn using_a_template_refreshes_the_room() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let mut stream = server.stream(&ann.key, &room).await;
+    use_template(&server, &ann, &room, "lounge").await;
+    heard_refresh(&mut stream).await;
+}
+
+// I35: nothing records a template, so what's taken up is what still stands as one left it.
+
+#[tokio::test]
+async fn changing_template_takes_up_what_the_last_left_and_nothing_anyone_touched() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let study = template("study");
+    use_template(&server, &ann, &room, "study").await;
+
+    let items = server.snapshot(&ann.key, &room).await["items"].clone();
+    let id_of = |kind: &str, n: usize| {
+        let found = items.as_array().unwrap().iter().filter(|item| item["kind"] == kind);
+        text(&found.clone().nth(n).unwrap()["id"])
+    };
+    let written_on = id_of("bookshelf", 0);
+    let moved = id_of("lamp", 0);
+    let turned = id_of("cabinet", 0);
+    server.note(&bo.key, &written_on, "Read this one").await.ok();
+    server.change(&ann.key, &moved, json!({ "x": 31, "y": 4 })).await.ok();
+    server.change(&ann.key, &turned, json!({ "facing": 2 })).await.ok();
+    let by_hand = server.item(&bo, &room, "rubber_duck", (35, 9)).await;
+
+    let (_, _, removed) = use_template(&server, &ann, &room, "lounge").await;
+    assert_eq!(removed, json!(study.items.len() - 3));
+    let after = server.snapshot(&ann.key, &room).await;
+    let left: BTreeSet<String> =
+        after["items"].as_array().unwrap().iter().map(|item| text(&item["id"])).collect();
+    for kept in [&written_on, &moved, &turned, &by_hand] {
+        assert!(left.contains(kept), "{kept} was taken up");
+    }
+    assert_eq!(
+        server.notes(&ann.key, &written_on).await.ok()["notes"].as_array().unwrap().len(),
+        1
+    );
+
+    // Going back to the start takes up the rest of what a template left, and nothing else.
+    let (_, _, removed) = use_template(&server, &ann, &room, "hangout").await;
+    assert_eq!(removed, json!(template("lounge").items.len()));
+    assert_eq!(server.snapshot(&ann.key, &room).await["items"].as_array().unwrap().len(), 4);
+}
+
+// I36
+
+#[tokio::test]
+async fn someone_with_no_friends_gets_all_of_any_template_on_an_empty_floor_public_or_not() {
+    let server = Server::start().await;
+    for each in items::TEMPLATES {
+        for kind in each.items.iter().map(|part| items::kind_of(part.kind).unwrap()) {
+            assert_eq!(kind.tier, "starter", "{}: {}", each.template, kind.kind);
+            assert!(!kind.sign, "{}: {}", each.template, kind.kind);
+        }
+        let total = each.items.len();
+        let expected = (json!(total), json!(0), json!(0));
+
+        let (room, ann) = server.someone("Ann").await;
+        assert_eq!(use_template(&server, &ann, &room, each.template).await, expected);
+        assert_eq!(kinds_on(&server, &ann, &room).await.len(), total);
+
+        let (public, cy) = server.someone("Cy").await;
+        server.open(&cy, &public).await.ok();
+        assert_eq!(use_template(&server, &cy, &public, each.template).await, expected);
+    }
+}
+
+// I36: nothing marks a template, so its items feel and look like any others.
+
+#[tokio::test]
+async fn a_templates_items_count_like_any_others_and_a_bot_is_told_how_the_room_feels() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    for (word, mood) in
+        [("cafe", "cozy"), ("study", "inspired"), ("lounge", "cozy"), ("garden", "calm")]
+    {
+        use_template(&server, &ann, &room, word).await;
+        let read = server.read_room(&scout.token, &room).await;
+        assert_eq!(read["room_mood"], mood, "{word}: {read}");
+        assert!(read["room_beauty"].as_i64().unwrap() > 0, "{word}: {read}");
+    }
+    let floor = server.state.db.floor(&room).unwrap().unwrap();
+    let fields = serde_json::to_value(&floor).unwrap();
+    assert!(!fields.to_string().contains("garden"), "{fields}");
+}
+
+// I37
+
+#[tokio::test]
+async fn the_catalog_lists_what_a_floors_look_can_be() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let catalog = server.get(&ann.key, "/api/items").await.ok();
+    let look = &catalog["look"];
+    assert_eq!(look["paints"].as_array().unwrap().len(), spaces::PAINTS.len());
+    assert_eq!(look["floorings"].as_array().unwrap().len(), spaces::FLOORINGS.len());
+    assert_eq!(look["furniture"].as_array().unwrap().len(), spaces::FURNITURE.len() + 1);
+    assert_eq!(look["templates"].as_array().unwrap().len(), items::TEMPLATES.len());
+    assert_eq!(look["templates"][1]["template"], "cafe");
+    assert_eq!(look["templates"][1]["items"][0], json!({ "kind": "coffee_table", "x": 3, "y": 2 }));
+    assert_eq!(catalog["fixed_furniture"][0]["furniture"], "couch");
+    assert_eq!(catalog["fixed_furniture"][1]["cells"], json!({ "x": 2, "y": 1, "w": 8, "h": 7 }));
+    server.get(&scout.token, "/api/items").await.refused(StatusCode::FORBIDDEN);
+}
+
+// I38
+
+#[tokio::test]
+async fn every_kind_and_every_piece_of_furniture_is_listed_under_a_category() {
+    let words: Vec<&str> = items::CATEGORIES.iter().map(|(word, _)| *word).collect();
+    assert_eq!(
+        words,
+        [
+            "seating",
+            "tables",
+            "beds",
+            "storage",
+            "lights",
+            "kitchen",
+            "bathroom",
+            "electronics",
+            "games",
+            "music",
+            "plants",
+            "art",
+            "work",
+            "spooky",
+            "signs"
+        ]
+    );
+    for word in &words {
+        assert!(items::CATALOG.iter().any(|kind| kind.category == *word), "nothing in {word}");
+    }
+    for kind in items::CATALOG {
+        assert!(words.contains(&kind.category), "{}: {}", kind.kind, kind.category);
+    }
+    // Everything that comes with a room is listed once, and only the table has to stay.
+    for word in spaces::FURNITURE {
+        let found = items::ROOM_FURNITURE.iter().filter(|(each, _)| *each == word).count();
+        assert_eq!(found, 1, "{word}");
+    }
+    let stays: Vec<&str> = items::ROOM_FURNITURE
+        .iter()
+        .map(|(word, _)| *word)
+        .filter(|word| !spaces::FURNITURE.contains(word))
+        .collect();
+    assert_eq!(stays, ["table"]);
+    for (word, category) in items::ROOM_FURNITURE {
+        assert!(words.contains(&category), "{word}: {category}");
+    }
+
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let catalog = server.get(&ann.key, "/api/items").await.ok();
+    assert_eq!(catalog["categories"][3], json!({ "category": "storage", "label": "Storage" }));
+    let listed = catalog["items"].as_array().unwrap();
+    let cabinet = listed.iter().find(|item| item["kind"] == "cabinet").unwrap();
+    assert_eq!(cabinet["category"], "storage");
+}
+
+// I39: a kind in the catalog has to work once it's placed, so what isn't square can be seen from its
+// end, and what's for everyone fits the strip along the front of any floor.
+
+#[test]
+fn every_kind_that_is_not_square_can_be_turned_and_every_starter_fits_the_front_strip() {
+    // A table looks the same either way round, so it has one painting (web/room.js).
+    let one_painting = [
+        "coffee_table",
+        "picnic_table",
+        "dining_table",
+        "standing_desk",
+        "candlelit_table",
+        "game_table",
+        "billiards",
+        "workbench",
+        "research_bench",
+        "sewing_table",
+    ];
+    let page = include_str!("../web/room.js").replace("\r\n", "\n");
+    for kind in items::CATALOG {
+        if kind.tier == "starter" {
+            assert!(kind.h <= 2, "{} is too deep for a starter", kind.kind);
+        }
+        if kind.w != kind.h && !one_painting.contains(&kind.kind) {
+            let entry = page.split(&format!("\n  {}: {{", kind.kind)).nth(1).unwrap();
+            let entry = entry.split("rise:").next().unwrap();
+            assert!(entry.contains("side"), "{} can't be seen from its end", kind.kind);
+        }
+    }
+}
+
+// I37: the look changes in build mode, so the space's page has no way to change it.
+
+#[test]
+fn the_look_is_offered_in_build_mode_and_not_on_the_spaces_page() {
+    let app = include_str!("../web/app.js");
+    for gone in
+        ["name: 'paint'", "name: 'flooring'", "name: `show-", "choices.packs", "choices.paints"]
+    {
+        assert!(!app.contains(gone), "the space's page still has {gone}");
+    }
+    for here in ["/templates/", "/packs/", "wallPicture", "floorPicture", "furniturePicture"] {
+        assert!(app.contains(here), "build mode has lost {here}");
+    }
 }
 
 // The tools themselves
