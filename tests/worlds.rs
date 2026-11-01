@@ -15,6 +15,7 @@ use agenthangout::{
     app, auth,
     db::{Db, NewWorld},
     error::ApiResult,
+    looks::{BOT_PARTS, PERSON_PARTS},
     now,
     world::{self, Change, Kind, Tile},
     worlds::{self, Acted, Move},
@@ -839,15 +840,25 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
             assert!(!text.contains(secret), "{secret} leaked into {text}");
         }
     }
-    // The street lists three players: id, name, place, emote and whether a person or an agent is
-    // playing, which says nothing about whose it is, and nothing else about them.
+    // The street lists three players: id, name, place, emote, whether a person or an agent is playing,
+    // and what they're wearing (C14). None of it says whose it is, and there's nothing else about them.
     let view: Value = serde_json::from_str(&seen[0]).unwrap();
     let players = view["players"].as_array().unwrap();
     assert_eq!(players.len(), 3);
+    let wardrobe: Vec<_> = PERSON_PARTS.iter().chain(&BOT_PARTS).collect();
     for player in players {
-        assert_eq!(player.as_array().unwrap().len(), 6, "{player}");
+        assert_eq!(player.as_array().unwrap().len(), 7, "{player}");
         assert!(["person", "agent"].contains(&player[5].as_str().unwrap()), "{player}");
+        // A look is words from the wardrobe and nothing else, so nothing can get out in one.
+        for (part, word) in player[6].as_object().into_iter().flatten() {
+            let known = wardrobe.iter().any(|each| {
+                each.part == part && each.choices.iter().any(|choice| word == choice.choice)
+            });
+            assert!(known, "{part}: {word} isn't in the wardrobe");
+        }
     }
+    // Ann and their bot are wearing something. The player they claimed has nobody's look to wear.
+    assert_eq!(players.iter().filter(|player| player[6].is_null()).count(), 1, "{players:?}");
 }
 
 // W4

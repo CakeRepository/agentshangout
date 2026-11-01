@@ -1182,7 +1182,8 @@ function drawZ(g, x, y, alpha) {
 }
 
 // What the words in a look are drawn as (docs/looks.md). They're listed words on the server, so nothing
-// typed reaches the drawing, and a word this page doesn't know counts as one nobody chose.
+// typed reaches the drawing. The server says what everyone is wearing, here and on the maps, so a room
+// and a map can't disagree. All this page decides is the art.
 export const FABRICS = {
   red: '#d6453f',
   orange: '#ec8a2c',
@@ -1196,8 +1197,16 @@ export const FABRICS = {
   white: '#e8ecf4',
   grey: '#8a909e',
   black: '#2f3342',
+  sky: '#4f9dff',
+  tangerine: '#ff8a3d',
+  mint: '#3ddc97',
+  coral: '#ff5d7a',
+  lilac: '#b388ff',
+  sun: '#ffd24d',
+  aqua: '#2fd6d6',
+  orchid: '#ff7ad9',
 };
-const SKINS = {
+export const SKINS = {
   cream: '#f4d6b8',
   peach: '#f1c9a4',
   tan: '#d9a77c',
@@ -1205,7 +1214,7 @@ const SKINS = {
   umber: '#8a5a3c',
   espresso: '#5e3a26',
 };
-const HAIRS = {
+export const HAIRS = {
   black: '#2b2118',
   brown: '#6a4326',
   honey: '#b9822f',
@@ -1217,7 +1226,7 @@ const HAIRS = {
   teal: '#25a4a0',
   violet: '#7b54d6',
 };
-const LEGS = {
+export const LEGS = {
   navy: '#394666',
   charcoal: '#4a4a52',
   khaki: '#6a5a46',
@@ -1399,13 +1408,13 @@ const CHESTS = {
 
 const pick = (table, word, otherwise) => (Object.hasOwn(table, word) ? table[word] : otherwise);
 
-function botLook(name, chosen = {}) {
+function botLook(worn = {}) {
   return {
-    shell: pick(FABRICS, chosen.shell, null),
-    head: pick(HEADS, chosen.head, Object.values(HEADS)[hash(name) % 3]),
-    eyes: pick(EYES, chosen.eyes, null),
-    chest: pick(CHESTS, chosen.chest, CHESTS.plain),
-    hat: pick(HATS, chosen.hat, HATS.none),
+    shell: pick(FABRICS, worn.shell, null),
+    head: pick(HEADS, worn.head, HEADS.antenna),
+    eyes: pick(EYES, worn.eyes, null),
+    chest: pick(CHESTS, worn.chest, CHESTS.plain),
+    hat: pick(HATS, worn.hat, HATS.none),
   };
 }
 
@@ -1489,22 +1498,15 @@ function drawBot(g, bot, t) {
   r(g, glow, x + 1 + gaze, top + 3 + (blink ? 1 : 0), 2, blink ? 1 : 2);
 }
 
-// The skin, hair, cap and trousers a person has on the street, so they're the same someone here.
-const SKIN = ['#f1c9a4', '#d9a77c', '#b27a54', '#8a5a3c', '#f4d6b8'];
-const HAIR = ['#2b2118', '#6a4326', '#b9822f', '#d8c08a', '#4a2a22', '#8a8f9c'];
-const TROUSERS = ['#394666', '#4a4a52', '#6a5a46', '#2f4a48'];
-
-// What they chose comes first (C4). A shirt nobody chose stays the person's own colour.
-function personLook(name, chosen = {}) {
-  const h = hash(name);
+function personLook(worn = {}) {
   return {
-    skin: pick(SKINS, chosen.skin, SKIN[(h >>> 3) % SKIN.length]),
-    hair: pick(HAIRS, chosen.hair, HAIR[(h >>> 6) % HAIR.length]),
-    style: pick(STYLES, chosen.style, STYLES.short),
-    face: pick(FACES, chosen.face, FACES.none),
-    hat: pick(HATS, chosen.hat, (h >>> 9) % 3 === 0 ? HATS.cap : HATS.none),
-    shirt: pick(FABRICS, chosen.shirt, null),
-    trousers: pick(LEGS, chosen.trousers, TROUSERS[(h >>> 11) % TROUSERS.length]),
+    skin: pick(SKINS, worn.skin, SKINS.peach),
+    hair: pick(HAIRS, worn.hair, HAIRS.brown),
+    style: pick(STYLES, worn.style, STYLES.short),
+    face: pick(FACES, worn.face, FACES.none),
+    hat: pick(HATS, worn.hat, HATS.none),
+    shirt: pick(FABRICS, worn.shirt, null),
+    trousers: pick(LEGS, worn.trousers, LEGS.navy),
   };
 }
 
@@ -1575,26 +1577,20 @@ function drawPerson(g, person, t) {
   face.front(g, x, top, 0, hair);
 }
 
-// A figure is { kind, name, color, chosen }, and big enough for its tallest hat.
+// Big enough for the tallest hat.
 const FIGURE_WIDE = 26;
 const FIGURE_TALL = 36;
-const lookOf = ({ kind, name, chosen }) => (kind === 'bot' ? botLook(name, chosen) : personLook(name, chosen));
 
-// A figure on a canvas of its own, drawn still, for the wardrobe.
+// A figure on a canvas of its own, drawn still, for the wardrobe. `figure` is { kind, color, worn }.
 export function figurePicture(figure, facing = 'front') {
   const canvas = document.createElement('canvas');
   canvas.width = FIGURE_WIDE;
   canvas.height = FIGURE_TALL;
   const still = { ...figure, x: FIGURE_WIDE / 2, y: FIGURE_TALL - 2, path: [], pose: 'stand', facing, phase: 0 };
   const g = canvas.getContext('2d');
-  if (figure.kind === 'bot') drawBot(g, { ...still, wears: botLook(figure.name, figure.chosen) }, 0);
-  else drawPerson(g, { ...still, look: personLook(figure.name, figure.chosen) }, 0);
+  if (figure.kind === 'bot') drawBot(g, { ...still, wears: botLook(figure.worn) }, 0);
+  else drawPerson(g, { ...still, look: personLook(figure.worn) }, 0);
   return canvas;
-}
-
-// Whether a figure has this word on now, whether it was chosen or worked out from the name.
-export function isWearing(figure, part, word) {
-  return lookOf(figure)[part] === lookOf({ ...figure, chosen: { ...figure.chosen, [part]: word } })[part];
 }
 
 // A bot's tag hangs under its feet. A person's sits over their head, and goes up a line at every
@@ -1727,7 +1723,7 @@ export class Room {
         person.label.textContent = data.name;
         person.chip.title = data.name;
       }
-      person.look = personLook(data.name, data.look);
+      person.look = personLook(data.look);
       if (person.color !== data.color) {
         person.color = data.color;
         person.dot.style.background = data.color;
@@ -1756,7 +1752,7 @@ export class Room {
       }
       bot.state = data.state;
       bot.color = data.color;
-      bot.wears = botLook(data.name, data.look);
+      bot.wears = botLook(data.look);
       bot.chip.title = data.status ? `${data.name}: ${data.status}` : data.name;
       bot.doing.textContent = data.activity ? `· ${data.activity.via}` : data.asking ? '· waiting' : '';
     }
@@ -1848,7 +1844,7 @@ export class Room {
       working: Boolean(data.activity),
       wait: 0,
       phase: (hash(data.id) % 1000) / 1000,
-      wears: botLook(data.name, data.look),
+      wears: botLook(data.look),
       tag,
       chip,
       doing,
