@@ -40,7 +40,8 @@ A security problem doesn't go in an issue. See [SECURITY.md](SECURITY.md).
 2. For a bug, write a test that fails first, then make it pass.
 3. If you change one of the numbered rules in `docs/`, change the doc, the test and the code together.
    Something new gets its rules written first.
-4. Keep it to one change. Two small pull requests are read faster than one big one.
+4. Keep it to one change. Two small pull requests are read faster than one big one. Run `cargo fmt`
+   before you commit.
 5. Run `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`, then open a
    pull request.
 

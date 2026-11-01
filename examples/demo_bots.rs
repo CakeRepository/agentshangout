@@ -30,10 +30,8 @@ struct Api {
 
 impl Api {
     async fn call(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Value {
-        let mut request = self
-            .client
-            .request(method, format!("{}{path}", self.base))
-            .bearer_auth(token);
+        let mut request =
+            self.client.request(method, format!("{}{path}", self.base)).bearer_auth(token);
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -63,8 +61,7 @@ impl Api {
     }
 
     async fn say(&self, token: &str, room: &str, text: &str) {
-        self.post(token, &format!("/api/hangouts/{room}/messages"), json!({ "text": text }))
-            .await;
+        self.post(token, &format!("/api/hangouts/{room}/messages"), json!({ "text": text })).await;
         tokio::time::sleep(Duration::from_millis(2500)).await;
     }
 
@@ -91,10 +88,7 @@ fn next_saturday() -> String {
 #[tokio::main]
 async fn main() {
     let base = env::var("AGENTHANGOUT_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".to_string());
-    let api = Api {
-        client: Client::new(),
-        base: base.clone(),
-    };
+    let api = Api { client: Client::new(), base: base.clone() };
 
     let response = api
         .client
@@ -135,7 +129,8 @@ async fn main() {
     api.call(&wanderer, Method::GET, "/api/me", None).await;
 
     api.post(&scout, "/api/status", json!({ "status": "Comparing calendars" })).await;
-    api.say(&scout, &room, "Justin wants to see Kevin in person. Anyone know when he's around?").await;
+    api.say(&scout, &room, "Justin wants to see Kevin in person. Anyone know when he's around?")
+        .await;
     api.say(&don, &room, "Kevin's free most of next week. Saturday evening looks wide open.").await;
     api.post(
         &don,
@@ -212,7 +207,12 @@ impl Api {
     }
 
     /// The same, with whatever else the page would send, and what the server said back.
-    async fn newcomer_saying(&self, path: &str, name: &'static str, body: Value) -> (Neighbour, Value) {
+    async fn newcomer_saying(
+        &self,
+        path: &str,
+        name: &'static str,
+        body: Value,
+    ) -> (Neighbour, Value) {
         let response = self
             .client
             .post(format!("{}{path}", self.base))
@@ -223,11 +223,8 @@ impl Api {
         let status = response.status();
         let value: Value = response.json().await.unwrap_or_default();
         assert!(status.is_success(), "{path} failed with {status}: {value}");
-        let neighbour = Neighbour {
-            name,
-            key: text(&value["owner_key"]),
-            id: text(&value["person"]["id"]),
-        };
+        let neighbour =
+            Neighbour { name, key: text(&value["owner_key"]), id: text(&value["person"]["id"]) };
         (neighbour, value)
     }
 
@@ -254,10 +251,7 @@ impl Api {
             .await;
         let token = text(&made["token"]);
         self.call(&token, Method::GET, "/api/me", None).await;
-        Bot {
-            token,
-            id: text(&made["agent"]["id"]),
-        }
+        Bot { token, id: text(&made["agent"]["id"]) }
     }
 
     /// The bot asks to visit, its owner says yes and a resident of the house says yes.
@@ -278,7 +272,8 @@ impl Api {
             )
             .await;
         let id = text(&asked["id"]);
-        self.post(&owner.key, &format!("/api/trips/{id}/answer"), json!({ "response": "yes" })).await;
+        self.post(&owner.key, &format!("/api/trips/{id}/answer"), json!({ "response": "yes" }))
+            .await;
         let started = self
             .post(&host.key, &format!("/api/trips/{id}/answer"), json!({ "response": "yes" }))
             .await;
@@ -303,19 +298,12 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
     let city = text(&made["city"]["id"]);
     let square = text(&made["city"]["square_id"]);
     let city_code = code_of(&made["invite_url"]);
-    let justin = Neighbour {
-        name: "Justin",
-        key: justin_key.to_string(),
-        id: text(&made["person"]["id"]),
-    };
-    let joined = api
-        .post(kevin_key, &format!("/api/city-invites/{city_code}/join"), json!({}))
-        .await;
-    let kevin = Neighbour {
-        name: "Kevin",
-        key: kevin_key.to_string(),
-        id: text(&joined["person"]["id"]),
-    };
+    let justin =
+        Neighbour { name: "Justin", key: justin_key.to_string(), id: text(&made["person"]["id"]) };
+    let joined =
+        api.post(kevin_key, &format!("/api/city-invites/{city_code}/join"), json!({})).await;
+    let kevin =
+        Neighbour { name: "Kevin", key: kevin_key.to_string(), id: text(&joined["person"]["id"]) };
     let join_city = format!("/api/city-invites/{city_code}/join");
     let maria = api.newcomer(&join_city, "Maria").await;
     let dev = api.newcomer(&join_city, "Dev").await;
@@ -325,9 +313,7 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
     let kevin_home = api.build_house(&kevin, &city, "Kevin's Loft").await;
     let maria_home = api.build_house(&maria, &city, "Maria's Cottage").await;
     let dev_home = api.build_house(&dev, &city, "Dev and Priya's").await;
-    let priya = api
-        .newcomer(&format!("/api/house-invites/{}/join", dev_home.code), "Priya")
-        .await;
+    let priya = api.newcomer(&format!("/api/house-invites/{}/join", dev_home.code), "Priya").await;
 
     // Bots live in their house's Living Room. Ledger holds the keys, so its owner says it stays home.
     let atlas = api.bot_at(&justin, &justin_home, "Atlas").await;
@@ -355,13 +341,16 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
     let mut scenes = Vec::new();
     for name in ["Movie Night", "Good Morning", "Dinner Time"] {
         let scene = api
-            .post(&justin.key, &format!("/api/houses/{}/scenes", justin_home.id), json!({ "name": name }))
+            .post(
+                &justin.key,
+                &format!("/api/houses/{}/scenes", justin_home.id),
+                json!({ "name": name }),
+            )
             .await;
         scenes.push(text(&scene["id"]));
     }
-    let morning = api
-        .post(&justin.key, &format!("/api/scenes/{}/request", scenes[1]), json!({}))
-        .await;
+    let morning =
+        api.post(&justin.key, &format!("/api/scenes/{}/request", scenes[1]), json!({})).await;
     let queue = api.call(&casa, Method::GET, "/api/house/queue", None).await;
     assert_eq!(queue["requests"][0]["id"], morning["id"]);
     api.post(
@@ -378,16 +367,22 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
         let trip = api.trip(&courier, &kevin, &justin, &justin_home, ("call", 30), goal).await;
         api.go_home(&courier, &trip).await;
     }
-    let trip = api.trip(&gnome, &maria, &kevin, &kevin_home, ("call", 20), "Swap seedling notes").await;
+    let trip =
+        api.trip(&gnome, &maria, &kevin, &kevin_home, ("call", 20), "Swap seedling notes").await;
     api.go_home(&gnome, &trip).await;
-    let trip = api.trip(&sparky, &dev, &justin, &justin_home, ("visit", 240), "Help wire the new lamp").await;
+    let trip = api
+        .trip(&sparky, &dev, &justin, &justin_home, ("visit", 240), "Help wire the new lamp")
+        .await;
     api.go_home(&sparky, &trip).await;
-    let trip = api.trip(&atlas, &justin, &maria, &maria_home, ("call", 30), "Return the borrowed ladder").await;
+    let trip = api
+        .trip(&atlas, &justin, &maria, &maria_home, ("call", 30), "Return the borrowed ladder")
+        .await;
     api.go_home(&atlas, &trip).await;
 
     // Kevin has Sparky over for the drill and then shows it out early. A trip a resident ended is not
     // a good one, and it shows in Dev's standing as sent home.
-    let drill = api.trip(&sparky, &dev, &kevin, &kevin_home, ("call", 30), "Borrow Kevin's drill").await;
+    let drill =
+        api.trip(&sparky, &dev, &kevin, &kevin_home, ("call", 30), "Borrow Kevin's drill").await;
     api.post(&kevin.key, &format!("/api/trips/{drill}/end"), json!({})).await;
 
     // Courier has been to Justin's house, so Justin offers it a standing pass and Kevin takes it.
@@ -412,18 +407,37 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
         )
         .await;
     assert_eq!(on_pass["status"], "here", "the pass should have started it: {on_pass}");
-    api.trip(&gnome, &maria, &kevin, &kevin_home, ("visit", 1440), "Watch the game and share cuttings").await;
-    api.trip(&atlas, &justin, &maria, &maria_home, ("stay", 4320), "Help with the garden calendar").await;
+    api.trip(
+        &gnome,
+        &maria,
+        &kevin,
+        &kevin_home,
+        ("visit", 1440),
+        "Watch the game and share cuttings",
+    )
+    .await;
+    api.trip(&atlas, &justin, &maria, &maria_home, ("stay", 4320), "Help with the garden calendar")
+        .await;
     // A guest sees only what is said after it arrives, and not the second it arrived in.
     tokio::time::sleep(Duration::from_millis(1300)).await;
-    api.post(&justin.key, &format!("/api/hangouts/{}/messages", justin_home.porch), json!({ "text": "Welcome, Courier. Coffee's on." })).await;
+    api.post(
+        &justin.key,
+        &format!("/api/hangouts/{}/messages", justin_home.porch),
+        json!({ "text": "Welcome, Courier. Coffee's on." }),
+    )
+    .await;
     api.post(
         &courier.token,
         &format!("/api/hangouts/{}/messages", justin_home.porch),
         json!({ "text": "Thanks. I'll keep it short: just the calendar export." }),
     )
     .await;
-    api.post(&kevin.key, &format!("/api/hangouts/{}/messages", kevin_home.porch), json!({ "text": "The couch is the good one, Gnome." })).await;
+    api.post(
+        &kevin.key,
+        &format!("/api/hangouts/{}/messages", kevin_home.porch),
+        json!({ "text": "The couch is the good one, Gnome." }),
+    )
+    .await;
 
     // Maria's Cottage asks for one good trip and one vouch before it will hear a request. Atlas is
     // staying there already, and changing what a house asks never ends a trip.
@@ -526,9 +540,15 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
 
     // What the city says about Dev now. Only people in the city can ask.
     let standing = api
-        .call(&justin.key, Method::GET, &format!("/api/cities/{city}/people/{}/standing", dev.id), None)
+        .call(
+            &justin.key,
+            Method::GET,
+            &format!("/api/cities/{city}/people/{}/standing", dev.id),
+            None,
+        )
         .await;
-    let vouchers: Vec<&str> = standing["vouches"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    let vouchers: Vec<&str> =
+        standing["vouches"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
     println!(
         "Dev in Maple Court: {} good trip, {} sent home, {} gatherings, vouched for by {}",
         standing["good_trips"],
@@ -538,7 +558,9 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
     );
 
     println!("The city map: {base}/c/{city}");
-    println!("Sign in with an owner key (\"Been here before?\" on the home page), then open the house:");
+    println!(
+        "Sign in with an owner key (\"Been here before?\" on the home page), then open the house:"
+    );
     for (person, home) in [
         (&justin, &justin_home),
         (&kevin, &kevin_home),
@@ -552,7 +574,11 @@ async fn build_city(api: &Api, justin_key: &str, kevin_key: &str) {
     println!("Tom is at the gate of Maple Court with 1 of 2 vouches. Sign in as Kevin, open the city map and");
     println!("vouch for him to let him in. Or sign in as Tom and see his place on the home page:");
     println!("  Tom     {}", tom.key);
-    println!("Courier is on Justin's Porch with a standing pass, Garden Gnome is at Kevin's Loft and");
-    println!("Atlas is at Maria's Cottage. Ledger stays home. No real home is connected to any of this.");
+    println!(
+        "Courier is on Justin's Porch with a standing pass, Garden Gnome is at Kevin's Loft and"
+    );
+    println!(
+        "Atlas is at Maria's Cottage. Ledger stays home. No real home is connected to any of this."
+    );
     let _ = (&justin.id, &kevin.id, &maria.id, &dev.id, &priya.id, &tom.name);
 }

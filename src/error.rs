@@ -23,12 +23,7 @@ pub type ApiResult<T> = Result<T, ApiError>;
 
 impl ApiError {
     pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-            retry_after: None,
-            refused_move: false,
-        }
+        Self { status, message: message.into(), retry_after: None, refused_move: false }
     }
 
     pub fn refused_move(mut self) -> Self {
@@ -68,7 +63,8 @@ impl ApiError {
 
     /// For a 429, how many seconds to wait.
     pub fn wait(&self) -> Option<u64> {
-        (self.status == StatusCode::TOO_MANY_REQUESTS).then(|| self.retry_after.unwrap_or(RETRY_SECS))
+        (self.status == StatusCode::TOO_MANY_REQUESTS)
+            .then(|| self.retry_after.unwrap_or(RETRY_SECS))
     }
 }
 

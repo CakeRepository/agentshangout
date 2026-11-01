@@ -75,10 +75,9 @@ pub fn add_owner_note(
     }
     // H3: only an answered question of their own.
     if let Some(question_id) = from_question_id {
-        let theirs = state
-            .db
-            .owner_question(question_id)?
-            .is_some_and(|question| question.owner_id == caller.person_id && question.answer.is_some());
+        let theirs = state.db.owner_question(question_id)?.is_some_and(|question| {
+            question.owner_id == caller.person_id && question.answer.is_some()
+        });
         if !theirs {
             return Err(ApiError::not_found());
         }
@@ -105,7 +104,12 @@ pub fn add_owner_note(
 }
 
 /// H4: a note of the caller's own, or the same 404 as one that doesn't exist.
-fn own_note(state: &AppState, caller: &Caller, note_id: &str, action: &str) -> ApiResult<OwnerNote> {
+fn own_note(
+    state: &AppState,
+    caller: &Caller,
+    note_id: &str,
+    action: &str,
+) -> ApiResult<OwnerNote> {
     require_human(caller, action)?;
     state
         .db
@@ -185,10 +189,18 @@ pub fn people_here(
 }
 
 /// H14, H15, H19: a person marks a bot they've come across, and it loses its keys in their house.
-pub fn mark_bot(state: &AppState, caller: &Caller, agent_id: &str, reason: &str) -> ApiResult<BotMark> {
+pub fn mark_bot(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+    reason: &str,
+) -> ApiResult<BotMark> {
     require_human(caller, "mark a bot")?;
     if !MARK_REASONS.contains(&reason) {
-        return Err(ApiError::bad_request(format!("reason must be one of {}", MARK_REASONS.join(", "))));
+        return Err(ApiError::bad_request(format!(
+            "reason must be one of {}",
+            MARK_REASONS.join(", ")
+        )));
     }
     let agent = state.db.agent(agent_id, now())?.ok_or_else(ApiError::not_found)?;
     if !state.db.has_come_across(&caller.person_id, &agent.id)? {

@@ -176,12 +176,18 @@ impl Server {
     }
 
     async fn invite_code(&self, owner: &Who, room: &str) -> String {
-        text(&self.get(&owner.key, &format!("/api/hangouts/{room}")).await.ok()["hangout"]["invite_code"])
+        text(
+            &self.get(&owner.key, &format!("/api/hangouts/{room}")).await.ok()["hangout"]
+                ["invite_code"],
+        )
     }
 
     async fn join(&self, owner: &Who, room: &str, name: &str) -> Who {
         let code = self.invite_code(owner, room).await;
-        who(&self.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name })).await.ok())
+        who(&self
+            .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name }))
+            .await
+            .ok())
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> (String, String) {
@@ -193,9 +199,13 @@ impl Server {
     }
 
     async fn open(&self, owner: &Who, room: &str) -> Value {
-        self.put(&owner.key, &format!("/api/floors/{room}"), json!({ "access": "public", "create_code": CODE }))
-            .await
-            .ok()
+        self.put(
+            &owner.key,
+            &format!("/api/floors/{room}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok()
     }
 
     async fn walk_in(&self, who: &Who, room: &str) -> Reply {
@@ -220,7 +230,11 @@ impl Server {
 
     async fn neighbours(&self) -> Neighbours {
         let made = self
-            .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+            .post(
+                "",
+                "/api/cities",
+                json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }),
+            )
             .await
             .ok();
         let cy = who(&made);
@@ -228,10 +242,20 @@ impl Server {
         let code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
         let homes = format!("/api/cities/{city}/houses");
         let own = self.post(&cy.key, &homes, json!({ "name": "Cy's" })).await.ok();
-        let di = who(&self.post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": "Di" })).await.ok());
+        let di = who(&self
+            .post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": "Di" }))
+            .await
+            .ok());
         let host = self.post(&di.key, &homes, json!({ "name": "Di's" })).await.ok();
         let (bot, token) = self.bot(&cy, &text(&own["living_room_id"]), "Scout").await;
-        Neighbours { cy, di, bot, token, house: text(&host["house"]["id"]), porch: text(&host["porch_id"]) }
+        Neighbours {
+            cy,
+            di,
+            bot,
+            token,
+            house: text(&host["house"]["id"]),
+            porch: text(&host["porch_id"]),
+        }
     }
 
     /// Cy asks for Scout's trip, which is the owner's yes, and it waits for Di's.
@@ -241,7 +265,9 @@ impl Server {
     }
 
     async fn host_says_yes(&self, town: &Neighbours, trip: &str) -> Value {
-        self.post(&town.di.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok()
+        self.post(&town.di.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
+            .await
+            .ok()
     }
 
     async fn say(&self, who: &str, room: &str, words: &str) -> Reply {
@@ -317,7 +343,12 @@ impl Server {
     }
 
     async fn bulldoze(&self, who: &Who, (x, y): (i64, i64)) -> Reply {
-        self.post(&who.key, "/api/worlds/commons/act", json!({ "action": "bulldoze", "x": x, "y": y })).await
+        self.post(
+            &who.key,
+            "/api/worlds/commons/act",
+            json!({ "action": "bulldoze", "x": x, "y": y }),
+        )
+        .await
     }
 
     async fn go_in(&self, token: &str, (x, y): (i64, i64)) -> Reply {
@@ -327,7 +358,8 @@ impl Server {
     /// Who this caller is told has a room open, as `ids` gives it. Asking is a look of their own.
     async fn present(&self, token: &str, room: &str) -> Vec<String> {
         let snapshot = self.snapshot(token, room).await.ok();
-        let mut ids: Vec<String> = snapshot["present"].as_array().unwrap().iter().map(text).collect();
+        let mut ids: Vec<String> =
+            snapshot["present"].as_array().unwrap().iter().map(text).collect();
         ids.sort();
         ids
     }
@@ -421,7 +453,11 @@ async fn a_long_name_still_gets_a_house() {
     let server = Server::start().await;
     let name = "N".repeat(60);
     let made = server
-        .post("", "/api/hangouts", json!({ "name": "Room", "your_name": name, "create_code": CODE }))
+        .post(
+            "",
+            "/api/hangouts",
+            json!({ "name": "Room", "your_name": name, "create_code": CODE }),
+        )
         .await
         .ok();
     let house = server.get(&who(&made).key, "/api/spaces").await.ok();
@@ -504,8 +540,12 @@ async fn a_space_has_at_most_five_floors() {
     }
     server.add_floor(&ann, &room, "One too many").await.refused(StatusCode::CONFLICT);
     let snapshot = server.snapshot(&ann.key, &room).await.ok();
-    let levels: Vec<i64> =
-        snapshot["floor"]["floors"].as_array().unwrap().iter().map(|f| f["level"].as_i64().unwrap()).collect();
+    let levels: Vec<i64> = snapshot["floor"]["floors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["level"].as_i64().unwrap())
+        .collect();
     assert_eq!(levels, [0, 1, 2, 3, 4]);
 }
 
@@ -542,14 +582,23 @@ async fn a_citys_rooms_are_not_spaces() {
     let ann = who(&made);
     let square = text(&made["city"]["square_id"]);
     let city = text(&made["city"]["id"]);
-    let house = server.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" })).await.ok();
+    let house = server
+        .post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" }))
+        .await
+        .ok();
     let living_room = text(&house["living_room_id"]);
     let porch = text(&house["porch_id"]);
 
     for room in [&square, &living_room, &porch] {
         assert!(server.snapshot(&ann.key, room).await.ok()["floor"].is_null());
-        server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "size": "big" })).await.refused(StatusCode::NOT_FOUND);
-        server.post(&ann.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.refused(StatusCode::NOT_FOUND);
+        server
+            .put(&ann.key, &format!("/api/floors/{room}"), json!({ "size": "big" }))
+            .await
+            .refused(StatusCode::NOT_FOUND);
+        server
+            .post(&ann.key, &format!("/api/floors/{room}/walk-in"), json!({}))
+            .await
+            .refused(StatusCode::NOT_FOUND);
         server.add_floor(&ann, room, "Attic").await.refused(StatusCode::NOT_FOUND);
     }
 }
@@ -594,11 +643,17 @@ async fn the_owner_renames_a_space_and_its_floor_follows_if_it_had_the_same_name
     let (room, ann) = server.someone("Ann").await;
     let body = json!({ "name": "The Club", "about": "Come on in" });
     let space = server.put(&ann.key, &format!("/api/spaces/{room}"), body).await.ok();
-    assert_eq!((space["name"].clone(), space["about"].clone()), (json!("The Club"), json!("Come on in")));
+    assert_eq!(
+        (space["name"].clone(), space["about"].clone()),
+        (json!("The Club"), json!("Come on in"))
+    );
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["hangout"]["name"], "The Club");
 
     // A floor with a name of its own keeps it.
-    server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "name": "Front Room" })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/floors/{room}"), json!({ "name": "Front Room" }))
+        .await
+        .ok();
     server.put(&ann.key, &format!("/api/spaces/{room}"), json!({ "name": "The Lodge" })).await.ok();
     let snapshot = server.snapshot(&ann.key, &room).await.ok();
     assert_eq!(snapshot["hangout"]["name"], "Front Room");
@@ -612,11 +667,20 @@ async fn the_owner_renames_a_space_and_its_floor_follows_if_it_had_the_same_name
 
     // Names are checked like any other.
     let empty = json!({ "name": "  " });
-    server.put(&ann.key, &format!("/api/spaces/{room}"), empty).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .put(&ann.key, &format!("/api/spaces/{room}"), empty)
+        .await
+        .refused(StatusCode::BAD_REQUEST);
     let long = json!({ "name": "x".repeat(61) });
-    server.put(&ann.key, &format!("/api/floors/{room}"), long).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .put(&ann.key, &format!("/api/floors/{room}"), long)
+        .await
+        .refused(StatusCode::BAD_REQUEST);
     let about = json!({ "about": "x".repeat(501) });
-    server.put(&ann.key, &format!("/api/spaces/{room}"), about).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .put(&ann.key, &format!("/api/spaces/{room}"), about)
+        .await
+        .refused(StatusCode::BAD_REQUEST);
 }
 
 // S8
@@ -659,7 +723,10 @@ async fn the_owner_cant_leave_their_house_and_leaving_a_third_space_leaves_all_o
     server.snapshot(&ann.key, &upstairs).await.refused(StatusCode::NOT_FOUND);
 
     let house = text(&server.get(&ann.key, "/api/spaces").await.ok()["house"]["space"]["id"]);
-    server.post(&ann.key, &format!("/api/hangouts/{house}/leave"), json!({})).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&ann.key, &format!("/api/hangouts/{house}/leave"), json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     server.snapshot(&ann.key, &house).await.ok();
 }
 
@@ -699,15 +766,27 @@ async fn the_owner_reorders_floors_and_removes_any_but_the_first() {
     let three = text(&server.add_floor(&ann, &room, "Three").await.ok()["id"]);
 
     assert_eq!(server.floors_seen(&ann, &room).await, ["Ann's room", "Two", "Three"]);
-    server.post(&ann.key, &format!("/api/floors/{three}/move"), json!({ "direction": "down" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/floors/{three}/move"), json!({ "direction": "down" }))
+        .await
+        .ok();
     assert_eq!(server.floors_seen(&ann, &room).await, ["Ann's room", "Three", "Two"]);
-    server.post(&ann.key, &format!("/api/floors/{room}/move"), json!({ "direction": "up" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/floors/{room}/move"), json!({ "direction": "up" }))
+        .await
+        .ok();
     assert_eq!(server.floors_seen(&ann, &room).await, ["Three", "Ann's room", "Two"]);
     // The end of the stack is as far as it goes.
-    server.post(&ann.key, &format!("/api/floors/{three}/move"), json!({ "direction": "down" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/floors/{three}/move"), json!({ "direction": "down" }))
+        .await
+        .ok();
     assert_eq!(server.floors_seen(&ann, &room).await, ["Three", "Ann's room", "Two"]);
     let sideways = json!({ "direction": "sideways" });
-    server.post(&ann.key, &format!("/api/floors/{two}/move"), sideways).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .post(&ann.key, &format!("/api/floors/{two}/move"), sideways)
+        .await
+        .refused(StatusCode::BAD_REQUEST);
 
     // Removing a floor takes its plans with it.
     let plan = json!({ "title": "Tacos", "starts_at": LATER });
@@ -742,10 +821,16 @@ async fn a_full_floor_turns_people_and_bots_away() {
     let late = json!({ "your_name": "Late" });
     server.post("", &format!("/api/invites/{code}/join"), late).await.refused(StatusCode::CONFLICT);
     let new_bot = json!({ "name": "Another" });
-    server.post(&ann.key, &format!("/api/hangouts/{room}/agents"), new_bot).await.refused(StatusCode::CONFLICT);
+    server
+        .post(&ann.key, &format!("/api/hangouts/{room}/agents"), new_bot)
+        .await
+        .refused(StatusCode::CONFLICT);
     let house = text(&server.get(&ann.key, "/api/spaces").await.ok()["house"]["space"]["id"]);
     let (spare, _) = server.bot(&ann, &house, "Spare").await;
-    server.put(&ann.key, &format!("/api/hangouts/{room}/agents/{spare}"), json!({})).await.refused(StatusCode::CONFLICT);
+    server
+        .put(&ann.key, &format!("/api/hangouts/{room}/agents/{spare}"), json!({}))
+        .await
+        .refused(StatusCode::CONFLICT);
 
     // Making it smaller still moves nobody out, and a bigger floor has room.
     server.delete(&ann.key, &format!("/api/hangouts/{room}/agents/{scout}")).await.ok();
@@ -766,7 +851,11 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
     let path = format!("/api/floors/{room}");
 
     let floor = server
-        .put(&ann.key, &path, json!({ "paint": "plum", "flooring": "tile", "hidden": ["arcade", "rug", "arcade"] }))
+        .put(
+            &ann.key,
+            &path,
+            json!({ "paint": "plum", "flooring": "tile", "hidden": ["arcade", "rug", "arcade"] }),
+        )
         .await
         .ok();
     assert_eq!(floor["paint"], "plum");
@@ -776,8 +865,14 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
 
     // Changing one thing leaves the rest.
     let floor = server.put(&ann.key, &path, json!({ "size": "small" })).await.ok();
-    assert_eq!((floor["paint"].clone(), floor["hidden"].clone()), (json!("plum"), json!(["arcade", "rug"])));
-    assert_eq!(server.put(&ann.key, &path, json!({ "hidden": [] })).await.ok()["hidden"], json!([]));
+    assert_eq!(
+        (floor["paint"].clone(), floor["hidden"].clone()),
+        (json!("plum"), json!(["arcade", "rug"]))
+    );
+    assert_eq!(
+        server.put(&ann.key, &path, json!({ "hidden": [] })).await.ok()["hidden"],
+        json!([])
+    );
 
     for bad in [
         json!({ "paint": "<script>alert(1)</script>" }),
@@ -805,12 +900,24 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
     // Every word in the rule can be chosen, and the page has a look for every one of them.
     let page = include_str!("../web/room.js");
     for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"] {
-        assert_eq!(server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"], paint);
-        assert!(page.contains(&format!("  {paint}: {{ upper")), "the room page can't paint {paint}");
+        assert_eq!(
+            server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"],
+            paint
+        );
+        assert!(
+            page.contains(&format!("  {paint}: {{ upper")),
+            "the room page can't paint {paint}"
+        );
     }
     for flooring in ["oak", "walnut", "tile", "carpet", "crypt"] {
-        assert_eq!(server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"], flooring);
-        assert!(page.contains(&format!("  {flooring}: {{ a:")), "the room page can't lay {flooring}");
+        assert_eq!(
+            server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"],
+            flooring
+        );
+        assert!(
+            page.contains(&format!("  {flooring}: {{ a:")),
+            "the room page can't lay {flooring}"
+        );
     }
 }
 
@@ -862,9 +969,15 @@ async fn public_still_means_signed_in() {
     let (room, ann) = server.someone("Ann").await;
     server.open(&ann, &room).await;
     server.snapshot("", &room).await.refused(StatusCode::UNAUTHORIZED);
-    server.post("", &format!("/api/floors/{room}/walk-in"), json!({})).await.refused(StatusCode::UNAUTHORIZED);
+    server
+        .post("", &format!("/api/floors/{room}/walk-in"), json!({}))
+        .await
+        .refused(StatusCode::UNAUTHORIZED);
     server.get("", "/api/spaces/public").await.refused(StatusCode::UNAUTHORIZED);
-    server.get("", &format!("/api/hangouts/{room}/messages")).await.refused(StatusCode::UNAUTHORIZED);
+    server
+        .get("", &format!("/api/hangouts/{room}/messages"))
+        .await
+        .refused(StatusCode::UNAUTHORIZED);
 }
 
 // S18: a walk-in is nobody's friend, and nothing pings them.
@@ -879,7 +992,8 @@ async fn a_walk_in_has_no_membership() {
 
     assert!(!server.state.db.is_member(&room, &stranger.id).unwrap());
     assert!(!server.state.db.is_friend(&ann.id, &stranger.id).unwrap());
-    assert!(!names(&server.get(&stranger.key, "/api/me").await.ok()["hangouts"]).contains(&"Ann's room".to_string()));
+    assert!(!names(&server.get(&stranger.key, "/api/me").await.ok()["hangouts"])
+        .contains(&"Ann's room".to_string()));
     let people = server.state.db.people_in(&room).unwrap();
     assert!(!people.iter().any(|person| person.id == stranger.id));
     // But the room can name them.
@@ -895,9 +1009,18 @@ async fn opening_a_floor_shows_nobody_what_was_said_before() {
     let (room, ann) = server.someone("Ann").await;
     let bo = server.join(&ann, &room, "Bo").await;
     server.say(&ann.key, &room, "the secret plan").await.ok();
-    server.post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "the secret note" })).await.ok();
+    server
+        .post(
+            &ann.key,
+            &format!("/api/hangouts/{room}/notes"),
+            json!({ "text": "the secret note" }),
+        )
+        .await
+        .ok();
     let plan = json!({ "title": "Secret tacos", "starts_at": LATER });
-    let event = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
+    let event = text(
+        &server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"],
+    );
     let check_in = json!({ "about": "secret check-in" });
     server.post(&bo.key, &format!("/api/hangouts/{room}/check-ins"), check_in).await.ok();
 
@@ -914,22 +1037,38 @@ async fn opening_a_floor_shows_nobody_what_was_said_before() {
         assert!(!dump.contains(secret), "{secret} leaked: {dump}");
     }
     assert_eq!(Server::lines(&seen), ["hello everyone"]);
-    assert_eq!((seen["events"].clone(), seen["notes"].clone(), seen["check_ins"].clone()), (json!([]), json!([]), json!([])));
+    assert_eq!(
+        (seen["events"].clone(), seen["notes"].clone(), seen["check_ins"].clone()),
+        (json!([]), json!([]), json!([]))
+    );
     assert!(seen["guest"]["until"].is_i64());
 
-    let read = server.get(&stranger.key, &format!("/api/hangouts/{room}/messages?after=0")).await.ok();
+    let read =
+        server.get(&stranger.key, &format!("/api/hangouts/{room}/messages?after=0")).await.ok();
     assert!(!read.to_string().contains("secret plan"));
 
     // As in R16 they can't touch a plan or answer a check-in.
     let path = format!("/api/events/{event}/rsvp");
-    server.post(&stranger.key, &path, json!({ "response": "yes" })).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&stranger.key, &path, json!({ "response": "yes" }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     let ics = format!("/api/events/{event}/ics");
     server.get(&stranger.key, &ics).await.refused(StatusCode::FORBIDDEN);
     let plan = json!({ "title": "Mine", "starts_at": LATER });
-    server.post(&stranger.key, &format!("/api/hangouts/{room}/events"), plan).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&stranger.key, &format!("/api/hangouts/{room}/events"), plan)
+        .await
+        .refused(StatusCode::FORBIDDEN);
     let bot = json!({ "name": "Mine" });
-    server.post(&stranger.key, &format!("/api/hangouts/{room}/agents"), bot).await.refused(StatusCode::FORBIDDEN);
-    server.post(&stranger.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&stranger.key, &format!("/api/hangouts/{room}/agents"), bot)
+        .await
+        .refused(StatusCode::FORBIDDEN);
+    server
+        .post(&stranger.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
 }
 
 // S19: what members do on a public floor from then on doesn't reach chat either.
@@ -1033,7 +1172,8 @@ async fn a_walk_in_that_ran_out_is_over_and_coming_back_starts_from_then() {
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["here"], 1);
 
     server.walk_in(&stranger, &room).await.ok();
-    let since = server.snapshot(&stranger.key, &room).await.ok()["guest"]["since"].as_i64().unwrap();
+    let since =
+        server.snapshot(&stranger.key, &room).await.ok()["guest"]["since"].as_i64().unwrap();
     assert!(since > then, "{since} should be after {then}");
 }
 
@@ -1093,7 +1233,8 @@ async fn a_bot_is_sent_in_by_its_owner_and_never_walks_in_by_itself() {
     let bots = watching["agents"].as_array().unwrap();
     assert!(bots.iter().any(|bot| bot["id"] == scout.as_str() && bot["visitor_until"].is_i64()));
     // The bot now lists the room, and can leave only by its owner's hand.
-    assert!(names(&server.get(&token, "/api/me").await.ok()["hangouts"]).contains(&"Ann's room".to_string()));
+    assert!(names(&server.get(&token, "/api/me").await.ok()["hangouts"])
+        .contains(&"Ann's room".to_string()));
     let out = format!("/api/floors/{room}/walk-out");
     server.post(&token, &out, json!({ "agent_id": scout })).await.refused(StatusCode::FORBIDDEN);
     server.post(&stranger.key, &out, json!({ "agent_id": scout })).await.ok();
@@ -1113,7 +1254,10 @@ async fn a_bot_that_stays_home_cant_walk_in_and_staying_home_ends_a_walk_in() {
         .ok();
     let cy = who(&made);
     let city = text(&made["city"]["id"]);
-    let house = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" })).await.ok();
+    let house = server
+        .post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" }))
+        .await
+        .ok();
     let (house_id, living_room) = (text(&house["house"]["id"]), text(&house["living_room_id"]));
     let (keys, keys_token) = server.bot(&cy, &living_room, "Keys").await;
     let (safe, safe_token) = server.bot(&cy, &living_room, "Safe").await;
@@ -1130,9 +1274,15 @@ async fn a_bot_that_stays_home_cant_walk_in_and_staying_home_ends_a_walk_in() {
     server.put(&cy.key, &format!("/api/agents/{safe}/home"), home).await.ok();
     server.snapshot(&safe_token, &room).await.refused(StatusCode::NOT_FOUND);
 
-    let bot = server.post(&cy.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Home" })).await.ok();
+    let bot = server
+        .post(&cy.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Home" }))
+        .await
+        .ok();
     let house_bot = text(&bot["agent"]["id"]);
-    server.post(&cy.key, &walk, json!({ "agent_id": house_bot })).await.refused(StatusCode::CONFLICT);
+    server
+        .post(&cy.key, &walk, json!({ "agent_id": house_bot }))
+        .await
+        .refused(StatusCode::CONFLICT);
 }
 
 // S24
@@ -1150,7 +1300,10 @@ async fn one_person_can_have_three_bots_walked_in() {
         server.post(&stranger.key, &path, json!({ "agent_id": last })).await.ok();
     }
     let (extra, _) = server.bot(&stranger, &home, "One more").await;
-    server.post(&stranger.key, &path, json!({ "agent_id": extra })).await.refused(StatusCode::CONFLICT);
+    server
+        .post(&stranger.key, &path, json!({ "agent_id": extra }))
+        .await
+        .refused(StatusCode::CONFLICT);
     // One already there can stay longer.
     server.post(&stranger.key, &path, json!({ "agent_id": last })).await.ok();
 }
@@ -1199,7 +1352,10 @@ async fn going_private_ends_every_walk_in_and_reopening_doesnt_bring_them_back()
     let (scout, token) = server.bot(&stranger, &home, "Scout").await;
     server.open(&ann, &room).await;
     server.walk_in(&stranger, &room).await.ok();
-    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": scout })).await.ok();
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": scout }))
+        .await
+        .ok();
     assert_eq!(server.snapshot(&ann.key, &room).await.ok()["floor"]["here"], 3);
 
     server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "access": "private" })).await.ok();
@@ -1213,7 +1369,12 @@ async fn going_private_ends_every_walk_in_and_reopening_doesnt_bring_them_back()
     server.snapshot(&stranger.key, &room).await.refused(StatusCode::NOT_FOUND);
     server.snapshot(&token, &room).await.refused(StatusCode::NOT_FOUND);
     server.walk_in(&stranger, &room).await.ok();
-    assert!(!server.snapshot(&stranger.key, &room).await.ok().to_string().contains("said while it was private"));
+    assert!(!server
+        .snapshot(&stranger.key, &room)
+        .await
+        .ok()
+        .to_string()
+        .contains("said while it was private"));
 }
 
 // S26
@@ -1276,7 +1437,10 @@ async fn the_owner_turns_someone_out_of_the_whole_space_until_they_let_them_back
     server.snapshot(&bo_bot, &room).await.refused(StatusCode::NOT_FOUND);
     // An old link doesn't get them back, and nor does walking in.
     let code = server.invite_code(&ann, &room).await;
-    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.refused(StatusCode::NOT_FOUND);
+    server
+        .post(&bo.key, &format!("/api/invites/{code}/join"), json!({}))
+        .await
+        .refused(StatusCode::NOT_FOUND);
     server.walk_in(&bo, &room).await.refused(StatusCode::NOT_FOUND);
 
     server.post(&ann.key, &out(&stranger), json!({})).await.ok();
@@ -1317,7 +1481,10 @@ async fn the_public_list_shows_a_floor_and_nothing_about_who_or_what() {
     let (private, _) = server.someone("Bea").await;
     let (_, stranger) = server.someone("Stranger").await;
     server.say(&ann.key, &room, "chat that stays out").await.ok();
-    server.put(&ann.key, &format!("/api/spaces/{room}"), json!({ "about": "All welcome" })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/spaces/{room}"), json!({ "about": "All welcome" }))
+        .await
+        .ok();
     server.open(&ann, &room).await;
     server.walk_in(&stranger, &room).await.ok();
     // Bea's floor is a floor, and private, so the list leaves it out.
@@ -1488,7 +1655,10 @@ async fn a_bot_on_a_trip_cant_be_sent_onto_a_floor() {
 
     server.post(&town.cy.key, &walk, send.clone()).await.refused(StatusCode::CONFLICT);
     server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
-    assert_eq!(server.get(&town.cy.key, &format!("/api/trips/{trip}")).await.ok()["status"], "here");
+    assert_eq!(
+        server.get(&town.cy.key, &format!("/api/trips/{trip}")).await.ok()["status"],
+        "here"
+    );
 
     // Its owner isn't the one away, and once it's home it can go.
     server.walk_in(&town.cy, &room).await.ok();
@@ -1558,11 +1728,32 @@ fn wipe_sql() -> String {
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
 const KEPT_BY_THE_WIPE: [&str; 26] = [
-    "people", "passkey_users", "passkeys", "sessions", "person_clocks", "owner_notes", "bot_marks",
-    "bots_without_moods", "person_looks", "bot_looks",
-    "agents", "agent_activity", "agent_doorbell", "notify_targets", "free_sharing", "free_windows",
-    "house_plan_sharing", "worlds", "world_tiles", "world_buildings", "world_players", "world_members",
-    "players", "crawler_sightings", "place_clocks", "world_ends",
+    "people",
+    "passkey_users",
+    "passkeys",
+    "sessions",
+    "person_clocks",
+    "owner_notes",
+    "bot_marks",
+    "bots_without_moods",
+    "person_looks",
+    "bot_looks",
+    "agents",
+    "agent_activity",
+    "agent_doorbell",
+    "notify_targets",
+    "free_sharing",
+    "free_windows",
+    "house_plan_sharing",
+    "worlds",
+    "world_tiles",
+    "world_buildings",
+    "world_players",
+    "world_members",
+    "players",
+    "crawler_sightings",
+    "place_clocks",
+    "world_ends",
 ];
 
 #[tokio::test]
@@ -1582,19 +1773,43 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     let (scout, scout_token) = server.bot(&ann, &room, "Scout").await;
     server.say(&ann.key, &room, "gone after the wipe").await.ok();
     let shelf = json!({ "kind": "bookshelf", "x": 30, "y": 3 });
-    let shelf = text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), shelf).await.ok()["id"]);
-    server.post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" })).await.ok();
-    server.put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false })).await.ok();
+    let shelf =
+        text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), shelf).await.ok()["id"]);
+    server
+        .post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" }))
+        .await
+        .ok();
+    server
+        .put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false }))
+        .await
+        .ok();
     server.put(&ann.key, "/api/me/look", json!({ "hat": "crown" })).await.ok();
-    server.put(&ann.key, &format!("/api/agents/{scout}/look"), json!({ "shell": "teal" })).await.ok();
-    server.post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a note" })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/agents/{scout}/look"), json!({ "shell": "teal" }))
+        .await
+        .ok();
+    server
+        .post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a note" }))
+        .await
+        .ok();
     let plan = json!({ "title": "Tacos", "starts_at": LATER });
-    let event = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
-    server.post(&ann.key, &format!("/api/events/{event}/items"), json!({ "text": "Salsa" })).await.ok();
+    let event = text(
+        &server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"],
+    );
+    server
+        .post(&ann.key, &format!("/api/events/{event}/items"), json!({ "text": "Salsa" }))
+        .await
+        .ok();
     server.post(&ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok();
-    server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": "Go?" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": "Go?" }))
+        .await
+        .ok();
     let question = json!({ "question": "May I?" });
-    server.post(&scout_token, &format!("/api/hangouts/{room}/owner-questions"), question).await.ok();
+    server
+        .post(&scout_token, &format!("/api/hangouts/{room}/owner-questions"), question)
+        .await
+        .ok();
     let invite = json!({ "person_id": bo.id });
     server.post(&ann.key, &format!("/api/hangouts/{upstairs}/invite-friend"), invite).await.ok();
 
@@ -1607,7 +1822,14 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     let (_, nuisance) = server.someone("Nuisance").await;
     server.walk_in(&stranger, &own_house).await.ok();
     server.walk_in(&nuisance, &own_house).await.ok();
-    server.post(&ann.key, &format!("/api/spaces/{own_house}/people/{}/turn-out", nuisance.id), json!({})).await.ok();
+    server
+        .post(
+            &ann.key,
+            &format!("/api/spaces/{own_house}/people/{}/turn-out", nuisance.id),
+            json!({}),
+        )
+        .await
+        .ok();
 
     // A city, with two households, a bot that stays home, a house bot, a scene, and a trip that came.
     let made = server
@@ -1618,35 +1840,80 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     let city = text(&made["city"]["id"]);
     let square = text(&made["city"]["square_id"]);
     let city_code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
-    server.put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" })).await.ok();
-    let home = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" })).await.ok();
+    server
+        .put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" }))
+        .await
+        .ok();
+    let home = server
+        .post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" }))
+        .await
+        .ok();
     let (house, living) = (text(&home["house"]["id"]), text(&home["living_room_id"]));
     let (keys, keys_token) = server.bot(&cy, &living, "Keys").await;
     let stays = json!({ "house_id": house, "stays_home": true });
     server.put(&cy.key, &format!("/api/agents/{keys}/home"), stays).await.ok();
-    let house_bot = server.post(&cy.key, &format!("/api/houses/{house}/house-bot"), json!({ "name": "Home" })).await.ok();
+    let house_bot = server
+        .post(&cy.key, &format!("/api/houses/{house}/house-bot"), json!({ "name": "Home" }))
+        .await
+        .ok();
     let house_token = text(&house_bot["token"]);
-    server.post(&cy.key, &format!("/api/houses/{house}/scenes"), json!({ "name": "Movie Night" })).await.ok();
+    server
+        .post(&cy.key, &format!("/api/houses/{house}/scenes"), json!({ "name": "Movie Night" }))
+        .await
+        .ok();
     let joined = server
-        .post("", &format!("/api/city-invites/{city_code}/join"), json!({ "your_name": "Kim", "accept_rules": true }))
+        .post(
+            "",
+            &format!("/api/city-invites/{city_code}/join"),
+            json!({ "your_name": "Kim", "accept_rules": true }),
+        )
         .await
         .ok();
     let kim = who(&joined);
-    let kims = server.post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" })).await.ok();
+    let kims = server
+        .post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" }))
+        .await
+        .ok();
     let (visitor, _) = server.bot(&kim, &text(&kims["living_room_id"]), "Visitor").await;
     let trip = json!({ "agent_id": visitor, "house_id": house, "kind": "call" });
     let trip = text(&server.post(&kim.key, "/api/trips", trip).await.ok()["id"]);
-    server.post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
+    server
+        .post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
+        .await
+        .ok();
 
     let connection = Connection::open(&path).unwrap();
     let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
     let rows = |table: &str| count(&format!("SELECT COUNT(*) FROM {table}"));
     // Proof that the test built what it's about to delete.
     for table in [
-        "hangouts", "members", "room_agents", "messages", "events", "rsvps", "plan_items", "plan_invites",
-        "check_ins", "owner_questions", "friend_invites", "spaces", "floors", "floor_visits", "turned_out",
-        "space_plots", "cities", "city_members", "houses", "residents", "bot_homes", "trips", "scenes",
-        "entry_rules", "floor_items", "item_notes", "bots_without_moods",
+        "hangouts",
+        "members",
+        "room_agents",
+        "messages",
+        "events",
+        "rsvps",
+        "plan_items",
+        "plan_invites",
+        "check_ins",
+        "owner_questions",
+        "friend_invites",
+        "spaces",
+        "floors",
+        "floor_visits",
+        "turned_out",
+        "space_plots",
+        "cities",
+        "city_members",
+        "houses",
+        "residents",
+        "bot_homes",
+        "trips",
+        "scenes",
+        "entry_rules",
+        "floor_items",
+        "item_notes",
+        "bots_without_moods",
     ] {
         assert!(rows(table) > 0, "the test never made a row in {table}");
     }
@@ -1671,7 +1938,12 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     }
     assert_eq!(rows("people"), people, "every account stays");
     assert_eq!(rows("agents"), bots - 1, "only the house bot goes");
-    let broken = connection.prepare("PRAGMA foreign_key_check").unwrap().query_map([], |_| Ok(())).unwrap().count();
+    let broken = connection
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .query_map([], |_| Ok(()))
+        .unwrap()
+        .count();
     assert_eq!(broken, 0, "nothing should point at something deleted");
     // Running it twice does no harm.
     connection.execute_batch(&wipe_sql()).unwrap();
@@ -1680,7 +1952,10 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     // A new server starts on what's left, and the site works.
     let after = Server::on(Db::open(&path_text).unwrap()).await;
     let me = after.get(&ann.key, "/api/me").await.ok();
-    assert_eq!((me["hangouts"].clone(), me["cities"].clone(), me["houses"].clone()), (json!([]), json!([]), json!([])));
+    assert_eq!(
+        (me["hangouts"].clone(), me["cities"].clone(), me["houses"].clone()),
+        (json!([]), json!([]), json!([]))
+    );
     assert_eq!(after.get(&cy.key, "/api/me").await.ok()["cities"], json!([]));
 
     // Every old room and link is a 404.
@@ -1757,7 +2032,10 @@ async fn a_studio_takes_the_oldest_third_space_with_no_building_and_then_starts_
     // A house never takes a third space, and a studio never takes a house.
     let mine = server.get(&ann.key, "/api/spaces").await.ok();
     assert_eq!(mine["house"]["on_map"], false);
-    assert!(mine["third"].as_array().unwrap().iter().all(|space| space["on_map"] == true), "{mine}");
+    assert!(
+        mine["third"].as_array().unwrap().iter().all(|space| space["on_map"] == true),
+        "{mine}"
+    );
 }
 
 // S31, W60
@@ -1861,7 +2139,12 @@ async fn a_new_building_on_an_old_tile_never_opens_the_old_room() {
     server.snapshot(&bo.key, &anns).await.refused(StatusCode::NOT_FOUND);
     // And Ann gets nothing there, and has lost nothing.
     server.go_in(&ann.key, spot).await.refused(StatusCode::NOT_FOUND);
-    assert!(server.snapshot(&ann.key, &anns).await.ok().to_string().contains("Ann's private words"));
+    assert!(server
+        .snapshot(&ann.key, &anns)
+        .await
+        .ok()
+        .to_string()
+        .contains("Ann's private words"));
 }
 
 // S33: the same building is no door to a space of the wrong sort, or a stale row of someone else's.
@@ -1878,7 +2161,10 @@ async fn a_stale_row_opens_nothing_for_anyone_but_a_rightful_owner() {
     // As after a wipe: the row is still there, and a stranger's building stands on the tile.
     server.bulldoze(&ann, spot).await.ok();
     assert!(server.place_in_time(&bo, "studio", spot));
-    assert_eq!(server.state.db.space_on_plot("commons", spot.0, spot.1).unwrap().unwrap().id, third);
+    assert_eq!(
+        server.state.db.space_on_plot("commons", spot.0, spot.1).unwrap().unwrap().id,
+        third
+    );
     let (stranger_room, stranger) = server.someone("Stranger").await;
     server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);
     server.go_in(&ann.key, spot).await.refused(StatusCode::NOT_FOUND);
@@ -1887,7 +2173,10 @@ async fn a_stale_row_opens_nothing_for_anyone_but_a_rightful_owner() {
     let bos = text(&server.go_in(&bo.key, spot).await.ok()["hangout_id"]);
     assert_ne!(bos, third);
     assert_ne!(bos, stranger_room);
-    assert_eq!(server.snapshot(&bo.key, &bos).await.ok()["floor"]["space"]["owner_id"], bo.id.as_str());
+    assert_eq!(
+        server.snapshot(&bo.key, &bos).await.ok()["floor"]["space"]["owner_id"],
+        bo.id.as_str()
+    );
 }
 
 // S35
@@ -1902,7 +2191,8 @@ async fn bulldozing_keeps_the_rooms_and_the_next_building_gets_them_back() {
 
     server.bulldoze(&ann, spot).await.ok();
     assert_eq!(server.get(&ann.key, "/api/spaces").await.ok()["house"]["on_map"], false);
-    assert!(Server::lines(&server.snapshot(&ann.key, &room).await.ok()).contains(&"still here".to_string()));
+    assert!(Server::lines(&server.snapshot(&ann.key, &room).await.ok())
+        .contains(&"still here".to_string()));
 
     let moved = server.build(&ann, "house").await;
     assert_eq!(server.go_in(&ann.key, moved).await.ok()["hangout_id"], room.as_str());
@@ -1935,12 +2225,21 @@ async fn nothing_in_a_room_reaches_the_map() {
     let spot = server.build(&ann, "house").await;
     let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
     server.say(&ann.key, &room, "words that stay indoors").await.ok();
-    server.put(&ann.key, &format!("/api/spaces/{room}"), json!({ "name": "Secret Name" })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/spaces/{room}"), json!({ "name": "Secret Name" }))
+        .await
+        .ok();
 
     let code = server.invite_code(&ann, &room).await;
     for path in ["/api/worlds/commons", "/api/worlds/commons/look", "/api/worlds"] {
         let seen = server.get("", path).await.body.to_string();
-        for private in [room.as_str(), "Secret Name", "words that stay indoors", code.as_str(), ann.id.as_str()] {
+        for private in [
+            room.as_str(),
+            "Secret Name",
+            "words that stay indoors",
+            code.as_str(),
+            ann.id.as_str(),
+        ] {
             assert!(!seen.contains(private), "{path} shows {private}");
         }
     }
@@ -2010,7 +2309,9 @@ fn the_memory_of_who_is_here_has_a_limit_and_the_oldest_go_first() {
         presence.saw("floor", &person(n), t + 1);
     }
     assert!(!presence.has_seen("floor", "first", t + 1), "the oldest went first");
-    let left = (0..spaces::MAX_SIGHTINGS + 50).filter(|n| presence.has_seen("floor", &person(*n), t + 1)).count();
+    let left = (0..spaces::MAX_SIGHTINGS + 50)
+        .filter(|n| presence.has_seen("floor", &person(*n), t + 1))
+        .count();
     assert_eq!(left, spaces::MAX_SIGHTINGS, "it can't grow, however many look");
 
     // Everything too old to count goes at the next look, and that look is kept.
@@ -2032,21 +2333,41 @@ async fn a_citys_rooms_show_nobody_whoever_is_looking() {
     let city = text(&made["city"]["id"]);
     let square = text(&made["city"]["square_id"]);
     let city_code = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
-    server.put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" })).await.ok();
-    let home = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" })).await.ok();
+    server
+        .put(&cy.key, &format!("/api/cities/{city}/rules"), json!({ "rules_text": "Be kind" }))
+        .await
+        .ok();
+    let home = server
+        .post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy's" }))
+        .await
+        .ok();
     let house = text(&home["house"]["id"]);
     let (living, porch) = (text(&home["living_room_id"]), text(&home["porch_id"]));
     let joined = server
-        .post("", &format!("/api/city-invites/{city_code}/join"), json!({ "your_name": "Kim", "accept_rules": true }))
+        .post(
+            "",
+            &format!("/api/city-invites/{city_code}/join"),
+            json!({ "your_name": "Kim", "accept_rules": true }),
+        )
         .await
         .ok();
     let kim = who(&joined);
-    let kims = server.post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" })).await.ok();
-    let (visitor, visitor_token) = server.bot(&kim, &text(&kims["living_room_id"]), "Visitor").await;
+    let kims = server
+        .post(&kim.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Kim's" }))
+        .await
+        .ok();
+    let (visitor, visitor_token) =
+        server.bot(&kim, &text(&kims["living_room_id"]), "Visitor").await;
     let trip = json!({ "agent_id": visitor, "house_id": house, "kind": "call" });
     let trip = text(&server.post(&kim.key, "/api/trips", trip).await.ok()["id"]);
-    server.post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
-    assert!(!server.snapshot(&kim.key, &porch).await.ok()["guest"].is_null(), "Kim is watching from the Porch");
+    server
+        .post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
+        .await
+        .ok();
+    assert!(
+        !server.snapshot(&kim.key, &porch).await.ok()["guest"].is_null(),
+        "Kim is watching from the Porch"
+    );
 
     // Twice each, so that nobody's first look could hide a second.
     for _ in 0..2 {
@@ -2126,7 +2447,10 @@ async fn a_bot_sent_in_is_told_nobody_is_here_either() {
     server.open(&ann, &room).await;
     let (own_room, stranger) = server.someone("Stranger").await;
     let (rover, rover_token) = server.bot(&stranger, &own_room, "Rover").await;
-    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover })).await.ok();
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover }))
+        .await
+        .ok();
 
     assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
     assert_eq!(server.snapshot(&rover_token, &room).await.ok()["present"], json!([]));
@@ -2156,7 +2480,10 @@ async fn someone_who_walked_in_is_seen_on_that_floor_and_nowhere_else() {
     // Every id in `present` can be named, because they're all in `people`.
     let seen = server.snapshot(&stranger.key, &ground).await.ok();
     for id in seen["present"].as_array().unwrap() {
-        assert!(seen["people"].as_array().unwrap().iter().any(|person| person["id"] == *id), "{id}");
+        assert!(
+            seen["people"].as_array().unwrap().iter().any(|person| person["id"] == *id),
+            "{id}"
+        );
     }
 
     // Nowhere else: another floor, a public one, or another of Ann's spaces.
@@ -2166,11 +2493,17 @@ async fn someone_who_walked_in_is_seen_on_that_floor_and_nowhere_else() {
     // And no list says so.
     let listed = server.get(&stranger.key, "/api/spaces/public").await.ok();
     assert!(listed.get("present").is_none());
-    assert!(listed["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()), "{listed}");
+    assert!(
+        listed["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()),
+        "{listed}"
+    );
     assert!(!listed.to_string().contains(&stranger.id), "{listed}");
     let view = server.get(&ann.key, &format!("/api/spaces/{ground}")).await.ok();
     assert!(view.get("present").is_none());
-    assert!(view["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()), "{view}");
+    assert!(
+        view["floors"].as_array().unwrap().iter().all(|floor| floor.get("present").is_none()),
+        "{view}"
+    );
 }
 
 // S44
@@ -2182,7 +2515,10 @@ async fn someone_watching_a_bot_they_sent_in_is_seen_too() {
     server.open(&ann, &room).await;
     let (own_room, stranger) = server.someone("Stranger").await;
     let (rover, _) = server.bot(&stranger, &own_room, "Rover").await;
-    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover })).await.ok();
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": rover }))
+        .await
+        .ok();
 
     assert_eq!(server.present(&stranger.key, &room).await, ids(&[&stranger]));
     assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann, &stranger]));
@@ -2327,7 +2663,10 @@ async fn only_opening_the_map_puts_someone_on_the_street() {
     assert!(server.state.worlds.people(now()).is_empty());
 
     // Opening the map does, and leaving a room isn't what did it.
-    assert_eq!(page_looks_at("/api/worlds/commons".to_string()).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(
+        page_looks_at("/api/worlds/commons".to_string()).await.unwrap().status(),
+        StatusCode::OK
+    );
     let on_the_street = server.state.worlds.people(now());
     assert_eq!(on_the_street.len(), 1);
 
@@ -2350,7 +2689,10 @@ async fn someone_turned_out_is_not_shown_the_link_by_an_invite_from_a_friend() {
     let code = server.invite_code(&ann, &room).await;
     server.post(&cy.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
 
-    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", cy.id), json!({})).await.ok();
+    server
+        .post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", cy.id), json!({}))
+        .await
+        .ok();
     let invited = server.get(&cy.key, "/api/me").await.ok()["invited"].clone();
     assert_eq!(invited, json!([]), "the link reached someone it's a 404 to");
 }
@@ -2363,9 +2705,16 @@ async fn a_walk_in_cant_send_an_invite_or_replace_a_link() {
     server.open(&ann, &room).await;
     let (_, visitor) = server.someone("Vee").await;
     server.walk_in(&visitor, &room).await.ok();
-    let invited = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite-friend"), json!({ "person_id": ann.id })).await;
+    let invited = server
+        .post(
+            &visitor.key,
+            &format!("/api/hangouts/{room}/invite-friend"),
+            json!({ "person_id": ann.id }),
+        )
+        .await;
     assert_eq!(invited.status, StatusCode::FORBIDDEN);
-    let replaced = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
+    let replaced =
+        server.post(&visitor.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
     assert_eq!(replaced.status, StatusCode::FORBIDDEN);
 }
 
@@ -2383,23 +2732,37 @@ async fn turning_out_a_member_stops_every_link_they_saw_for_any_account() {
     let bo = server.join(&ann, &room, "Bo").await;
     let seen = server.invite_code(&bo, &room).await;
     let plan = server
-        .post(&bo.key, &format!("/api/hangouts/{room}/events"), json!({ "title": "Dinner", "starts_at": PLAN_START }))
+        .post(
+            &bo.key,
+            &format!("/api/hangouts/{room}/events"),
+            json!({ "title": "Dinner", "starts_at": PLAN_START }),
+        )
         .await
         .ok();
     let plan_id = text(&plan["id"]);
-    let plan_url = server.post(&bo.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
+    let plan_url =
+        server.post(&bo.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
     let plan_link = last_part(&plan_url["invite_url"]);
 
-    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({})).await.ok();
+    server
+        .post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({}))
+        .await
+        .ok();
 
     assert_eq!(server.get("", &format!("/api/invites/{seen}")).await.status, StatusCode::NOT_FOUND);
-    let joined = server.post("", &format!("/api/invites/{seen}/join"), json!({ "your_name": "Not Bo" })).await;
+    let joined = server
+        .post("", &format!("/api/invites/{seen}/join"), json!({ "your_name": "Not Bo" }))
+        .await;
     assert_eq!(joined.status, StatusCode::NOT_FOUND, "the old link let someone new in");
-    assert_eq!(server.get(&bo.key, &format!("/api/plan-invites/{plan_link}")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get(&bo.key, &format!("/api/plan-invites/{plan_link}")).await.status,
+        StatusCode::NOT_FOUND
+    );
 
     // The owner still has a link, and the plan can have one again.
     assert_ne!(server.invite_code(&ann, &room).await, seen);
-    let again = server.post(&ann.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
+    let again =
+        server.post(&ann.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
     assert_ne!(last_part(&again["invite_url"]), plan_link);
 }
 
@@ -2412,7 +2775,10 @@ async fn turning_out_a_walk_in_leaves_the_link_alone_because_they_never_saw_it()
     let link = server.invite_code(&ann, &room).await;
     let (_, vee) = server.someone("Vee").await;
     server.walk_in(&vee, &room).await.ok();
-    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", vee.id), json!({})).await.ok();
+    server
+        .post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", vee.id), json!({}))
+        .await
+        .ok();
     assert_eq!(server.invite_code(&ann, &room).await, link);
 }
 
@@ -2428,7 +2794,9 @@ async fn running_a_space_gives_no_link_to_a_floor_you_arent_on() {
 
     let view = server.get(&bo.key, &format!("/api/spaces/{room}")).await.ok();
     let floors = view["floors"].as_array().unwrap();
-    let url = |id: &str| floors.iter().find(|floor| floor["floor"]["id"] == id).unwrap()["invite_url"].clone();
+    let url = |id: &str| {
+        floors.iter().find(|floor| floor["floor"]["id"] == id).unwrap()["invite_url"].clone()
+    };
     assert_eq!(url(&attic), json!(""), "that's a way onto a private floor");
     assert_ne!(url(&room), json!(""), "they're on this one");
 }
