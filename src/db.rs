@@ -573,6 +573,16 @@ CREATE TABLE IF NOT EXISTS bot_looks (
     choice      TEXT NOT NULL,
     PRIMARY KEY (agent_id, part)
 );
+CREATE TABLE IF NOT EXISTS place_requests (
+    id          TEXT PRIMARY KEY,
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    asked_by    TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL CHECK (status IN ('waiting', 'yes', 'no')),
+    created_at  INTEGER NOT NULL,
+    answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS place_requests_by_space ON place_requests (space_id, status);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -941,6 +951,9 @@ pub struct RoutineRow {
     pub max_social_runs: i64,
     pub public_places: bool,
 }
+
+/// S51: a request waiting on a place's owner: `(id, space_id, place, bot, asker, asked_at)`.
+pub type PlaceRequestRow = (String, String, String, String, String, i64);
 
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -7067,10 +7080,88 @@ impl Db {
         rows.collect()
     }
 
-    /// Everything a player has built in a world. It reads their tiles only, by the index on world
-    /// and player, so it costs what they have built and not what the world holds.
-    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
-    /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
+    // Asking to let a bot in (S49 to S52)
+
+    /// S52: the latest request for this bot at this space since `since` that's waiting or was turned
+    /// down: its id and status.
+    pub fn place_request_for(&self, space_id: &str, agent_id: &str, since: i64) -> rusqlite::Result<Option<(String, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT id, status FROM place_requests
+                 WHERE space_id = ? AND agent_id = ? AND status IN ('waiting', 'no')
+                   AND COALESCE(answered_at, created_at) > ?
+                 ORDER BY created_at DESC LIMIT 1",
+                params![space_id, agent_id, since],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// S50: adds a request unless this person has `max` waiting since `since`. False if they have.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_place_request(
+        &self,
+        id: &str,
+        space_id: &str,
+        agent_id: &str,
+        asked_by: &str,
+        now: i64,
+        since: i64,
+        max: i64,
+    ) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "INSERT INTO place_requests (id, space_id, agent_id, asked_by, status, created_at)
+             SELECT ?1, ?2, ?3, ?4, 'waiting', ?5
+             WHERE (SELECT COUNT(*) FROM place_requests
+                    WHERE asked_by = ?4 AND status = 'waiting' AND created_at > ?6) < ?7",
+            params![id, space_id, agent_id, asked_by, now, since, max],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// A request still waiting since `since`: `(space_id, agent_id, asked_by)`.
+    pub fn waiting_place_request(&self, id: &str, since: i64) -> rusqlite::Result<Option<(String, String, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT space_id, agent_id, asked_by FROM place_requests
+                 WHERE id = ? AND status = 'waiting' AND created_at > ?",
+                params![id, since],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+    }
+
+    /// S51: the requests waiting on this owner since `since`, oldest first:
+    /// `(id, space name, bot name, asker's name, created_at)`.
+    pub fn place_requests_for_owner(
+        &self,
+        owner_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<PlaceRequestRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.space_id, s.name, a.name, p.name, r.created_at FROM place_requests r
+             JOIN spaces s ON s.id = r.space_id
+             JOIN agents a ON a.id = r.agent_id
+             JOIN people p ON p.id = r.asked_by
+             WHERE s.owner_id = ? AND r.status = 'waiting' AND r.created_at > ?
+             ORDER BY r.created_at, r.id",
+        )?;
+        let rows = stmt.query_map(params![owner_id, since], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?;
+        rows.collect()
+    }
+
+    /// False if it was answered already.
+    pub fn answer_place_request(&self, id: &str, status: &str, now: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE place_requests SET status = ?, answered_at = ? WHERE id = ? AND status = 'waiting'",
+            params![status, now, id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// W71: every place in a world with its owner's name, `(x, y, name)`.
     pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
         let conn = self.conn();
@@ -7085,6 +7176,8 @@ impl Db {
         rows.collect()
     }
 
+    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
+    /// for anything public: only W71 says whose a place is, by name.
     pub fn building_at(
         &self,
         world_id: &str,
@@ -7102,6 +7195,8 @@ impl Db {
             .optional()
     }
 
+    /// Everything a player has built in a world. It reads their tiles only, by the index on world
+    /// and player, so it costs what they have built and not what the world holds.
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(

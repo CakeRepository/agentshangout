@@ -5226,6 +5226,32 @@ async function worldView(id, { home = false } = {}) {
   });
   void agentBody;
   const roomsLabel = me?.invited?.length ? `Rooms and cities (${me.invited.length})` : 'Rooms and cities';
+  // S51: bots someone asked to let into this person's places, with a yes and a no for each.
+  const requestsBody = panels.add('requests', 'Requests to come in', {});
+  let requestsAt = 0;
+  async function loadRequests(force = false) {
+    if (!me || me.kind !== 'person' || (!force && Date.now() - requestsAt < 30000)) return;
+    requestsAt = Date.now();
+    const { requests = [] } = await api('/api/place-requests').catch(() => ({}));
+    const error = formError();
+    const answer = (id, response) => act(error, async () => {
+      await api(`/api/place-requests/${id}/answer`, { method: 'POST', body: { response } });
+      await loadRequests(true);
+    });
+    requestsBody.replaceChildren(
+      h('p', { class: 'muted' }, 'People asking to let their bot into one of your places. A yes brings the bot into its first room, and its owner can read that room and take their bot back.'),
+      ...(requests.length ? requests.map((request) => h('div', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('span', {}, h('strong', {}, request.asked_by), ` asks to let ${request.bot} into ${request.place}`),
+          h('small', { class: 'muted' }, `${request.kind ? `Your ${request.kind}` : 'Your place'} \u00b7 ${whenText(request.asked_at)}`)),
+        h('button', { type: 'button', class: 'primary', onclick: answer(request.id, 'yes') }, 'Let in'),
+        h('button', { type: 'button', onclick: answer(request.id, 'no') }, 'No'))) : [h('p', { class: 'muted' }, 'Nobody is asking right now.')]),
+      error);
+    if (requests.length && requestsToggle) requestsToggle.textContent = `Requests (${requests.length})`;
+    else if (requestsToggle) requestsToggle.textContent = 'Requests';
+  }
+  let requestsToggle = null;
+
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
       if (!aboutBody.firstChild) aboutBody.replaceChildren(aboutText());
@@ -5284,6 +5310,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
+    me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
@@ -5460,8 +5487,47 @@ async function worldView(id, { home = false } = {}) {
     return { title: `Tile ${t.x}, ${t.y}`, sub: what, items };
   }
 
-  function picked({ figure, tile, clientX, clientY, via }) {
-    const spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
+  // S49: on someone else's place there's no going in unless it's open to anyone. Instead, ask its
+  // owner to let one of your bots in. On your own, going in is how you get to its rooms.
+  async function placeMenu(t, spec) {
+    let details;
+    try {
+      details = await api(`/api/places/${encodeURIComponent(t.x)}/${encodeURIComponent(t.y)}`);
+    } catch (failure) {
+      return spec;
+    }
+    placeDetails.set(`${t.x},${t.y}`, { at: Date.now(), body: details });
+    const rest = spec.items.filter((item) => item?.label !== 'Go in');
+    const own = [];
+    if (details.yours || details.open) own.push({ label: 'Go in', run: () => goIn(t) });
+    for (const bot of details.bots || []) {
+      if (bot.access === 'needs_invite') {
+        own.push({ label: `Ask to let ${bot.name} in`, run: () => askIn(t, bot) });
+      } else if (bot.access === 'asked') {
+        own.push({ label: `${bot.name}: asked, waiting for an answer`, run: () => say(`You've asked to let ${bot.name} in. The owner hasn't answered yet.`) });
+      } else if (bot.access === 'declined') {
+        own.push({ label: `${bot.name}: not this week`, run: () => say(`The owner said no to ${bot.name}. You can ask again in a week.`) });
+      }
+    }
+    const owner = details.owner ? `${details.owner}\u2019s ${details.kind}` : spec.title;
+    return { ...spec, title: owner, items: own.length ? [...own, null, ...rest] : rest };
+  }
+
+  async function askIn(t, bot) {
+    try {
+      await api(`/api/places/${encodeURIComponent(t.x)}/${encodeURIComponent(t.y)}/requests`, { method: 'POST', body: { agent_id: bot.id } });
+      placeDetails.delete(`${t.x},${t.y}`);
+      say(`Asked. ${bot.name} goes in once the owner says yes.`);
+    } catch (failure) {
+      say(plain(failure.message));
+    }
+  }
+
+  async function picked({ figure, tile, clientX, clientY, via }) {
+    let spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
+    if (spec && !figure && tile && me && me.kind === 'person' && !frozen && BUILDING_KINDS.has(tile.kind)) {
+      spec = await placeMenu(tile, spec);
+    }
     if (spec) menu.open(spec, clientX, clientY, via);
   }
 
@@ -5631,6 +5697,7 @@ async function worldView(id, { home = false } = {}) {
 
   let spokeAt = 0;
   function arrive(view) {
+    loadRequests();
     const before = latest === view ? null : latest;
     latest = view;
     world.setView(view);
