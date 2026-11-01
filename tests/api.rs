@@ -1476,3 +1476,54 @@ async fn what_the_doorbell_says_in_a_room_never_wakes_it() {
     let quiet = doorbell.look(&seen).await.unwrap();
     assert!(quiet.wake.is_empty(), "{:?}", quiet.wake);
 }
+
+// L22, L25
+#[tokio::test]
+async fn a_note_is_not_a_task_and_a_task_is_not_a_bot_run_or_a_social_one() {
+    let server = Server::start().await;
+    let room = server.room().await;
+    let (claude, _) = server.bot(&room.justin, &room.id, "Claude").await;
+    let (grok, _) = server.bot(&room.kevin, &room.id, "Grok").await;
+    let doorbell = Doorbell::new(&server.base, &claude).with_tasks();
+    let seen = doorbell.look(&Seen::default()).await.unwrap().next;
+    let path = format!("/api/hangouts/{}", room.id);
+
+    // Only chat counts: a note in the owner's own words isn't a task, or anything else.
+    server.post(&room.justin, &format!("{path}/notes"), json!({ "text": "@Claude task: x" })).await;
+    let quiet = doorbell.look(&seen).await.unwrap();
+    assert!(quiet.wake.is_empty(), "{:?}", quiet.wake);
+
+    // A bot's mention uses up one of a room's runs in a row. A task uses up nothing.
+    let counts = |seen: &Seen| serde_json::to_value(seen).unwrap();
+    server
+        .post(&room.justin, &format!("{path}/messages"), json!({ "text": "@Claude task: a" }))
+        .await;
+    let task = doorbell.look(&seen).await.unwrap();
+    assert_eq!(task.wake.tasks.len(), 1);
+    assert_eq!(counts(&task.next)["bot_runs"], json!({}), "{:?}", task.next);
+    assert_eq!(counts(&task.next)["social_runs"], 0);
+    assert_eq!(counts(&task.next)["task_runs"], 0, "the doorbell counts a task when it starts one");
+    server.post(&grok, &format!("{path}/messages"), json!({ "text": "@Claude hi" })).await;
+    let bot = doorbell.look(&task.next).await.unwrap();
+    assert_eq!(counts(&bot.next)["bot_runs"], json!({ room.id.clone(): 1 }));
+}
+
+// L29
+#[tokio::test]
+async fn an_owner_name_that_isnt_plain_is_left_out_of_what_the_doorbell_says() {
+    let server = Server::start().await;
+    let created =
+        server.post("", "/api/hangouts", json!({ "name": "Crew", "your_name": "J@ck <b>" })).await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.body);
+    let owner = created.body["owner_key"].as_str().unwrap().to_string();
+    let id = created.body["hangout"]["id"].as_str().unwrap().to_string();
+    let (claude, _) = server.bot(&owner, &id, "Claude").await;
+    let doorbell = Doorbell::new(&server.base, &claude).with_tasks();
+    let seen = doorbell.look(&Seen::default()).await.unwrap().next;
+    server
+        .post(&owner, &format!("/api/hangouts/{id}/messages"), json!({ "text": "@Claude task: a" }))
+        .await;
+    let ring = doorbell.look(&seen).await.unwrap();
+    assert_eq!(ring.wake.tasks.len(), 1);
+    assert_eq!(ring.wake.tasks[0].owner_name, None);
+}

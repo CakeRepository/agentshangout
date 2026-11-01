@@ -12,8 +12,8 @@
 mod tasks;
 
 pub use tasks::{
-    parse_task, pr_url, run_task, task_id, task_note, Task, TaskNote, TaskOutcome, TaskText,
-    MAX_TASKS_PER_DAY, MAX_TASK_CHARS,
+    parse_task, pr_url, refusal, run_task, task_id, task_note, valid_repo, Task, TaskNote,
+    TaskOutcome, TaskText, MAX_TASKS_PER_DAY, MAX_TASK_CHARS, WORKER_ENV,
 };
 
 use std::{

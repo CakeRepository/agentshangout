@@ -33,6 +33,7 @@ fn worker(name: &str, body: &[&str]) -> PathBuf {
 fn doorbell_environment() {
     std::env::set_var("AGENTHANGOUT_TOKEN", "ah_bot_the-doorbells-own-token");
     std::env::set_var("AGENTHANGOUT_URL", "https://example.test");
+    std::env::set_var("PLANTED_SECRET", "hunter2-planted");
 }
 
 // L28
@@ -46,7 +47,8 @@ async fn the_worker_gets_the_task_on_stdin_and_never_the_token() {
                 "echo token=[%AGENTHANGOUT_TOKEN%]",
                 "echo url=[%AGENTHANGOUT_URL%]",
                 "echo id=[%TASK_ID%]",
-                "echo args=[%1]",
+                "echo secret=[%PLANTED_SECRET%]",
+                "echo repo=[%AGENTHANGOUT_TASK_REPO%]",
                 "findstr \"^\"",
                 "echo https://github.com/a/b/pull/5",
             ],
@@ -58,32 +60,39 @@ async fn the_worker_gets_the_task_on_stdin_and_never_the_token() {
                 "echo \"token=[$AGENTHANGOUT_TOKEN]\"",
                 "echo \"url=[$AGENTHANGOUT_URL]\"",
                 "echo \"id=[$TASK_ID]\"",
-                "echo \"args=[$1]\"",
+                "echo \"secret=[$PLANTED_SECRET]\"",
+                "echo \"repo=[$AGENTHANGOUT_TASK_REPO]\"",
                 "cat",
                 "echo https://github.com/a/b/pull/5",
             ],
         )
     };
     let outcome =
-        run_task(&report, "room-12", "fix the typo\nthen stop", Duration::from_secs(60)).await;
+        run_task(&report, "room-12", "fix the typo\nthen stop", Duration::from_secs(60), "a/b")
+            .await;
     let TaskOutcome::Done(output) = outcome else { panic!("{outcome:?}") };
     let lines: Vec<_> = output.lines().map(str::trim).collect();
-    assert_eq!(lines[..4], ["token=[]", "url=[]", "id=[room-12]", "args=[]"], "{output}");
-    assert_eq!(lines[4], "fix the typo", "{output}");
-    assert_eq!(lines[5], "then stop", "{output}");
-    assert!(!output.contains("the-doorbells-own-token") && !output.contains("example.test"));
-    assert_eq!(pr_url(&output).as_deref(), Some("https://github.com/a/b/pull/5"));
+    let expected = ["token=[]", "url=[]", "id=[room-12]", "secret=[]", "repo=[a/b]"];
+    assert_eq!(lines[..5], expected, "{output}");
+    assert_eq!(lines[5], "fix the typo", "{output}");
+    assert_eq!(lines[6], "then stop", "{output}");
+    assert!(
+        !output.contains("hunter2-planted")
+            && !output.contains("the-doorbells-own-token")
+            && !output.contains("example.test")
+    );
+    assert_eq!(pr_url(&output, "a/b").as_deref(), Some("https://github.com/a/b/pull/5"));
 }
 
 // L27
 #[tokio::test]
 async fn a_worker_that_fails_or_cant_start_is_a_failure() {
     let fails = worker("fails", &["exit 3"]);
-    let outcome = run_task(&fails, "x", "t", Duration::from_secs(60)).await;
+    let outcome = run_task(&fails, "x", "t", Duration::from_secs(60), "a/b").await;
     assert!(matches!(outcome, TaskOutcome::Failed(_)), "{outcome:?}");
 
     let missing = Path::new(env!("CARGO_TARGET_TMPDIR")).join("no-such-worker");
-    let outcome = run_task(&missing, "x", "t", Duration::from_secs(60)).await;
+    let outcome = run_task(&missing, "x", "t", Duration::from_secs(60), "a/b").await;
     assert!(matches!(outcome, TaskOutcome::Failed(_)), "{outcome:?}");
 }
 
@@ -96,7 +105,7 @@ async fn a_worker_that_runs_too_long_is_killed() {
         worker("slow", &["sleep 60"])
     };
     let started = Instant::now();
-    let outcome = run_task(&slow, "x", "t", Duration::from_secs(1)).await;
+    let outcome = run_task(&slow, "x", "t", Duration::from_secs(1), "a/b").await;
     assert_eq!(outcome, TaskOutcome::TimedOut);
     assert!(started.elapsed() < Duration::from_secs(30), "{:?}", started.elapsed());
 }

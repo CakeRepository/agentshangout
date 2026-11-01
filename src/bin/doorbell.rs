@@ -17,7 +17,7 @@ use std::{
 };
 
 use agenthangout::doorbell::{
-    run_task, task_note, Doorbell, Failure, Look, Seen, TaskNote, TaskOutcome,
+    refusal, run_task, task_note, valid_repo, Doorbell, Failure, Look, Seen, TaskNote, TaskOutcome,
 };
 use tokio::{io::AsyncWriteExt, process::Command, task::JoinHandle};
 
@@ -85,6 +85,12 @@ struct Running {
     owner_name: Option<String>,
 }
 
+/// The program that does tasks, and the repository its pull requests must be in (L31).
+struct Worker {
+    command: PathBuf,
+    repo: String,
+}
+
 async fn tell(
     doorbell: &Doorbell,
     hangout_id: &str,
@@ -97,62 +103,83 @@ async fn tell(
     }
 }
 
-/// L29: tells the room how a task that has ended came out.
-async fn finish(doorbell: &Doorbell, running: Running) {
+/// L29: tells the room how a task that has ended came out. It tries twice, since the owner has
+/// nowhere else to find a pull request address.
+async fn finish(doorbell: &Doorbell, worker: &Worker, running: Running) {
     let outcome =
         running.handle.await.unwrap_or_else(|error| TaskOutcome::Failed(error.to_string()));
     let (hangout_id, owner, id) =
         (&running.hangout_id, running.owner_name.as_deref(), running.message_id);
-    match &outcome {
-        TaskOutcome::Done(output) => {
-            tell(doorbell, hangout_id, owner, id, TaskNote::Finished(output)).await;
-        }
+    let note = match &outcome {
+        TaskOutcome::Done(output) => TaskNote::Finished(output, &worker.repo),
         TaskOutcome::Failed(error) => {
             eprintln!("the task from message {id} failed: {error}");
-            tell(doorbell, hangout_id, owner, id, TaskNote::Failed).await;
+            TaskNote::Failed
         }
-        TaskOutcome::TimedOut => tell(doorbell, hangout_id, owner, id, TaskNote::TimedOut).await,
+        TaskOutcome::TimedOut => TaskNote::TimedOut,
+    };
+    let text = task_note(owner, id, &note);
+    for attempt in 1..=2 {
+        match doorbell.say(hangout_id, &text).await {
+            Ok(()) => return,
+            Err(failure) => eprintln!("couldn't tell the room about message {id}: {failure:?}"),
+        }
+        if attempt == 1 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
     }
+    eprintln!("it was: {text}");
 }
 
 /// L26 and L27: starts the owner's tasks, or says why not. A task that was started, refused or
-/// failed is marked, so it isn't tried again even if the bot's wake-up has to be.
+/// failed is marked and saved before the room hears anything, so it isn't tried again even if the
+/// bot's wake-up has to be, or the doorbell stops.
 async fn start_tasks(
     doorbell: &Doorbell,
-    command: &Path,
+    worker: &Worker,
     running: &mut Option<Running>,
     seen: &mut Seen,
     look: &mut Look,
+    state: &Path,
 ) {
     for task in &look.wake.tasks {
         seen.handled(task);
         look.next.handled(task);
-        let refusal = if task.too_long {
-            Some(TaskNote::TooLong)
-        } else if running.is_some() {
-            Some(TaskNote::Busy)
-        } else if !seen.task_allowed_today() {
-            Some(TaskNote::Limit)
-        } else {
-            None
-        };
+        let refusal = refusal(task, running.is_some(), seen);
         let owner = task.owner_name.as_deref();
         if let Some(refusal) = refusal {
+            save(state, seen);
             tell(doorbell, &task.hangout_id, owner, task.message_id, refusal).await;
             continue;
         }
         seen.count_task();
         look.next.count_task();
+        save(state, seen);
         eprintln!("starting the task from message {} of {}", task.message_id, task.hangout_id);
-        let (command, id, text) = (command.to_path_buf(), task.id(), task.text.clone());
+        let (command, id, text) = (worker.command.clone(), task.id(), task.text.clone());
+        let repo = worker.repo.clone();
         *running = Some(Running {
-            handle: tokio::spawn(async move { run_task(&command, &id, &text, TASK_TIMEOUT).await }),
+            handle: tokio::spawn(async move {
+                run_task(&command, &id, &text, TASK_TIMEOUT, &repo).await
+            }),
             hangout_id: task.hangout_id.clone(),
             message_id: task.message_id,
             owner_name: task.owner_name.clone(),
         });
         tell(doorbell, &task.hangout_id, owner, task.message_id, TaskNote::Started).await;
     }
+}
+
+/// L24 and L31: the worker, if the owner named one. Naming one without the repository its pull
+/// requests belong to is a mistake, so the doorbell doesn't start.
+fn worker(file: &str) -> Result<Option<Worker>, String> {
+    let Some(command) = setting(file, "AGENTHANGOUT_TASK_COMMAND") else { return Ok(None) };
+    let repo = setting(file, "AGENTHANGOUT_TASK_REPO")
+        .ok_or("AGENTHANGOUT_TASK_COMMAND needs AGENTHANGOUT_TASK_REPO, as owner/name")?;
+    if !valid_repo(&repo) {
+        return Err(format!("AGENTHANGOUT_TASK_REPO should look like owner/name, not {repo}"));
+    }
+    Ok(Some(Worker { command: PathBuf::from(command), repo }))
 }
 
 #[tokio::main]
@@ -194,9 +221,15 @@ async fn main() -> ExitCode {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default();
     // L24: tasks are off unless the owner named a program to run them.
-    let task_command = setting(&file, "AGENTHANGOUT_TASK_COMMAND").map(PathBuf::from);
+    let worker = match worker(&file) {
+        Ok(worker) => worker,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let mut doorbell = Doorbell::new(&url, &token);
-    if task_command.is_some() {
+    if worker.is_some() {
         doorbell = doorbell.with_tasks();
     }
     let mut running: Option<Running> = None;
@@ -206,20 +239,23 @@ async fn main() -> ExitCode {
 
     loop {
         // The task runs beside this loop, so the room keeps being watched while it works.
-        if running.as_ref().is_some_and(|task| task.handle.is_finished()) {
-            if let Some(task) = running.take() {
-                finish(&doorbell, task).await;
-            }
-        }
         let mut look = match doorbell.report().await {
             Ok(true) => Ok(None),
             Ok(false) => doorbell.look(&seen).await.map(Some),
             Err(failure) => Err(failure),
         };
-        if let (Ok(Some(look)), Some(command)) = (&mut look, &task_command) {
-            if !look.wake.tasks.is_empty() {
-                start_tasks(&doorbell, command, &mut running, &mut seen, look).await;
-                save(&state, &seen);
+        // That took a moment, and the worker may have ended in it: a task that arrived just as it
+        // did mustn't be turned away as busy.
+        if let Some(worker) = &worker {
+            if running.as_ref().is_some_and(|task| task.handle.is_finished()) {
+                if let Some(task) = running.take() {
+                    finish(&doorbell, worker, task).await;
+                }
+            }
+            if let Ok(Some(look)) = &mut look {
+                if !look.wake.tasks.is_empty() {
+                    start_tasks(&doorbell, worker, &mut running, &mut seen, look, &state).await;
+                }
             }
         }
         match look {

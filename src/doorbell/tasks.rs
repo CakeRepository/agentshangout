@@ -111,21 +111,30 @@ pub fn task_id(hangout_id: &str, message_id: i64) -> String {
         .collect()
 }
 
-/// L29: the last non-empty line of a worker's output, if it is a GitHub pull request address and
-/// nothing else. Anything else the worker prints is thrown away.
-pub fn pr_url(output: &str) -> Option<String> {
+/// L31: whether `repo` is `owner/name` with safe characters, as `AGENTHANGOUT_TASK_REPO` must be.
+pub fn valid_repo(repo: &str) -> bool {
+    let Some((owner, name)) = repo.split_once('/') else { return false };
+    (1..=39).contains(&owner.len())
+        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && (1..=100).contains(&name.len())
+        && name != "."
+        && name != ".."
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// L29 and L31: the last non-empty line of a worker's output, if it is the address of a pull
+/// request in `repo` (`owner/name`) and nothing else. Anything else the worker prints is thrown
+/// away, and so is an address in any other repository.
+pub fn pr_url(output: &str, repo: &str) -> Option<String> {
+    if !valid_repo(repo) {
+        return None;
+    }
     let line = output.lines().map(str::trim).rfind(|line| !line.is_empty())?;
     let mut parts = line.strip_prefix("https://github.com/")?.split('/');
-    let (owner, repo, pull, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
-    let owner_ok = (1..=39).contains(&owner.len())
-        && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
-    let repo_ok = (1..=100).contains(&repo.len())
-        && repo != "."
-        && repo != ".."
-        && repo.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+    let (owner, name, pull, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    let in_repo = format!("{owner}/{name}").eq_ignore_ascii_case(repo);
     let number_ok = (1..=10).contains(&number.len()) && number.chars().all(|c| c.is_ascii_digit());
-    (parts.next().is_none() && pull == "pull" && owner_ok && repo_ok && number_ok)
-        .then(|| line.to_string())
+    (parts.next().is_none() && pull == "pull" && in_repo && number_ok).then(|| line.to_string())
 }
 
 /// What the doorbell tells a room about a task.
@@ -135,8 +144,9 @@ pub enum TaskNote<'a> {
     Busy,
     Limit,
     TooLong,
-    /// The worker's whole output, of which only a pull request address is ever used.
-    Finished(&'a str),
+    /// The worker's whole output, of which only a pull request address in the task repository
+    /// (the second field) is ever used.
+    Finished(&'a str, &'a str),
     Failed,
     TimedOut,
 }
@@ -154,7 +164,7 @@ pub fn task_note(owner: Option<&str>, message_id: i64, note: &TaskNote) -> Strin
             "The task in message {n} is longer than {MAX_TASK_CHARS} characters, so I didn't \
              start it."
         ),
-        TaskNote::Finished(output) => match pr_url(output) {
+        TaskNote::Finished(output, repo) => match pr_url(output, repo) {
             Some(url) => format!("Finished the task from message {n}: {url}"),
             None => format!("The task from message {n} finished without a pull request."),
         },
@@ -177,18 +187,69 @@ pub enum TaskOutcome {
     TimedOut,
 }
 
-/// L27 and L28: runs `program` with the task on stdin. It gets `TASK_ID` and never this bot's
-/// token or the server's address, even if the doorbell has them. Its stdout is captured, and it is
-/// killed with whatever it started if it runs past `timeout`.
-pub async fn run_task(program: &Path, id: &str, text: &str, timeout: Duration) -> TaskOutcome {
+/// L28: the only variables a worker inherits from the doorbell. They are what git, gh, cargo,
+/// pwsh and claude need to run and find the logins in the user's profile. Everything else in the
+/// doorbell's environment, secrets included, stops here. The four tokens at the end are only for
+/// someone who signs in to claude or gh that way instead of in their profile.
+pub const WORKER_ENV: &[&str] = &[
+    "PATH",
+    "PATHEXT",
+    "SystemRoot",
+    "ComSpec",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "USERPROFILE",
+    "HOME",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "USERNAME",
+    "USER",
+    "LANG",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+];
+
+/// L27: why a task can't start now, if it can't. `busy` is whether another is running.
+pub fn refusal(task: &Task, busy: bool, seen: &super::Seen) -> Option<TaskNote<'static>> {
+    if task.too_long {
+        Some(TaskNote::TooLong)
+    } else if busy {
+        Some(TaskNote::Busy)
+    } else if !seen.task_allowed_today() {
+        Some(TaskNote::Limit)
+    } else {
+        None
+    }
+}
+
+/// L27 and L28: runs `program` with the task on stdin. It gets a scrubbed environment (see
+/// [`WORKER_ENV`]), `TASK_ID` and `AGENTHANGOUT_TASK_REPO`, and never this bot's token or the
+/// server's address. Its stdout is captured, and it is killed with whatever it started if it runs
+/// past `timeout`.
+pub async fn run_task(
+    program: &Path,
+    id: &str,
+    text: &str,
+    timeout: Duration,
+    repo: &str,
+) -> TaskOutcome {
     let mut command = Command::new(program);
-    command
-        .env("TASK_ID", id)
-        .env_remove("AGENTHANGOUT_TOKEN")
-        .env_remove("AGENTHANGOUT_URL")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .kill_on_drop(true);
+    command.env_clear();
+    for name in WORKER_ENV {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command.env("TASK_ID", id).env("AGENTHANGOUT_TASK_REPO", repo);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
     let mut child = match command.spawn() {
@@ -300,11 +361,12 @@ mod tests {
     #[test]
     fn only_a_pull_request_address_comes_back_from_a_worker() {
         let url = "https://github.com/CakeRepository/agentshangout/pull/166";
-        assert_eq!(pr_url(url).as_deref(), Some(url));
-        assert_eq!(pr_url(&format!("building...\r\n{url}\r\n\r\n")).as_deref(), Some(url));
-        assert_eq!(pr_url(&format!("{url}  \n")).as_deref(), Some(url));
+        let repo = "CakeRepository/agentshangout";
+        assert_eq!(pr_url(url, repo).as_deref(), Some(url));
+        assert_eq!(pr_url(&format!("building...\r\n{url}\r\n\r\n"), repo).as_deref(), Some(url));
+        assert_eq!(pr_url(&format!("{url}  \n"), repo).as_deref(), Some(url));
         assert_eq!(
-            pr_url("https://github.com/a/b.c_d/pull/1").as_deref(),
+            pr_url("https://github.com/a/b.c_d/pull/1", "a/b.c_d").as_deref(),
             Some("https://github.com/a/b.c_d/pull/1")
         );
 
@@ -340,8 +402,58 @@ mod tests {
             "https://github.com/@room/b/pull/1",
             "https://github.com/a/b/pull/١",
         ] {
-            assert_eq!(pr_url(bad), None, "{bad:?}");
+            assert_eq!(pr_url(bad, "a/b"), None, "{bad:?}");
         }
+    }
+
+    // L31
+    #[test]
+    fn only_a_pull_request_in_the_task_repository_counts() {
+        let repo = "CakeRepository/agentshangout";
+        let mine = "https://github.com/CakeRepository/agentshangout/pull/12";
+        assert_eq!(pr_url(mine, repo).as_deref(), Some(mine));
+        // GitHub ignores case in names, so the address may differ from the setting in it.
+        let cased = "https://github.com/cakerepository/agentshangout/pull/12";
+        assert_eq!(pr_url(cased, repo).as_deref(), Some(cased));
+        for other in [
+            "https://github.com/evil/agentshangout/pull/12",
+            "https://github.com/CakeRepository/other/pull/12",
+            "https://github.com/CakeRepository/agentshangout2/pull/12",
+            "https://github.com/CakeRepository/agentshangout.git/pull/12",
+        ] {
+            assert_eq!(pr_url(other, repo), None, "{other}");
+        }
+        // A setting that isn't owner/name accepts nothing.
+        for bad in ["", "CakeRepository", "a/b/c", "a/", "/b", "a b/c", "a/b\n", "../x"] {
+            assert!(!valid_repo(bad), "{bad:?}");
+            assert_eq!(pr_url("https://github.com/a/b/pull/1", bad), None, "{bad:?}");
+        }
+        assert!(valid_repo(repo));
+        let note =
+            task_note(None, 4, &TaskNote::Finished("https://github.com/evil/x/pull/1", repo));
+        assert_eq!(note, "The task from message 4 finished without a pull request.");
+    }
+
+    // L27
+    #[test]
+    fn a_task_is_refused_for_length_for_being_busy_and_for_the_daily_limit() {
+        let task = |too_long| Task {
+            hangout_id: "r".into(),
+            message_id: 1,
+            text: String::new(),
+            too_long,
+            owner_name: None,
+        };
+        let mut seen = super::super::Seen::default();
+        assert!(refusal(&task(false), false, &seen).is_none());
+        assert!(matches!(refusal(&task(false), true, &seen), Some(TaskNote::Busy)));
+        assert!(matches!(refusal(&task(true), false, &seen), Some(TaskNote::TooLong)));
+        assert!(matches!(refusal(&task(true), true, &seen), Some(TaskNote::TooLong)));
+        for _ in 0..MAX_TASKS_PER_DAY {
+            seen.count_task();
+        }
+        assert!(matches!(refusal(&task(false), false, &seen), Some(TaskNote::Limit)));
+        assert!(matches!(refusal(&task(false), true, &seen), Some(TaskNote::Busy)));
     }
 
     // L29
@@ -366,10 +478,10 @@ mod tests {
         let url = "https://github.com/a/b/pull/9";
         let output = format!("secret: abc\n{url}\n");
         assert_eq!(
-            say(Some("Cake Claude"), TaskNote::Finished(&output)),
+            say(Some("Cake Claude"), TaskNote::Finished(&output, "a/b")),
             format!("@Cake Claude Finished the task from message 7: {url}")
         );
-        let nothing = say(None, TaskNote::Finished("token=hunter2\nall done"));
+        let nothing = say(None, TaskNote::Finished("token=hunter2\nall done", "a/b"));
         assert_eq!(nothing, "The task from message 7 finished without a pull request.");
         // A name that could be anything else isn't put in a message.
         for odd in ["", "Ju\nstin", "Justin @everyone!", " Justin", "<b>x</b>"] {

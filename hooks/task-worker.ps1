@@ -1,59 +1,68 @@
-# Does one task for the doorbell (L22 to L30). The doorbell starts this when the bot's owner writes
-# "@Bot task: ..." in a room, with the task on stdin and TASK_ID in the environment.
+# Does one task for the doorbell (L22 to L31). The doorbell starts this when the bot's owner writes
+# "@Bot task: ..." in a room, with the task on stdin, TASK_ID and AGENTHANGOUT_TASK_REPO
+# (owner/name) in a scrubbed environment.
 #
-# This is not the bot in the room. The bot in the room has only the room's tools because room text
-# comes from other people's bots. This run never reads a room: its only input is the owner's own
-# words. It gets a fresh worktree of agentshangout, a short list of tools, and no token for the site.
+# This is not the bot in the room. That bot has only the room's tools because room text comes from
+# other people's bots. This run never reads a room: its only input is the owner's own words. It gets
+# a fresh worktree of the repository, a short list of tools, and no token for the site.
 #
-# Whatever happens, the last line it prints is the pull request address or the word FAILED, and
-# nothing else goes to stdout. The doorbell posts that address in the room and ignores the rest.
-# Everything else goes to ~/.agenthangout/tasks/<id>.log.
+# This is not a sandbox. `cargo test` runs code from the worktree with your rights, so anything the
+# task can get into the repository, it can run as you. The rules below stop the obvious mistakes.
 #
-#   AGENTHANGOUT_TASK_REPO_DIR   the agentshangout checkout (default T:\agentshangout)
-#   AGENTHANGOUT_TASK_ROOT       where worktrees go (default T:\ah-tasks). Keep it short: long paths
-#                                break the MSVC linker.
+# The last line it prints is the pull request address or the word FAILED, and nothing else goes to
+# stdout. The doorbell posts the address in the room and ignores the rest. Everything else goes to
+# ~/.agenthangout/tasks/<id>.log.
 $ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 
 $task = [Console]::In.ReadToEnd()
 $id = ([string]$env:TASK_ID) -replace '[^A-Za-z0-9_-]', '-'
+$repoName = [string]$env:AGENTHANGOUT_TASK_REPO
 $logs = Join-Path $HOME '.agenthangout\tasks'
 New-Item -ItemType Directory -Force $logs | Out-Null
-if (-not $id -or -not $task.Trim()) {
+if (-not $id -or -not $task.Trim() -or $repoName -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$') {
     'FAILED'
     exit 1
 }
 $log = Join-Path $logs "$id.log"
 function Log([string]$line) { Add-Content -LiteralPath $log -Value "$(Get-Date -Format o) $line" }
 
-# The doorbell takes these out already. A worker that can't reach the site can't be talked into it.
-Remove-Item -ErrorAction Ignore Env:AGENTHANGOUT_TOKEN, Env:AGENTHANGOUT_URL
-
-$repo = if ($env:AGENTHANGOUT_TASK_REPO_DIR) { $env:AGENTHANGOUT_TASK_REPO_DIR } else { 'T:\agentshangout' }
-$root = if ($env:AGENTHANGOUT_TASK_ROOT) { $env:AGENTHANGOUT_TASK_ROOT } else { 'T:\ah-tasks' }
+$repo = 'T:\agentshangout'
+$root = 'T:\ah-tasks'   # short, because long paths break the MSVC linker
 $tree = Join-Path $root $id
 $branch = "task/$id"
-$pr = 'https://github.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[0-9]+'
+$pr = "^https://github\.com/$([regex]::Escape($repoName))/pull/[0-9]+$"
 
-# Only ever in agentshangout, so a task can't point this at some other repository.
+# Only ever in this repository, so a task can't point this at some other one.
 $origin = (& git -C $repo config --get remote.origin.url 2>$null)
-if ($LASTEXITCODE -ne 0 -or $origin -notmatch 'github\.com[:/][A-Za-z0-9-]+/agentshangout(\.git)?/?$') {
-    Log "${repo} is not an agentshangout checkout"
+if ($LASTEXITCODE -ne 0 -or $origin -notmatch ('github\.com[:/]' + [regex]::Escape($repoName) + '(\.git)?/?$')) {
+    Log "${repo} is not a checkout of ${repoName}"
     'FAILED'
     exit 1
 }
 
+# Worktrees from earlier tasks (a timeout leaves one behind) go first. Only direct children of the
+# root, never a link, and never anything outside it.
+if (Test-Path -LiteralPath $root) {
+    Get-ChildItem -LiteralPath $root -Directory | Where-Object {
+        $_.Name -ne $id -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
+    } | ForEach-Object {
+        & git -C $repo worktree remove --force $_.FullName *>> $log
+        if (Test-Path -LiteralPath $_.FullName) { Remove-Item -Recurse -Force -LiteralPath $_.FullName }
+    }
+    & git -C $repo worktree prune *>> $log
+}
+
 $mine = $false
 function Clean-Up {
-    # Keep the work if anything reached GitHub. Only a worktree that pushed nothing is thrown away.
+    # The branch on GitHub is the work, so the local copy and its build output can go. If GitHub
+    # couldn't be asked, it stays.
     if (-not $mine) { return }
     & git -C $tree ls-remote --exit-code --heads origin $branch *>> $log
-    if ($LASTEXITCODE -ne 2) {
-        Log "keeping $tree (the branch is on GitHub, or this couldn't be checked)"
-        return
-    }
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) { return }
     & git -C $repo worktree remove --force $tree *>> $log
     & git -C $repo branch -D $branch *>> $log
-    Log "removed ${tree}: nothing was pushed"
 }
 
 try {
@@ -65,26 +74,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed' }
     $mine = $true
 
-    # Tools: files in the worktree, git, cargo, and a little of gh. No merging, no releases, no
-    # workflows, no API calls, no curl, no pushing to main, and none of the places secrets live.
+    # Files only inside this worktree (./ is where claude runs), not .git, which holds the hooks and
+    # the link back to the main checkout. Git and cargo only in the forms a change needs. No
+    # merging, no releases, no workflows, no API calls, no curl, nothing aimed at another repo,
+    # and none of the places secrets live.
     $allow = @(
-        'Read', 'Glob', 'Grep', 'Edit', 'Write',
-        'Bash(git:*)', 'Bash(cargo:*)',
-        'Bash(gh issue view:*)', 'Bash(gh issue list:*)',
-        'Bash(gh pr create:*)', 'Bash(gh pr view:*)', 'Bash(gh pr checks:*)'
+        'Read(./**)', 'Edit(./**)',
+        'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git show:*)',
+        'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git switch:*)', 'Bash(git branch:*)',
+        'Bash(git fetch:*)', 'Bash(git push origin HEAD)', 'Bash(git push -u origin HEAD)',
+        'Bash(cargo fmt:*)', 'Bash(cargo clippy:*)', 'Bash(cargo test:*)', 'Bash(cargo build:*)',
+        'Bash(cargo check:*)',
+        'Bash(gh issue view:*)', 'Bash(gh issue list:*)', 'Bash(gh pr create:*)',
+        'Bash(gh pr view:*)', 'Bash(gh pr checks:*)'
     )
-    $secrets = '~/.agenthangout.env', '~/.agenthangout/**', '~/.claude.json', '~/.claude/**',
-        '~/.ssh/**', '~/.git-credentials', '~/.config/gh/**', '~/AppData/Roaming/GitHub CLI/**',
-        '~/.aws/**', '~/.azure/**'
     $deny = @(
+        'Edit(./.git)', 'Edit(./.git/**)', 'Read(./.git/config)',
         'Bash(git push origin main*)', 'Bash(git push*:main*)', 'Bash(git push --force*)',
-        'Bash(git push -f*)', 'Bash(git credential*)', 'Bash(git config*)',
+        'Bash(git push -f*)', 'Bash(git diff*--no-index*)', 'Bash(git diff*--output*)',
+        'Bash(gh pr create*--repo*)', 'Bash(gh pr create*-R *)',
+        'Bash(gh pr create*--body-file*)', 'Bash(gh pr create*-F *)',
         'Bash(gh pr merge:*)', 'Bash(gh release:*)', 'Bash(gh workflow:*)', 'Bash(gh api:*)',
-        'Bash(curl:*)'
+        'Bash(curl:*)',
+        'Read(~/.agenthangout.env)', 'Read(~/.agenthangout/**)', 'Read(~/.claude.json)',
+        'Read(~/.claude/**)', 'Read(~/.ssh/**)'
     )
-    foreach ($path in $secrets) {
-        $deny += "Read($path)", "Edit($path)", "Write($path)"
-    }
 
     $noServers = Join-Path $logs 'no-mcp-servers.json'
     Set-Content -LiteralPath $noServers -Value '{"mcpServers":{}}'
@@ -115,7 +129,7 @@ try {
     if ($code -ne 0) { throw "claude exited with $code" }
 
     $last = ($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Select-Object -Last 1)
-    if ($last -notmatch "^$pr$") { throw 'the last line was not a pull request address' }
+    if ($last -notmatch $pr) { throw 'the last line was not a pull request address' }
     Clean-Up
     $last
     exit 0
