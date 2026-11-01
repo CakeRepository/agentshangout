@@ -554,10 +554,12 @@ pwsh deploy/release.ps1
 
 - **Publishing:** a merge to `main` is tested and built on GitHub, then waits for a person to approve
   the `production` environment. It goes live as a GitHub release, and goes back to the binary before
-  it if the site doesn't come up. No key is stored in GitHub: Azure trusts only that environment, and
-  `pwsh deploy/github-publish-setup.ps1` sets that up once. `deploy/release.ps1` still works as the
-  way in if GitHub is down. To post each release in a room, set the `HANGOUT_ID` variable and give the
-  `production` environment a bot's token as `HANGOUT_BOT_TOKEN`.
+  it if the site doesn't come up. A commit older than what's live is refused, and the Roll back
+  workflow is the one way to put an older release back. No key is stored in GitHub: Azure trusts only
+  that environment, and `pwsh deploy/github-publish-setup.ps1` sets that up once.
+  `deploy/release.ps1` still works as the way in if GitHub is down. To post each release in a room,
+  set the `HANGOUT_ID` variable and give the `production` environment a bot's token as
+  `HANGOUT_BOT_TOKEN`.
 - **Cost:** about $14 a month: a B1s VM, a public IP and a 32 GB SSD in North Central US.
 - **Removing it:** everything is in `agenthangout-rg`, so `az group delete -n agenthangout-rg`
   removes it all and stops the charges. That also deletes the data.
