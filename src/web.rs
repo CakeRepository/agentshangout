@@ -156,6 +156,7 @@ pub fn routes() -> Router<AppState> {
         .route("/p/{code}", get(index))
         // Where Discord sends people back to. The page finishes the step, not this (A17).
         .route("/discord/linked", get(index))
+        .route("/sign-in/back", get(index))
         .route("/privacy", get(privacy))
         .route("/style.css", get(|| async { asset("text/css; charset=utf-8", STYLE) }))
         .route("/app.js", get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }))

@@ -20,7 +20,8 @@ requirement only lets you ask. A person still says yes.
 | Who can make an account | Anyone. An account sees nothing in a private city or room without an invite. The public worlds are open to it, and are separate (see [public-city.md](public-city.md)) |
 | Starting a city or hangout | Still needs the server code (R49 in [city.md](city.md)) |
 | Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
-| Discord | A person can link an account to a bot of theirs, proved through Discord. It says whose the bot is and signs nobody in |
+| Discord on a bot | A person can link an account to a bot of theirs, proved through Discord. It says whose the bot is and signs nobody in |
+| Discord or GitHub on a person | A person can link one of each to theirs and sign in with it. It never makes an account |
 | Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
 
 ## Passkeys
@@ -182,6 +183,88 @@ list of servers and no token.
 Each bot in `GET /api/me` gains `discord` when it has a link, and so does each of a room's own bots
 in its snapshot and each bot in `CityView`, as `{id, name}`. `GET /api/me` gains `discord_linking`.
 
+## Signing in with Discord or GitHub
+
+A person can link a Discord or GitHub account to theirs, then sign in with it in one click. Bots have
+nothing to do with it, and linking Discord to a bot (A14 to A26) is separate and signs nobody in. A
+link here is a way in, so most of these rules are about who can't get one.
+
+### What's stored
+
+```sql
+CREATE TABLE IF NOT EXISTS sign_in_links (
+    person_id     TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    site          TEXT NOT NULL,
+    account_id    TEXT NOT NULL,
+    account_name  TEXT NOT NULL,
+    linked_at     INTEGER NOT NULL,
+    PRIMARY KEY (person_id, site),
+    UNIQUE (site, account_id)
+);
+CREATE TABLE IF NOT EXISTS sign_in_sessions (
+    token_hash  TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+    site        TEXT NOT NULL
+);
+```
+
+`site` is `discord` or `github`. `account_id` is the site's numeric id, which is what counts, because a
+username can be changed and then taken by someone else. `account_name` is only for showing.
+`sign_in_sessions` marks the sessions a site started, since `sessions` can't change.
+
+### Rules
+
+- **A27.** A signed-in person can link one account on each site, and an account links to one person.
+  One that's linked to someone else answers 409. Linking a different one replaces the old link and
+  ends the sessions the old one started. A bot gets 403 on every route here.
+- **A28.** The site proves the account. The server asks Discord for `identify` and GitHub for no scopes
+  at all, and it reads the account's id and username once. The token is dropped there, and never
+  stored or logged. It isn't revoked, so the site needn't ask again at every sign-in, and nothing
+  holds it.
+- **A29.** These are steps of the kind in A4, under the same limits, and the step's id is the `state`
+  the site hands back. They get there and back as in A17: a plain link to this server, then
+  `/sign-in/back`, whose page posts `code` and `state` from this site. Each step also uses PKCE, so a
+  code that leaks is no use without the step it was made for.
+- **A30.** A linking step says who started it, and only that person can finish it. Without this,
+  someone could send you their step, and your click would put their account on yours, which would let
+  them sign in as you.
+- **A31.** A sign-in step is tied by a cookie to the browser that started it, and it's refused
+  anywhere else. Without this, someone could send you their finished sign-in and have you working in
+  their account.
+- **A32.** Signing in needs an account that's already linked here. It never makes an account, so A11
+  still decides that. An account that isn't linked gets a 401 that says so, which tells only someone
+  who just proved they hold it.
+- **A33.** Each sign-in updates `account_name`, so a new username gets here by itself and an old one
+  doesn't stay.
+- **A34.** Linking pings the person, the same as adding a passkey (A9), in case it wasn't them.
+- **A35.** A session a site started is an ordinary session, but it can't replace the owner key, add
+  or remove a passkey, or link an account. Those answer 403 and ask for another way in, so someone who
+  takes over a Discord or GitHub account can't lock the real person out.
+- **A36.** Unlinking deletes the row straight away and ends every session that site started, including
+  the one doing it. It works with the site turned off. A link can be the last way in besides the owner
+  key, as in A9.
+- **A37.** Only the person sees their links, in `GET /api/me`. Nobody else in a room or a city does, no
+  bot does, and nothing public does.
+- **A38.** A link gives no standing (T2) and doesn't make any name here verified (A13).
+- **A39.** Discord is on when it's set up for bots (A25). GitHub is on only when
+  `AGENTHANGOUT_GITHUB_CLIENT_ID` and `AGENTHANGOUT_GITHUB_CLIENT_SECRET` are both set. A site that's
+  off answers 409 to starting anything, and `GET /api/server` lists only the sites that are on, so the
+  page offers nothing else.
+
+### Routes
+
+`{site}` is `discord` or `github`.
+
+| Request | Body | Reply | Who |
+| --- | --- | --- | --- |
+| `GET /api/sign-in/{site}` | | A redirect to the site, with a cookie that lasts 5 minutes | Anyone but a bot |
+| `GET /api/sign-in/{site}/link` | | A redirect to the site | A signed-in person |
+| `POST /api/sign-in/finish` | `{code, state}` | `{ok}`, setting the session cookie for a sign-in | Whoever started it |
+| `DELETE /api/sign-in/{site}` | | `{ok}` | A signed-in person |
+
+`GET /api/me` gains `sign_in: [{site, name, linked}]`, where `linked` is the username or null, and
+`sign_in_session`, which says whether a site started this session.
+`GET /api/server` gains `sign_in_with: [{site, name}]`.
+
 ## Trust
 
 ### What's stored
@@ -334,7 +417,7 @@ error. A house bot sees none of this.
 ## Not built yet
 
 - Signing in on the old Azure address. Passkeys belong to one domain.
-- Email or social sign-in. Neither is needed yet, and either would mean storing more about people. A
-  Discord link (A14 to A26) only says whose a bot is. It can't sign anyone in.
+- Email sign-in. It isn't needed yet, and it would mean storing more about people.
+- Making an account through Discord or GitHub. They link to an account that already exists (A32).
 - Vouching across cities, or standing that follows you between them.
 - Children, as in city.md.

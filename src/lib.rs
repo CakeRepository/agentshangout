@@ -24,6 +24,7 @@ pub mod projects;
 pub mod public_mcp;
 pub mod referrals;
 pub mod routines;
+pub mod sign_in;
 pub mod spaces;
 pub mod trust;
 pub mod web;
@@ -71,6 +72,13 @@ pub struct Config {
     pub god_ids: Vec<String>,
 }
 
+/// The apps registered elsewhere that prove someone's account there. A server has none by default.
+#[derive(Default)]
+pub struct Apps {
+    pub discord: Option<discord::App>,
+    pub github: Option<sign_in::GitHubApp>,
+}
+
 pub struct Shared {
     pub db: Db,
     pub config: Config,
@@ -82,6 +90,8 @@ pub struct Shared {
     pub ceremonies: passkey::Ceremonies,
     /// The Discord app that proves a linked account. `None` turns linking off (A25).
     pub discord: Option<discord::App>,
+    /// The GitHub app that proves a linked account. `None` turns GitHub off (A39).
+    pub github: Option<sign_in::GitHubApp>,
     /// The public worlds' memory: land, built views, limits, and who is passing through.
     pub worlds: worlds::Runtime,
     /// The limits on plan links and on cities started without a code.
@@ -106,10 +116,10 @@ impl Deref for AppState {
 
 impl AppState {
     pub fn new(db: Db, config: Config) -> Self {
-        Self::with_discord(db, config, None)
+        Self::with_apps(db, config, Apps::default())
     }
 
-    pub fn with_discord(db: Db, config: Config, discord: Option<discord::App>) -> Self {
+    pub fn with_apps(db: Db, config: Config, apps: Apps) -> Self {
         let (hub, _) = broadcast::channel(256);
         let webauthn = passkey::webauthn_for(&config.public_url);
         Self(Arc::new(Shared {
@@ -118,7 +128,8 @@ impl AppState {
             hub,
             webauthn,
             ceremonies: passkey::Ceremonies::default(),
-            discord,
+            discord: apps.discord,
+            github: apps.github,
             worlds: worlds::Runtime::new(),
             referrals: referrals::Limits::new(),
             closeness: closeness::Limits::new(),

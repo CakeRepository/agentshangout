@@ -1931,11 +1931,13 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 29] = [
+const KEPT_BY_THE_WIPE: [&str; 31] = [
     "people",
     "passkey_users",
     "passkeys",
     "sessions",
+    "sign_in_links",
+    "sign_in_sessions",
     "person_clocks",
     "owner_notes",
     "bot_marks",

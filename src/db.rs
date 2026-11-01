@@ -601,6 +601,19 @@ CREATE TABLE IF NOT EXISTS discord_links (
     discord_name  TEXT NOT NULL,
     linked_at     INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sign_in_links (
+    person_id     TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    site          TEXT NOT NULL,
+    account_id    TEXT NOT NULL,
+    account_name  TEXT NOT NULL,
+    linked_at     INTEGER NOT NULL,
+    PRIMARY KEY (person_id, site),
+    UNIQUE (site, account_id)
+);
+CREATE TABLE IF NOT EXISTS sign_in_sessions (
+    token_hash  TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+    site        TEXT NOT NULL
+);
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
@@ -2165,6 +2178,110 @@ impl Db {
     pub fn delete_session(&self, token_hash: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM sessions WHERE token_hash = ?", [token_hash])?;
         Ok(())
+    }
+
+    pub fn mark_sign_in_session(&self, token_hash: &str, site: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO sign_in_sessions (token_hash, site) VALUES (?, ?)",
+            params![token_hash, site],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_sign_in_session(&self, token_hash: &str) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn()
+            .query_row("SELECT 1 FROM sign_in_sessions WHERE token_hash = ?", [token_hash], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some())
+    }
+
+    /// A person's links, as site and account name.
+    pub fn sign_in_links(&self, person_id: &str) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT site, account_name FROM sign_in_links WHERE person_id = ?")?;
+        let rows = stmt.query_map([person_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Links an account to this person. False if someone else has it, which leaves theirs as it was
+    /// (A27). A different account takes the old one's place, and what that one started ends.
+    pub fn set_sign_in_link(
+        &self,
+        person_id: &str,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let holder: Option<String> = tx
+            .query_row(
+                "SELECT person_id FROM sign_in_links WHERE site = ? AND account_id = ?",
+                [site, account_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if holder.is_some_and(|holder| holder != person_id) {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM sessions WHERE person_id = ?1
+               AND token_hash IN (SELECT token_hash FROM sign_in_sessions WHERE site = ?2)
+               AND EXISTS (SELECT 1 FROM sign_in_links l
+                   WHERE l.person_id = ?1 AND l.site = ?2 AND l.account_id <> ?3)",
+            [person_id, site, account_id],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO sign_in_links
+                 (person_id, site, account_id, account_name, linked_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![person_id, site, account_id, account_name, now],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Who this account signs in as, with their username brought up to date (A33).
+    pub fn person_by_sign_in(
+        &self,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+    ) -> rusqlite::Result<Option<Person>> {
+        let person_id: Option<String> = self
+            .conn()
+            .query_row(
+                "UPDATE sign_in_links SET account_name = ?3 WHERE site = ?1 AND account_id = ?2
+                 RETURNING person_id",
+                [site, account_id, account_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match person_id {
+            Some(id) => self.person(&id),
+            None => Ok(None),
+        }
+    }
+
+    /// A36: the link and every session it started.
+    pub fn remove_sign_in_link(&self, person_id: &str, site: &str) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM sessions WHERE person_id = ?1
+               AND token_hash IN (SELECT token_hash FROM sign_in_sessions WHERE site = ?2)",
+            [person_id, site],
+        )?;
+        tx.execute(
+            "DELETE FROM sign_in_links WHERE person_id = ? AND site = ?",
+            [person_id, site],
+        )?;
+        tx.commit()
     }
 
     pub fn session_count(&self, person_id: &str) -> rusqlite::Result<i64> {
