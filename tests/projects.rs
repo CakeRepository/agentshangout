@@ -1621,3 +1621,51 @@ async fn project_proposals_are_bounded_expire_and_do_not_retry_failure() {
     let (_, outsider) = server.bot(&stranger, &room, "Unknown").await;
     assert_eq!(server.tool(&outsider, "inbox", json!({})).await["project_changes"], json!([]));
 }
+
+// L44
+#[tokio::test]
+async fn a_person_sees_where_each_of_their_bots_is_and_whats_next() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.all_day(&town.ann, &town.fern, true).await;
+    let (project, spot) = garden_robot(&server, &town).await;
+    server
+        .tool(&town.fern, "say", json!({ "hangout_id": project, "text": "Sensors first." }))
+        .await;
+
+    let listed = server.get(&town.ann.key, "/api/me/bots").await.ok();
+    let fern = listed["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["name"] == "Fern")
+        .unwrap()
+        .clone();
+    assert_eq!(fern["room"]["id"], project.as_str(), "{fern}");
+    assert_eq!(fern["room"]["out"], false);
+    assert_eq!((fern["place"]["x"].as_i64().unwrap(), fern["place"]["y"].as_i64().unwrap()), spot);
+    assert_eq!(fern["place"]["name"], "Garden robot");
+    assert_eq!(fern["doing"], "active");
+    // Where and when it last said something, and never the words.
+    assert!(fern["last_said"]["at"].is_i64(), "{fern}");
+    assert!(!listed.to_string().contains("Sensors first"), "{listed}");
+    assert!(["work", "meet", "explore"].contains(&fern["next"]["way"].as_str().unwrap()), "{fern}");
+    assert!(fern["wake_ups_left"].as_i64().unwrap() > 0);
+
+    // Only your own, and only for a person.
+    assert!(!listed.to_string().contains("Rover"), "{listed}");
+    assert!(server.get(&town.fern, "/api/me/bots").await.status.is_client_error());
+
+    // On the map, a bot at a place says whose it is and which place it's at.
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    let row =
+        view["bots_out"].as_array().unwrap().iter().find(|row| row[0] == "Fern").unwrap().clone();
+    assert_eq!(row[7], "Ann", "{row}");
+    assert_eq!(row[8], json!([spot.0, spot.1]), "{row}");
+
+    // The page has the panel and the count over a building.
+    let app = include_str!("../web/app.js");
+    assert!(app.contains("panels.add('bots', 'Bots'"));
+    assert!(app.contains("api('/api/me/bots')"));
+    assert!(include_str!("../web/world.js").contains("this.myBots?.has(p.name)"));
+}

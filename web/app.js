@@ -5787,6 +5787,69 @@ async function worldView(id, { home = false } = {}) {
   let requestsRow = null;
   let moreToggle = null;
 
+  // L44: where each of your bots is, what it's doing and where it goes next, and everyone else's
+  // bots out on the map. Another person's bot shows only where it is, as the map does.
+  const DOING = {
+    working: 'working through another tool',
+    thinking: 'thinking',
+    using: 'using something in the room',
+    active: 'active',
+    idle: 'idle',
+    asleep: 'asleep: nothing from it in a day',
+  };
+  const NEXT = { work: 'work at its building', meet: 'meet at the town square', explore: 'explore somewhere new' };
+  let botsTab = 'yours';
+  let myBots = [];
+  const botsBody = panels.add('bots', 'Bots', { onOpen: () => loadBots(true) });
+  const where = (bot) => {
+    if (!bot.room) return 'Not in any room right now';
+    const at = bot.place ? `${bot.place.name || KIND_WORDS[bot.place.kind] || bot.place.kind}` : null;
+    const room = bot.room.name;
+    const text = at && at !== room ? `${at} \u00b7 ${room}` : room;
+    return bot.room.out ? `Visiting ${text}` : `In ${text}`;
+  };
+  function renderBots() {
+    const tabs = h('div', { class: 'row-actions', role: 'tablist' },
+      ...[['yours', 'Yours'], ['everyone', 'Everyone out']].map(([tab, label]) =>
+        h('button', { type: 'button', class: botsTab === tab ? 'primary' : '', role: 'tab', 'aria-selected': String(botsTab === tab), onclick: () => { botsTab = tab; renderBots(); } }, label)));
+    let rows;
+    if (botsTab === 'yours') {
+      rows = myBots.length ? myBots.map((bot) => h('div', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('strong', {}, bot.name),
+          h('small', {}, where(bot)),
+          h('small', { class: 'muted' }, `${DOING[bot.doing] || bot.doing}${bot.last_said ? ` \u00b7 last said something${bot.last_said.room ? ` in ${bot.last_said.room}` : ''} ${agoText(bot.last_said.at)}` : ''}`),
+          h('small', { class: 'muted' }, bot.next
+            ? `Next: ${NEXT[bot.next.way] || bot.next.way} ${untilText(bot.next.at)} \u00b7 ${bot.wake_ups_left} wake-ups left today`
+            : bot.public_places ? 'Outside its social hours, so it stays where it is' : 'Public places are off, so it stays where it is')),
+        bot.place ? h('button', { type: 'button', class: 'link', 'aria-label': `Show ${bot.name} on the map`, onclick: () => world.focus(bot.place.x, bot.place.y, { zoom: 1.5 }) }, 'Show') : null,
+        bot.room ? link(`/h/${bot.room.id}`, 'Go in', { class: 'link' }) : null))
+        : [h('p', { class: 'muted' }, 'You have no bots yet.')];
+    } else {
+      const out = latest?.bots_out || [];
+      rows = out.length ? out.map((row) => {
+        const at = Array.isArray(row[8]) ? row[8] : [row[1], row[2]];
+        const placeName = nameAt(at[0], at[1]) || 'a place';
+        return h('div', { class: 'row' },
+          h('span', { class: 'row-main' },
+            h('strong', {}, row[0]),
+            h('small', { class: 'muted' }, `${row[7] ? `${row[7]}\u2019s bot \u00b7 ` : ''}at ${placeName}`)),
+          h('button', { type: 'button', class: 'link', 'aria-label': `Show ${row[0]} on the map`, onclick: () => world.focus(at[0], at[1], { zoom: 1.5 }) }, 'Show'));
+      }) : [h('p', { class: 'muted' }, 'No bots are out on the map right now.')];
+    }
+    botsBody.replaceChildren(tabs, ...rows);
+  }
+  let botsAt = 0;
+  async function loadBots(force = false) {
+    if (!me || me.kind !== 'person' || (!force && Date.now() - botsAt < 30000)) return;
+    botsAt = Date.now();
+    const { bots = [] } = await api('/api/me/bots').catch(() => ({}));
+    myBots = bots;
+    // The count over a building turns gold for one of these.
+    world.myBots = new Set(bots.map((bot) => bot.name));
+    renderBots();
+  }
+
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
       if (!aboutBody.firstChild) aboutBody.replaceChildren(aboutText());
@@ -5869,6 +5932,7 @@ async function worldView(id, { home = false } = {}) {
   frame.actions.append(...[
     guide?.toggle,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
+    me && me.kind === 'person' ? panels.toggle('bots', 'Bots', { className: 'sec' }) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
@@ -5888,6 +5952,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     guide ? h('button', { type: 'button', class: 'wd-btn wide mid', onclick: () => panels.open('tutorial') }, 'Tutorial') : null,
     me?.kind === 'person' ? (requestsRow = moreRow('requests', 'Requests')) : null,
+    me?.kind === 'person' ? moreRow('bots', 'Bots') : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) => moreRow(name, label)),
     repoLink('wd-btn wide'),
     link('/docs', 'Docs', { class: 'wd-btn wide' }),
@@ -6258,6 +6323,11 @@ async function worldView(id, { home = false } = {}) {
       // A new owner would not otherwise find the builder, which is only in the menu.
       details?.yours ? h('small', { class: 'city-card-hint' }, matchMedia('(pointer: coarse)').matches ? 'Press and hold to build outside' : 'Right-click to build outside') : null,
     ];
+    // L44: who's inside, by name and whose, as the map already shows them going in.
+    const inside = (latest?.bots_out || []).filter((row) => Array.isArray(row[8]) && row[8][0] === place.x && row[8][1] === place.y);
+    if (inside.length) {
+      lines.push(h('small', { class: 'city-card-hint' }, `Inside: ${inside.map((row) => (row[7] ? `${row[0]} (${row[7]}\u2019s)` : row[0])).join(', ')}`));
+    }
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
       lines.push(h('span', { class: allowed ? 'city-card-bot allowed' : 'city-card-bot' },
@@ -6470,6 +6540,9 @@ async function worldView(id, { home = false } = {}) {
       spokeAt = Date.now();
     }
     renderAround(view);
+    if (botsTab === 'everyone' && !botsBody.closest('[hidden]')) renderBots();
+    // L44: where your bots are changes as the map does, asked at most every 30 seconds.
+    loadBots();
     // The message about slowing down has done its job once a view gets through.
     if (trouble) {
       trouble = false;
@@ -6491,6 +6564,7 @@ async function worldView(id, { home = false } = {}) {
   });
   arrive(latest);
   loadRequests();
+  loadBots();
   say(mover?.trouble || idle);
 
   // --- Keys, and leaving -----------------------------------------------------------------------

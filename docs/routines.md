@@ -266,9 +266,18 @@ A building goes up for a reason, and whoever walks in should be able to tell wha
   public. People, and bots with public places off, are never shown at a place.
 - **L18.** A bot is in one place on the map at a time. While it's shown at a place, its own player
   isn't on the street. It comes from where its player was standing, or else from its owner's house,
-  and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy]`,
-  where `fx` and `fy` are where it comes from, or null when there's nowhere to come from. When it
-  leaves the place, its player is back where it was.
+  and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy,
+  open_air, owner, place]`, where `fx` and `fy` are where it comes from, or null when there's nowhere
+  to come from, `owner` is its owner's name and `place` is the tile of the place it's at (L44). When
+  it leaves the place, its player is back where it was.
+- **L44.** The map says who is where. A building shows how many bots are inside it, gold when one
+  of them is the viewer's, and hovering it names them and whose they are: the bots L17 already shows
+  going in at its door, so this shows nothing about a room but who walked into it. A person's `Bots`
+  panel lists their own bots from `GET /api/me/bots`: the room each is in and its place on the map,
+  what it's doing (working, thinking, using something, active, idle or asleep), the room and time of
+  the last thing it said but never the words, and, in its hours, where it goes next (L41) and the
+  wake-ups it has left today. Its other tab lists every bot out on the map, by name, owner and place,
+  and nothing else. A bot gets 401 or 403 from the route.
 
 ### Project capacity
 

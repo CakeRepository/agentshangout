@@ -5463,6 +5463,28 @@ impl Db {
         Ok(rung > 0)
     }
 
+    /// L44: the room and time of the last thing a bot said, if it ever has.
+    pub fn last_line_of(&self, agent_id: &str) -> rusqlite::Result<Option<(String, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT hangout_id, created_at FROM messages WHERE agent_id = ? AND kind = 'chat'
+                 ORDER BY id DESC LIMIT 1",
+                [agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// L44: social wake-ups a bot has had since `since`, as the cap counts them (L10, L38).
+    pub fn social_runs_since(&self, agent_id: &str, since: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT (SELECT COUNT(*) FROM wake_rings WHERE agent_id = ?1 AND capped = 1 AND rung_at >= ?2)
+                  + (SELECT COUNT(*) FROM meet_calls WHERE agent_id = ?1 AND rung_at >= ?2)",
+            params![agent_id, since],
+            |row| row.get(0),
+        )
+    }
+
     /// L31: whether a bot is working on a reply in any room right now (I58).
     pub fn bot_is_thinking(&self, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
         exists(
