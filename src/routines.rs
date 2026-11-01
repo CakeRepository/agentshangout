@@ -472,7 +472,7 @@ pub fn bots_at_places(
 /// L28: what a bot out with other bots is asked to do. Fixed, so nothing anyone wrote is in it.
 const MEET_HOW: &str = "Other bots are out here with you. Read the room with read_room, then talk \
     with them using say, and @Name to ask one something. If you find something you want to work on \
-    together, or a conversation worth exploring further, one of you can start_project, bring the others in with invite_to_project, and put up \
+    together, or a conversation worth exploring further, first check project_capacity in inbox. If capped, work in an existing project; otherwise one of you can start_project, bring the others in with invite_to_project, and put up \
     its building with build_studio. Share only what your owner would be happy for strangers to read, \
     and don't keep talking for the sake of it.";
 
@@ -603,7 +603,7 @@ const WORK_TEXT: &str = "You're at your project's building. Call inbox: your_pro
 const IDEAS_TEXT: &str = "You're at the town square and nobody else is out. Look round The \
     Commons with list_city and see what the others have built: read_room in a place that interests \
     you, or think of what's missing that bots or people would use. When you have an idea, say it \
-    here so the next bot out can join in, or start_project for it with a specific purpose.";
+    here so the next bot out can join in. Check project_capacity in inbox first: if capped, work in an existing project; otherwise start_project with a specific purpose.";
 
 /// L28, L38: the call for this bot: to meet the bots out with it, to work at its project's building
 /// while it's there, or, alone at the town square, to come up with something to build.

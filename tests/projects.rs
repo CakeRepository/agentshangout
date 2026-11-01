@@ -331,7 +331,46 @@ async fn a_bot_starts_a_project_that_counts_as_one_of_its_owners_third_spaces() 
     let message =
         server.refused(&town.fern, "start_project", json!({ "name": "One too many" })).await;
     assert!(message.contains("3"), "{message}");
+    assert!(message.contains("existing project"), "{message}");
+    assert!(message.contains("owner"), "{message}");
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["project_capacity"]["can_start"], false);
+    assert_eq!(inbox["project_capacity"]["used"], 3);
+    assert_eq!(inbox["project_capacity"]["remaining"], 0);
+    server.all_day(&town.ann, &town.fern, true).await;
+    let commons = server.tool(&town.fern, "list_city", json!({"city_id":"commons"})).await;
+    assert_eq!(commons["project_capacity"]["can_start"], false);
+    assert!(commons["note"].as_str().unwrap().contains("existing project"));
     server.refused(&town.fern, "start_project", json!({ "name": "  " })).await;
+}
+
+// L39: capacity is owner-scoped, refreshes after the owner closes a space, and reserves nothing.
+#[tokio::test]
+async fn project_capacity_is_an_owner_scoped_snapshot_not_a_reservation() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let initial = server.tool(&town.fern, "inbox", json!({})).await["project_capacity"].clone();
+    assert_eq!(initial["used"], 1);
+    assert_eq!(initial["remaining"], 2);
+    assert_eq!(initial["can_start"], true);
+    assert_eq!(initial["limit"], 3);
+    assert!(initial.get("god_mode").is_none());
+    assert!(initial.get("exempt").is_none());
+    let first =
+        server.tool(&town.fern, "start_project", json!({"name":"Private fixture project"})).await;
+    server.tool(&town.fern, "start_project", json!({"name":"Second fixture project"})).await;
+    let capped = server.tool(&town.fern, "inbox", json!({})).await["project_capacity"].clone();
+    assert_eq!(capped["can_start"], false);
+    assert!(!capped.to_string().contains("Private fixture"));
+    assert!(server.tool(&town.rover, "inbox", json!({})).await["project_capacity"]["can_start"]
+        .as_bool()
+        .unwrap());
+    // A previously positive snapshot does not authorize a fourth space.
+    server.refused(&town.fern, "start_project", json!({"name":"No reserved slot"})).await;
+    server.delete(&town.ann.key, &format!("/api/spaces/{}", text(&first["project_id"]))).await.ok();
+    let reopened = server.tool(&town.fern, "inbox", json!({})).await["project_capacity"].clone();
+    assert_eq!(reopened["remaining"], 1);
+    assert_eq!(reopened["can_start"], true);
 }
 
 // L12
@@ -926,6 +965,9 @@ async fn only_a_bot_its_owner_let_out_sees_the_commons() {
         )
         .await
         .ok();
+    let capacity = server.tool(&elm.pip, "inbox", json!({})).await;
+    assert_eq!(capacity["project_capacity"]["can_start"], false);
+    assert!(capacity["project_capacity"]["note"].as_str().unwrap().contains("stay home"));
     let message = server.refused(&elm.pip, "list_city", asked).await;
     assert!(message.contains("stay home"), "{message}");
     assert_eq!(server.city(&elm.pip, json!({})).await["city"]["name"], "Elm");

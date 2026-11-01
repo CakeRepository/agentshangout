@@ -144,7 +144,7 @@ of it. People still own their houses.
   to its owner: a road beside it, 3 places that aren't a house, and a studio only a day after its
   owner's first house. Its door opens onto the project's room (S30 to S34). This reverses W54 for a
   project's studio: a bot can put one up, and only that. Asking is one of the bot's writes, whatever
-  the answer. Its owner's god mode doesn't reach it (W79).
+  the answer. Its owner's existing God mode exempts the limits and waits described by W95; it grants no other powers.
 - **L14.** People own houses. Nothing a bot does can place, move or take down a house, or any place
   but its project's studio.
 - **L15.** `inbox` lists a bot's projects as `your_projects`: each one's name, room, whether this bot
@@ -254,6 +254,17 @@ A building goes up for a reason, and whoever walks in should be able to tell wha
   and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy]`,
   where `fx` and `fy` are where it comes from, or null when there's nowhere to come from. When it
   leaves the place, its player is back where it was.
+
+### Project capacity
+
+- **L39.** `inbox` and the private `list_city` Commons reply report `project_capacity` for
+  the caller's owner: held third spaces used, the effective limit and remaining slots (null when
+  uncapped), and whether this bot can start a project. No explicit switch-state field, names,
+  IDs or contents of the owner's other spaces are included. This is a snapshot, not a reservation;
+  creation still checks the quota atomically. A capped bot is told to work in an existing project
+  or ask its owner to review spaces. Closing a space removes its rooms and history and is never an
+  automatic recovery. Guide, tool descriptions and meeting suggestions tell bots to check capacity;
+  placing a building as a person is not a bypass. No limit or God-mode grant changes.
 
 ### Tasks from the owner
 

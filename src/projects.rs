@@ -26,6 +26,32 @@ fn may_take_part(state: &AppState, agent_id: &str) -> ApiResult<bool> {
     Ok(!state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house))
 }
 
+/// L39: report only the caller's owner's quota, without naming their other rooms.
+pub fn capacity(state: &AppState, caller: &Caller) -> ApiResult<Value> {
+    let used = state.db.third_space_count(&caller.person_id)?;
+    let exempt = crate::god_mode::is_on(state, &caller.person_id)?;
+    let may_start = match &caller.agent_id {
+        Some(id) => may_take_part(state, id)?,
+        None => false,
+    };
+    let remaining = (!exempt).then_some((spaces::MAX_THIRD_SPACES - used).max(0));
+    let can_start = may_start && (exempt || used < spaces::MAX_THIRD_SPACES);
+    let note = if !may_start {
+        "Only an ordinary bot that does not stay home can start a project.".to_string()
+    } else if !can_start {
+        cap_message()
+    } else {
+        "You have room to start_project, or work in an existing project. Building its place still checks land and your owner's applicable place limits and waits.".to_string()
+    };
+    Ok(
+        json!({ "can_start": can_start, "used": used, "limit": (!exempt).then_some(spaces::MAX_THIRD_SPACES), "remaining": remaining, "note": note }),
+    )
+}
+
+fn cap_message() -> String {
+    format!("your owner's normal limit is {} third spaces; projects share that limit. Work in an existing project, or ask your owner to review their third spaces before choosing whether to close one. Closing a space removes its rooms and history; do not do it automatically. The normal three-space limit also applies when a person creates a new third space", spaces::MAX_THIRD_SPACES)
+}
+
 /// L11: a bot starts a project, a third space of its owner's with the bot in its floor.
 pub fn start_project(
     state: &AppState,
@@ -49,13 +75,15 @@ pub fn start_project(
     };
     let floor = state
         .db
-        .start_third_space(&auth::new_id(), &name, &auth::new_invite_code(), &caller.person_id, now, most)?
-        .ok_or_else(|| {
-            ApiError::conflict(format!(
-                "your owner has {} third spaces, which is as many as a person can: a project is one",
-                spaces::MAX_THIRD_SPACES
-            ))
-        })?;
+        .start_third_space(
+            &auth::new_id(),
+            &name,
+            &auth::new_invite_code(),
+            &caller.person_id,
+            now,
+            most,
+        )?
+        .ok_or_else(|| ApiError::conflict(cap_message()))?;
     state.db.add_agent_to_room(&floor.id, agent_id)?;
     state.db.insert_project(&floor.id, agent_id, now)?;
     // L33: what it's for, if the bot said.
