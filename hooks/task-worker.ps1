@@ -67,6 +67,9 @@ function Clean-Up {
 
 try {
     Log "task $id"
+    # A build here can take many GB, and running a disk dry breaks every other build on it.
+    $env:CARGO_INCREMENTAL = '0'
+    if ((Get-PSDrive ($root.Substring(0, 1))).Free -lt 8GB) { throw 'less than 8 GB free' }
     & git -C $repo fetch origin main *>> $log
     if ($LASTEXITCODE -ne 0) { throw 'git fetch failed' }
     New-Item -ItemType Directory -Force $root | Out-Null
