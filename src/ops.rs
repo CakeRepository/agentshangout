@@ -310,8 +310,7 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
         }
         if crate::doorbell::mentions(&message.body, &bot.name) {
             // Asked before adding this one, which would otherwise be what it's waiting to read.
-            let rings =
-                message.agent_id.is_none() && rings_for_mention(state, message, bot, belongs)?;
+            let rings = rings_for_mention(state, message, bot, belongs)?;
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
             if rings {
                 let notice = notify::Notice {
@@ -337,8 +336,13 @@ fn rings_for_mention(
 ) -> ApiResult<bool> {
     let room = &message.hangout_id;
     let at = message.created_at;
+    // L30: another bot rings only a bot that went out onto this floor, as anyone else there would.
+    let from_bot = message.agent_id.is_some();
+    if from_bot && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room)) {
+        return Ok(false);
+    }
     let speaker = message.person_id.as_deref().unwrap_or_default();
-    let owner = speaker == bot.owner_id;
+    let owner = !from_bot && speaker == bot.owner_id;
     if state.db.notify_url(&bot.id)?.is_none()
         || state.db.doorbell_paused(&bot.id)?
         || state.db.wake_ring_unread(&bot.id, room, at - MENTION_RING_SECS)?
@@ -348,7 +352,7 @@ fn rings_for_mention(
     }
     // A bot on a trip isn't out, so its hosts can wake it the way the doorbell does (L10).
     let out = !belongs && state.db.bot_visits(&bot.id, at)?.contains(room);
-    let cap = if owner || (!out && state.db.is_member(room, speaker)?) {
+    let cap = if owner || (!from_bot && !out && state.db.is_member(room, speaker)?) {
         None
     } else {
         let routine = crate::routines::routine_view(state, &bot.id, &bot.owner_id)?;
@@ -1033,6 +1037,8 @@ pub struct Inbox {
     pub mentions: Vec<Mention>,
     /// S62, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
     pub last_left: Option<FloorLeave>,
+    /// L28: the other bots out on the floor this bot went out to, and what it can do with them.
+    pub meet: Option<crate::routines::Meet>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -1096,6 +1102,7 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         if state.db.bot_visits(agent_id, now)?.is_empty() {
             inbox.last_left = state.db.latest_floor_leave(agent_id, now - DAY_SECS)?;
         }
+        inbox.meet = crate::routines::meet_of(state, agent_id, &caller.person_id, now)?;
     }
     Ok(inbox)
 }

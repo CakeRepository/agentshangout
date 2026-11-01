@@ -366,6 +366,71 @@ async fn in_its_hours_a_bot_wanders_when_its_doorbell_checks_in() {
     assert!(server.out_at(&town.rover).await.is_null());
 }
 
+// L27
+#[tokio::test]
+async fn in_its_hours_a_bot_goes_out_by_itself_with_no_doorbell() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let minute = || agenthangout::worlds::housekeeping(&server.state, now());
+
+    minute();
+    assert!(server.out_at(&town.rover).await.is_null(), "it has no social hours yet");
+
+    server.always_out(&town, 5).await;
+    minute();
+    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str(), "nothing had to check in");
+
+    // One its owner paused stays put.
+    server.tool(&town.rover, "come_back", json!({})).await;
+    server
+        .put(
+            &town.bo.key,
+            &format!("/api/agents/{}/doorbell", town.rover_id),
+            json!({ "paused": true }),
+        )
+        .await
+        .ok();
+    minute();
+    assert!(server.out_at(&town.rover).await.is_null());
+}
+
+// L28
+#[tokio::test]
+async fn out_with_another_bot_a_bot_is_asked_to_meet_once_a_half_hour() {
+    start_early_in(WANDER_SECS, 10).await;
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.always_out(&town, 5).await;
+    let (cy_room, cy) = server.someone("Cy").await;
+    let (pip_id, pip) = server.bot(&cy, &cy_room, "Pip").await;
+    let hours = json!({ "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "starts": "00:00", "ends": "24:00", "max_social_runs": 5, "public_places": true });
+    server.set_routine(&cy.key, &pip_id, hours).await.ok();
+    let meet = async |token: &str| server.tool(token, "inbox", json!({})).await["meet"].clone();
+
+    assert!(meet(&town.rover).await.is_null(), "it isn't out");
+    server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
+    assert!(meet(&town.rover).await.is_null(), "Fern belongs there, so Rover is out on its own");
+
+    server.tool(&pip, "go_out", json!({ "floor_id": town.cafe })).await;
+    let asked = meet(&town.rover).await;
+    assert_eq!(asked["hangout_id"], town.cafe.as_str(), "{asked}");
+    assert_eq!(asked["name"], "Ann's Cafe", "{asked}");
+    assert_eq!(asked["bots"], json!(["Pip"]), "{asked}");
+    for tool in ["say", "start_project", "invite_to_project", "build_studio"] {
+        assert!(text(&asked["how"]).contains(tool), "{tool}: {asked}");
+    }
+    assert_eq!(meet(&pip).await["bots"], json!(["Rover"]));
+
+    // The doorbell wakes it for that once this half hour, and it counts against the cap.
+    let doorbell = Doorbell::new(&server.base, &town.rover);
+    let look = doorbell.look(&Seen::default()).await.unwrap();
+    assert_eq!(look.wake.meet.as_deref(), Some(town.cafe.as_str()));
+    assert!(look.wake.prompt().contains("meet"), "{}", look.wake.prompt());
+    let again = doorbell.look(&look.next).await.unwrap();
+    assert!(again.wake.meet.is_none(), "it rang once for this half hour");
+    assert_eq!(meet(&town.rover).await["id"], asked["id"]);
+}
+
 // L9, S57
 #[tokio::test]
 async fn a_bot_that_went_to_a_room_this_half_hour_isnt_walked_back_out_of_it() {

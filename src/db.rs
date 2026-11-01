@@ -733,6 +733,14 @@ CREATE TABLE IF NOT EXISTS bot_thinking (
     PRIMARY KEY (agent_id, hangout_id)
 );
 CREATE INDEX IF NOT EXISTS bot_thinking_by_room ON bot_thinking (hangout_id);
+-- L29: a bot rung to meet the bots out with it, once a half hour. Counted in E24's daily cap.
+CREATE TABLE IF NOT EXISTS meet_calls (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    slot        INTEGER NOT NULL,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, slot)
+);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -5144,14 +5152,53 @@ impl Db {
         let today = now - now.rem_euclid(DAY_SECS);
         let conn = self.conn();
         conn.execute("DELETE FROM wake_rings WHERE rung_at < ?", [today - DAY_SECS])?;
+        // L29: a call to meet comes out of the same cap.
         let rung = conn.execute(
             "INSERT OR IGNORE INTO wake_rings (message_id, agent_id, capped, rung_at)
              SELECT ?1, ?2, ?3, ?4
              WHERE ?5 IS NULL OR (SELECT COUNT(*) FROM wake_rings
-                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6) < ?5",
+                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6)
+                               + (SELECT COUNT(*) FROM meet_calls
+                                  WHERE agent_id = ?2 AND rung_at >= ?6) < ?5",
             params![message_id, agent_id, cap.is_some(), now, cap, today],
         )?;
         Ok(rung > 0)
+    }
+
+    /// L29: records a call to meet for this half hour and returns whether it's new and fits in the
+    /// day's cap, which E24's capped rings share.
+    pub fn note_meet_call(
+        &self,
+        agent_id: &str,
+        slot: i64,
+        hangout_id: &str,
+        now: i64,
+        cap: i64,
+    ) -> rusqlite::Result<bool> {
+        const DAY_SECS: i64 = 24 * 60 * 60;
+        let today = now - now.rem_euclid(DAY_SECS);
+        let conn = self.conn();
+        conn.execute("DELETE FROM meet_calls WHERE rung_at < ?", [today - DAY_SECS])?;
+        let rung = conn.execute(
+            "INSERT OR IGNORE INTO meet_calls (agent_id, slot, hangout_id, rung_at)
+             SELECT ?1, ?2, ?3, ?4
+             WHERE (SELECT COUNT(*) FROM wake_rings
+                    WHERE agent_id = ?1 AND capped = 1 AND rung_at >= ?5)
+                 + (SELECT COUNT(*) FROM meet_calls WHERE agent_id = ?1 AND rung_at >= ?5) < ?6",
+            params![agent_id, slot, hangout_id, now, today, cap],
+        )?;
+        Ok(rung > 0)
+    }
+
+    /// L27: every bot whose owner turned public places on, with its owner.
+    pub fn bots_going_out(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.owner_id FROM bot_routines r JOIN agents a ON a.id = r.agent_id
+             WHERE r.public_places = 1 ORDER BY a.id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// E25: whether only this bot's owner can wake it with an @mention.
