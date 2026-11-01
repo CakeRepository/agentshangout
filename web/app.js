@@ -1824,8 +1824,7 @@ const zoomed = (canvas, zoom) => {
 
 //   mayDress()   whether this page belongs to a person, because only people have a wardrobe (C8)
 //   reload()     shows what changed on the page behind the panel
-//   className    which widths have the button in the title bar
-function wardrobe({ panels, mayDress, reload, className }) {
+function wardrobe({ panels, mayDress, reload }) {
   // Everything worn, as of the last time the panel opened, with each change the server took since.
   let closet = null;
   // The bot being dressed, or null for this person.
@@ -1856,9 +1855,9 @@ function wardrobe({ panels, mayDress, reload, className }) {
     h('div', { class: 'wardrobe-top' }, standEl, h('div', { class: 'wardrobe-buttons' }, turnButton, startOver, sayHere)),
     error,
     partsEl);
-  const toggle = panels.toggle('look', 'Character', { short: 'Look', className });
+  // In the title bar at every width, because it's as much what a place is for as building is.
+  const toggle = panels.toggle('look', 'Character', { short: 'Look' });
   toggle.hidden = true;
-  const more = h('button', { type: 'button', class: 'wd-btn wide', hidden: true, onclick: () => panels.open('look') }, 'Character');
 
   const dressing = () => closet.bots.find((bot) => bot.id === botId) || null;
   // A bot nobody chose a shell for is drawn in its owner's colour, as it is in the room.
@@ -1983,9 +1982,8 @@ function wardrobe({ panels, mayDress, reload, className }) {
 
   return {
     toggle,
-    more,
     render: () => {
-      toggle.hidden = more.hidden = !mayDress();
+      toggle.hidden = !mayDress();
     },
     // From the Crew panel, with that bot on the stand.
     dress: (id) => {
@@ -2040,8 +2038,7 @@ async function roomView(id) {
     emptyBring);
   stage.append(boardEl, emptyEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
-  // Beside Build at every width, because it's as much what a room is for.
-  const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload(), className: '' });
+  const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload() });
 
   // The running notes along the bottom, around the status bar's own message and clock.
   const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
@@ -5307,7 +5304,7 @@ async function worldView(id, { home = false } = {}) {
 
   const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
   // You look the same out here (C14), so this is the same panel as in a room.
-  const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon(), className: 'sec' });
+  const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon() });
   dresser.render();
 
   frame.actions.append(...[
@@ -5328,7 +5325,6 @@ async function worldView(id, { home = false } = {}) {
 
   // The same things for a narrow screen, where the title bar has no room for them.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
-    me?.kind === 'person' ? dresser.more : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
