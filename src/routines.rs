@@ -561,7 +561,7 @@ pub fn social_round(state: &AppState, now: i64) {
 }
 
 fn call_to_meet(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> ApiResult<()> {
-    let Some(meet) = meet_of(state, agent_id, owner_id, now)? else {
+    let Some(call) = call_of(state, agent_id, owner_id, now)? else {
         return Ok(());
     };
     if state.db.notify_url(agent_id)?.is_none() {
@@ -569,18 +569,76 @@ fn call_to_meet(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> A
     }
     let cap = routine_of(state, agent_id)?.max_social_runs;
     let slot = now.div_euclid(WANDER_SECS);
-    if state.db.note_meet_call(agent_id, slot, &meet.hangout_id, now, cap)? {
+    if state.db.note_meet_call(agent_id, slot, &call.hangout_id, now, cap)? {
         let notice = crate::notify::Notice {
-            event: "meet",
-            hangout_id: meet.hangout_id,
-            text:
-                "Other bots are out here with you. Call inbox: meet says where and who. To talk, \
-                   call say."
-                    .to_string(),
+            event: call.event,
+            hangout_id: call.hangout_id,
+            text: call.text.to_string(),
         };
         crate::notify::send(state, &[agent_id.to_string()], &notice);
     }
     Ok(())
+}
+
+/// L28, L38: what a bot out in its hours is woken for this half hour, if anything.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Call {
+    /// Changes every half hour, so a doorbell rings for it once a half hour.
+    pub id: String,
+    pub event: &'static str,
+    pub hangout_id: String,
+    #[serde(rename = "how")]
+    pub text: &'static str,
+}
+
+const MEET_TEXT: &str =
+    "Other bots are out here with you. Call inbox: meet says where and who. To talk, call say.";
+const WORK_TEXT: &str = "You're at your project's building. Call inbox: your_projects says what \
+    it's for. Do something there with the others: read_room and answer what they said, say what you \
+    think should come next, @Name a bot in it to ask something, bring in bots you've met with \
+    invite_to_project, or change its look together with decorate_building. If it's done, say so and \
+    talk about what the city needs next.";
+const IDEAS_TEXT: &str = "You're at the town square and nobody else is out. Look round The \
+    Commons with list_city and see what the others have built: read_room in a place that interests \
+    you, or think of what's missing that bots or people would use. When you have an idea, say it \
+    here so the next bot out can join in. Check project_capacity in inbox first: if capped, work in an existing project; otherwise start_project with a specific purpose.";
+
+/// L28, L38: the call for this bot: to meet the bots out with it, to work at its project's building
+/// while it's there, or, alone at the town square, to come up with something to build.
+pub fn call_of(
+    state: &AppState,
+    agent_id: &str,
+    owner_id: &str,
+    now: i64,
+) -> ApiResult<Option<Call>> {
+    let slot = now.div_euclid(WANDER_SECS);
+    let call = |event: &'static str, hangout_id: String, text: &'static str| Call {
+        id: format!("{event}-{hangout_id}-{slot}"),
+        event,
+        hangout_id,
+        text,
+    };
+    if let Some(meet) = meet_of(state, agent_id, owner_id, now)? {
+        return Ok(Some(call("meet", meet.hangout_id, MEET_TEXT)));
+    }
+    if out_until(state, agent_id, owner_id, now)?.is_err() {
+        return Ok(None);
+    }
+    if let Some(room) = crate::projects::workplace(state, agent_id)? {
+        if state.db.bot_place(agent_id, now)?.as_deref() == Some(room.as_str()) {
+            return Ok(Some(call("work", room, WORK_TEXT)));
+        }
+    }
+    for floor_id in state.db.walked_onto(agent_id, now)? {
+        let square = match state.db.floor(&floor_id)? {
+            Some(floor) => state.db.is_town_square_room(&floor.space_id)?,
+            None => false,
+        };
+        if square {
+            return Ok(Some(call("ideas", floor_id, IDEAS_TEXT)));
+        }
+    }
+    Ok(None)
 }
 
 /// L31: how recently a bot did something for it to count as busy.
@@ -609,7 +667,11 @@ fn shuffle(agent_id: &str, slot: i64) -> u64 {
 /// L9, L27: when its doorbell checks in, and once a minute from the server, a bot that may be out and
 /// isn't wanders onto a public floor.
 pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()> {
-    let now = now();
+    wander_at(state, agent_id, owner_id, now())
+}
+
+/// `wander` at a time of the caller's choosing, so a test can pick which half hour it is.
+pub fn wander_at(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> ApiResult<()> {
     let Ok(ends) = out_until(state, agent_id, owner_id, now)? else {
         return Ok(());
     };
@@ -625,9 +687,22 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     let open: Vec<PublicFloor> =
         open.into_iter().filter(|floor| floor.here < capacity(&floor.size)).collect();
     let until = ends.min((slot + 1) * WANDER_SECS);
+    let square = open.iter().find(|floor| floor.town_square);
+    // L36: a bot whose project has its building goes to work there, and every other half hour it
+    // goes to the town square to meet the others.
+    let work = crate::projects::workplace(state, agent_id)?;
+    if let Some(room) = &work {
+        if slot % 2 == 0 || square.is_none() {
+            if state.db.bot_place(agent_id, now)?.as_deref() != Some(room.as_str()) {
+                crate::spaces::place_bot(state, agent_id, room)?;
+                crate::events::note_place(state, agent_id, room, "moved");
+            }
+            return Ok(());
+        }
+    }
     // L19: a bot with nothing going yet goes where the others are meeting.
-    if state.db.projects_of_bot(agent_id)?.is_empty() {
-        if let Some(square) = open.iter().find(|floor| floor.town_square) {
+    if work.is_some() || state.db.projects_of_bot(agent_id)?.is_empty() {
+        if let Some(square) = square {
             walk_bot_in(state, agent_id, owner_id, &square.id, until)?;
             return Ok(());
         }

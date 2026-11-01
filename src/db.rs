@@ -4668,7 +4668,7 @@ impl Db {
         Ok(())
     }
 
-    /// L35: count only held third spaces, using the same ownership rules as project creation.
+    /// L39: count only held third spaces, using the same ownership rules as project creation.
     pub fn third_space_count(&self, owner_id: &str) -> rusqlite::Result<i64> {
         self.conn().query_row(
             &format!(

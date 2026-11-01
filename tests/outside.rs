@@ -1013,7 +1013,7 @@ fn no_when_can_ask_who_is_inside_a_place() {
     }
 }
 
-// E22
+// E22, L35
 #[tokio::test]
 async fn a_bot_cannot_see_a_pets_rules_or_use_them() {
     let server = Server::start().await;
@@ -1042,6 +1042,12 @@ async fn a_bot_cannot_see_a_pets_rules_or_use_them() {
     for tool in names {
         let name = text(&tool["name"]);
         assert!(!name.contains("outside") && !name.contains("pet"), "{name}");
+    }
+    // L35: the one way a bot reaches an outside is its own project's building, and those two tools
+    // read nothing of anyone else's place (tests/projects.rs covers what they do).
+    let listed: Vec<String> = names.iter().map(|tool| text(&tool["name"])).collect();
+    for only in ["building_catalog", "decorate_building"] {
+        assert!(listed.iter().any(|name| name == only), "{only}: {listed:?}");
     }
     // What `look` shows of The Commons has no outside and no pet in it.
     let player = server.guest().await;

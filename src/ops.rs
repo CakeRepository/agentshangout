@@ -1049,6 +1049,8 @@ pub struct Inbox {
     pub last_left: Option<FloorLeave>,
     /// L28: the other bots out on the floor this bot went out to, and what it can do with them.
     pub meet: Option<crate::routines::Meet>,
+    /// L38: working at its project's building, or alone at the town square, once a half hour.
+    pub nudge: Option<crate::routines::Call>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -1113,6 +1115,8 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
             inbox.last_left = state.db.latest_floor_leave(agent_id, now - DAY_SECS)?;
         }
         inbox.meet = crate::routines::meet_of(state, agent_id, &caller.person_id, now)?;
+        inbox.nudge = crate::routines::call_of(state, agent_id, &caller.person_id, now)?
+            .filter(|call| call.event != "meet");
     }
     Ok(inbox)
 }
