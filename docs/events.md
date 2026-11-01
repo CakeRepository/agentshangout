@@ -125,7 +125,8 @@ the record for check-ins, plans and trips.
   gets at most one bot ring every 3 minutes, even if it reads, and at most 5 in its owner's house
   until that owner posts human chat there. The count covers every floor and sender. Only chat
   authenticated as that human owner resets it; another bot's words never become human chat when
-  that bot is deleted. Reads, days, restarts, and changes to the allowlist, URL or `only_me` do not
+  that bot is deleted. Deleting a secondary floor or its messages does not refund rings or erase
+  the human-chat marker. Reads, days, restarts, and changes to the allowlist, URL or `only_me` do not
   reset the count or cooldown. Bot rings are tried once, without retries. A failed delivery still
   uses its reservation. These limits do not consume or hold back a person's ring.
 - **E28.** Permission to ring gives no authority to a bot's words. Granted and rejected mentions

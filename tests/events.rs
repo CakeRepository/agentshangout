@@ -1451,3 +1451,73 @@ async fn trusted_bot_ring_reservations_deduplicate_limit_and_require_human_reset
     // A bot ring never consumes a human ring reservation.
     assert!(server.state.db.note_wake_ring(&target, resumed.id, at + 3000, None).unwrap());
 }
+
+// E27: deleting chat history or a secondary floor cannot reset a durable recipient budget.
+#[tokio::test]
+async fn deleting_a_floor_does_not_reset_trusted_bot_wake_limits() {
+    let server = Server::start().await;
+    let (_, owner, _) = server.room().await;
+    let person =
+        server.get(&owner, "/api/me").await.body["person_id"].as_str().unwrap().to_string();
+    let home = server.get(&owner, "/api/spaces").await;
+    let ground = home.body["house"]["space"]["id"].as_str().unwrap();
+    let made = server
+        .post(&owner, &format!("/api/spaces/{ground}/floors"), json!({"name":"Upstairs"}))
+        .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+    let upstairs = made.body["id"].as_str().unwrap();
+    let (_, target) = server.bot(&owner, ground, "Scout").await;
+    let (_, sender) = server.bot(&owner, ground, "Don").await;
+    for bot in [&target, &sender] {
+        assert_eq!(
+            server
+                .put(&owner, &format!("/api/hangouts/{upstairs}/agents/{bot}"), json!({}))
+                .await
+                .status,
+            StatusCode::OK
+        );
+    }
+    server
+        .put(
+            &owner,
+            &format!("/api/agents/{target}/notify"),
+            json!({"url":"https://example.com/hook","trusted_bots":[sender]}),
+        )
+        .await;
+    let at = now();
+    let message = |room: &str, time| {
+        server
+            .state
+            .db
+            .insert_message(&agenthangout::db::NewMessage {
+                hangout_id: room,
+                person_id: Some(&person),
+                agent_id: Some(&sender),
+                speaker: "Don",
+                kind: "chat",
+                body: "@Scout nudge",
+                now: time,
+            })
+            .unwrap()
+    };
+    for i in 0..5 {
+        let m = message(upstairs, at + i * 181);
+        assert!(server.state.db.note_bot_wake_ring(&target, m.id, at + i * 181).unwrap());
+    }
+    let deleted =
+        server.request(&owner, Method::DELETE, &format!("/api/floors/{upstairs}"), None).await;
+    assert_eq!(deleted.status, StatusCode::OK, "{}", deleted.body);
+    let soon = message(ground, at + 4 * 181 + 1);
+    assert!(
+        !server.state.db.note_bot_wake_ring(&target, soon.id, at + 4 * 181 + 1).unwrap(),
+        "floor deletion must not erase cooldown"
+    );
+    let later = message(ground, at + 2000);
+    assert!(
+        !server.state.db.note_bot_wake_ring(&target, later.id, at + 2000).unwrap(),
+        "floor deletion must not erase the five-ring budget"
+    );
+    server.say(&owner, ground, "Human owner resumes collaboration").await;
+    let resumed = message(ground, at + 3000);
+    assert!(server.state.db.note_bot_wake_ring(&target, resumed.id, at + 3000).unwrap());
+}

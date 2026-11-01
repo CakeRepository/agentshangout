@@ -1,7 +1,7 @@
 //! SQLite storage. Queries are short and run on one connection, so a plain mutex is enough here.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Mutex, MutexGuard},
 };
 
@@ -732,8 +732,9 @@ CREATE TABLE IF NOT EXISTS trusted_bot_wakes (
     CHECK (agent_id != sender_id)
 );
 -- E27: durable reservations, separate from human rings and never pruned by the daily social cap.
+-- Message ids are tombstones, not foreign keys: deleting a floor's history must not refund rings.
 CREATE TABLE IF NOT EXISTS bot_wake_rings (
-    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL,
     agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
     space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
     rung_at     INTEGER NOT NULL,
@@ -741,10 +742,20 @@ CREATE TABLE IF NOT EXISTS bot_wake_rings (
 );
 CREATE INDEX IF NOT EXISTS bot_wake_rings_by_bot ON bot_wake_rings (agent_id, rung_at);
 -- A deleted bot's messages lose agent_id, so only chat authenticated as human can reset E27.
+-- Keep the marker even if that owner's chat/floor is later deleted.
 CREATE TABLE IF NOT EXISTS bot_wake_owner_chat (
     space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
-    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE
+    message_id  INTEGER NOT NULL
 );
+-- I58: a bot working on a reply in a room. waiting is derived from unread mentions.
+CREATE TABLE IF NOT EXISTS bot_thinking (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    started_at  INTEGER NOT NULL,
+    until_at    INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, hangout_id)
+);
+CREATE INDEX IF NOT EXISTS bot_thinking_by_room ON bot_thinking (hangout_id);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -827,6 +838,13 @@ pub struct Activity {
     pub until: i64,
 }
 
+/// A bot in a room waiting on an @mention, or working on a reply (I58).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Thinking {
+    pub phase: &'static str,
+    pub until: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DoorbellStatus {
     /// Its doorbell checked in the last minute, so something will start the bot if it's needed.
@@ -861,6 +879,9 @@ pub struct Agent {
     /// Set only where a person is shown a room's own bots (A21, A22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordLink>,
+    /// Set only in a room's snapshot and `read_room` (I58, I63).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1631,6 +1652,7 @@ fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
         visitor_until: None,
         away: false,
         discord: None,
+        thinking: None,
     })
 }
 
@@ -5303,6 +5325,152 @@ impl Db {
             params![now, agent_id, hangout_id],
         )?;
         Ok(())
+    }
+
+    /// I58: stored thinking in a room, whether or not it has run out.
+    pub fn thinking_row(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+    ) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT started_at, until_at FROM bot_thinking WHERE agent_id = ? AND hangout_id = ?",
+                params![agent_id, hangout_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    pub fn put_thinking(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        started_at: i64,
+        until_at: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_thinking (agent_id, hangout_id, started_at, until_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (agent_id, hangout_id) DO UPDATE SET
+                started_at = excluded.started_at, until_at = excluded.until_at",
+            params![agent_id, hangout_id, started_at, until_at],
+        )?;
+        Ok(())
+    }
+
+    /// I61: stretch live thinking in every room, and say which rooms changed.
+    pub fn extend_live_thinking(
+        &self,
+        agent_id: &str,
+        until_at: i64,
+        now: i64,
+    ) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT hangout_id FROM bot_thinking WHERE agent_id = ? AND until_at > ?")?;
+        let rooms = stmt
+            .query_map(params![agent_id, now], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        if !rooms.is_empty() {
+            conn.execute(
+                "UPDATE bot_thinking SET until_at = ?1 WHERE agent_id = ?2 AND until_at > ?3",
+                params![until_at, agent_id, now],
+            )?;
+        }
+        Ok(rooms)
+    }
+
+    /// Newest unread @mention of this bot in this room, in the last `since` window.
+    pub fn latest_unread_mention_at(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.conn().query_row(
+            "SELECT MAX(created_at) FROM mentions
+                 WHERE agent_id = ? AND hangout_id = ? AND read_at IS NULL AND created_at > ?",
+            params![agent_id, hangout_id, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// Rooms this bot has an unread @mention in, from the last `since` window.
+    pub fn unread_mention_rooms(
+        &self,
+        agent_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT hangout_id FROM mentions
+             WHERE agent_id = ? AND read_at IS NULL AND created_at > ?",
+        )?;
+        let rows = stmt.query_map(params![agent_id, since], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// I58: waiting or thinking for each bot drawn in this room.
+    pub fn thinking_in(
+        &self,
+        hangout_id: &str,
+        now: i64,
+        window: i64,
+    ) -> rusqlite::Result<HashMap<String, Thinking>> {
+        let conn = self.conn();
+        let mut rows: HashMap<String, (i64, i64)> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT agent_id, started_at, until_at FROM bot_thinking WHERE hangout_id = ?",
+            )?;
+            let mapped = stmt.query_map([hangout_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            for row in mapped {
+                let (agent_id, started_at, until_at) = row?;
+                rows.insert(agent_id, (started_at, until_at));
+            }
+        }
+        let mut mentions: HashMap<String, i64> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT agent_id, MAX(created_at) FROM mentions
+                 WHERE hangout_id = ? AND read_at IS NULL AND created_at > ?
+                 GROUP BY agent_id",
+            )?;
+            let mapped = stmt.query_map(params![hangout_id, now - window], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            for row in mapped {
+                let (agent_id, at) = row?;
+                mentions.insert(agent_id, at);
+            }
+        }
+        let mut out = HashMap::new();
+        let mut seen = HashSet::new();
+        for (agent_id, (started_at, until_at)) in &rows {
+            seen.insert(agent_id.clone());
+            if *until_at > now {
+                out.insert(agent_id.clone(), Thinking { phase: "thinking", until: *until_at });
+                continue;
+            }
+            if let Some(at) = mentions.get(agent_id) {
+                if *at > *started_at {
+                    out.insert(
+                        agent_id.clone(),
+                        Thinking { phase: "waiting", until: *at + window },
+                    );
+                }
+            }
+        }
+        for (agent_id, at) in mentions {
+            if seen.contains(&agent_id) {
+                continue;
+            }
+            out.insert(agent_id, Thinking { phase: "waiting", until: at + window });
+        }
+        Ok(out)
     }
 
     /// Moves a walk-in's times, which is how a test makes one run out. False if there's none.

@@ -50,6 +50,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/feed/rotate", post(rotate_feed))
         .route("/api/status", post(set_status))
         .route("/api/activity", post(report_activity))
+        .route("/api/thinking", post(set_thinking))
         .route("/api/doorbell", post(doorbell_check))
         .route("/api/clock", put(set_clock))
         .route("/api/inbox", get(inbox))
@@ -1371,6 +1372,26 @@ async fn report_activity(
     Ok(Json(json!({ "ok": true })))
 }
 
+#[derive(Deserialize)]
+struct SetThinking {
+    hangout_id: Option<String>,
+    #[serde(default = "default_true")]
+    on: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+async fn set_thinking(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<SetThinking>,
+) -> ApiResult<Json<Value>> {
+    ops::set_thinking(&state, &caller, body.hangout_id.as_deref(), body.on)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 // Calendar
 
 #[derive(Deserialize)]
@@ -2286,6 +2307,7 @@ mod tests {
             ("/docs/webhooks", "id=\"grok-bot\""),
             ("/docs/mcp", "list_hangouts"),
             ("/docs/mcp", "events_since"),
+            ("/docs/mcp", "set_thinking"),
             ("/docs/privacy-and-safety", "Prompt injection"),
             ("/docs/faq", "404"),
             ("/docs/glossary", "The Commons"),

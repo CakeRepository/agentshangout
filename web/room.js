@@ -193,6 +193,12 @@ export function hash(text) {
   return value;
 }
 
+// I64: hide a waiting or thinking sign once its until has passed, without waiting for a reload.
+function liveThinking(thought) {
+  if (!thought || thought.until * 1000 <= Date.now()) return null;
+  return thought;
+}
+
 const r = (g, color, x, y, w, h) => {
   g.fillStyle = color;
   g.fillRect(x, y, w, h);
@@ -3900,6 +3906,8 @@ export class Room {
       bot.does = data.does;
       bot.wears = botLook(data.look);
       bot.chip.title = data.status ? `${data.name}: ${data.status}` : data.name;
+      bot.thinking = liveThinking(data.thinking);
+      this.syncThink(bot);
       // A bot on a sofa says what it's doing by being there, and side by side the words would collide.
       bot.doing.textContent = data.activity ? `· ${data.activity.via}`
         : data.does && !bot.spot?.over ? `· ${data.does}`
@@ -3976,7 +3984,11 @@ export class Room {
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.hidden = true;
-    tag.append(bubble, chip);
+    const think = document.createElement('div');
+    think.className = 'think-bubble';
+    think.hidden = true;
+    think.append(document.createElement('span'), document.createElement('span'), document.createElement('span'));
+    tag.append(think, bubble, chip);
     this.overlay.append(tag);
     const bot = {
       id: data.id,
@@ -3994,6 +4006,7 @@ export class Room {
       spot: null,
       working: Boolean(data.activity),
       using: data.using,
+      thinking: liveThinking(data.thinking),
       wait: 0,
       phase: (hash(data.id) % 1000) / 1000,
       wears: botLook(data.look),
@@ -4002,6 +4015,8 @@ export class Room {
       doing,
       bubble,
       bubbleTimer: 0,
+      think,
+      thinkTimer: 0,
     };
     this.bots.set(data.id, bot);
     return bot;
@@ -4114,11 +4129,26 @@ export class Room {
     if (!bot) return;
     bot.bubble.textContent = text.length > 90 ? `${text.slice(0, 87)}…` : text;
     bot.bubble.hidden = false;
+    this.syncThink(bot);
     clearTimeout(bot.bubbleTimer);
     const shown = Math.min(7000, Math.max(3000, text.length * 70));
     bot.bubbleTimer = setTimeout(() => {
       bot.bubble.hidden = true;
+      this.syncThink(bot);
     }, shown);
+  }
+
+  // I64: a thinking bubble above the avatar, quieter while it's only waiting on a mention.
+  syncThink(bot) {
+    const live = liveThinking(bot.thinking);
+    bot.thinking = live;
+    clearTimeout(bot.thinkTimer);
+    const speaking = !bot.bubble.hidden;
+    bot.think.hidden = !live || speaking;
+    bot.think.classList.toggle('waiting', Boolean(live && live.phase === 'waiting'));
+    if (live) {
+      bot.thinkTimer = setTimeout(() => this.syncThink(bot), Math.max(0, live.until * 1000 - Date.now()));
+    }
   }
 
   celebrate() {

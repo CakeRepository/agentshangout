@@ -606,6 +606,7 @@ async fn a_guest_token_is_an_unknown_token_on_every_route_but_a_worlds() {
         (Method::GET, "/api/houses/abc"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/status"),
+        (Method::POST, "/api/thinking"),
         (Method::PUT, "/api/notify"),
         (Method::GET, "/api/passkeys"),
         (Method::POST, "/api/key/rotate"),
@@ -2814,11 +2815,12 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
     // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13),
-    // use_item (I32), go_to_room (S57), set_whiteboard (I49) and events_since (E16).
+    // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60).
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
-            && private_names.len() == 40,
+            && private_names.contains(&"set_thinking")
+            && private_names.len() == 41,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.

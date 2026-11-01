@@ -30,6 +30,8 @@ const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
 /// Reports expire instead of being cleared, so an agent that crashes doesn't stay at the desk.
 const ACTIVITY_SECS: i64 = 60;
+/// I58: waiting on a mention, and thinking after the bot catches up, last this long.
+pub const THINKING_SECS: i64 = 2 * 60;
 const DEFAULT_DURATION_MINUTES: i64 = 120;
 const MAX_DURATION_MINUTES: i64 = 7 * 24 * 60;
 const DEFAULT_MIN_YES: i64 = 2;
@@ -283,6 +285,13 @@ pub fn post_message(
         state.db.note_bot_wake_owner_chat(message.id)?;
     }
     note_mentions(state, &message)?;
+    // I62: a chat line in this room clears thinking here. A note doesn't.
+    if kind == "chat" {
+        if let Some(agent_id) = caller.agent_id.as_deref() {
+            let at = message.created_at;
+            state.db.put_thinking(agent_id, hangout_id, at, at)?;
+        }
+    }
     publish_message(state, &message);
     crate::events::note_message(state, &message);
     Ok(message)
@@ -423,10 +432,116 @@ pub fn report_activity(state: &AppState, caller: &Caller, kind: &str, via: &str)
     state.db.record_activity(agent_id, kind, &via, now + ACTIVITY_SECS)?;
     state.db.touch_agent_active(agent_id, now)?;
     let unchanged = current.is_some_and(|current| current.kind == kind && current.via == via);
+    // I61: stretch thinking that's already on; this never starts it.
+    let thinking_rooms = state.db.extend_live_thinking(agent_id, now + THINKING_SECS, now)?;
     if !unchanged {
         for hangout in state.db.hangouts_for_agent(agent_id, now)? {
             refresh(state, &hangout.id);
         }
+    } else {
+        for hangout_id in thinking_rooms {
+            refresh(state, &hangout_id);
+        }
+    }
+    Ok(())
+}
+
+/// I60: mark this bot thinking in a room, or clear it. `hangout_id` if it's in more than one.
+pub fn set_thinking(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: Option<&str>,
+    on: bool,
+) -> ApiResult<()> {
+    no_house_bot(caller)?;
+    let Some(agent_id) = &caller.agent_id else {
+        return Err(ApiError::forbidden("only bots can mark themselves thinking"));
+    };
+    let hangout = match hangout_id.filter(|id| !id.is_empty()) {
+        Some(id) => require_room(state, caller, id)?,
+        None => {
+            let mut hangouts = state.db.hangouts_for_agent(agent_id, now())?;
+            match hangouts.len() {
+                1 => hangouts.remove(0),
+                0 => return Err(ApiError::bad_request("you aren't in any hangouts yet")),
+                _ => {
+                    return Err(ApiError::bad_request(
+                        "you're in several hangouts, so hangout_id is required (see list_hangouts)",
+                    ));
+                }
+            }
+        }
+    };
+    let now = now();
+    if on {
+        state.db.put_thinking(agent_id, &hangout.id, now, now + THINKING_SECS)?;
+    } else {
+        // Clearing also stops waiting on mentions the bot has already seen.
+        state.db.put_thinking(agent_id, &hangout.id, now, now)?;
+    }
+    refresh(state, &hangout.id);
+    Ok(())
+}
+
+/// I59: the bot is catching up, so unread mentions in these rooms become thinking.
+/// `hangout_id` limits it to one room (`read_room`, `events_since` with a room).
+pub fn note_thinking_pickup(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: Option<&str>,
+) -> ApiResult<()> {
+    let Some(agent_id) = &caller.agent_id else {
+        return Ok(());
+    };
+    if caller.is_house {
+        return Ok(());
+    }
+    let now = now();
+    let since = now - THINKING_SECS;
+    let rooms = match hangout_id.filter(|id| !id.is_empty()) {
+        Some(id) => vec![id.to_string()],
+        None => state.db.unread_mention_rooms(agent_id, since)?,
+    };
+    for room in rooms {
+        if start_thinking_from_mention(state, agent_id, &room, now, since)? {
+            refresh(state, &room);
+        }
+    }
+    Ok(())
+}
+
+fn start_thinking_from_mention(
+    state: &AppState,
+    agent_id: &str,
+    hangout_id: &str,
+    now: i64,
+    since: i64,
+) -> ApiResult<bool> {
+    let Some(at) = state.db.latest_unread_mention_at(agent_id, hangout_id, since)? else {
+        return Ok(false);
+    };
+    if let Some((started_at, until_at)) = state.db.thinking_row(agent_id, hangout_id)? {
+        if until_at > now {
+            return Ok(false);
+        }
+        // A mention the bot already thought about does not start it again (I59).
+        if at <= started_at {
+            return Ok(false);
+        }
+    }
+    state.db.put_thinking(agent_id, hangout_id, now, now + THINKING_SECS)?;
+    Ok(true)
+}
+
+fn attach_thinking(
+    state: &AppState,
+    hangout_id: &str,
+    agents: &mut [Agent],
+    now: i64,
+) -> ApiResult<()> {
+    let thoughts = state.db.thinking_in(hangout_id, now, THINKING_SECS)?;
+    for agent in agents {
+        agent.thinking = thoughts.get(&agent.id).cloned();
     }
     Ok(())
 }
@@ -1238,6 +1353,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     for agent in &mut agents {
         agent.away = state.db.bot_place(&agent.id, now)?.as_deref() != Some(hangout_id);
     }
+    attach_thinking(state, hangout_id, &mut agents, now)?;
     let mut people = state.db.people_in(hangout_id)?;
     for owner in state.db.visitor_owners(hangout_id, now)? {
         if !people.iter().any(|person| person.id == owner.id) {
