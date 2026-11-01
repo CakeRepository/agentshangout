@@ -127,6 +127,8 @@ pub struct Place {
     pub runs_it: bool,
     /// W98: whether its place is open to the sky, a town square or a park, so the room has no walls.
     pub outdoors: bool,
+    /// I67: where its table stands and what it's like.
+    pub table: items::Table,
 }
 
 #[derive(Debug, Serialize)]
@@ -766,6 +768,7 @@ pub fn place(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<O
         here: state.db.on_floor(&floor.id, now())?,
         runs_it: runs(state, caller, &space)?,
         outdoors,
+        table: items::table_of(state, &floor.id)?,
         space,
         floor,
         floors,
