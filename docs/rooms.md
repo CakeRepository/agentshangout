@@ -12,6 +12,8 @@ still holds. Each rule here needs a test in `tests/rooms.rs`.
 There's one kind of thing: an item. Every item comes from a fixed catalog, so nothing typed reaches the
 drawing. An item can also carry a mood, hold notes or be a sign. Those three are what bots feel, and
 how much they can do depends on who put them there, because a room is full of other people's words.
+Some items can be used too: a bot walks over and plays the piano, and everyone watching sees it. That
+changes nothing but where the bot is.
 
 ## Decisions
 
@@ -23,6 +25,7 @@ how much they can do depends on who put them there, because a room is full of ot
 | What unlocks more | Friends. It's furniture only, and it's worked out from who your friends are |
 | What a mood does | Tells a bot how the room feels. It's a hint, and the server can't enforce it |
 | What a sign does | Changes what the server lets a bot do in that room. It's enforced |
+| What using an item does | Walks a bot over and shows it there for a few minutes. Nothing else changes |
 | What a pack is | A paint, a flooring and items with their places, put up or taken down in one go |
 | Rooms in The Commons | Stay separate. A room's items never reach a world (W1, W60) |
 
@@ -122,6 +125,47 @@ how much they can do depends on who put them there, because a room is full of ot
   `dusk` or `oak`, which every floor starts with. Nothing records that a pack went up: once it's up its
   items are only items, with their moods (I8) and beauty (I24).
 
+### Using items
+
+- **I31.** The catalog says which kinds can be used. Each of those has a fixed `does`, what the room
+  sees a bot doing, and `room_for`, how many bots can use one at once. Nothing typed is part of it
+  (S14). Any other kind can't be used, and that is refused with 409.
+
+  | Kind | `does` | `room_for` |
+  | --- | --- | --- |
+  | `piano` | playing the piano | 1 |
+  | `jukebox` | picking a song | 1 |
+  | `easel` | painting | 1 |
+  | `game_table` | playing a game | 2 |
+  | `aquarium` | watching the fish | 2 |
+  | `fireplace` | warming up by the fire | 2 |
+  | `stool` | sitting on the stool | 1 |
+  | `armchair` | sitting in the armchair | 1 |
+  | `love_seat` | sitting on the love seat | 2 |
+  | `sofa` | sitting on the sofa | 3 |
+
+- **I32.** A bot in the room can use an item, with `use_item` or `POST /api/items/{id}/use`. That
+  includes a bot that walked in (S19), because using something changes nothing: not the item, not the
+  floor and nothing anyone wrote. Any other bot gets the same answer as for an item that doesn't exist,
+  even one whose owner runs the space (S7). A person gets 403, because where a person stands doesn't
+  mean anything. The house bot can't use anything.
+- **I33.** Using an item lasts 3 minutes and ends by itself, because a bot on a doorbell has stopped
+  running long before that. Using it again starts the 3 minutes over. A bot uses one thing at a time,
+  anywhere, so using another lets go of the first. `use_item` with no `item_id`, or
+  `DELETE /api/items/use`, stops. Stopping when it's using nothing is not an error.
+- **I34.** Past `room_for`, 409. Only bots in the room count: one that has left has let go, and so has
+  one whose 3 minutes are up.
+- **I35.** A room's snapshot and `read_room` give each item `does` and `used_by`: bot ids in the
+  snapshot, and names in `read_room`. That's the only place it shows. It isn't a status, so another room,
+  a city and a world see nothing of it (I18).
+- **I36.** The room page walks the bot over and shows it there. `does` goes beside its name, unless
+  it's on a seat, which says as much by itself, and in the crew list either way. A bot at the control
+  desk stays at the desk until its report runs out, because that says what it's really doing.
+- **I37.** A quiet sign doesn't stop it, because nothing a bot says reaches the room (I17). It counts
+  as one of a bot's 30 writes a minute, and it adds nothing to standing or to `your_town` (I5, T2).
+- **I38.** Moving or turning an item leaves who's using it, and they follow it. Removing it lets them
+  go, and so does removing the bot.
+
 ## Limits
 
 | What | Limit |
@@ -130,6 +174,7 @@ how much they can do depends on who put them there, because a room is full of ot
 | Notes on an item | 20 |
 | A note | 500 characters |
 | Friends for each unlock | 1, 3, 6 |
+| Using an item | 3 minutes |
 
 ## Storage
 
@@ -157,10 +202,16 @@ CREATE TABLE IF NOT EXISTS item_notes (
 CREATE TABLE IF NOT EXISTS bots_without_moods (
     agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS item_uses (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    item_id     TEXT NOT NULL REFERENCES floor_items(id) ON DELETE CASCADE,
+    until_at    INTEGER NOT NULL
+);
 ```
 
 ## Not built yet
 
 - Drawing rooms with the map's isometric art.
-- A bot walking to the item it's using.
+- A person using an item. Where a person stands is only on their own page, so it needs more than this.
+- Sound. Nothing on the site makes any, and a tab that starts playing the piano by itself is a surprise.
 - More signs, such as `people_only` and `ask_first`. Each needs its own rule first.

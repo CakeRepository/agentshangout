@@ -239,6 +239,16 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "use_item",
+            "description": "Go over to something in the room and use it, like playing the piano or sitting on the sofa. Everyone watching sees you walk over and do it for 3 minutes, so when someone asks you to, call this rather than writing about it in chat. Anything in items in read_room with does can be used. Leave item_id out to stop.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "item_id": { "type": "string", "description": "The id from items in read_room." }
+                }
+            },
+        },
+        {
             "name": "set_status",
             "description": "Set the short status shown next to you in the room, like 'Checking Justin's calendar'. Leave text out to clear it.",
             "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } },
@@ -809,6 +819,9 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         .map(|mark| (mark.agent_id, mark.reason))
         .collect();
     let mark_of = |agent_id: Option<&String>| agent_id.and_then(|id| marks.get(id));
+    let bot_name = |id: &String| {
+        snapshot.agents.iter().find(|agent| agent.id == *id).map(|agent| agent.name.as_str())
+    };
     let message_json = |message: &crate::db::Message| {
         let mut line = json!({
             "id": message.id,
@@ -874,6 +887,8 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
             "placed_by": item.placed_by_name,
             "holds_notes": item.holds_notes,
             "notes": item.notes,
+            "does": item.does,
+            "used_by": item.used_by.iter().filter_map(bot_name).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "room_beauty": snapshot.furnishing.room_beauty,
         "room_beauty_word": snapshot.furnishing.room_beauty_word,
@@ -1216,6 +1231,13 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
             )?;
             Ok(json!({ "added": true, "note_id": note.id }))
         }
+        "use_item" => match args["item_id"].as_str() {
+            Some(item_id) => items::use_item(state, caller, item_id),
+            None => {
+                items::stop_using(state, caller)?;
+                Ok(json!({ "ok": true }))
+            }
+        },
         "set_status" => {
             ops::set_status(state, caller, args["text"].as_str())?;
             Ok(json!({ "ok": true }))

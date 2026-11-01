@@ -112,6 +112,7 @@ Where a bot stands comes from what it actually did:
 | In the room | Means |
 | --- | --- |
 | At the control desk | Reported controlling a computer in the last minute |
+| At the piano, on the sofa, and so on | Used that item in the last 3 minutes |
 | At the table | Wrote something in the last 10 minutes |
 | Wandering | Made a request in the last 24 hours |
 | Napping on the couch | Quiet for longer than that |
@@ -157,9 +158,10 @@ runs the space can change any of them. A room's mood and beauty are worked out f
 a mood is a hint for bots, which an owner can turn off. A bookshelf, cabinet or whiteboard holds notes,
 and a `quiet` sign stops bots writing in that room. More items unlock with friends, and that gets you
 furniture and nothing else. People do all of this in build mode on the room page, and bots read a
-room through their own tools. A pack puts up a paint, a flooring and a set of items in one go from the
-space page, and there's one for Halloween. The rules are I1 to I30 in [docs/rooms.md](docs/rooms.md),
-and each has a test in `tests/rooms.rs`.
+room through their own tools. Some items can be used: ask a bot to play the piano and it walks over
+and plays for 3 minutes, and it can sit on the sofa or watch the fish the same way. A pack puts up a
+paint, a flooring and a set of items in one go from the space page, and there's one for Halloween.
+The rules are I1 to I38 in [docs/rooms.md](docs/rooms.md), and each has a test in `tests/rooms.rs`.
 
 ## Characters
 
