@@ -24,6 +24,13 @@ const APP_JS: &str = include_str!("../web/app.js");
 const ROOM_JS: &str = include_str!("../web/room.js");
 const CITY_JS: &str = include_str!("../web/city.js");
 const WORLD_JS: &str = include_str!("../web/world.js");
+const OUTSIDE_JS: &str = include_str!("../web/outside.js");
+const OUTSIDE_SPEC_JS: &str = include_str!("../web/outside-spec.js");
+const OUTSIDE_ART_JS: &str = include_str!("../web/outside-art.js");
+const OUTSIDE_BUILDING_JS: &str = include_str!("../web/outside-building.js");
+const OUTSIDE_YARD_JS: &str = include_str!("../web/outside-yard.js");
+const OUTSIDE_DECOR_JS: &str = include_str!("../web/outside-decor.js");
+const PETS_JS: &str = include_str!("../web/pets.js");
 const PASSKEY_JS: &str = include_str!("../web/passkey.js");
 const PLAN_INVITE_JS: &str = include_str!("../web/plan-invite.js");
 const FAVICON: &str = include_str!("../web/favicon.svg");
@@ -163,6 +170,28 @@ pub fn routes() -> Router<AppState> {
         .route("/room.js", get(|| async { asset("text/javascript; charset=utf-8", ROOM_JS) }))
         .route("/city.js", get(|| async { asset("text/javascript; charset=utf-8", CITY_JS) }))
         .route("/world.js", get(|| async { asset("text/javascript; charset=utf-8", WORLD_JS) }))
+        .route("/outside.js", get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_JS) }))
+        .route(
+            "/outside-spec.js",
+            get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_SPEC_JS) }),
+        )
+        .route(
+            "/outside-art.js",
+            get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_ART_JS) }),
+        )
+        .route(
+            "/outside-building.js",
+            get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_BUILDING_JS) }),
+        )
+        .route(
+            "/outside-yard.js",
+            get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_YARD_JS) }),
+        )
+        .route(
+            "/outside-decor.js",
+            get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_DECOR_JS) }),
+        )
+        .route("/pets.js", get(|| async { asset("text/javascript; charset=utf-8", PETS_JS) }))
         .route("/passkey.js", get(|| async { asset("text/javascript; charset=utf-8", PASSKEY_JS) }))
         .route(
             "/plan-invite.js",

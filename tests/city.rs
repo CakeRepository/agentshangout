@@ -4613,6 +4613,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         // The public worlds' tables came after those, and are dropped with them.
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "place_outsides",
             "bot_places",
             "item_uses",
             "town_square_rooms",

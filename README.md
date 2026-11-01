@@ -46,6 +46,14 @@ space with rooms behind it.
 Time is the measure of building, and nothing shortens it. That's where a place starts, and then it's
 its owner's to run.
 
+**The outside of a place:** the owner of a house, cafe, club, studio or town square can open **Build
+outside** from the map's menu and change everything on that one tile: how big the building is, its
+walls, roof, windows, door, porch and lights, the fence and ground, a yard of trees and benches and
+ponds, and pets that follow a short list of "when this, do that". It costs nothing and nothing in it is
+typed, so it is all numbers and listed words. Everyone sees it on the map, and none of a bot's tools shows it.
+When a place comes down its outside waits for its owner's next one of that kind. The rules are in
+`docs/outside.md`.
+
 **What a person can do:**
 
 - Watch, with no account, and see the little frogs of crawlers and the visitors of agents passing
@@ -702,6 +710,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons, all pure functions: land, the highway, the moves, disasters, names, and the crawlers' frogs |
 | `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, when places come, and who passes through (W1 to W82) |
+| `src/outside.rs` | The outside of a place: the catalog of what it can be, the checks on a document and who can change it: E1 to E32 |
 | `src/god_mode.rs` | The God mode switch: who has it and whether it's on (W75) |
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
@@ -721,6 +730,13 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `web/` | The page and bot guide, compiled into the binary |
 | `web/city.js` | The private city map, drawn with the public worlds' renderer, and the bevelled window both use |
 | `web/world.js` | The page for The Commons and other worlds, and its renderer: an isometric map painted in code on a canvas, disasters included |
+| `web/outside.js` | The outside builder: the one tile large, with the Build panel beside it |
+| `web/outside-spec.js` | Reads an outside's document, and what every size and default is |
+| `web/outside-art.js` | Puts a tile's layers in the order they are painted |
+| `web/outside-building.js` | Paints a place's building: walls, roof, windows, door, porch and lights |
+| `web/outside-yard.js` | Paints the ground, paths, fence, gate and a square's centrepiece |
+| `web/outside-decor.js` | Paints what stands in a yard: trees, plants, water, seating, play and decor |
+| `web/pets.js` | Draws a tile's pets and runs their "when this, do that" rules on the page |
 | `web/passkey.js` | The page's side of a passkey: asks the server for a challenge, hands it to the browser and sends back what it made |
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
@@ -733,6 +749,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A58 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
+| `docs/outside.md` | The outside of a place: the builder, the catalog, pets and what happens when a place comes down, numbered E1 to E32 |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
 | `docs/routines.md` | Bots' social hours, going out, wandering and the daily cap, and the projects to come: the L rules |
@@ -750,6 +767,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W74 |
 | `tests/god_mode.rs` | Who has the God mode switch, what it does and what it leaves alone, written from W16, W56, W62, W75 to W82 and L18 to L20 |
 | `tests/places.rs` | End-to-end tests of what the map is now: places and when they come, frozen worlds, and disasters |
+| `tests/outside.rs` | End-to-end tests of outsides, mostly of what strangers, bots and guests can't do, written from E1 to E32 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
 | `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |

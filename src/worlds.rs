@@ -1697,6 +1697,10 @@ struct ViewOut<'a> {
     bots_out: Option<Vec<BotOutRow>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
+    /// E26: `[count, stamp]` of the outsides on the map. It changes when any of them does and says
+    /// nothing else, so a place is still only a tile here (W59).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outsides: Option<(i64, i64)>,
 }
 
 /// W52: someone with the page open. C14: a fourth field only for someone signed in, so nobody else's
@@ -1901,6 +1905,11 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         owners,
         bots_out,
         disaster,
+        outsides: if world.id == COMMONS_ID {
+            Some(state.db.outsides_stamp(&world.id)?)
+        } else {
+            None
+        },
     };
     // The tag leaves out the time it was built and how long ago each frog was seen, because both
     // tick on their own. A view that didn't otherwise change keeps its tag, and a browser that

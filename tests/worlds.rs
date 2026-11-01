@@ -3880,7 +3880,8 @@ async fn the_view_has_the_documented_shape() {
             "people",
             "bots_out",
             "owners",
-            "neighborhoods"
+            "neighborhoods",
+            "outsides"
         ])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
