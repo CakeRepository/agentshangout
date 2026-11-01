@@ -942,6 +942,10 @@ pub struct RoutineRow {
     pub public_places: bool,
 }
 
+/// W71, W73: a place, its owner, its kind and the name of the room behind its door, if it has one:
+/// `(x, y, owner, kind, name)`.
+pub type PlaceOwnerRow = (i64, i64, String, String, Option<String>);
+
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PersonClock {
@@ -7066,14 +7070,10 @@ impl Db {
         rows.collect()
     }
 
-    /// Everything a player has built in a world. It reads their tiles only, by the index on world
-    /// and player, so it costs what they have built and not what the world holds.
-    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
-    /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
     /// W71: every place in a world with its owner's name, `(x, y, name)`.
     /// W73: with its kind, and the name of the space behind its door if its owner has been through
     /// and it still stands as that space's door (S33): `(x, y, owner, kind, name)`.
-    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String, String, Option<String>)>> {
+    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<PlaceOwnerRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT b.x, b.y, pe.name, b.kind,
@@ -7090,6 +7090,8 @@ impl Db {
         rows.collect()
     }
 
+    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
+    /// for anything public: only W71 says whose a place is, by name.
     pub fn building_at(
         &self,
         world_id: &str,
@@ -7107,6 +7109,8 @@ impl Db {
             .optional()
     }
 
+    /// Everything a player has built in a world. It reads their tiles only, by the index on world
+    /// and player, so it costs what they have built and not what the world holds.
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
