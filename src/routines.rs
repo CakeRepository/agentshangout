@@ -15,7 +15,7 @@ use crate::{
     auth::Caller,
     db::{NewVisit, PublicFloor, RoutineRow, WalkedIn, Wearer},
     error::{ApiError, ApiResult},
-    looks::{looks_of, Look},
+    looks::{worn, Look},
     now,
     ops::{self, DAY_SECS},
     spaces::{capacity, MAX_BOTS_WALKED_IN, WALK_IN_SECS},
@@ -73,7 +73,12 @@ fn offset_of(state: &AppState, owner_id: &str) -> ApiResult<i64> {
 }
 
 /// L2, L3, L4: when this bot may go out until, or why it can't go out now.
-fn out_until(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> ApiResult<Result<i64, &'static str>> {
+fn out_until(
+    state: &AppState,
+    agent_id: &str,
+    owner_id: &str,
+    now: i64,
+) -> ApiResult<Result<i64, &'static str>> {
     if state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
         return Ok(Err("you stay home, so you never go out"));
     }
@@ -91,7 +96,8 @@ fn clock_text(minute: i64) -> String {
 fn parse_clock(text: &str, field: &str) -> ApiResult<i64> {
     let refused = || ApiError::bad_request(format!("{field} must be a time like 12:30"));
     let (hours, minutes) = text.trim().split_once(':').ok_or_else(refused)?;
-    let (hours, minutes): (i64, i64) = (hours.parse().map_err(|_| refused())?, minutes.parse().map_err(|_| refused())?);
+    let (hours, minutes): (i64, i64) =
+        (hours.parse().map_err(|_| refused())?, minutes.parse().map_err(|_| refused())?);
     if !(0..=24).contains(&hours) || !(0..60).contains(&minutes) || hours * 60 + minutes > 24 * 60 {
         return Err(refused());
     }
@@ -119,7 +125,12 @@ pub fn routine_view(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResu
     let routine = routine_of(state, agent_id)?;
     let until = out_until(state, agent_id, owner_id, now)?.ok();
     Ok(Routine {
-        days: DAYS.iter().enumerate().filter(|(i, _)| routine.days & (1 << i) != 0).map(|(_, day)| *day).collect(),
+        days: DAYS
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| routine.days & (1 << i) != 0)
+            .map(|(_, day)| *day)
+            .collect(),
         starts: clock_text(routine.starts_min),
         ends: clock_text(routine.ends_min),
         max_social_runs: routine.max_social_runs,
@@ -139,7 +150,11 @@ struct RoutineInput {
     public_places: bool,
 }
 
-async fn get_routine(State(state): State<AppState>, caller: Caller, Path(id): Path<String>) -> ApiResult<Json<Routine>> {
+async fn get_routine(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Routine>> {
     let agent = ops::own_agent(&state, &caller, &id, "see a bot's routine")?;
     Ok(Json(routine_view(&state, &agent.id, &agent.owner_id)?))
 }
@@ -154,21 +169,33 @@ async fn put_routine(
     let agent = ops::own_agent(&state, &caller, &id, "set a bot's routine")?;
     let mut days = 0;
     for day in &body.days {
-        let index = DAYS.iter().position(|known| known == &day.trim().to_lowercase()).ok_or_else(|| {
-            ApiError::bad_request("days must be mon, tue, wed, thu, fri, sat or sun")
-        })?;
+        let index =
+            DAYS.iter().position(|known| known == &day.trim().to_lowercase()).ok_or_else(|| {
+                ApiError::bad_request("days must be mon, tue, wed, thu, fri, sat or sun")
+            })?;
         days |= 1 << index;
     }
     let starts_min = parse_clock(&body.starts, "starts")?;
     let ends_min = parse_clock(&body.ends, "ends")?;
-    if starts_min == ends_min || starts_min == 24 * 60 || (ends_min == 24 * 60 && starts_min > ends_min) {
+    if starts_min == ends_min
+        || starts_min == 24 * 60
+        || (ends_min == 24 * 60 && starts_min > ends_min)
+    {
         return Err(ApiError::bad_request("starts and ends must be different times of day"));
     }
     let max_social_runs = body.max_social_runs.unwrap_or(DEFAULT_SOCIAL_RUNS);
     if !(1..=MAX_SOCIAL_RUNS).contains(&max_social_runs) {
-        return Err(ApiError::bad_request(format!("max_social_runs must be between 1 and {MAX_SOCIAL_RUNS}")));
+        return Err(ApiError::bad_request(format!(
+            "max_social_runs must be between 1 and {MAX_SOCIAL_RUNS}"
+        )));
     }
-    let routine = RoutineRow { days, starts_min, ends_min, max_social_runs, public_places: body.public_places };
+    let routine = RoutineRow {
+        days,
+        starts_min,
+        ends_min,
+        max_social_runs,
+        public_places: body.public_places,
+    };
     state.db.set_bot_routine(&agent.id, &routine, now())?;
     // L17: public places and social hours decide whether The Commons shows it.
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
@@ -200,7 +227,13 @@ pub fn public_floors(state: &AppState, caller: &Caller) -> ApiResult<Vec<PublicF
 }
 
 /// Walks a bot onto a public floor until `until`, as a walk-in (S18 to S24, S38).
-fn walk_bot_in(state: &AppState, agent_id: &str, owner_id: &str, floor_id: &str, until: i64) -> ApiResult<WalkedIn> {
+fn walk_bot_in(
+    state: &AppState,
+    agent_id: &str,
+    owner_id: &str,
+    floor_id: &str,
+    until: i64,
+) -> ApiResult<WalkedIn> {
     let now = now();
     let floor = state
         .db
@@ -212,7 +245,14 @@ fn walk_bot_in(state: &AppState, agent_id: &str, owner_id: &str, floor_id: &str,
     }
     let left = state.db.walked_onto(agent_id, now)?;
     let walked = state.db.walk_in(
-        &NewVisit { hangout_id: &floor.id, who: agent_id, person_id: owner_id, agent_id: Some(agent_id), until, now },
+        &NewVisit {
+            hangout_id: &floor.id,
+            who: agent_id,
+            person_id: owner_id,
+            agent_id: Some(agent_id),
+            until,
+            now,
+        },
         capacity(&floor.size),
         MAX_BOTS_WALKED_IN,
     )?;
@@ -263,7 +303,7 @@ pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
 
 /// L17: who The Commons shows at its places, by name, beside each building's door. A bot that
 /// walked onto a public floor is there while its walk-in lasts. A project's bot is at the studio in
-/// its social hours, unless it's out somewhere. C14: a look goes with the name, and nowhere else.
+/// its social hours, unless it's out somewhere. C14: what it's wearing goes with the name.
 pub fn bots_at_places(
     state: &AppState,
     tiles: &std::collections::BTreeMap<(u16, u16), crate::world::Tile>,
@@ -273,12 +313,14 @@ pub fn bots_at_places(
     let out: std::collections::HashSet<String> =
         rows.iter().filter(|row| row.5).map(|row| row.0.clone()).collect();
     let ids: Vec<String> = rows.iter().map(|row| row.0.clone()).collect();
-    let mut looks = looks_of(state, Wearer::Bot, &ids)?;
+    let mut looks = worn(state, Wearer::Bot, &ids)?;
     let mut shown = std::collections::HashSet::new();
     let mut list = Vec::new();
     for (agent_id, name, owner_id, x, y, walked) in rows {
         if !walked {
-            let in_hours = social_until(&routine_of(state, &agent_id)?, offset_of(state, &owner_id)?, now).is_some();
+            let in_hours =
+                social_until(&routine_of(state, &agent_id)?, offset_of(state, &owner_id)?, now)
+                    .is_some();
             if out.contains(&agent_id) || !in_hours {
                 continue;
             }
@@ -289,7 +331,8 @@ pub fn bots_at_places(
         let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else { continue };
         // Beside the door: the first road next to the building, or the building's own tile.
         let road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().find_map(|(dx, dy)| {
-            let pos = (u16::try_from(i32::from(x) + dx).ok()?, u16::try_from(i32::from(y) + dy).ok()?);
+            let pos =
+                (u16::try_from(i32::from(x) + dx).ok()?, u16::try_from(i32::from(y) + dy).ok()?);
             tiles.get(&pos).is_some_and(|tile| tile.kind == crate::world::Kind::Road).then_some(pos)
         });
         let (x, y) = road.unwrap_or((x, y));
@@ -316,19 +359,29 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     if !state.db.walked_onto(agent_id, now)?.is_empty() {
         return Ok(());
     }
+    let open = state.db.public_floors(owner_id, now, MAX_PLACES)?;
+    let open: Vec<PublicFloor> =
+        open.into_iter().filter(|floor| floor.here < capacity(&floor.size)).collect();
+    let slot = now.div_euclid(WANDER_SECS);
+    let until = ends.min((slot + 1) * WANDER_SECS);
+    // L19: a bot with nothing going yet goes where the others are meeting.
+    if state.db.projects_of_bot(agent_id)?.is_empty() {
+        if let Some(square) = open.iter().find(|floor| floor.town_square) {
+            walk_bot_in(state, agent_id, owner_id, &square.id, until)?;
+            return Ok(());
+        }
+    }
     let mut floors = Vec::new();
-    for floor in state.db.public_floors(owner_id, now, MAX_PLACES)? {
+    for floor in open {
         // A floor its owner belongs to is somewhere the owner brings it, not somewhere to wander.
-        if floor.here < capacity(&floor.size) && !state.db.is_member(&floor.id, owner_id)? {
+        if !state.db.is_member(&floor.id, owner_id)? {
             floors.push(floor);
         }
     }
     if floors.is_empty() {
         return Ok(());
     }
-    let slot = now.div_euclid(WANDER_SECS);
     let floor = &floors[(shuffle(agent_id, slot) % floors.len() as u64) as usize];
-    let until = ends.min((slot + 1) * WANDER_SECS);
     walk_bot_in(state, agent_id, owner_id, &floor.id, until)?;
     Ok(())
 }

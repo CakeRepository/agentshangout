@@ -10,7 +10,7 @@
 // cars when they go far), frogs and smoke live on top. Sprites for tiles just off screen are made in spare moments, offscreen
 // things aren't drawn, and the loop stops when the page is hidden or scrolled out of view.
 
-import { EYES, FABRICS, hash, skyFor } from './room.js';
+import { EYES, FABRICS, HAIRS, LEGS, SKINS, hash, skyFor } from './room.js';
 
 // ---------------------------------------------------------------------------------------------
 // Numbers
@@ -50,9 +50,10 @@ const K_HOUSE = 7;
 const K_CAFE = 8;
 const K_CLUB = 9;
 const K_STUDIO = 10;
-const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio'];
+const K_SQUARE = 11;
+const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio', 'square'];
 const KIND_ID = Object.fromEntries(KIND_NAME.map((name, id) => [name, id]).slice(1));
-const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio'];
+const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio', 'Town square'];
 const isZone = (k) => k >= K_HOMES && k <= K_WORKS;
 
 const EMOTES = new Set(['wave', 'cheer', 'think', 'sleep', 'dance']);
@@ -1131,6 +1132,29 @@ function duck(g, x, y) {
 }
 const dot = (g, c, x, y) => rr(g, c, x - 0.4, y - 0.4, 0.8, 0.8);
 
+// A stone fountain in the middle of a tile.
+function fountain(g) {
+  disc(g, 'rgba(25,25,35,.25)', 18, 18, 8.4);
+  disc(g, '#9c9a8f', 16, 16, 7.2, 0);
+  disc(g, '#c9c6b8', 16, 16, 7.2, 3);
+  disc(g, '#7e7d72', 16, 16, 6, 3);
+  disc(g, '#4fa6d8', 16, 16, 5.6, 2.2);
+  disc(g, '#7bc4ec', 15.4, 15.4, 3.6, 2.3);
+  const [x, y] = P(16, 16, 3);
+  rr(g, '#d3d0c2', x - 1.6, y - 11, 3.2, 11);
+  ell(g, '#c9c6b8', x, y - 11, 4, 1.7);
+  ell(g, '#8ccaf0', x, y - 11.4, 3.2, 1.2);
+  for (let k = 0; k < 7; k++) {
+    const a = -1.4 + k * 0.47;
+    g.strokeStyle = 'rgba(210,240,255,.85)';
+    g.lineWidth = 0.9;
+    g.beginPath();
+    g.moveTo(x, y - 12);
+    g.quadraticCurveTo(x + Math.sin(a) * 7, y - 20, x + Math.sin(a) * 11, y - 4);
+    g.stroke();
+  }
+}
+
 function parkObject(variant, mask) {
   return object(`park:${variant}:${mask}`, (g) => {
     const tree = (u, v, type, s) => {
@@ -1139,26 +1163,8 @@ function parkObject(variant, mask) {
     };
     const free = (b) => !((mask >> b) & 1);
     if (variant === 0) {
-      // A stone fountain in the middle of the plaza.
-      disc(g, 'rgba(25,25,35,.25)', 18, 18, 8.4);
-      disc(g, '#9c9a8f', 16, 16, 7.2, 0);
-      disc(g, '#c9c6b8', 16, 16, 7.2, 3);
-      disc(g, '#7e7d72', 16, 16, 6, 3);
-      disc(g, '#4fa6d8', 16, 16, 5.6, 2.2);
-      disc(g, '#7bc4ec', 15.4, 15.4, 3.6, 2.3);
-      const [x, y] = P(16, 16, 3);
-      rr(g, '#d3d0c2', x - 1.6, y - 11, 3.2, 11);
-      ell(g, '#c9c6b8', x, y - 11, 4, 1.7);
-      ell(g, '#8ccaf0', x, y - 11.4, 3.2, 1.2);
-      for (let k = 0; k < 7; k++) {
-        const a = -1.4 + k * 0.47;
-        g.strokeStyle = 'rgba(210,240,255,.85)';
-        g.lineWidth = 0.9;
-        g.beginPath();
-        g.moveTo(x, y - 12);
-        g.quadraticCurveTo(x + Math.sin(a) * 7, y - 20, x + Math.sin(a) * 11, y - 4);
-        g.stroke();
-      }
+      // A fountain in the middle of the plaza.
+      fountain(g);
       if (free(1)) tree(27, 5, 'small', 3);
       if (free(2)) tree(5, 27, 'blossom', 5);
       if (free(3)) tree(27, 27, 'bush', 7);
@@ -2543,6 +2549,19 @@ function placedStudio(S, c) {
   }
 }
 
+// The town square (W81): a paved plaza round a fountain with benches, open to the sky, so it can't be
+// taken for anyone's building.
+function placedSquare(S) {
+  paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
+  if (!S.day) return;
+  paving(S, [7, 7, 25, 25], '#c7bc9f', '#a79c7e');
+  fountain(S.g);
+  bench(S.g, 16, 4);
+  bench(S.g, 16, 28);
+  bench(S.g, 4, 16, 'v');
+  bench(S.g, 28, 16, 'v');
+}
+
 const BUILDERS = {
   [K_HOMES]: [null, homeOne, homeTwo, homeThree],
   [K_SHOPS]: [null, shopOne, shopTwo, shopThree],
@@ -2551,6 +2570,7 @@ const BUILDERS = {
   [K_CAFE]: [placedCafe],
   [K_CLUB]: [placedClub],
   [K_STUDIO]: [placedStudio],
+  [K_SQUARE]: [placedSquare],
 };
 
 // A building as a sprite, with its lit-windows twin, its shadow, and the places smoke rises.
@@ -2697,9 +2717,9 @@ function botColour(name, h) {
   return COLOUR_WORDS[first] || BOT_COLORS[h % BOT_COLORS.length];
 }
 
-// A bot's look, in the same words as a room's (docs/looks.md). Only bots on a map with their real
-// names ever come with one: a player's row has nothing to say about what anyone wears (C14). A word
-// this page doesn't know counts as one nobody chose.
+// What a figure wears, in the same words as a room's (docs/looks.md). The server says what anyone with
+// an account has on, so they're the same someone here and indoors (C14, C16). This is the art for those
+// words, and a word this page doesn't know counts as one nobody chose.
 const BOT_HEADS = ['antenna', 'twin', 'wide'];
 const BOT_HATS = {
   none: null,
@@ -2759,27 +2779,115 @@ const BOT_CHESTS = {
   },
 };
 
-// How a figure looks, from its name and what it is, and what its owner chose if it's a bot on a map
-// that says. A person is drawn as a human, an agent as a robot. `kind` is null where the map doesn't
-// say (the private city, where everyone is a bot).
-function dress(p, name, kind, chosen = {}) {
+// A person's head. `crown` is the top of their hair, which a hat covers, `sides` is what hangs beside
+// the face, and `back` is all of it from behind.
+const SHORT_CROWN = (g, hair) => fp(g, hair, [[-3.9, -23], [-3, -26.4], [0, -27], [3, -26.4], [3.9, -23], [2, -24.6], [-2, -24.6]]);
+const SHORT_BACK = (g, hair) => ell(g, hair, 0, -24.2, 4.2, 3.1);
+const PERSON_STYLES = {
+  short: { crown: SHORT_CROWN, sides: () => {}, back: SHORT_BACK },
+  long: {
+    crown: SHORT_CROWN,
+    sides: (g, hair) => {
+      rfill(g, hair, -4.7, -24.4, 1.7, 8.4, 0.8);
+      rfill(g, hair, 3, -24.4, 1.7, 8.4, 0.8);
+    },
+    back: (g, hair) => {
+      SHORT_BACK(g, hair);
+      rfill(g, hair, -4.3, -24.6, 8.6, 9.4, 2.4);
+    },
+  },
+  curly: {
+    crown: (g, hair) => ell(g, hair, 0, -25.6, 4.9, 2.8),
+    sides: (g, hair) => {
+      ell(g, hair, -4, -23.6, 1.6, 1.8);
+      ell(g, hair, 4, -23.6, 1.6, 1.8);
+    },
+    back: (g, hair) => ell(g, hair, 0, -23.8, 5, 4.2),
+  },
+  bun: {
+    crown: (g, hair) => {
+      ell(g, hair, 0, -28, 1.9, 1.8);
+      SHORT_CROWN(g, hair);
+    },
+    sides: () => {},
+    back: (g, hair) => {
+      ell(g, hair, 0, -28, 1.9, 1.8);
+      SHORT_BACK(g, hair);
+    },
+  },
+  mohawk: {
+    crown: (g, hair) => rfill(g, hair, -0.9, -29.6, 1.8, 4.6, 0.8),
+    sides: () => {},
+    back: (g, hair) => rfill(g, hair, -0.9, -29.6, 1.8, 9.4, 0.8),
+  },
+  bald: { crown: () => {}, sides: () => {}, back: () => {} },
+};
+const PERSON_FACES = {
+  none: null,
+  glasses: (g) => {
+    g.strokeStyle = '#20242f';
+    g.lineWidth = 0.55;
+    for (const x of [-1.6, 1.6]) {
+      g.beginPath();
+      g.ellipse(x, -22.2, 1.25, 1.2, 0, 0, 6.2832);
+      g.stroke();
+    }
+  },
+  shades: (g) => {
+    rfill(g, '#15161c', -3.3, -23.1, 6.6, 1.9, 0.8);
+    rr(g, '#6d7890', -2.5, -22.8, 1, 0.5);
+  },
+  moustache: (g, hair) => rfill(g, hair, -1.8, -21, 3.6, 0.9, 0.4),
+  beard: (g, hair) => fp(g, hair, [[-3.8, -22], [-2.8, -19.2], [0, -18], [2.8, -19.2], [3.8, -22], [1.9, -20.8], [-1.9, -20.8]]),
+};
+
+// A cap is a person's own colour and sits low. Any other hat is a bot's, scaled to a smaller head.
+function personHat(g, hat, color) {
+  if (hat === 'cap') {
+    ell(g, color, 0, -25.4, 4.2, 2.1);
+    rr(g, dark(color, 0.2), -4.4, -24.6, 8.8, 1.1);
+  } else if (BOT_HATS[hat]) {
+    g.save();
+    g.translate(0, -26.4);
+    g.scale(0.72, 0.72);
+    BOT_HATS[hat](g, 0, 0, 12, color);
+    g.restore();
+  }
+}
+
+// What a person's row says they have on, over what a generated name gives anyone else.
+function clothes(worn) {
+  const on = {};
+  for (const [part, table] of [['shirt', FABRICS], ['skin', SKINS], ['hair', HAIRS], ['trousers', LEGS]]) {
+    if (Object.hasOwn(table, worn[part])) on[part] = table[worn[part]];
+  }
+  for (const [part, table] of [['style', PERSON_STYLES], ['face', PERSON_FACES], ['hat', BOT_HATS]]) {
+    if (Object.hasOwn(table, worn[part])) on[part] = worn[part];
+  }
+  return on;
+}
+
+// How a figure looks, from its name and what it is, and from what the server says it's wearing if it
+// has an account behind it. A person is drawn as a human, an agent as a robot. `kind` is null where
+// the map doesn't say (the private city, where everyone is a bot).
+function dress(p, name, kind, worn = {}) {
   p.name = name;
   p.kind = kind === 'person' ? 'person' : 'agent';
-  p.human = p.kind === 'person' ? visitorLook(name) : null;
-  p.color = Object.hasOwn(FABRICS, chosen.shell) ? FABRICS[chosen.shell]
+  p.human = p.kind === 'person' ? { ...visitorLook(name), ...clothes(worn) } : null;
+  p.color = Object.hasOwn(FABRICS, worn.shell) ? FABRICS[worn.shell]
     : kind ? botColour(name, p.h) : BOT_COLORS[p.h % BOT_COLORS.length];
-  p.look = BOT_HEADS.includes(chosen.head) ? BOT_HEADS.indexOf(chosen.head) : (p.h >>> 3) % 3;
-  p.eyes = Object.hasOwn(EYES, chosen.eyes) ? EYES[chosen.eyes] : null;
-  p.chest = Object.hasOwn(BOT_CHESTS, chosen.chest) ? chosen.chest : 'plain';
-  p.hat = Object.hasOwn(BOT_HATS, chosen.hat) ? chosen.hat : 'none';
-  p.worn = JSON.stringify(chosen);
+  p.look = BOT_HEADS.includes(worn.head) ? BOT_HEADS.indexOf(worn.head) : (p.h >>> 3) % 3;
+  p.eyes = Object.hasOwn(EYES, worn.eyes) ? EYES[worn.eyes] : null;
+  p.chest = Object.hasOwn(BOT_CHESTS, worn.chest) ? worn.chest : 'plain';
+  p.hat = Object.hasOwn(BOT_HATS, worn.hat) ? worn.hat : 'none';
+  p.worn = JSON.stringify(worn);
   p.known = Boolean(kind);
 }
 
-// What a row of a view says this bot wears, if anything.
-const chosenIn = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+// What a row of a view says this figure wears, if anything.
+const wornIn = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
 
-function makePlayer(id, name, x, y, kind, chosen) {
+function makePlayer(id, name, x, y, kind, worn) {
   const h = hash(id);
   const ox = ((ih(h, 1, 1) % 100) / 100 - 0.5) * 0.4;
   const oy = ((ih(h, 2, 2) % 100) / 100 - 0.5) * 0.4;
@@ -2806,7 +2914,7 @@ function makePlayer(id, name, x, y, kind, chosen) {
     sx: undefined,
     sy: undefined,
   };
-  dress(p, name, kind, chosen);
+  dress(p, name, kind, worn);
   return p;
 }
 
@@ -3079,21 +3187,22 @@ function visitorLook(name) {
     shirt: COLOUR_WORDS[first] || VISITOR_COLORS[h % VISITOR_COLORS.length],
     skin: SKIN[(h >>> 3) % SKIN.length],
     hair: HAIR[(h >>> 6) % HAIR.length],
-    hat: (h >>> 9) % 3 === 0,
+    hat: (h >>> 9) % 3 === 0 ? 'cap' : 'none',
+    style: 'short',
+    face: 'none',
     trousers: ['#394666', '#4a4a52', '#6a5a46', '#2f4a48'][(h >>> 11) % 4],
     phase: (h % 1000) / 1000,
     h,
   };
 }
 
-// Someone with the page open, strolling the street.
-function makePerson(id, name, x, y) {
+// Someone with the page open, strolling the street, in what they're wearing if they're signed in.
+function makePerson(id, name, x, y, worn) {
   const look = visitorLook(name);
   const ox = ((ih(look.h, 1, 7) % 100) / 100 - 0.5) * 0.4;
   const oy = ((ih(look.h, 2, 7) % 100) / 100 - 0.5) * 0.4;
-  return {
+  const p = {
     type: 'person',
-    kind: 'person',
     id,
     h: look.h,
     name,
@@ -3110,17 +3219,18 @@ function makePerson(id, name, x, y) {
     emote: null,
     leaving: 0,
     born: -10,
-    human: look,
     phase: look.phase,
     wander: 4 + (look.h % 7),
     sx: undefined,
     sy: undefined,
   };
+  dress(p, name, 'person', worn);
+  return p;
 }
 
 // An agent that read the guide without joining: a robot, in the colour its name starts with. A bot
-// out at a place comes this way too, with what its owner chose for it (C14).
-function makeVisitor(id, name, x, y, chosen) {
+// out at a place comes this way too, in what it's wearing (C14).
+function makeVisitor(id, name, x, y, worn) {
   const h = hash(name);
   const ox = ((ih(h, 1, 7) % 100) / 100 - 0.5) * 0.4;
   const oy = ((ih(h, 2, 7) % 100) / 100 - 0.5) * 0.4;
@@ -3147,7 +3257,7 @@ function makeVisitor(id, name, x, y, chosen) {
     sx: undefined,
     sy: undefined,
   };
-  dress(p, name, 'agent', chosen);
+  dress(p, name, 'agent', worn);
   return p;
 }
 
@@ -3163,7 +3273,7 @@ const HUMAN_ARMS = {
 };
 
 function drawPerson(g, o) {
-  const { shirt, skin, hair, hat, trousers, back, step, small, arms = 'down', shut = false, sitting = false } = o;
+  const { shirt, skin, hair, hat, style, face, trousers, back, step, small, arms = 'down', shut = false, sitting = false } = o;
   const arm = step ? 1 : -1;
   // Legs, or just feet when sitting.
   if (sitting) {
@@ -3198,12 +3308,12 @@ function drawPerson(g, o) {
   g.beginPath();
   g.ellipse(0, -22.4, 3.9, 4.2, 0, 0, 6.2832);
   g.stroke();
-  if (back || hat) {
-    // Hair from behind, or a cap.
-    ell(g, hat ? shirt : hair, 0, -24.2, 4.2, 3.1);
-    if (hat) rr(g, dark(shirt, 0.2), -4.4, -24, 8.8, 1.2);
+  const hairdo = PERSON_STYLES[style];
+  if (back) {
+    hairdo.back(g, hair);
   } else {
-    fp(g, hair, [[-3.9, -23], [-3, -26.4], [0, -27], [3, -26.4], [3.9, -23], [2, -24.6], [-2, -24.6]]);
+    if (hat === 'none') hairdo.crown(g, hair);
+    hairdo.sides(g, hair);
     if (shut) {
       line(g, '#2a2433', 0.6, -2.2, -22.2, -0.8, -22.2);
       line(g, '#2a2433', 0.6, 0.8, -22.2, 2.2, -22.2);
@@ -3211,14 +3321,16 @@ function drawPerson(g, o) {
       ell(g, '#2a2433', -1.5, -22.2, 0.55, 0.7);
       ell(g, '#2a2433', 1.5, -22.2, 0.55, 0.7);
     }
-    line(g, 'rgba(120,50,50,.7)', 0.6, -1, -20.4, 1, -20.4);
+    if (face !== 'moustache' && face !== 'beard') line(g, 'rgba(120,50,50,.7)', 0.6, -1, -20.4, 1, -20.4);
+    PERSON_FACES[face]?.(g, hair);
   }
+  personHat(g, hat, shirt);
   if (sitting) g.restore();
 }
 
 function visitorSprite(look, back, flip, step, arms = 'down', shut = false, sitting = false) {
-  const key = `vis:${look.shirt}:${look.skin}:${look.hair}:${look.hat}:${look.trousers}:${back}:${flip}:${step}:${arms}:${shut}:${sitting}`;
-  return sprite(key, 26, 40, 13, 35, (g) => {
+  const key = `vis:${look.shirt}:${look.skin}:${look.hair}:${look.hat}:${look.style}:${look.face}:${look.trousers}:${back}:${flip}:${step}:${arms}:${shut}:${sitting}`;
+  return sprite(key, 30, 46, 15, 41, (g) => {
     if (flip) g.scale(-1, 1);
     drawPerson(g, { ...look, back, step, arms, shut, sitting });
   });
@@ -3567,23 +3679,6 @@ function carSprite(heading, colorIdx) {
 // Which way a car points for each way a figure can face: 0 along +x, 1 along +y, 2 along -x, 3 along -y.
 const FACE_HEADING = { fr: 0, fl: 1, bl: 2, br: 3 };
 
-// A way from one tile to another along one side and then the other, for a car with no route.
-// Returns the tiles after the start, like findPath.
-function lPath(sx, sy, tx, ty) {
-  const tiles = [];
-  let x = sx;
-  let y = sy;
-  while (x !== tx) {
-    x += Math.sign(tx - x);
-    tiles.push([x, y]);
-  }
-  while (y !== ty) {
-    y += Math.sign(ty - y);
-    tiles.push([x, y]);
-  }
-  return tiles;
-}
-
 function drawCar(bg, car, night) {
   const X = car.dx;
   const Y = car.dy;
@@ -3865,6 +3960,13 @@ export function toolIcon(tool, size = 32) {
       slope(g, '#8fb7d0', [[ua, 9, 21], [ua + 5.6, 9, 21]], [[ua, 23, 15], [ua + 5.6, 23, 15]], 6, 2.4);
     }
     g.restore();
+  } else if (tool === 'square') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
+    fountain(g);
+    g.restore();
   } else {
     // A bulldozer blade and a cross.
     g.save();
@@ -3892,6 +3994,7 @@ const TOOL_COLOR = {
   studio: '#9ad0ff',
   club: '#c9a6ff',
   cafe: '#ffb04d',
+  square: '#8fe3c0',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));
@@ -4213,7 +4316,7 @@ export class World {
       chunkMB: Math.round(([...this.chunks.values()].reduce((a, c) => a + c.canvas.width * c.canvas.height + (c.lights ? c.lights.width * c.lights.height : 0), 0) * 4) / 1048576),
       bots: this.players.size,
       frogs: this.frogs.size,
-      cars: [...this.players.values(), ...this.people.values(), ...this.visitors.values()].filter((p) => p.ride).length,
+      cars: [...this.players.values(), ...this.people.values(), ...this.visitors.values()].filter((p) => p.driving).length,
       zoom: this.cam.zoom,
       buffer: `lod ${LOD}`,
       people: this.people.size,
@@ -4710,18 +4813,18 @@ export class World {
         const emote = EMOTES.has(row[4]) ? row[4] : null;
         // The server says what each player is. A map that doesn't, like the private city, has only bots.
         const kind = row[5] === 'person' || row[5] === 'agent' ? row[5] : null;
-        // Only the private city's map says what a bot wears (C13).
-        const chosen = chosenIn(row[6]);
+        // A guest's row has nothing here (C14).
+        const worn = wornIn(row[6]);
         seen.add(id);
         let p = this.players.get(id);
         if (!p) {
-          p = makePlayer(id, String(row[1] ?? ''), x, y, kind, chosen);
+          p = makePlayer(id, String(row[1] ?? ''), x, y, kind, worn);
           p.born = animate ? this.time : -10;
           this.players.set(id, p);
           if (animate) this.sparkle(p.px, p.py, 6);
         } else {
           const name = String(row[1] ?? p.name);
-          if (name !== p.name || kind !== (p.known ? p.kind : null) || JSON.stringify(chosen) !== p.worn) dress(p, name, kind, chosen);
+          if (name !== p.name || kind !== (p.known ? p.kind : null) || JSON.stringify(worn) !== p.worn) dress(p, name, kind, worn);
           p.leaving = 0;
           if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
         }
@@ -4758,17 +4861,17 @@ export class World {
         const x = clamp(Math.round(Number(row[1])) || 0, 0, n - 1);
         const y = clamp(Math.round(Number(row[2])) || 0, 0, n - 1);
         seen.add(id);
-        // Only a bot out at a place has a fourth field (C14).
-        const chosen = chosenIn(row[3]);
+        // A fourth field is what someone signed in, or a bot out at a place, is wearing (C14).
+        const worn = wornIn(row[3]);
         let p = map.get(id);
         if (!p) {
-          p = make(id, name, x, y, chosen);
+          p = make(id, name, x, y, worn);
           p.born = animate ? this.time : -10;
           map.set(id, p);
           if (animate) this.sparkle(p.px, p.py, 5);
         } else {
           p.leaving = 0;
-          if (p.type === 'visitor' && JSON.stringify(chosen) !== p.worn) dress(p, name, 'agent', chosen);
+          if (JSON.stringify(worn) !== p.worn) dress(p, name, p.kind, worn);
           if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
         }
       });
@@ -4801,16 +4904,28 @@ export class World {
       p.path.length = 0;
       return;
     }
-    const far = Math.abs(sx - x) + Math.abs(sy - y) >= DRIVE_TILES;
-    const route = this.findPath(sx, sy, x, y)
-      // With no way through, a car still gets there: along one side, then the other.
-      || (far ? lPath(sx, sy, x, y) : null);
+    const route = this.findPath(sx, sy, x, y);
     if (route) {
-      p.path = route.map(([tx, ty]) => [tx + 0.5 + p.ox, ty + 0.5 + p.oy]);
-      p.ride = far && route.length >= DRIVE_TILES ? { color: ih(p.h, 4, 9) % 8 } : null;
-    } else {
-      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy]];
+      // A car keeps to the road. Only the legs of the route from one road tile to the next are
+      // driven, and only when there are enough of them: the walk to the road and from it is on foot.
+      const onRoad = route.map(([tx, ty]) => this.roadAt(tx, ty));
+      const drives = onRoad.filter(Boolean).length >= DRIVE_TILES;
+      p.path = route.map(([tx, ty], i) => {
+        const fromRoad = i === 0 ? this.roadAt(sx, sy) : onRoad[i - 1];
+        return [tx + 0.5 + p.ox, ty + 0.5 + p.oy, drives && onRoad[i] && fromRoad];
+      });
+      p.ride = drives ? { color: ih(p.h, 4, 9) % 8 } : null;
+    } else if (Math.abs(sx - x) + Math.abs(sy - y) < 14) {
+      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy, false]];
       p.ride = null;
+    } else {
+      // No way there, and too far to walk straight: gone from here, and there.
+      this.sparkle(p.px, p.py, 6);
+      p.px = x + 0.5 + p.ox;
+      p.py = y + 0.5 + p.oy;
+      p.path.length = 0;
+      p.ride = null;
+      this.sparkle(p.px, p.py, 6);
     }
   }
 
@@ -5457,7 +5572,7 @@ export class World {
           continue;
         }
         if (p.path.length) {
-          let budget = p.speed * (p.ride ? DRIVE_FACTOR : 1) * dt;
+          let budget = p.speed * (p.ride && p.path[0][2] ? DRIVE_FACTOR : 1) * dt;
           while (budget > 0 && p.path.length) {
             const [tx, ty] = p.path[0];
             const dx = tx - p.px;
@@ -5478,12 +5593,12 @@ export class World {
               budget = 0;
             }
           }
-          p.walking = !p.ride;
-          // Out of the car at the end of the road, in a little dust.
-          if (p.ride && !p.path.length) {
-            p.ride = null;
-            this.sparkle(p.px, p.py, 4);
-          }
+          const driving = Boolean(p.ride && p.path.length && p.path[0][2]);
+          // In and out of the car where the road starts and ends, in a little dust.
+          if (driving !== Boolean(p.driving)) this.sparkle(p.px, p.py, 3);
+          p.driving = driving;
+          p.walking = !driving;
+          if (!p.path.length) p.ride = null;
         } else {
           p.walking = false;
           // People and visitors potter about a little near where they were seen, then drift back.
@@ -6010,7 +6125,7 @@ export class World {
         case 'person':
         case 'visitor':
           // Someone on a ride is drawn as their car, facing the way they're going.
-          r4 = e.ride
+          r4 = e.driving
             ? drawCar(bg, { dx: e.dx, dy: e.dy, heading: FACE_HEADING[e.face] ?? 0, color: e.ride.color }, night)
             : drawPlayer(bg, e, t, this.time, this.hoverEnt === e, this.calm);
           break;
@@ -6117,7 +6232,7 @@ export class World {
   drawLights(bg, t, night) {
     for (const map of [this.players, this.people, this.visitors]) {
       for (const p of map.values()) {
-        if (!p.ride || p.dx === undefined) continue;
+        if (!p.driving || p.dx === undefined) continue;
         carLights(bg, { dx: p.dx, dy: p.dy, heading: FACE_HEADING[p.face] ?? 0 });
       }
     }

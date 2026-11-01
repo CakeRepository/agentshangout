@@ -18,7 +18,7 @@ use crate::{
     auth::{self, Caller},
     db::{Floor, FloorChange, NewFloor, NewVisit, Person, PublicFloor, Space, WalkedIn},
     error::{ApiError, ApiResult},
-    items, now,
+    god_mode, items, now,
     ops::{self, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
     worlds::COMMONS_ID,
     AppState,
@@ -40,6 +40,9 @@ const FLOOR_OPENED: &str =
 /// S13: a size and how many fit.
 const SIZES: [(&str, i64); 3] = [("small", 8), ("medium", 50), ("big", 150)];
 const DEFAULT_CAPACITY: i64 = 50;
+/// W82: the room behind the town square, which has space for everyone who wants to meet.
+const TOWN_SQUARE: &str = "Town Square";
+const TOWN_SQUARE_SIZE: &str = "big";
 /// S14: listed words, so nothing typed reaches the page's drawing.
 const PAINTS: [&str; 7] = ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"];
 const FLOORINGS: [&str; 5] = ["oak", "walnut", "tile", "carpet", "crypt"];
@@ -158,7 +161,8 @@ struct SpaceView {
 pub(crate) fn runs(state: &AppState, caller: &Caller, space: &Space) -> ApiResult<bool> {
     Ok(!caller.is_agent()
         && state.db.is_member(&space.id, &caller.person_id)?
-        && (space.owner_id == caller.person_id || !state.db.is_member(&space.id, &space.owner_id)?))
+        && (space.owner_id == caller.person_id
+            || !state.db.is_member(&space.id, &space.owner_id)?))
 }
 
 /// The space, if this caller runs it. S7: anyone in it is told only its owner can, and anyone else
@@ -217,7 +221,11 @@ fn house_of(state: &AppState, caller: &Caller) -> ApiResult<Space> {
 }
 
 fn with_floors(state: &AppState, space: Space) -> ApiResult<SpaceAndFloors> {
-    Ok(SpaceAndFloors { floors: state.db.floors_of(&space.id)?, on_map: stands_on_map(state, &space)?, space })
+    Ok(SpaceAndFloors {
+        floors: state.db.floors_of(&space.id)?,
+        on_map: stands_on_map(state, &space)?,
+        space,
+    })
 }
 
 async fn my_spaces(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<MySpaces>> {
@@ -234,7 +242,10 @@ async fn my_spaces(State(state): State<AppState>, caller: Caller) -> ApiResult<J
         third,
         limits: Limits { third_spaces: MAX_THIRD_SPACES, floors: MAX_FLOORS },
         choices: Choices {
-            sizes: SIZES.iter().map(|(size, capacity)| SizeChoice { size, capacity: *capacity }).collect(),
+            sizes: SIZES
+                .iter()
+                .map(|(size, capacity)| SizeChoice { size, capacity: *capacity })
+                .collect(),
             paints: &PAINTS,
             floorings: &FLOORINGS,
             furniture: &FURNITURE,
@@ -263,9 +274,11 @@ type Building = (String, Option<String>);
 
 /// S33: whether this building is still the way into this space. A row in `space_plots` proves
 /// nothing alone, because after a bulldoze or a wipe someone else's building can stand on that tile.
-fn is_door_to(building: &Building, space: &Space) -> bool {
-    building.1.as_deref() == Some(space.owner_id.as_str())
+fn is_door_to(state: &AppState, building: &Building, space: &Space) -> ApiResult<bool> {
+    // W82: a square opens only the room marked as the town square, and nothing else opens that one.
+    Ok(building.1.as_deref() == Some(space.owner_id.as_str())
         && (building.0 == "house") == (space.kind == "house")
+        && (building.0 == "square") == state.db.is_town_square_room(&space.id)?)
 }
 
 /// The building that's the way into this space now, if one is.
@@ -273,7 +286,10 @@ fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<Building>> {
     let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
         return Ok(None);
     };
-    Ok(state.db.building_at(COMMONS_ID, x, y)?.filter(|building| is_door_to(building, space)))
+    match state.db.building_at(COMMONS_ID, x, y)? {
+        Some(building) if is_door_to(state, &building, space)? => Ok(Some(building)),
+        _ => Ok(None),
+    }
 }
 
 fn stands_on_map(state: &AppState, space: &Space) -> ApiResult<bool> {
@@ -303,10 +319,14 @@ async fn place_details(
         if state.db.bot_home(&agent.id)?.is_some_and(|home| home.is_house) {
             continue;
         }
-        let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
+        let rooms: Vec<String> =
+            state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
         let walked = state.db.walked_onto(&agent.id, now)?;
         let asked = match &place.space {
-            Some(space) => state.db.place_request_for(&space.id, &agent.id, now - REQUEST_SECS)?.map(|(_, status)| status),
+            Some(space) => state
+                .db
+                .place_request_for(&space.id, &agent.id, now - REQUEST_SECS)?
+                .map(|(_, status)| status),
             None => None,
         };
         let access = if floors.iter().any(|floor| walked.contains(&floor.id)) {
@@ -347,9 +367,13 @@ struct PlaceAt {
 }
 
 fn place_at(state: &AppState, x: i64, y: i64) -> ApiResult<PlaceAt> {
-    let (kind, owner_id) = state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
+    let (kind, owner_id) =
+        state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
     let building = (kind.clone(), owner_id.clone());
-    let space = state.db.space_on_plot(COMMONS_ID, x, y)?.filter(|space| is_door_to(&building, space));
+    let space = match state.db.space_on_plot(COMMONS_ID, x, y)? {
+        Some(space) if is_door_to(state, &building, &space)? => Some(space),
+        _ => None,
+    };
     Ok(PlaceAt { kind, owner_id, space })
 }
 
@@ -375,33 +399,51 @@ async fn ask_to_let_in(
     if place.owner_id.as_deref() == Some(caller.person_id.as_str()) {
         return Err(ApiError::conflict("this is your own place: bring your bot in from inside"));
     }
-    let space = place
-        .space
-        .ok_or_else(|| ApiError::conflict("nobody has opened this place yet, so there's nowhere to let a bot in"))?;
+    let space = place.space.ok_or_else(|| {
+        ApiError::conflict("nobody has opened this place yet, so there's nowhere to let a bot in")
+    })?;
     // S27: it's a 404 to them, so the owner hears nothing from someone they turned out.
     if state.db.is_turned_out(&space.id, &caller.person_id)? {
         return Err(ApiError::not_found());
     }
     let now = now();
     let floors = state.db.floors_of(&space.id)?;
-    let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
+    let rooms: Vec<String> =
+        state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
     if floors.iter().any(|floor| rooms.contains(&floor.id)) {
         return Err(ApiError::conflict(format!("{} is already in", agent.name)));
     }
     match state.db.place_request_for(&space.id, &agent.id, now - REQUEST_SECS)? {
-        Some((id, status)) if status == "waiting" => return Ok(Json(json!({ "id": id, "status": "waiting" }))),
-        Some(_) => return Err(ApiError::conflict("the owner said no: you can ask again in a week")),
+        Some((id, status)) if status == "waiting" => {
+            return Ok(Json(json!({ "id": id, "status": "waiting" })))
+        }
+        Some(_) => {
+            return Err(ApiError::conflict("the owner said no: you can ask again in a week"))
+        }
         None => {}
     }
     let id = auth::new_id();
-    if !state.db.insert_place_request(&id, &space.id, &agent.id, &caller.person_id, now, now - REQUEST_SECS, MAX_OPEN_REQUESTS)? {
-        return Err(ApiError::conflict(format!("you have {MAX_OPEN_REQUESTS} requests waiting already")));
+    if !state.db.insert_place_request(
+        &id,
+        &space.id,
+        &agent.id,
+        &caller.person_id,
+        now,
+        now - REQUEST_SECS,
+        MAX_OPEN_REQUESTS,
+    )? {
+        return Err(ApiError::conflict(format!(
+            "you have {MAX_OPEN_REQUESTS} requests waiting already"
+        )));
     }
     if let (Some(owner_id), Some(floor)) = (&place.owner_id, floors.first()) {
         let notice = crate::notify::Notice {
             event: "place.asked",
             hangout_id: floor.id.clone(),
-            text: format!("{} asks to let their bot {} into {}.", caller.name, agent.name, space.name),
+            text: format!(
+                "{} asks to let their bot {} into {}.",
+                caller.name, agent.name, space.name
+            ),
         };
         crate::notify::send(&state, std::slice::from_ref(owner_id), &notice);
     }
@@ -413,7 +455,9 @@ async fn place_requests(State(state): State<AppState>, caller: Caller) -> ApiRes
     ops::require_human(&caller, "see requests to come in")?;
     let now = now();
     let mut list = Vec::new();
-    for (id, space_id, place, bot, asker, at) in state.db.place_requests_for_owner(&caller.person_id, now - REQUEST_SECS)? {
+    for (id, space_id, place, bot, asker, at) in
+        state.db.place_requests_for_owner(&caller.person_id, now - REQUEST_SECS)?
+    {
         let kind = match state.db.space(&space_id)? {
             Some(space) => building_of(&state, &space)?.map(|(kind, _)| kind),
             None => None,
@@ -437,7 +481,8 @@ async fn answer_place_request(
 ) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "answer a request to come in")?;
     let now = now();
-    let (space_id, agent_id, asked_by) = state.db.waiting_place_request(&id, now - REQUEST_SECS)?.ok_or_else(ApiError::not_found)?;
+    let (space_id, agent_id, asked_by) =
+        state.db.waiting_place_request(&id, now - REQUEST_SECS)?.ok_or_else(ApiError::not_found)?;
     let space = state
         .db
         .space(&space_id)?
@@ -448,7 +493,8 @@ async fn answer_place_request(
         "no" => "no",
         _ => return Err(ApiError::bad_request("response must be yes or no")),
     };
-    let floor = state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
+    let floor =
+        state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
     // S13, S27: a yes is a way of joining, so it's no way round either of them. Refused, it still waits.
     if status == "yes" {
         check_can_join(&state, &asked_by, &floor.id)?;
@@ -459,25 +505,30 @@ async fn answer_place_request(
     if status == "yes" {
         state.db.add_agent_to_room(&floor.id, &agent_id)?;
         state.db.add_member(&floor.id, &asked_by, now)?;
-        let name = state.db.agent(&agent_id, now)?.map_or_else(|| "a bot".to_string(), |agent| agent.name);
+        let name =
+            state.db.agent(&agent_id, now)?.map_or_else(|| "a bot".to_string(), |agent| agent.name);
         ops::announce(&state, &floor.id, &format!("{} let {name} in.", caller.name))?;
         ops::refresh(&state, &floor.id);
     }
     Ok(Json(json!({ "ok": true, "status": status })))
 }
 
-/// S48: whether this space's building is a café, whose owner needs no code to open its floors.
+/// S48: whether this space's building is a café or the town square (W82), whose owner needs no code
+/// to open its floors.
 fn is_cafe(state: &AppState, space: &Space) -> ApiResult<bool> {
-    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe"))
+    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe" || kind == "square"))
 }
 
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
 /// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
-/// S47: a new one behind a café starts open. A room that came back stays as its owner left it, so
-/// placing a café never opens a room someone already has.
+/// Someone with the god mode switch, on or off, isn't held to that limit (W79). S47: a new one behind a café starts
+/// open. A room that came back stays as its owner left it, so placing a café never opens a room
+/// someone already has. W82: the town square has a room of its own, marked as such, and no other
+/// place takes it, whatever either is called.
 fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> ApiResult<Space> {
+    let square = kind == "square";
     for space in state.db.third_spaces_of(&caller.person_id)? {
-        if !stands_on_map(state, &space)? {
+        if state.db.is_town_square_room(&space.id)? == square && !stands_on_map(state, &space)? {
             return Ok(space);
         }
     }
@@ -487,24 +538,27 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
         _ => "Studio",
     };
     let name: String = caller.name.chars().take(MAX_NAME_CHARS - NAMED_AFTER_CHARS).collect();
+    let name = if square { TOWN_SQUARE.to_string() } else { format!("{name}'s {kind}") };
+    // Only a person gets here (the door refuses bots), so the switch is theirs to have, on or off.
+    let most = if square || god_mode::may_use(state, &caller.person_id) {
+        i64::MAX
+    } else {
+        MAX_THIRD_SPACES
+    };
     let id = auth::new_id();
     state
         .db
-        .start_third_space(
-            &id,
-            &format!("{name}'s {kind}"),
-            &auth::new_invite_code(),
-            &caller.person_id,
-            now(),
-            MAX_THIRD_SPACES,
-        )?
+        .start_third_space(&id, &name, &auth::new_invite_code(), &caller.person_id, now(), most)?
         .ok_or_else(|| ApiError::conflict(format!("you have {MAX_THIRD_SPACES} third spaces")))?;
-    if kind == "Café" {
+    if square {
+        state.db.mark_town_square_room(&id)?;
+    }
+    if square || kind == "Café" {
         state.db.change_floor(&FloorChange {
             id: &id,
             name: None,
             access: Some("public"),
-            size: None,
+            size: square.then_some(TOWN_SQUARE_SIZE),
             paint: None,
             flooring: None,
             hidden: None,
@@ -539,10 +593,10 @@ async fn go_through_door(
     }
     let building =
         state.db.building_at(COMMONS_ID, body.x, body.y)?.ok_or_else(ApiError::not_found)?;
-    let found = state
-        .db
-        .space_on_plot(COMMONS_ID, body.x, body.y)?
-        .filter(|space| is_door_to(&building, space));
+    let found = match state.db.space_on_plot(COMMONS_ID, body.x, body.y)? {
+        Some(space) if is_door_to(&state, &building, &space)? => Some(space),
+        _ => None,
+    };
     let space = match found {
         Some(space) => space,
         // S34: only here does a door make anything, and only for the person whose building it is.
@@ -616,10 +670,8 @@ pub fn check_can_join(state: &AppState, person_id: &str, hangout_id: &str) -> Ap
 
 /// S9. True if this was the owner leaving their third space, which this has dealt with.
 pub fn leave_own_space(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<bool> {
-    let Some(space) = state
-        .db
-        .space_for_room(hangout_id)?
-        .filter(|space| space.owner_id == caller.person_id)
+    let Some(space) =
+        state.db.space_for_room(hangout_id)?.filter(|space| space.owner_id == caller.person_id)
     else {
         return Ok(false);
     };
@@ -655,7 +707,9 @@ pub fn note_walk_in_write(state: &AppState, caller: &Caller, hangout_id: &str) -
     if caller.is_agent() || state.db.floor(hangout_id)?.is_none() {
         return Ok(());
     }
-    if state.guest_visit(caller, hangout_id)?.is_some() && !state.allow_agent_write(&caller.person_id) {
+    if state.guest_visit(caller, hangout_id)?.is_some()
+        && !state.allow_agent_write(&caller.person_id)
+    {
         return Err(ApiError::too_many_requests(format!(
             "slow down: someone who walked in gets {} writes a minute",
             ops::MAX_AGENT_WRITES_PER_MINUTE
@@ -668,7 +722,10 @@ pub fn note_walk_in_write(state: &AppState, caller: &Caller, hangout_id: &str) -
 
 fn one_of(value: &str, field: &str, choices: &[&str]) -> ApiResult<()> {
     if !choices.contains(&value) {
-        return Err(ApiError::bad_request(format!("{field} must be one of {}", choices.join(", "))));
+        return Err(ApiError::bad_request(format!(
+            "{field} must be one of {}",
+            choices.join(", ")
+        )));
     }
     Ok(())
 }
@@ -729,7 +786,8 @@ async fn change_space(
     Json(body): Json<ChangeSpace>,
 ) -> ApiResult<Json<Space>> {
     let space = run_space(&state, &caller, &id, "change it")?;
-    let name = body.name.as_deref().map(|name| ops::clean(name, "name", MAX_NAME_CHARS)).transpose()?;
+    let name =
+        body.name.as_deref().map(|name| ops::clean(name, "name", MAX_NAME_CHARS)).transpose()?;
     let about = body
         .about
         .as_deref()
@@ -808,7 +866,8 @@ async fn change_floor(
     Json(body): Json<ChangeFloor>,
 ) -> ApiResult<Json<Floor>> {
     let (space, floor) = run_floor(&state, &caller, &id, "change it")?;
-    let name = body.name.as_deref().map(|name| ops::clean(name, "name", MAX_NAME_CHARS)).transpose()?;
+    let name =
+        body.name.as_deref().map(|name| ops::clean(name, "name", MAX_NAME_CHARS)).transpose()?;
     if let Some(access) = &body.access {
         one_of(access, "access", &["private", "public"])?;
     }
@@ -828,8 +887,11 @@ async fn change_floor(
                 one_of(word, "hidden", &FURNITURE)?;
             }
             // Kept in the list's own order, once each, so nothing can be stored twice.
-            let kept: Vec<&str> =
-                FURNITURE.iter().copied().filter(|item| words.iter().any(|word| word == item)).collect();
+            let kept: Vec<&str> = FURNITURE
+                .iter()
+                .copied()
+                .filter(|item| words.iter().any(|word| word == item))
+                .collect();
             Some(kept.join(","))
         }
         None => None,
@@ -854,7 +916,9 @@ async fn change_floor(
             private_only: &items::private_only(),
         })?
         // I11: flirty items are for private floors.
-        .ok_or_else(|| ApiError::conflict("take the flirty items off this floor before opening it"))?;
+        .ok_or_else(|| {
+            ApiError::conflict("take the flirty items off this floor before opening it")
+        })?;
     if opening {
         ops::announce(&state, &floor.id, FLOOR_OPENED)?;
         // S25: no bot goes in front of strangers without its owner choosing it.
@@ -1028,7 +1092,9 @@ async fn walk_in(
                 "you have {MAX_BOTS_WALKED_IN} bots on this floor already"
             )))
         }
-        WalkedIn::OnTrip => return Err(ApiError::conflict("that bot is on a trip: bring it home first")),
+        WalkedIn::OnTrip => {
+            return Err(ApiError::conflict("that bot is on a trip: bring it home first"))
+        }
     }
     for gone in left.iter().filter(|gone| **gone != floor.id) {
         ops::refresh(&state, gone);
@@ -1114,7 +1180,8 @@ impl Presence {
         sightings.retain(|_, seen| now - *seen <= PRESENT_SECS);
         let key = (floor_id.to_string(), person_id.to_string());
         if sightings.len() >= MAX_SIGHTINGS && !sightings.contains_key(&key) {
-            let oldest = sightings.iter().min_by_key(|(_, seen)| **seen).map(|(key, _)| key.clone());
+            let oldest =
+                sightings.iter().min_by_key(|(_, seen)| **seen).map(|(key, _)| key.clone());
             if let Some(oldest) = oldest {
                 sightings.remove(&oldest);
             }

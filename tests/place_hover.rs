@@ -59,6 +59,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -91,14 +92,24 @@ impl Server {
 
     async fn someone(&self, name: &str) -> (String, Who) {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
-        (text(&made["hangout"]["id"]), Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) })
+        (
+            text(&made["hangout"]["id"]),
+            Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) },
+        )
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> (String, String) {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         (text(&made["agent"]["id"]), text(&made["token"]))
     }
 
@@ -117,7 +128,9 @@ impl Server {
             .into_iter()
             .find(|&(x, y)| {
                 let pos = (x as u16, y as u16);
-                !tiles.contains_key(&pos) && !world::is_reserved(&tiles, pos) && land.at(pos).is_some_and(|ground| ground.is_open())
+                !tiles.contains_key(&pos)
+                    && !world::is_reserved(&tiles, pos)
+                    && land.at(pos).is_some_and(|ground| ground.is_open())
             })
             .unwrap()
     }
@@ -126,7 +139,15 @@ impl Server {
     fn place_at(&self, who: &Who, kind: &str, at: i64) -> (i64, i64) {
         let player = self.state.db.own_player(&who.id, at).unwrap();
         let (x, y) = self.free_spot();
-        let mv = Move { action: "place".into(), x: Some(x), y: Some(y), x2: None, y2: None, kind: Some(kind.into()), emote: None };
+        let mv = Move {
+            action: "place".into(),
+            x: Some(x),
+            y: Some(y),
+            x2: None,
+            y2: None,
+            kind: Some(kind.into()),
+            emote: None,
+        };
         worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
         (x, y)
     }
@@ -148,7 +169,9 @@ impl Server {
             .as_array()
             .unwrap()
             .iter()
-            .map(|row| ((row[0].as_i64().unwrap(), row[1].as_i64().unwrap()), text(&row[2]), text(&row[3])))
+            .map(|row| {
+                ((row[0].as_i64().unwrap(), row[1].as_i64().unwrap()), text(&row[2]), text(&row[3]))
+            })
             .collect()
     }
 
@@ -159,7 +182,10 @@ impl Server {
 
 fn access(place: &Value, bot: &str) -> String {
     let bots = place["bots"].as_array().unwrap();
-    text(&bots.iter().find(|row| row["name"] == bot).unwrap_or_else(|| panic!("{bot}: {place}"))["access"])
+    text(
+        &bots.iter().find(|row| row["name"] == bot).unwrap_or_else(|| panic!("{bot}: {place}"))
+            ["access"],
+    )
 }
 
 // W71
@@ -195,19 +221,34 @@ async fn hovering_a_place_tells_you_how_each_of_your_bots_can_get_in() {
 
     // Ann's cafe is open to anyone, so Rover can walk in, and once it has, it's visiting.
     let cafe = server.place_at(&ann, "cafe", now());
-    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
     let floor = text(&door["hangout_id"]);
     // The door opened onto Ann's own room, which stays as she left it (S47), so she opens it.
-    server.send(&ann.key, Method::PUT, &format!("/api/floors/{floor}"), Some(json!({ "access": "public", "create_code": CODE }))).await.ok();
+    server
+        .send(
+            &ann.key,
+            Method::PUT,
+            &format!("/api/floors/{floor}"),
+            Some(json!({ "access": "public", "create_code": CODE })),
+        )
+        .await
+        .ok();
     let place = server.place(&bo.key, cafe).await.ok();
     assert_eq!(place["kind"], "cafe");
     assert_eq!(access(&place, "Rover"), "can_walk_in");
     assert_eq!(place["open"], true);
-    server.post(&bo.key, &format!("/api/floors/{floor}/walk-in"), json!({ "agent_id": rover_id })).await.ok();
+    server
+        .post(&bo.key, &format!("/api/floors/{floor}/walk-in"), json!({ "agent_id": rover_id }))
+        .await
+        .ok();
     assert_eq!(access(&server.place(&bo.key, cafe).await.ok(), "Rover"), "visiting");
 
     // A bot in one of a place's rooms is in it: Ann makes her house's room and brings in her own bot.
-    let house_door = server.post(&ann.key, "/api/spaces/door", json!({ "x": ann_house.0, "y": ann_house.1 })).await.ok();
+    let house_door = server
+        .post(&ann.key, "/api/spaces/door", json!({ "x": ann_house.0, "y": ann_house.1 }))
+        .await
+        .ok();
     let house_room = text(&house_door["hangout_id"]);
     server.bot(&ann, &house_room, "Fern").await;
     assert_eq!(access(&server.place(&ann.key, ann_house).await.ok(), "Fern"), "in");
@@ -233,20 +274,39 @@ async fn every_place_has_a_name_its_owner_or_its_project_gave_it() {
     assert_eq!(names.get(&studio).map(String::as_str), Some("Ann's Studio"));
 
     // Going in gives the house its room, named after her, and she can rename it.
-    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
     assert_eq!(server.names().await.get(&house).map(String::as_str), Some("Ann's House"));
     let space = text(&door["space_id"]);
-    server.send(&ann.key, Method::PUT, &format!("/api/spaces/{space}"), Some(json!({ "name": "Sunny Side" }))).await.ok();
+    server
+        .send(
+            &ann.key,
+            Method::PUT,
+            &format!("/api/spaces/{space}"),
+            Some(json!({ "name": "Sunny Side" })),
+        )
+        .await
+        .ok();
     assert_eq!(server.names().await.get(&house).map(String::as_str), Some("Sunny Side"));
 
     // Someone else going through a door isn't told which space it is.
     let (_, bo) = server.someone("Bo").await;
     server.place_at(&bo, "house", now());
     let cafe = server.place_at(&bo, "cafe", now() + 8 * DAY);
-    let mine = server.post(&bo.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
+    let mine =
+        server.post(&bo.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
     let floor = text(&mine["hangout_id"]);
-    server.send(&bo.key, Method::PUT, &format!("/api/floors/{floor}"), Some(json!({ "access": "public", "create_code": CODE }))).await.ok();
-    let theirs = server.post(&ann.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
+    server
+        .send(
+            &bo.key,
+            Method::PUT,
+            &format!("/api/floors/{floor}"),
+            Some(json!({ "access": "public", "create_code": CODE })),
+        )
+        .await
+        .ok();
+    let theirs =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
     assert!(theirs["space_id"].is_null(), "{theirs}");
 }
 
@@ -265,7 +325,8 @@ async fn a_person_asks_to_let_their_bot_into_someone_elses_place_and_the_owner_d
     // A place with no rooms yet can't take anyone.
     let shut = server.post(&bo.key, &path, ask(&rover_id)).await;
     assert_eq!(shut.status, StatusCode::CONFLICT, "{}", shut.body);
-    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
     let room = text(&door["hangout_id"]);
 
     let asked = server.post(&bo.key, &path, ask(&rover_id)).await.ok();
@@ -275,7 +336,11 @@ async fn a_person_asks_to_let_their_bot_into_someone_elses_place_and_the_owner_d
     assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "asked");
     assert_eq!(server.post(&rover, &path, ask(&rover_id)).await.status, StatusCode::FORBIDDEN);
     let (fern_id, _) = server.bot(&ann, &room, "Fern").await;
-    assert_eq!(server.post(&ann.key, &path, ask(&fern_id)).await.status, StatusCode::CONFLICT, "her own place");
+    assert_eq!(
+        server.post(&ann.key, &path, ask(&fern_id)).await.status,
+        StatusCode::CONFLICT,
+        "her own place"
+    );
 
     // Ann sees it, and Bo can't answer it.
     let waiting = server.get(&ann.key, "/api/place-requests").await.ok();
@@ -286,17 +351,31 @@ async fn a_person_asks_to_let_their_bot_into_someone_elses_place_and_the_owner_d
     assert_eq!(server.get(&bo.key, "/api/place-requests").await.ok()["requests"], json!([]));
     let id = text(&request["id"]);
     let answer = format!("/api/place-requests/{id}/answer");
-    assert_eq!(server.post(&bo.key, &answer, json!({ "response": "yes" })).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.post(&bo.key, &answer, json!({ "response": "yes" })).await.status,
+        StatusCode::NOT_FOUND
+    );
 
     // A yes brings Rover into the house's first floor, and Bo can read it.
     server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
     assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "in");
     server.get(&bo.key, &format!("/api/hangouts/{room}")).await.ok();
-    assert_eq!(server.post(&bo.key, &path, ask(&rover_id)).await.status, StatusCode::CONFLICT, "already in");
+    assert_eq!(
+        server.post(&bo.key, &path, ask(&rover_id)).await.status,
+        StatusCode::CONFLICT,
+        "already in"
+    );
 
     // A no is final for a week.
     let scout = server.post(&bo.key, &path, ask(&scout_id)).await.ok();
-    server.post(&ann.key, &format!("/api/place-requests/{}/answer", text(&scout["id"])), json!({ "response": "no" })).await.ok();
+    server
+        .post(
+            &ann.key,
+            &format!("/api/place-requests/{}/answer", text(&scout["id"])),
+            json!({ "response": "no" }),
+        )
+        .await
+        .ok();
     assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Scout"), "declined");
     assert_eq!(server.post(&bo.key, &path, ask(&scout_id)).await.status, StatusCode::CONFLICT);
     assert_eq!(server.get(&ann.key, "/api/place-requests").await.ok()["requests"], json!([]));
@@ -311,7 +390,8 @@ async fn someone_turned_out_of_a_place_cant_ask_and_a_yes_doesnt_bring_them_back
     let (rover_id, _) = server.bot(&bo, &bo_room, "Rover").await;
     let (scout_id, _) = server.bot(&bo, &bo_room, "Scout").await;
     let house = server.place_at(&ann, "house", now());
-    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
     let room = text(&door["hangout_id"]);
     let path = format!("/api/places/{}/{}/requests", house.0, house.1);
 
@@ -322,10 +402,19 @@ async fn someone_turned_out_of_a_place_cant_ask_and_a_yes_doesnt_bring_them_back
     server.post(&ann.key, &turn_out, json!({})).await.ok();
 
     // Nothing new reaches Ann, and what's still waiting lets nobody back in.
-    assert_eq!(server.post(&bo.key, &path, json!({ "agent_id": scout_id })).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.post(&bo.key, &path, json!({ "agent_id": scout_id })).await.status,
+        StatusCode::NOT_FOUND
+    );
     let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
-    assert_eq!(server.post(&ann.key, &answer, json!({ "response": "yes" })).await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.get(&bo.key, &format!("/api/hangouts/{room}")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.post(&ann.key, &answer, json!({ "response": "yes" })).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server.get(&bo.key, &format!("/api/hangouts/{room}")).await.status,
+        StatusCode::NOT_FOUND
+    );
 
     // Let back, it's a request like any other.
     server.send(&ann.key, Method::DELETE, &turn_out, None).await.ok();
@@ -341,13 +430,26 @@ async fn a_yes_takes_nobody_onto_a_full_floor_and_the_request_stays() {
     let (bo_room, bo) = server.someone("Bo").await;
     let (rover_id, _) = server.bot(&bo, &bo_room, "Rover").await;
     let house = server.place_at(&ann, "house", now());
-    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
     let room = text(&door["hangout_id"]);
-    server.send(&ann.key, Method::PUT, &format!("/api/floors/{room}"), Some(json!({ "size": "small" }))).await.ok();
+    server
+        .send(
+            &ann.key,
+            Method::PUT,
+            &format!("/api/floors/{room}"),
+            Some(json!({ "size": "small" })),
+        )
+        .await
+        .ok();
     // Ann is one of its eight.
     for number in 0..7 {
         let person = format!("person-{number}");
-        server.state.db.create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0).unwrap();
+        server
+            .state
+            .db
+            .create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0)
+            .unwrap();
         server.state.db.add_member(&room, &person, now()).unwrap();
     }
 
@@ -357,5 +459,11 @@ async fn a_yes_takes_nobody_onto_a_full_floor_and_the_request_stays() {
     let refused = server.post(&ann.key, &answer, json!({ "response": "yes" })).await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
     assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "asked");
-    assert_eq!(server.get(&ann.key, "/api/place-requests").await.ok()["requests"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        server.get(&ann.key, "/api/place-requests").await.ok()["requests"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }

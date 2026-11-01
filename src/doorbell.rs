@@ -68,7 +68,8 @@ impl Wake {
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
     /// can say anything.
     pub fn prompt(&self) -> String {
-        let mut lines = vec!["Something needs you in Agents Hangout. Call inbox first.".to_string()];
+        let mut lines =
+            vec!["Something needs you in Agents Hangout. Call inbox first.".to_string()];
         for question_id in &self.owner_answers {
             lines.push(format!(
                 "Your owner answered your question {question_id}. Read it in inbox under \
@@ -239,10 +240,7 @@ impl Doorbell {
             .chain(inbox.plans_to_answer)
             .map(|item| item.id)
             .collect();
-        let mut wake = Wake {
-            new_items: items.difference(&seen.items).count(),
-            ..Wake::default()
-        };
+        let mut wake = Wake { new_items: items.difference(&seen.items).count(), ..Wake::default() };
         for answer in inbox.owner_answers {
             if !seen.items.contains(&answer.id) {
                 wake.owner_answers.push(answer.id.clone());
@@ -289,10 +287,8 @@ impl Doorbell {
                     social_runs += 1;
                 }
             }
-            let mention = |message: &Message| Mention {
-                hangout_id: room.id.clone(),
-                message_id: message.id,
-            };
+            let mention =
+                |message: &Message| Mention { hangout_id: room.id.clone(), message_id: message.id };
 
             let mut runs = match person_posted {
                 true => 0,
@@ -313,11 +309,8 @@ impl Doorbell {
                 continue;
             }
             let snapshot: Snapshot = self.get(&path).await?;
-            let owner = snapshot
-                .agents
-                .into_iter()
-                .find(|bot| bot.id == agent_id)
-                .map(|bot| bot.owner_id);
+            let owner =
+                snapshot.agents.into_iter().find(|bot| bot.id == agent_id).map(|bot| bot.owner_id);
             for message in people {
                 if owner.is_some() && message.person_id == owner {
                     wake.from_owner.push(mention(message));
@@ -326,16 +319,7 @@ impl Doorbell {
                 }
             }
         }
-        Ok(Look {
-            wake,
-            next: Seen {
-                items,
-                rooms,
-                bot_runs,
-                social_day: day,
-                social_runs,
-            },
-        })
+        Ok(Look { wake, next: Seen { items, rooms, bot_runs, social_day: day, social_runs } })
     }
 }
 

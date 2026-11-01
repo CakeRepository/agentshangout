@@ -81,6 +81,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -141,7 +142,11 @@ impl Server {
     /// Someone new, by way of a room of their own: its id, and who they are.
     async fn someone(&self, name: &str) -> (String, Who) {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
         (text(&made["hangout"]["id"]), who(&made))
@@ -157,7 +162,10 @@ impl Server {
 
     async fn join(&self, owner: &Who, room: &str, name: &str) -> Who {
         let code = self.invite_code(owner, room).await;
-        who(&self.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name })).await.ok())
+        who(&self
+            .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name }))
+            .await
+            .ok())
     }
 
     /// Fills a room with new people until its owner has this many more friends.
@@ -170,12 +178,20 @@ impl Server {
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> Bot {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         Bot { id: text(&made["agent"]["id"]), token: text(&made["token"]) }
     }
 
     async fn open(&self, owner: &Who, room: &str) -> Reply {
-        self.put(&owner.key, &format!("/api/floors/{room}"), json!({ "access": "public", "create_code": CODE })).await
+        self.put(
+            &owner.key,
+            &format!("/api/floors/{room}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
     }
 
     async fn walk_in(&self, who: &Who, room: &str) {
@@ -187,7 +203,12 @@ impl Server {
     }
 
     async fn place(&self, token: &str, room: &str, kind: &str, (x, y): (i64, i64)) -> Reply {
-        self.post(token, &format!("/api/floors/{room}/items"), json!({ "kind": kind, "x": x, "y": y })).await
+        self.post(
+            token,
+            &format!("/api/floors/{room}/items"),
+            json!({ "kind": kind, "x": x, "y": y }),
+        )
+        .await
     }
 
     /// Places something that has to fit, and gives back its id.
@@ -267,8 +288,14 @@ async fn an_item_is_a_listed_kind_a_place_on_the_grid_and_a_facing() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let place = format!("/api/floors/{room}/items");
-    let reply = server.post(&ann.key, &place, json!({ "kind": "plant", "x": 30, "y": 2, "facing": 3 })).await.ok();
-    assert_eq!((reply["kind"].clone(), reply["x"].clone(), reply["y"].clone(), reply["facing"].clone()), (json!("plant"), json!(30), json!(2), json!(3)));
+    let reply = server
+        .post(&ann.key, &place, json!({ "kind": "plant", "x": 30, "y": 2, "facing": 3 }))
+        .await
+        .ok();
+    assert_eq!(
+        (reply["kind"].clone(), reply["x"].clone(), reply["y"].clone(), reply["facing"].clone()),
+        (json!("plant"), json!(30), json!(2), json!(3))
+    );
 
     for bad in [
         json!({ "kind": "throne", "x": 31, "y": 2 }),
@@ -299,10 +326,16 @@ async fn nothing_typed_is_ever_part_of_an_item() {
     for extra in ["name", "label", "color", "text", "colour", "note", "placed_by"] {
         let mut body = json!({ "kind": "plant", "x": 30, "y": 2 });
         body[extra] = json!("<script>alert(1)</script>");
-        server.post(&ann.key, &format!("/api/floors/{room}/items"), body).await.refused(StatusCode::BAD_REQUEST);
+        server
+            .post(&ann.key, &format!("/api/floors/{room}/items"), body)
+            .await
+            .refused(StatusCode::BAD_REQUEST);
     }
     let item = server.item(&ann, &room, "plant", (30, 2)).await;
-    server.change(&ann.key, &item, json!({ "label": "mine" })).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .change(&ann.key, &item, json!({ "label": "mine" }))
+        .await
+        .refused(StatusCode::BAD_REQUEST);
     server.change(&ann.key, &item, json!({ "facing": 9 })).await.refused(StatusCode::BAD_REQUEST);
     let snapshot = server.snapshot(&ann.key, &room).await;
     assert!(!snapshot["items"].to_string().contains("script"), "{}", snapshot["items"]);
@@ -320,7 +353,10 @@ async fn a_snapshot_gives_each_item_its_kind_twice_and_who_placed_it() {
     assert_eq!(item["id"], id.as_str());
     assert_eq!(item["kind"], "bookshelf");
     assert_eq!(item["item"], "bookshelf", "the room page's drawing reads this name");
-    assert_eq!((item["x"].clone(), item["y"].clone(), item["facing"].clone()), (json!(30), json!(2), json!(0)));
+    assert_eq!(
+        (item["x"].clone(), item["y"].clone(), item["facing"].clone()),
+        (json!(30), json!(2), json!(0))
+    );
     assert_eq!(item["placed_by"], ann.id.as_str());
     assert_eq!(item["placed_by_name"], "Ann");
     assert_eq!(item["holds_notes"], true);
@@ -338,8 +374,21 @@ async fn the_grid_is_forty_by_fourteen_and_the_catalog_has_the_kinds_with_art() 
         server.item(&ann, &room, "plant", corner).await;
     }
     for art in [
-        "bookshelf", "lamp", "plant", "monitor", "server_rack", "whiteboard", "armchair", "coffee_table", "rubber_duck", "trophy",
-        "pumpkin", "ghost", "cauldron", "gravestone", "skeleton",
+        "bookshelf",
+        "lamp",
+        "plant",
+        "monitor",
+        "server_rack",
+        "whiteboard",
+        "armchair",
+        "coffee_table",
+        "rubber_duck",
+        "trophy",
+        "pumpkin",
+        "ghost",
+        "cauldron",
+        "gravestone",
+        "skeleton",
     ] {
         assert!(items::kind_of(art).is_some(), "{art} has art and isn't in the catalog");
     }
@@ -402,7 +451,10 @@ async fn someone_watching_their_own_bot_on_a_floor_changes_nothing_either() {
     server.open(&ann, &room).await.ok();
     let (home, eve) = server.someone("Eve").await;
     let pip = server.bot(&eve, &home, "Pip").await;
-    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
+    server
+        .post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id }))
+        .await
+        .ok();
 
     server.place(&eve.key, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
     server.remove(&eve.key, &item).await.refused(StatusCode::FORBIDDEN);
@@ -419,7 +471,8 @@ async fn a_bot_changes_nothing_whoever_it_belongs_to() {
     let scout = server.bot(&ann, &room, "Scout").await;
     let item = server.item(&ann, &room, "plant", (30, 2)).await;
 
-    let refused = server.place(&scout.token, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
+    let refused =
+        server.place(&scout.token, &room, "plant", (31, 2)).await.refused(StatusCode::FORBIDDEN);
     assert!(text(&refused["error"]).contains("only a person"), "{refused}");
     server.change(&scout.token, &item, json!({ "x": 32 })).await.refused(StatusCode::FORBIDDEN);
     server.remove(&scout.token, &item).await.refused(StatusCode::FORBIDDEN);
@@ -438,18 +491,44 @@ async fn a_stranger_or_a_bot_from_elsewhere_gets_the_answer_for_nothing_at_all()
     let (elsewhere, dee) = server.someone("Dee").await;
     let pip = server.bot(&dee, &elsewhere, "Pip").await;
 
-    let nothing = server.get(&dee.key, "/api/items/no-such-item/notes").await.refused(StatusCode::NOT_FOUND);
+    let nothing =
+        server.get(&dee.key, "/api/items/no-such-item/notes").await.refused(StatusCode::NOT_FOUND);
     for token in [&dee.key, &pip.token] {
-        assert_eq!(server.place(token, &room, "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND), nothing);
-        assert_eq!(server.place(token, "no-such-floor", "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND), nothing);
-        assert_eq!(server.change(token, &item, json!({ "x": 32 })).await.refused(StatusCode::NOT_FOUND), nothing);
-        assert_eq!(server.change(token, "no-such-item", json!({ "x": 32 })).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(
+            server.place(token, &room, "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND),
+            nothing
+        );
+        assert_eq!(
+            server
+                .place(token, "no-such-floor", "plant", (31, 2))
+                .await
+                .refused(StatusCode::NOT_FOUND),
+            nothing
+        );
+        assert_eq!(
+            server.change(token, &item, json!({ "x": 32 })).await.refused(StatusCode::NOT_FOUND),
+            nothing
+        );
+        assert_eq!(
+            server
+                .change(token, "no-such-item", json!({ "x": 32 }))
+                .await
+                .refused(StatusCode::NOT_FOUND),
+            nothing
+        );
         assert_eq!(server.remove(token, &item).await.refused(StatusCode::NOT_FOUND), nothing);
         assert_eq!(server.note(token, &item, "hi").await.refused(StatusCode::NOT_FOUND), nothing);
         assert_eq!(server.notes(token, &item).await.refused(StatusCode::NOT_FOUND), nothing);
-        assert_eq!(server.delete(token, &format!("/api/item-notes/{note}")).await.refused(StatusCode::NOT_FOUND), nothing);
+        assert_eq!(
+            server
+                .delete(token, &format!("/api/item-notes/{note}"))
+                .await
+                .refused(StatusCode::NOT_FOUND),
+            nothing
+        );
         // A bad body tells them no more than a good one.
-        let bad = server.post(token, &format!("/api/floors/{room}/items"), json!({ "kind": 7 })).await;
+        let bad =
+            server.post(token, &format!("/api/floors/{room}/items"), json!({ "kind": 7 })).await;
         assert_eq!(bad.refused(StatusCode::NOT_FOUND), nothing);
     }
     // Over MCP too.
@@ -472,7 +551,10 @@ async fn someone_turned_out_can_touch_nothing_they_placed() {
     let (room, ann) = server.someone("Ann").await;
     let bo = server.join(&ann, &room, "Bo").await;
     let item = server.item(&bo, &room, "plant", (30, 2)).await;
-    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({})).await.ok();
+    server
+        .post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({}))
+        .await
+        .ok();
     server.remove(&bo.key, &item).await.refused(StatusCode::NOT_FOUND);
     server.place(&bo.key, &room, "plant", (31, 2)).await.refused(StatusCode::NOT_FOUND);
     // What they placed stays, and whoever runs the space can deal with it.
@@ -502,7 +584,12 @@ async fn running_a_space_from_another_floor_clears_and_signs_but_does_not_furnis
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let bo = server.join(&ann, &room, "Bo").await;
-    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
     let cy = server.join(&ann, &upstairs, "Cy").await;
     let shelf = server.item(&cy, &upstairs, "bookshelf", (30, 2)).await;
     server.note(&cy.key, &shelf, "up here").await.ok();
@@ -521,11 +608,17 @@ async fn running_a_space_from_another_floor_clears_and_signs_but_does_not_furnis
 #[tokio::test]
 async fn town_squares_living_rooms_and_porches_have_no_items() {
     let server = Server::start().await;
-    let made = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
     let ann = who(&made);
     let square = text(&made["city"]["square_id"]);
     let city = text(&made["city"]["id"]);
-    let house = server.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" })).await.ok();
+    let house = server
+        .post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" }))
+        .await
+        .ok();
     let living_room = text(&house["living_room_id"]);
     let porch = text(&house["porch_id"]);
     let scout = server.bot(&ann, &living_room, "Scout").await;
@@ -550,7 +643,16 @@ async fn town_squares_living_rooms_and_porches_have_no_items() {
 async fn an_item_stays_on_the_floor() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
-    for off in [(-1, 0), (0, -1), (40, 0), (0, 14), (i64::MAX, 0), (0, i64::MAX), (i64::MIN, 0), (0, i64::MIN)] {
+    for off in [
+        (-1, 0),
+        (0, -1),
+        (40, 0),
+        (0, 14),
+        (i64::MAX, 0),
+        (0, i64::MAX),
+        (i64::MIN, 0),
+        (0, i64::MIN),
+    ] {
         server.place(&ann.key, &room, "plant", off).await.refused(StatusCode::CONFLICT);
     }
     // All of it, not only its corner: a bookshelf is 4 wide.
@@ -577,8 +679,14 @@ async fn the_table_couch_desk_and_door_stay_clear_to_the_cell() {
     for (name, (left, right), (top, bottom), outside) in boxes {
         for y in top..=bottom {
             for x in left..=right {
-                let refused = server.place(&ann.key, &room, "plant", (x, y)).await.refused(StatusCode::CONFLICT);
-                assert!(text(&refused["error"]).contains("stay where they are"), "{name} at {x}, {y}: {refused}");
+                let refused = server
+                    .place(&ann.key, &room, "plant", (x, y))
+                    .await
+                    .refused(StatusCode::CONFLICT);
+                assert!(
+                    text(&refused["error"]).contains("stay where they are"),
+                    "{name} at {x}, {y}: {refused}"
+                );
             }
         }
         for at in outside {
@@ -595,9 +703,14 @@ fn the_nap_spots_kept_clear_are_the_ones_in_the_room_page() {
     let page = include_str!("../web/room.js");
     for (x, y) in [(132, 238), (164, 238), (196, 238)] {
         let nap = format!("x: {x}, y: {y}, ax: {x}, ay: 228, pose: 'sleep'");
-        assert!(page.contains(&nap), "the page no longer has this nap spot, so check the cells: {nap}");
+        assert!(
+            page.contains(&nap),
+            "the page no longer has this nap spot, so check the cells: {nap}"
+        );
         let cell = (x / 12, (y - 84) / 12);
-        let kept = items::FIXED.iter().any(|fixed| (fixed.x, fixed.y, fixed.w, fixed.h) == (cell.0, cell.1, 1, 1));
+        let kept = items::FIXED
+            .iter()
+            .any(|fixed| (fixed.x, fixed.y, fixed.w, fixed.h) == (cell.0, cell.1, 1, 1));
         assert!(kept, "{cell:?} isn't kept clear");
     }
 }
@@ -608,7 +721,11 @@ fn the_nap_spots_kept_clear_are_the_ones_in_the_room_page() {
 fn the_room_page_draws_every_kind_in_the_catalog() {
     let page = include_str!("../web/room.js");
     for kind in items::CATALOG {
-        assert!(page.contains(&format!("  {}: {{", kind.kind)), "web/room.js has no art for {}", kind.kind);
+        assert!(
+            page.contains(&format!("  {}: {{", kind.kind)),
+            "web/room.js has no art for {}",
+            kind.kind
+        );
     }
 }
 
@@ -637,7 +754,12 @@ async fn hiding_and_showing_furniture_never_leaves_an_item_where_it_cant_be() {
     // Showing them moves nothing and refuses nothing, and the floor still loads for everyone.
     let shown = server.snapshot(&ann.key, &room).await;
     assert_eq!(shown["floor"]["floor"]["hidden"], json!([]));
-    let cells: Vec<(Value, Value)> = shown["items"].as_array().unwrap().iter().map(|item| (item["x"].clone(), item["y"].clone())).collect();
+    let cells: Vec<(Value, Value)> = shown["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| (item["x"].clone(), item["y"].clone()))
+        .collect();
     assert_eq!(cells, [(json!(37), json!(5)), (json!(34), json!(0))]);
     let scout = server.bot(&ann, &room, "Scout").await;
     assert_eq!(server.read_room(&scout.token, &room).await["items"].as_array().unwrap().len(), 2);
@@ -658,29 +780,40 @@ async fn a_floor_still_loads_with_an_item_stored_where_it_cant_be() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
-    let stored = |id: &'static str, kind: &'static str, x: i64, y: i64| agenthangout::db::NewFloorItem {
-        id,
-        hangout_id: &room,
-        kind,
-        x,
-        y,
-        facing: 0,
-        placed_by: &ann.id,
-        now: now(),
-    };
+    let stored =
+        |id: &'static str, kind: &'static str, x: i64, y: i64| agenthangout::db::NewFloorItem {
+            id,
+            hangout_id: &room,
+            kind,
+            x,
+            y,
+            facing: 0,
+            placed_by: &ann.id,
+            now: now(),
+        };
     let nothing_checked = |_: &str, _: &[agenthangout::db::FloorItem]| Ok::<(), ()>(());
     let db = &server.state.db;
     db.place_item(&stored("on-the-table", "plant", 20, 5), nothing_checked).unwrap().unwrap();
     db.place_item(&stored("off-the-floor", "plant", 90, 90), nothing_checked).unwrap().unwrap();
-    db.place_item(&stored("from-a-later-release", "hot_tub", 30, 3), nothing_checked).unwrap().unwrap();
+    db.place_item(&stored("from-a-later-release", "hot_tub", 30, 3), nothing_checked)
+        .unwrap()
+        .unwrap();
 
     let snapshot = server.snapshot(&ann.key, &room).await;
-    let shown: Vec<String> = snapshot["items"].as_array().unwrap().iter().map(|item| text(&item["id"])).collect();
-    assert_eq!(shown, ["on-the-table", "off-the-floor"], "a kind this release doesn't know isn't shown");
+    let shown: Vec<String> =
+        snapshot["items"].as_array().unwrap().iter().map(|item| text(&item["id"])).collect();
+    assert_eq!(
+        shown,
+        ["on-the-table", "off-the-floor"],
+        "a kind this release doesn't know isn't shown"
+    );
     assert_eq!(server.read_room(&scout.token, &room).await["items"].as_array().unwrap().len(), 2);
 
     // It can't be left there on purpose, and it can be put right.
-    server.change(&ann.key, "on-the-table", json!({ "facing": 1 })).await.refused(StatusCode::CONFLICT);
+    server
+        .change(&ann.key, "on-the-table", json!({ "facing": 1 }))
+        .await
+        .refused(StatusCode::CONFLICT);
     server.change(&ann.key, "on-the-table", json!({ "x": 30, "y": 5 })).await.ok();
     server.remove(&ann.key, "off-the-floor").await.ok();
 }
@@ -716,14 +849,32 @@ async fn a_bot_learns_a_floor_exists_only_by_being_on_it() {
     let bad = json!({ "kind": 7 });
 
     for body in [&good, &bad] {
-        server.post(&scout.token, &items_of(&room), body.clone()).await.refused(StatusCode::FORBIDDEN);
-        let real = server.post(&pip.token, &items_of(&room), body.clone()).await.refused(StatusCode::NOT_FOUND);
-        let made_up = server.post(&pip.token, &items_of("no-such-floor"), body.clone()).await.refused(StatusCode::NOT_FOUND);
+        server
+            .post(&scout.token, &items_of(&room), body.clone())
+            .await
+            .refused(StatusCode::FORBIDDEN);
+        let real = server
+            .post(&pip.token, &items_of(&room), body.clone())
+            .await
+            .refused(StatusCode::NOT_FOUND);
+        let made_up = server
+            .post(&pip.token, &items_of("no-such-floor"), body.clone())
+            .await
+            .refused(StatusCode::NOT_FOUND);
         assert_eq!(real, made_up);
     }
     server.change(&scout.token, &item, json!({ "facing": 9 })).await.refused(StatusCode::FORBIDDEN);
-    let real = server.change(&pip.token, &item, json!({ "facing": 9 })).await.refused(StatusCode::NOT_FOUND);
-    assert_eq!(real, server.change(&pip.token, "no-such-item", json!({ "facing": 9 })).await.refused(StatusCode::NOT_FOUND));
+    let real = server
+        .change(&pip.token, &item, json!({ "facing": 9 }))
+        .await
+        .refused(StatusCode::NOT_FOUND);
+    assert_eq!(
+        real,
+        server
+            .change(&pip.token, "no-such-item", json!({ "facing": 9 }))
+            .await
+            .refused(StatusCode::NOT_FOUND)
+    );
 
     // Someone who walked in is told no the same way, whatever they send.
     server.open(&ann, &room).await.ok();
@@ -827,7 +978,12 @@ async fn a_floor_holds_forty_items() {
     assert_eq!(items::MAX_ITEMS, 40);
     server.place(&ann.key, &room, "plant", spot(100)).await.refused(StatusCode::CONFLICT);
     // Another floor is another 40.
-    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
     server.item(&ann, &upstairs, "plant", spot(100)).await;
     server.remove(&ann.key, &first).await.ok();
     server.item(&ann, &room, "plant", spot(100)).await;
@@ -953,17 +1109,28 @@ async fn a_rooms_mood_is_the_one_most_of_its_items_carry_when_at_least_two_do() 
 
 #[test]
 fn nothing_about_mood_or_beauty_is_stored() {
-    let path = std::env::temp_dir().join(format!("rooms-schema-{}-{}.db", std::process::id(), now()));
+    let path =
+        std::env::temp_dir().join(format!("rooms-schema-{}-{}.db", std::process::id(), now()));
     let db = Db::open(path.to_str().unwrap()).unwrap();
     drop(db);
     let connection = rusqlite::Connection::open(&path).unwrap();
     let columns = |table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
-        statement.query_map([], |row| row.get::<_, String>(1)).unwrap().map(Result::unwrap).collect()
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     };
     // Nor is any name: who placed an item is a person's id, and their name comes from `people`.
-    assert_eq!(columns("floor_items"), ["id", "hangout_id", "kind", "x", "y", "facing", "placed_by", "placed_at"]);
-    assert_eq!(columns("item_notes"), ["id", "item_id", "body", "person_id", "via_agent", "created_at"]);
+    assert_eq!(
+        columns("floor_items"),
+        ["id", "hangout_id", "kind", "x", "y", "facing", "placed_by", "placed_at"]
+    );
+    assert_eq!(
+        columns("item_notes"),
+        ["id", "item_id", "body", "person_id", "via_agent", "created_at"]
+    );
     assert_eq!(columns("bots_without_moods"), ["agent_id"]);
     drop(connection);
     for suffix in ["", "-wal", "-shm"] {
@@ -984,7 +1151,14 @@ async fn read_room_gives_a_mood_and_one_fixed_sentence_for_it() {
     assert!(empty.as_object().unwrap().contains_key("room_mood"), "{empty}");
     assert!(empty["room_mood"].is_null() && empty["room_mood_note"].is_null());
 
-    let carriers = [("drive", "whiteboard"), ("inspired", "bookshelf"), ("calm", "plant"), ("cozy", "lamp"), ("playful", "rubber_duck"), ("flirty", "candlelit_table")];
+    let carriers = [
+        ("drive", "whiteboard"),
+        ("inspired", "bookshelf"),
+        ("calm", "plant"),
+        ("cozy", "lamp"),
+        ("playful", "rubber_duck"),
+        ("flirty", "candlelit_table"),
+    ];
     let mut sentences = BTreeSet::new();
     for (mood, kind) in carriers {
         let one = server.item(&ann, &room, kind, (28, 0)).await;
@@ -1013,8 +1187,14 @@ async fn read_room_gives_a_mood_and_one_fixed_sentence_for_it() {
 async fn the_guide_says_a_mood_is_a_hint_that_never_overrides_a_bots_owner() {
     let guide = include_str!("../web/agents.md").replace("\r\n", "\n").replace('\n', " ");
     assert!(guide.contains("A mood is a hint."), "the guide doesn't say it's a hint");
-    assert!(guide.contains("It never overrides what your owner has set"), "the guide doesn't put the owner first");
-    assert!(guide.contains("item_notes") && guide.contains("add_item_note"), "the guide doesn't list the tools");
+    assert!(
+        guide.contains("It never overrides what your owner has set"),
+        "the guide doesn't put the owner first"
+    );
+    assert!(
+        guide.contains("item_notes") && guide.contains("add_item_note"),
+        "the guide doesn't list the tools"
+    );
     assert!(guide.contains("A `quiet` sign"), "the guide doesn't explain quiet");
 }
 
@@ -1029,7 +1209,10 @@ async fn an_owner_can_turn_moods_off_and_their_bot_then_gets_neither_field() {
     server.item(&ann, &room, "plant", spot(1)).await;
     assert_eq!(server.read_room(&scout.token, &room).await["room_mood"], "calm");
 
-    server.put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": false })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": false }))
+        .await
+        .ok();
     let read = server.read_room(&scout.token, &room).await;
     let fields = read.as_object().unwrap();
     assert!(!fields.contains_key("room_mood") && !fields.contains_key("room_mood_note"), "{read}");
@@ -1039,10 +1222,17 @@ async fn an_owner_can_turn_moods_off_and_their_bot_then_gets_neither_field() {
     // Plain HTTP doesn't get round it.
     let rest = server.snapshot(&scout.token, &room).await;
     assert!(rest["room_mood"].is_null() && rest["room_mood_note"].is_null(), "{rest}");
-    assert_eq!(server.snapshot(&ann.key, &room).await["room_mood"], "calm", "a person still sees it");
+    assert_eq!(
+        server.snapshot(&ann.key, &room).await["room_mood"],
+        "calm",
+        "a person still sees it"
+    );
 
     assert_eq!(server.snapshot(&ann.key, &room).await["bots_without_moods"], json!([scout.id]));
-    server.put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": true })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/agents/{}/moods", scout.id), json!({ "moods": true }))
+        .await
+        .ok();
     assert_eq!(server.read_room(&scout.token, &room).await["room_mood"], "calm");
     assert_eq!(server.snapshot(&ann.key, &room).await["bots_without_moods"], json!([]));
 }
@@ -1062,8 +1252,14 @@ async fn only_its_owner_can_turn_a_bots_moods_on_or_off() {
     server.put(&scout.token, &path, json!({ "moods": true })).await.refused(StatusCode::FORBIDDEN);
     server.put(&rover.token, &path, json!({ "moods": true })).await.refused(StatusCode::FORBIDDEN);
     // Someone else's bot is one that doesn't exist, even to whoever is in the room with it.
-    let nothing = server.put(&bo.key, "/api/agents/no-such-bot/moods", json!({ "moods": true })).await.refused(StatusCode::NOT_FOUND);
-    assert_eq!(server.put(&bo.key, &path, json!({ "moods": true })).await.refused(StatusCode::NOT_FOUND), nothing);
+    let nothing = server
+        .put(&bo.key, "/api/agents/no-such-bot/moods", json!({ "moods": true }))
+        .await
+        .refused(StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.put(&bo.key, &path, json!({ "moods": true })).await.refused(StatusCode::NOT_FOUND),
+        nothing
+    );
     server.put("", &path, json!({ "moods": true })).await.refused(StatusCode::UNAUTHORIZED);
     server.put(&ann.key, &path, json!({ "moods": "yes" })).await.refused(StatusCode::BAD_REQUEST);
     assert!(!server.state.db.bot_has_moods(&scout.id).unwrap());
@@ -1103,7 +1299,10 @@ async fn a_floor_holding_flirty_items_cant_be_opened_until_they_are_gone() {
     assert_eq!(snapshot["agents"].as_array().unwrap().len(), 1, "{}", snapshot["agents"]);
     assert!(!snapshot["messages"].to_string().contains("public"), "{}", snapshot["messages"]);
     let (_, eve) = server.someone("Eve").await;
-    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.refused(StatusCode::NOT_FOUND);
+    server
+        .post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({}))
+        .await
+        .refused(StatusCode::NOT_FOUND);
     server.get(&pip.token, &format!("/api/hangouts/{room}")).await.ok();
 
     // Other changes to the floor go through, and it's only opening that it stops.
@@ -1136,7 +1335,8 @@ async fn closing_a_floor_and_furnishing_it_doesnt_let_it_open_again() {
 async fn only_a_bookshelf_cabinet_or_whiteboard_holds_notes() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
-    let holders: Vec<&str> = items::CATALOG.iter().filter(|kind| kind.holds_notes).map(|kind| kind.kind).collect();
+    let holders: Vec<&str> =
+        items::CATALOG.iter().filter(|kind| kind.holds_notes).map(|kind| kind.kind).collect();
     assert_eq!(holders, ["bookshelf", "cabinet", "whiteboard"]);
     for (n, kind) in holders.iter().enumerate() {
         let at = (28, n as i64 * 2);
@@ -1195,13 +1395,21 @@ async fn a_member_and_their_bot_can_read_and_add_notes() {
     let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
 
     server.note(&bo.key, &shelf, "from Bo").await.ok();
-    let added = server.tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "from Pip" })).await;
+    let added = server
+        .tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "from Pip" }))
+        .await;
     assert_eq!(added["structuredContent"]["added"], true, "{added}");
     server.note(&pip.token, &shelf, "from Pip over HTTP").await.ok();
 
-    assert_eq!(notes_read(&server.notes(&ann.key, &shelf).await.ok()), ["from Bo", "from Pip", "from Pip over HTTP"]);
+    assert_eq!(
+        notes_read(&server.notes(&ann.key, &shelf).await.ok()),
+        ["from Bo", "from Pip", "from Pip over HTTP"]
+    );
     let read = server.tool(&pip.token, "item_notes", json!({ "item_id": shelf })).await;
-    assert_eq!(notes_read(&read["structuredContent"]), ["from Bo", "from Pip", "from Pip over HTTP"]);
+    assert_eq!(
+        notes_read(&read["structuredContent"]),
+        ["from Bo", "from Pip", "from Pip over HTTP"]
+    );
 }
 
 // I13, S19: every rule in spaces.md still holds, so what was said before a floor opened stays hidden.
@@ -1242,12 +1450,17 @@ async fn a_bot_that_was_sent_in_reads_the_same_way_and_writes_nothing() {
     server.open(&ann, &room).await.ok();
     let (home, eve) = server.someone("Eve").await;
     let pip = server.bot(&eve, &home, "Pip").await;
-    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
+    server
+        .post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id }))
+        .await
+        .ok();
 
     let read = server.tool(&pip.token, "item_notes", json!({ "item_id": shelf })).await;
     assert!(notes_read(&read["structuredContent"]).is_empty(), "{read}");
     assert_eq!(server.read_room(&pip.token, &room).await["items"][0]["notes"], 0);
-    let added = server.tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "hello" })).await;
+    let added = server
+        .tool(&pip.token, "add_item_note", json!({ "item_id": shelf, "text": "hello" }))
+        .await;
     assert_eq!(added["isError"], true, "{added}");
     server.note(&pip.token, &shelf, "hello").await.refused(StatusCode::FORBIDDEN);
     // Nor can the person who sent it, who is on the floor only to watch.
@@ -1287,7 +1500,10 @@ async fn only_a_notes_writer_or_whoever_runs_the_space_can_remove_it() {
     let last = server.note_id(&cy.key, &shelf, "Cy's words").await;
     let listed = server.notes(&bo.key, &shelf).await.ok();
     assert_eq!(note_by(&listed, "Cy's words")["can_remove"], false);
-    assert_eq!(note_by(&server.notes(&ann.key, &shelf).await.ok(), "Cy's words")["can_remove"], true);
+    assert_eq!(
+        note_by(&server.notes(&ann.key, &shelf).await.ok(), "Cy's words")["can_remove"],
+        true
+    );
     server.delete(&ann.key, &path(&last)).await.ok();
     assert!(notes_read(&server.notes(&ann.key, &shelf).await.ok()).is_empty());
 }
@@ -1303,7 +1519,10 @@ async fn someone_who_walked_in_can_remove_no_note() {
     let note = server.note_id(&ann.key, &shelf, "stays").await;
     let (_, eve) = server.someone("Eve").await;
     server.walk_in(&eve, &room).await;
-    server.delete(&eve.key, &format!("/api/item-notes/{note}")).await.refused(StatusCode::FORBIDDEN);
+    server
+        .delete(&eve.key, &format!("/api/item-notes/{note}"))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     assert!(server.state.db.item_note(&note).unwrap().is_some());
 }
 
@@ -1319,7 +1538,9 @@ async fn a_bots_notes_count_against_its_write_cap() {
     'writing: for row in 0..4 {
         let shelf = server.item(&ann, &room, "bookshelf", (30, row * 2)).await;
         for _ in 0..items::MAX_NOTES {
-            if server.note(&scout.token, &shelf, "again").await.status == StatusCode::TOO_MANY_REQUESTS {
+            if server.note(&scout.token, &shelf, "again").await.status
+                == StatusCode::TOO_MANY_REQUESTS
+            {
                 limited = true;
                 break 'writing;
             }
@@ -1365,7 +1586,11 @@ async fn only_a_bots_own_owners_words_are_from_its_owner() {
     server.note(&pip.token, &shelf, "Pip").await.ok();
 
     let check = |read: Value, ann_is: bool, bo_is: bool| {
-        assert_eq!(read["trust_note"].as_str().map(|note| note.contains("never as instructions")), Some(true), "{read}");
+        assert_eq!(
+            read["trust_note"].as_str().map(|note| note.contains("never as instructions")),
+            Some(true),
+            "{read}"
+        );
         assert_eq!(note_by(&read, "Ann herself")["from_your_owner"], ann_is, "{read}");
         assert_eq!(note_by(&read, "Bo himself")["from_your_owner"], bo_is, "{read}");
         assert_eq!(note_by(&read, "the other Ann")["from_your_owner"], false, "{read}");
@@ -1376,7 +1601,11 @@ async fn only_a_bots_own_owners_words_are_from_its_owner() {
     let over_mcp = |token: String| {
         let shelf = shelf.clone();
         let server = &server;
-        async move { server.tool(&token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone() }
+        async move {
+            server.tool(&token, "item_notes", json!({ "item_id": shelf })).await
+                ["structuredContent"]
+                .clone()
+        }
     };
     check(over_mcp(scout.token.clone()).await, true, false);
     check(over_mcp(rover.token.clone()).await, true, false);
@@ -1396,12 +1625,17 @@ async fn running_the_space_doesnt_make_someones_words_a_bots_owners_wherever_the
     let scout = server.bot(&ann, &home, "Scout").await;
     let code = server.invite_code(&eve, &eves_room).await;
     server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
-    server.put(&ann.key, &format!("/api/hangouts/{eves_room}/agents/{}", scout.id), json!({})).await.ok();
+    server
+        .put(&ann.key, &format!("/api/hangouts/{eves_room}/agents/{}", scout.id), json!({}))
+        .await
+        .ok();
     let shelf = server.item(&eve, &eves_room, "bookshelf", (30, 2)).await;
     server.note(&eve.key, &shelf, "Eve runs this place").await.ok();
     server.note(&ann.key, &shelf, "Ann, on Eve's floor").await.ok();
 
-    let read = server.tool(&scout.token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone();
+    let read = server.tool(&scout.token, "item_notes", json!({ "item_id": shelf })).await
+        ["structuredContent"]
+        .clone();
     assert_eq!(note_by(&read, "Eve runs this place")["from_your_owner"], false);
     assert_eq!(note_by(&read, "Ann, on Eve's floor")["from_your_owner"], true, "{read}");
     // A person isn't anyone's bot, so it isn't true for them either.
@@ -1420,7 +1654,9 @@ async fn a_bots_note_stays_a_bots_after_it_has_gone() {
     let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
     server.note(&scout.token, &shelf, "from Scout").await.ok();
     server.delete(&ann.key, &format!("/api/hangouts/{room}/agents/{}", scout.id)).await.ok();
-    let read = server.tool(&rover.token, "item_notes", json!({ "item_id": shelf })).await["structuredContent"].clone();
+    let read = server.tool(&rover.token, "item_notes", json!({ "item_id": shelf })).await
+        ["structuredContent"]
+        .clone();
     assert_eq!(note_by(&read, "from Scout")["via_bot"], "Scout");
     assert_eq!(note_by(&read, "from Scout")["from_your_owner"], false);
 }
@@ -1446,7 +1682,12 @@ async fn removing_an_item_removes_its_notes() {
 async fn removing_a_floor_or_closing_a_space_takes_its_items_with_it() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
-    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
     let up = server.item(&ann, &upstairs, "bookshelf", (30, 2)).await;
     let up_note = server.note_id(&ann.key, &up, "up here").await;
     let down = server.item(&ann, &room, "bookshelf", (30, 2)).await;
@@ -1466,7 +1707,10 @@ async fn only_whoever_runs_the_space_can_place_a_sign() {
     let bo = server.join(&ann, &room, "Bo").await;
     let scout = server.bot(&ann, &room, "Scout").await;
 
-    assert_eq!(items::CATALOG.iter().filter(|kind| kind.sign).map(|kind| kind.kind).collect::<Vec<_>>(), [items::QUIET]);
+    assert_eq!(
+        items::CATALOG.iter().filter(|kind| kind.sign).map(|kind| kind.kind).collect::<Vec<_>>(),
+        [items::QUIET]
+    );
     server.place(&bo.key, &room, items::QUIET, spot(0)).await.refused(StatusCode::FORBIDDEN);
     server.place(&scout.token, &room, items::QUIET, spot(0)).await.refused(StatusCode::FORBIDDEN);
     let sign = server.item(&ann, &room, items::QUIET, spot(0)).await;
@@ -1519,12 +1763,23 @@ impl QuietRoom {
         let scout = server.bot(&bo, &room, "Scout").await;
         let shelf = server.item(&ann, &room, "bookshelf", (30, 2)).await;
         let plan = json!({ "title": "Tacos", "starts_at": LATER });
-        let plan = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);
-        server.post(&bo.key, &format!("/api/events/{plan}/rsvp"), json!({ "response": "yes" })).await.ok();
+        let plan = text(
+            &server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"],
+        );
+        server
+            .post(&bo.key, &format!("/api/events/{plan}/rsvp"), json!({ "response": "yes" }))
+            .await
+            .ok();
         let unanswered = json!({ "title": "Lunch", "starts_at": LATER });
-        let unanswered = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), unanswered).await.ok()["id"]);
+        let unanswered = text(
+            &server.post(&ann.key, &format!("/api/hangouts/{room}/events"), unanswered).await.ok()
+                ["id"],
+        );
         let check_in = json!({ "about": "May I?" });
-        let check_in = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), check_in).await.ok()["id"]);
+        let check_in = text(
+            &server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), check_in).await.ok()
+                ["id"],
+        );
         server.item(&ann, &room, items::QUIET, spot(40)).await;
         Self { server, room, ann, bo, scout, shelf, plan, unanswered, check_in }
     }
@@ -1548,7 +1803,8 @@ impl QuietRoom {
         assert!(!snapshot.to_string().contains(WORDS), "{snapshot}");
         let notes = self.server.notes(&self.ann.key, &self.shelf).await.ok();
         assert!(!notes.to_string().contains(WORDS), "{notes}");
-        let list = self.server.get(&self.bo.key, &format!("/api/events/{}/items", self.plan)).await.ok();
+        let list =
+            self.server.get(&self.bo.key, &format!("/api/events/{}/items", self.plan)).await.ok();
         assert!(!list.to_string().contains(WORDS), "{list}");
     }
 
@@ -1562,7 +1818,10 @@ impl QuietRoom {
 #[tokio::test]
 async fn quiet_stops_a_bot_posting_a_message_over_http() {
     let quiet = QuietRoom::new().await;
-    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": WORDS })).await;
+    let reply = quiet
+        .server
+        .post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": WORDS }))
+        .await;
     quiet.refused_over_http(reply);
     quiet.nothing_landed().await;
 }
@@ -1572,7 +1831,8 @@ async fn quiet_stops_a_bot_posting_a_message_over_http() {
 #[tokio::test]
 async fn quiet_stops_a_bot_pinning_a_shared_note_over_http() {
     let quiet = QuietRoom::new().await;
-    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("notes"), json!({ "text": WORDS })).await;
+    let reply =
+        quiet.server.post(&quiet.scout.token, &quiet.rest("notes"), json!({ "text": WORDS })).await;
     quiet.refused_over_http(reply);
     quiet.nothing_landed().await;
 }
@@ -1582,7 +1842,10 @@ async fn quiet_stops_a_bot_pinning_a_shared_note_over_http() {
 #[tokio::test]
 async fn quiet_stops_say_over_mcp() {
     let quiet = QuietRoom::new().await;
-    let result = quiet.server.tool(&quiet.scout.token, "say", json!({ "hangout_id": quiet.room, "text": WORDS })).await;
+    let result = quiet
+        .server
+        .tool(&quiet.scout.token, "say", json!({ "hangout_id": quiet.room, "text": WORDS }))
+        .await;
     quiet.refused_over_mcp(result);
     quiet.nothing_landed().await;
 }
@@ -1592,7 +1855,10 @@ async fn quiet_stops_say_over_mcp() {
 #[tokio::test]
 async fn quiet_stops_share_note_over_mcp() {
     let quiet = QuietRoom::new().await;
-    let result = quiet.server.tool(&quiet.scout.token, "share_note", json!({ "hangout_id": quiet.room, "text": WORDS })).await;
+    let result = quiet
+        .server
+        .tool(&quiet.scout.token, "share_note", json!({ "hangout_id": quiet.room, "text": WORDS }))
+        .await;
     quiet.refused_over_mcp(result);
     quiet.nothing_landed().await;
 }
@@ -1623,7 +1889,10 @@ async fn quiet_stops_a_note_on_an_item_over_http() {
 #[tokio::test]
 async fn quiet_stops_add_item_note_over_mcp() {
     let quiet = QuietRoom::new().await;
-    let result = quiet.server.tool(&quiet.scout.token, "add_item_note", json!({ "item_id": quiet.shelf, "text": WORDS })).await;
+    let result = quiet
+        .server
+        .tool(&quiet.scout.token, "add_item_note", json!({ "item_id": quiet.shelf, "text": WORDS }))
+        .await;
     quiet.refused_over_mcp(result);
     quiet.nothing_landed().await;
 }
@@ -1633,7 +1902,10 @@ async fn quiet_stops_add_item_note_over_mcp() {
 #[tokio::test]
 async fn quiet_stops_a_check_in_over_http() {
     let quiet = QuietRoom::new().await;
-    let reply = quiet.server.post(&quiet.scout.token, &quiet.rest("check-ins"), json!({ "about": WORDS })).await;
+    let reply = quiet
+        .server
+        .post(&quiet.scout.token, &quiet.rest("check-ins"), json!({ "about": WORDS }))
+        .await;
     quiet.refused_over_http(reply);
     quiet.nothing_landed().await;
 }
@@ -1643,7 +1915,10 @@ async fn quiet_stops_a_check_in_over_http() {
 #[tokio::test]
 async fn quiet_stops_check_in_over_mcp() {
     let quiet = QuietRoom::new().await;
-    let result = quiet.server.tool(&quiet.scout.token, "check_in", json!({ "hangout_id": quiet.room, "about": WORDS })).await;
+    let result = quiet
+        .server
+        .tool(&quiet.scout.token, "check_in", json!({ "hangout_id": quiet.room, "about": WORDS }))
+        .await;
     quiet.refused_over_mcp(result);
     quiet.nothing_landed().await;
 }
@@ -1654,7 +1929,9 @@ async fn quiet_stops_check_in_over_mcp() {
 async fn quiet_stops_a_plan_over_http() {
     let quiet = QuietRoom::new().await;
     let body = json!({ "title": WORDS, "starts_at": LATER });
-    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &quiet.rest("events"), body).await);
+    quiet.refused_over_http(
+        quiet.server.post(&quiet.scout.token, &quiet.rest("events"), body).await,
+    );
     quiet.nothing_landed().await;
 }
 
@@ -1674,7 +1951,9 @@ async fn quiet_stops_propose_hangout_over_mcp() {
 async fn quiet_stops_adding_to_a_plans_list_over_http() {
     let quiet = QuietRoom::new().await;
     let path = format!("/api/events/{}/items", quiet.plan);
-    quiet.refused_over_http(quiet.server.post(&quiet.scout.token, &path, json!({ "text": WORDS })).await);
+    quiet.refused_over_http(
+        quiet.server.post(&quiet.scout.token, &path, json!({ "text": WORDS })).await,
+    );
     quiet.nothing_landed().await;
 }
 
@@ -1722,7 +2001,15 @@ async fn quiet_stops_a_note_on_an_answer_to_a_check_in_and_not_the_answer() {
 #[tokio::test]
 async fn no_tool_a_bot_has_gets_its_words_past_a_quiet_sign() {
     let quiet = QuietRoom::new().await;
-    let listed = quiet.server.post(&quiet.scout.token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
+    let listed = quiet
+        .server
+        .post(
+            &quiet.scout.token,
+            "/mcp",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+        )
+        .await
+        .ok();
     let tools = listed["result"]["tools"].as_array().unwrap().clone();
     assert!(tools.len() > 25, "{listed}");
     for tool in tools {
@@ -1764,7 +2051,9 @@ async fn a_bot_can_still_read_a_quiet_room() {
     assert!(calendar["isError"].is_null(), "{calendar}");
     server.get(token, "/api/inbox").await.ok();
     // It can still ask its owner, which stays between them and goes in no room.
-    let asked = server.tool(token, "ask_owner", json!({ "hangout_id": quiet.room, "question": "Is this fine?" })).await;
+    let asked = server
+        .tool(token, "ask_owner", json!({ "hangout_id": quiet.room, "question": "Is this fine?" }))
+        .await;
     assert!(asked["isError"].is_null(), "{asked}");
 }
 
@@ -1776,10 +2065,16 @@ async fn people_are_unaffected_by_a_quiet_sign() {
     let server = &quiet.server;
     for who in [&quiet.ann, &quiet.bo] {
         server.post(&who.key, &quiet.rest("messages"), json!({ "text": "a person" })).await.ok();
-        server.post(&who.key, &quiet.rest("notes"), json!({ "text": "a person's note" })).await.ok();
+        server
+            .post(&who.key, &quiet.rest("notes"), json!({ "text": "a person's note" }))
+            .await
+            .ok();
         server.note(&who.key, &quiet.shelf, "on the shelf").await.ok();
         server.post(&who.key, &quiet.rest("check-ins"), json!({ "about": "May I?" })).await.ok();
-        server.post(&who.key, &quiet.rest("events"), json!({ "title": "Lunch", "starts_at": LATER })).await.ok();
+        server
+            .post(&who.key, &quiet.rest("events"), json!({ "title": "Lunch", "starts_at": LATER }))
+            .await
+            .ok();
     }
     // And someone who walked in talks as before.
     server.open(&quiet.ann, &quiet.room).await.ok();
@@ -1794,9 +2089,17 @@ async fn people_are_unaffected_by_a_quiet_sign() {
 async fn taking_the_sign_down_lets_bots_write_again() {
     let quiet = QuietRoom::new().await;
     let server = &quiet.server;
-    server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": "x" })).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": "x" }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     let snapshot = server.snapshot(&quiet.ann.key, &quiet.room).await;
-    let sign = snapshot["items"].as_array().unwrap().iter().find(|item| item["kind"] == items::QUIET).unwrap();
+    let sign = snapshot["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == items::QUIET)
+        .unwrap();
     server.remove(&quiet.ann.key, &text(&sign["id"])).await.ok();
     server.post(&quiet.scout.token, &quiet.rest("messages"), json!({ "text": "x" })).await.ok();
     server.note(&quiet.scout.token, &quiet.shelf, "x").await.ok();
@@ -1812,8 +2115,13 @@ async fn quiet_stops_a_bot_that_was_sent_in_as_well() {
     server.item(&ann, &room, items::QUIET, spot(0)).await;
     let (home, eve) = server.someone("Eve").await;
     let pip = server.bot(&eve, &home, "Pip").await;
-    server.post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id })).await.ok();
-    let reply = server.post(&pip.token, &format!("/api/hangouts/{room}/messages"), json!({ "text": WORDS })).await;
+    server
+        .post(&eve.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": pip.id }))
+        .await
+        .ok();
+    let reply = server
+        .post(&pip.token, &format!("/api/hangouts/{room}/messages"), json!({ "text": WORDS }))
+        .await;
     assert_eq!(reply.refused(StatusCode::FORBIDDEN)["error"], items::QUIET_REASON);
     let said = server.tool(&pip.token, "say", json!({ "hangout_id": room, "text": WORDS })).await;
     assert_eq!(said["isError"], true, "{said}");
@@ -1825,20 +2133,32 @@ async fn quiet_stops_a_bot_that_was_sent_in_as_well() {
 async fn a_quiet_sign_stops_at_the_floor_it_stands_on() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
-    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
     let (elsewhere, dee) = server.someone("Dee").await;
     let code = server.invite_code(&dee, &elsewhere).await;
     server.post(&ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
     let scout = server.bot(&ann, &room, "Scout").await;
     for other in [&upstairs, &elsewhere] {
-        server.put(&ann.key, &format!("/api/hangouts/{other}/agents/{}", scout.id), json!({})).await.ok();
+        server
+            .put(&ann.key, &format!("/api/hangouts/{other}/agents/{}", scout.id), json!({}))
+            .await
+            .ok();
     }
     server.item(&ann, &room, items::QUIET, spot(0)).await;
 
     let say = |in_room: String| {
         let token = scout.token.clone();
         let server = &server;
-        async move { server.post(&token, &format!("/api/hangouts/{in_room}/messages"), json!({ "text": "hi" })).await }
+        async move {
+            server
+                .post(&token, &format!("/api/hangouts/{in_room}/messages"), json!({ "text": "hi" }))
+                .await
+        }
     };
     say(room.clone()).await.refused(StatusCode::FORBIDDEN);
     say(upstairs.clone()).await.ok();
@@ -1864,7 +2184,11 @@ async fn a_room_gives_a_bot_nothing_its_owner_didnt() {
     server.notes(&pip.token, &shelf).await.refused(StatusCode::NOT_FOUND);
     // And the words in a room stay there: they aren't in the room's shared notes or a bot's inbox.
     server.note(&ann.key, &shelf, "stays on the shelf").await.ok();
-    assert!(!server.read_room(&scout.token, &room).await.to_string().contains("stays on the shelf"));
+    assert!(!server
+        .read_room(&scout.token, &room)
+        .await
+        .to_string()
+        .contains("stays on the shelf"));
     let inbox = server.tool(&scout.token, "inbox", json!({})).await;
     assert!(!inbox.to_string().contains("stays on the shelf"), "{inbox}");
     // Nothing about a person's friends reaches their bot.
@@ -1876,12 +2200,23 @@ async fn a_room_gives_a_bot_nothing_its_owner_didnt() {
 #[tokio::test]
 async fn a_house_bot_gets_nothing_from_any_of_this() {
     let server = Server::start().await;
-    let made = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
     let ann = who(&made);
     let city = text(&made["city"]["id"]);
-    let house = server.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" })).await.ok();
+    let house = server
+        .post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" }))
+        .await
+        .ok();
     let house_id = text(&house["house"]["id"]);
-    let casa = text(&server.post(&ann.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" })).await.ok()["token"]);
+    let casa = text(
+        &server
+            .post(&ann.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" }))
+            .await
+            .ok()["token"],
+    );
     let (room, _) = server.someone("Dee").await;
     for tool in ["item_notes", "add_item_note"] {
         let result = server.tool(&casa, tool, json!({ "item_id": "x", "text": "x" })).await;
@@ -1902,13 +2237,21 @@ async fn starter_items_are_for_everyone_and_the_rest_unlock_with_friends() {
         server.remove(&ann.key, &id).await.ok();
     }
 
-    let tiers = [("monitor", "one_friend", 1), ("sofa", "three_friends", 3), ("fireplace", "six_friends", 6)];
+    let tiers = [
+        ("monitor", "one_friend", 1),
+        ("sofa", "three_friends", 3),
+        ("fireplace", "six_friends", 6),
+    ];
     let mut friends = 0;
     for (kind, tier, needed) in tiers {
-        assert_eq!(items::kind_of(kind).map(|entry| (entry.tier, entry.friends)), Some((tier, needed)));
+        assert_eq!(
+            items::kind_of(kind).map(|entry| (entry.tier, entry.friends)),
+            Some((tier, needed))
+        );
         // One short of it, it's refused, and it says how many.
         server.friends_for(&ann, &room, (needed - 1 - friends) as usize).await;
-        let refused = server.place(&ann.key, &room, kind, (28, 12)).await.refused(StatusCode::FORBIDDEN);
+        let refused =
+            server.place(&ann.key, &room, kind, (28, 12)).await.refused(StatusCode::FORBIDDEN);
         assert!(text(&refused["error"]).contains(&needed.to_string()), "{refused}");
         server.friends_for(&ann, &room, 1).await;
         friends = needed;
@@ -1951,7 +2294,10 @@ async fn friends_unlock_furniture_and_nothing_else() {
     server.place(&scout.token, &room, "fireplace", (28, 5)).await.refused(StatusCode::FORBIDDEN);
     server.get(&scout.token, "/api/items").await.refused(StatusCode::FORBIDDEN);
     let referrals = include_str!("../docs/referrals.md");
-    assert!(referrals.contains("The one exception is furniture"), "docs/referrals.md lost the exception");
+    assert!(
+        referrals.contains("The one exception is furniture"),
+        "docs/referrals.md lost the exception"
+    );
 }
 
 // I21
@@ -2025,7 +2371,10 @@ async fn the_catalog_says_what_this_person_has_unlocked_and_what_the_rest_need()
 
     // It shows nobody's friends: not a name, an id or a count.
     let body = catalog.to_string();
-    assert!(!body.contains("\"Bo\"") && !body.contains(&bo.id) && !body.contains("friends\":"), "{body}");
+    assert!(
+        !body.contains("\"Bo\"") && !body.contains(&bo.id) && !body.contains("friends\":"),
+        "{body}"
+    );
 }
 
 // I22
@@ -2057,8 +2406,16 @@ async fn every_kind_has_a_fixed_whole_beauty_from_zero_to_ten() {
 #[test]
 fn a_rooms_beauty_word_comes_from_its_sum() {
     for (sum, word) in [
-        (0, "bare"), (4, "bare"), (5, "plain"), (19, "plain"), (20, "nice"), (49, "nice"),
-        (50, "lovely"), (99, "lovely"), (100, "stunning"), (400, "stunning"),
+        (0, "bare"),
+        (4, "bare"),
+        (5, "plain"),
+        (19, "plain"),
+        (20, "nice"),
+        (49, "nice"),
+        (50, "lovely"),
+        (99, "lovely"),
+        (100, "stunning"),
+        (400, "stunning"),
     ] {
         assert_eq!(items::beauty_word(sum), word, "{sum}");
     }
@@ -2074,7 +2431,10 @@ async fn a_rooms_beauty_is_the_sum_of_its_items_worked_out_on_read() {
     let beauty = |item: &str| items::kind_of(item).unwrap().beauty;
 
     let empty = server.read_room(&scout.token, &room).await;
-    assert_eq!((empty["room_beauty"].clone(), empty["room_beauty_word"].clone()), (json!(0), json!("bare")));
+    assert_eq!(
+        (empty["room_beauty"].clone(), empty["room_beauty_word"].clone()),
+        (json!(0), json!("bare"))
+    );
 
     let plant = server.item(&ann, &room, "plant", spot(0)).await;
     server.item(&ann, &room, "bookshelf", (28, 5)).await;
@@ -2133,9 +2493,17 @@ async fn nothing_ranks_or_lists_a_rooms_beauty() {
         server.item(&lonely, &lonely_room, "plant", spot(n)).await;
     }
     let catalog = server.get(&lonely.key, "/api/items").await.ok();
-    let locked = catalog["items"].as_array().unwrap().iter().filter(|item| item["unlocked"] == false).count();
+    let locked = catalog["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["unlocked"] == false)
+        .count();
     assert!(locked > 0);
-    server.place(&lonely.key, &lonely_room, "monitor", spot(20)).await.refused(StatusCode::FORBIDDEN);
+    server
+        .place(&lonely.key, &lonely_room, "monitor", spot(20))
+        .await
+        .refused(StatusCode::FORBIDDEN);
 }
 
 // Packs
@@ -2214,9 +2582,18 @@ async fn only_someone_who_runs_the_space_and_is_on_the_floor_puts_a_pack_up_or_d
 
     // Who's asking comes before what they asked, and a word that isn't a pack is refused.
     let (_, cy) = server.someone("Cy").await;
-    server.post(&cy.key, &format!("/api/floors/{room}/packs/easter"), json!({})).await.refused(StatusCode::NOT_FOUND);
-    server.post(&ann.key, &format!("/api/floors/{room}/packs/easter"), json!({})).await.refused(StatusCode::BAD_REQUEST);
-    server.delete(&ann.key, &format!("/api/floors/{room}/packs/easter")).await.refused(StatusCode::BAD_REQUEST);
+    server
+        .post(&cy.key, &format!("/api/floors/{room}/packs/easter"), json!({}))
+        .await
+        .refused(StatusCode::NOT_FOUND);
+    server
+        .post(&ann.key, &format!("/api/floors/{room}/packs/easter"), json!({}))
+        .await
+        .refused(StatusCode::BAD_REQUEST);
+    server
+        .delete(&ann.key, &format!("/api/floors/{room}/packs/easter"))
+        .await
+        .refused(StatusCode::BAD_REQUEST);
 
     server.post(&ann.key, &path, json!({})).await.ok();
     assert_eq!(kinds_on(&server, &ann, &room).await.len(), halloween().items.len());
@@ -2229,7 +2606,12 @@ async fn running_a_space_from_another_floor_isnt_enough_to_put_a_pack_up() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let bo = server.join(&ann, &room, "Bo").await;
-    let upstairs = text(&server.post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" })).await.ok()["id"]);
+    let upstairs = text(
+        &server
+            .post(&ann.key, &format!("/api/spaces/{room}/floors"), json!({ "name": "Up" }))
+            .await
+            .ok()["id"],
+    );
     server.leave(&ann, &room).await;
 
     // Bo runs the space from the first floor and has never been upstairs.
@@ -2255,9 +2637,17 @@ async fn a_pack_sets_the_look_and_places_its_items_around_whats_already_there() 
     assert_eq!(look_of(&server, &ann, &room).await, (json!(pack.paint), json!(pack.flooring)));
     let snapshot = server.snapshot(&ann.key, &room).await;
     assert_eq!(snapshot["items"].as_array().unwrap().len(), total);
-    let plant = snapshot["items"].as_array().unwrap().iter().find(|item| item["id"] == kept.as_str()).unwrap();
+    let plant = snapshot["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == kept.as_str())
+        .unwrap();
     assert_eq!(plant["kind"], "plant", "what was there stays");
-    assert_eq!(snapshot["items"][1]["placed_by_name"], "Ann", "an item from a pack says who placed it");
+    assert_eq!(
+        snapshot["items"][1]["placed_by_name"], "Ann",
+        "an item from a pack says who placed it"
+    );
 
     // Doing it twice adds nothing.
     let before = kinds_on(&server, &ann, &room).await;
@@ -2281,7 +2671,10 @@ async fn a_pack_never_takes_a_floor_past_what_it_holds() {
         server.item(&ann, &room, "plant", at).await;
     }
     let up = server.post(&ann.key, &pack_path(&room), json!({})).await.ok();
-    assert_eq!((up["placed"].clone(), up["skipped"].clone()), (json!(room_for), json!(pack.items.len() - room_for)));
+    assert_eq!(
+        (up["placed"].clone(), up["skipped"].clone()),
+        (json!(room_for), json!(pack.items.len() - room_for))
+    );
     assert_eq!(kinds_on(&server, &ann, &room).await.len(), items::MAX_ITEMS);
     assert_eq!(look_of(&server, &ann, &room).await, (json!(pack.paint), json!(pack.flooring)));
 }
@@ -2393,11 +2786,25 @@ async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
-    let listed = server.post(&scout.token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
-    let names: Vec<String> = listed["result"]["tools"].as_array().unwrap().iter().map(|tool| text(&tool["name"])).collect();
-    assert!(names.contains(&"item_notes".to_string()) && names.contains(&"add_item_note".to_string()), "{names:?}");
+    let listed = server
+        .post(&scout.token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .await
+        .ok();
+    let names: Vec<String> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| text(&tool["name"]))
+        .collect();
+    assert!(
+        names.contains(&"item_notes".to_string()) && names.contains(&"add_item_note".to_string()),
+        "{names:?}"
+    );
     // A bot's place in a room doesn't change: nothing here places, moves or removes an item.
-    assert!(!names.iter().any(|name| name.contains("place") || name.contains("furnish")), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.contains("place") || name.contains("furnish")),
+        "{names:?}"
+    );
 }
 
 #[tokio::test]
@@ -2411,7 +2818,10 @@ async fn read_room_lists_a_floors_items_with_their_ids() {
     let item = &read["items"][0];
     assert_eq!(item["id"], shelf.as_str());
     assert_eq!(item["kind"], "bookshelf");
-    assert_eq!((item["x"].clone(), item["y"].clone(), item["facing"].clone()), (json!(30), json!(2), json!(0)));
+    assert_eq!(
+        (item["x"].clone(), item["y"].clone(), item["facing"].clone()),
+        (json!(30), json!(2), json!(0))
+    );
     assert_eq!(item["placed_by"], "Ann");
     assert_eq!(item["holds_notes"], true);
     assert_eq!(item["notes"], 1);

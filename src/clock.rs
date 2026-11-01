@@ -2,8 +2,7 @@
 //! has no time zone database: it keeps the offset the person's page last reported, and says when.
 
 use time::{
-    format_description::well_known::Rfc3339, macros::format_description, OffsetDateTime,
-    UtcOffset,
+    format_description::well_known::Rfc3339, macros::format_description, OffsetDateTime, UtcOffset,
 };
 
 use crate::{
@@ -39,9 +38,7 @@ pub fn set_clock(
         ));
     }
     if !(MIN_OFFSET_MINUTES..=MAX_OFFSET_MINUTES).contains(&utc_offset_minutes) {
-        return Err(ApiError::bad_request(
-            "utc_offset_minutes must be between -720 and 840",
-        ));
+        return Err(ApiError::bad_request("utc_offset_minutes must be between -720 and 840"));
     }
     state.db.set_person_clock(&caller.person_id, time_zone, utc_offset_minutes, now())?;
     Ok(())
@@ -97,11 +94,7 @@ mod tests {
     const SATURDAY: i64 = 1_893_801_600;
 
     fn clock(minutes: i64) -> PersonClock {
-        PersonClock {
-            time_zone: "Somewhere".into(),
-            utc_offset_minutes: minutes,
-            updated_at: 0,
-        }
+        PersonClock { time_zone: "Somewhere".into(), utc_offset_minutes: minutes, updated_at: 0 }
     }
 
     #[test]

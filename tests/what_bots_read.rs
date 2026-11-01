@@ -64,6 +64,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         tokio::spawn(async move { axum::serve(listener, app(state)).await });
@@ -97,17 +98,37 @@ impl Server {
     }
 
     async fn town(&self) -> Town {
-        let made = self.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE })).await.ok();
+        let made = self
+            .post(
+                "",
+                "/api/cities",
+                json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE }),
+            )
+            .await
+            .ok();
         let city = text(&made["city"]["id"]);
         let square = text(&made["city"]["square_id"]);
         let invite = text(&made["invite_url"]).rsplit('/').next().unwrap().to_string();
         let ann = Who { key: text(&made["owner_key"]) };
-        let house = self.post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann House" })).await.ok();
+        let house = self
+            .post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann House" }))
+            .await
+            .ok();
         let ann_house = text(&house["house"]["id"]);
         let ann_porch = text(&house["porch_id"]);
-        let joined = self.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Bo", "accept_rules": true })).await.ok();
+        let joined = self
+            .post(
+                "",
+                &format!("/api/city-invites/{invite}/join"),
+                json!({ "your_name": "Bo", "accept_rules": true }),
+            )
+            .await
+            .ok();
         let bo = Who { key: text(&joined["owner_key"]) };
-        let house = self.post(&bo.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo House" })).await.ok();
+        let house = self
+            .post(&bo.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo House" }))
+            .await
+            .ok();
         let bo_living = text(&house["living_room_id"]);
         let scout = self.bot(&ann, &square, "Scout").await;
         let rover = self.bot(&bo, &bo_living, "Rover").await;
@@ -115,12 +136,20 @@ impl Server {
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> String {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         text(&made["token"])
     }
 
     async fn save_clock(&self, token: &str, time_zone: &str, minutes: i64) -> Reply {
-        self.put(token, "/api/clock", json!({ "time_zone": time_zone, "utc_offset_minutes": minutes })).await
+        self.put(
+            token,
+            "/api/clock",
+            json!({ "time_zone": time_zone, "utc_offset_minutes": minutes }),
+        )
+        .await
     }
 
     async fn plan_at(&self, who: &Who, room: &str, starts_at: i64) -> String {
@@ -163,7 +192,10 @@ async fn every_read_says_what_time_it_is() {
         let said = OffsetDateTime::parse(&text(&clock["now"]), &Rfc3339).unwrap().unix_timestamp();
         assert!((said - now()).abs() < 60, "{clock}");
         assert!(text(&clock["now"]).ends_with('Z'), "{clock}");
-        assert!(clock["owner_time_zone"].is_null() && clock["owner_utc_offset"].is_null(), "{clock}");
+        assert!(
+            clock["owner_time_zone"].is_null() && clock["owner_utc_offset"].is_null(),
+            "{clock}"
+        );
         assert!(clock["owner_now"].is_null() && clock["owner_today"].is_null(), "{clock}");
         assert!(clock["owner_offset_as_of"].is_null(), "{clock}");
         assert!(text(&clock["note"]).contains("UTC"), "{clock}");
@@ -173,7 +205,8 @@ async fn every_read_says_what_time_it_is() {
     server.save_clock(&town.ann.key, "America/Chicago", CHICAGO).await.ok();
     for clock in [
         server.tool(&town.scout, "inbox", json!({})).await["clock"].clone(),
-        server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await["clock"].clone(),
+        server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await["clock"]
+            .clone(),
     ] {
         assert_eq!(clock["owner_time_zone"], "America/Chicago");
         assert_eq!(clock["owner_utc_offset"], "-06:00");
@@ -240,7 +273,8 @@ async fn every_plan_time_a_bot_reads_is_also_in_its_owners_time() {
     assert_eq!(plan["when_local"], "Friday, January 4, 6:00 PM");
 
     let room = server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
-    let listed = server.tool(&town.scout, "list_calendar", json!({ "hangout_id": town.square })).await;
+    let listed =
+        server.tool(&town.scout, "list_calendar", json!({ "hangout_id": town.square })).await;
     for calendar in [&room["calendar"], &listed["calendar"]] {
         assert_eq!(calendar[0]["starts_local"], "2030-01-04T18:00:00-06:00", "{calendar}");
         assert_eq!(calendar[0]["ends_local"], "2030-01-04T20:00:00-06:00", "{calendar}");
@@ -250,7 +284,10 @@ async fn every_plan_time_a_bot_reads_is_also_in_its_owners_time() {
     // Plans coming up soon carry it too, once Ann has said she's going.
     let tomorrow = now() + DAY;
     let soon = server.plan_at(&town.bo, &town.square, tomorrow).await;
-    server.post(&town.ann.key, &format!("/api/events/{soon}/rsvp"), json!({ "response": "yes" })).await.ok();
+    server
+        .post(&town.ann.key, &format!("/api/events/{soon}/rsvp"), json!({ "response": "yes" }))
+        .await
+        .ok();
     let inbox = server.tool(&town.scout, "inbox", json!({})).await;
     let reminder = &inbox["plans_soon"][0];
     assert_eq!(reminder["id"], soon.as_str(), "{inbox}");
@@ -290,14 +327,30 @@ async fn a_plan_says_when_it_was_announced() {
 async fn a_guest_is_told_it_cannot_see_what_came_before_it() {
     let server = Server::start().await;
     let town = server.town().await;
-    server.post(&town.ann.key, &format!("/api/hangouts/{}/messages", town.ann_porch), json!({ "text": "Before anyone came" })).await.ok();
+    server
+        .post(
+            &town.ann.key,
+            &format!("/api/hangouts/{}/messages", town.ann_porch),
+            json!({ "text": "Before anyone came" }),
+        )
+        .await
+        .ok();
 
-    let asked = server.tool(&town.rover, "ask_for_trip", json!({ "house_id": town.ann_house, "kind": "call" })).await;
+    let asked = server
+        .tool(&town.rover, "ask_for_trip", json!({ "house_id": town.ann_house, "kind": "call" }))
+        .await;
     let trip = text(&asked["id"]);
-    server.post(&town.bo.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
-    server.post(&town.ann.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" })).await.ok();
+    server
+        .post(&town.bo.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
+        .await
+        .ok();
+    server
+        .post(&town.ann.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
+        .await
+        .ok();
 
-    let porch = server.tool(&town.rover, "read_room", json!({ "hangout_id": town.ann_porch })).await;
+    let porch =
+        server.tool(&town.rover, "read_room", json!({ "hangout_id": town.ann_porch })).await;
     assert_eq!(porch["you_are_a_guest"], true);
     assert_eq!(porch["messages"], json!([]), "{porch}");
     let note = text(&porch["before_you_arrived"]);

@@ -7,6 +7,7 @@ pub mod db;
 pub mod doorbell;
 pub mod error;
 pub mod friends;
+pub mod god_mode;
 pub mod households;
 pub mod ical;
 pub mod items;
@@ -62,6 +63,8 @@ pub struct Config {
     /// The person who looks after The Commons and can remove a player from it (W18): their id,
     /// from `AGENTHANGOUT_KEEPER`. Nobody is, when it isn't set.
     pub keeper_id: Option<String>,
+    /// The people who have the God mode switch (W75): their ids, from `AGENTHANGOUT_GODS`.
+    pub god_ids: Vec<String>,
 }
 
 pub struct Shared {
@@ -126,10 +129,8 @@ impl AppState {
     /// Counts one more against this key's one-minute window, and says if it's within `limit`.
     pub fn allow_writes(&self, key: &str, limit: u32) -> bool {
         let minute = now() / 60;
-        let mut windows = self
-            .write_windows
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut windows =
+            self.write_windows.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         windows.retain(|_, (window, _)| *window == minute);
         let (_, count) = windows.entry(key.to_string()).or_insert((minute, 0));
         *count += 1;

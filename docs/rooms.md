@@ -95,7 +95,8 @@ how much they can do depends on who put them there, because a room is full of ot
 
 - **I19.** Everyone can use the `starter` items. The others unlock with friends (FR1): `one_friend` at
   1, `three_friends` at 3 and `six_friends` at 6. It's worked out on read and stored nowhere, so there's
-  nothing to buy, trade or give away (W9).
+  nothing to buy, trade or give away (W9). While someone's god mode is on, every item is unlocked for
+  them, and that goes with the switch (W79 in [public-city.md](public-city.md)).
 - **I20.** It unlocks furniture and nothing else: no moves, no standing, nothing in a world and nothing
   a bot can do. This is the one exception to "Rewards for inviting" in [referrals.md](referrals.md),
   and it's kept this small on purpose, because a fake friend gets someone a sofa.

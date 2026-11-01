@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{self, Caller},
     city,
-    db::{Event, House, HouseNote, HousePlan, NewHouseNote, NewPlanItem, NoteWrite, Person, PlanItem},
+    db::{
+        Event, House, HouseNote, HousePlan, NewHouseNote, NewPlanItem, NoteWrite, Person, PlanItem,
+    },
     error::{ApiError, ApiResult},
     items, now,
     ops::{self, iso},
@@ -29,7 +31,8 @@ const MAX_TIMES: usize = 20;
 /// F35: enough to plan with, and too few to piece someone's week together.
 const ASKS_PER_HOUR: u32 = 30;
 /// F33: what anyone is told each time they're shown free times.
-const FREE_TIMES_NOTE: &str = "These are hints, not commitments. Pick one and propose a plan, then \
+const FREE_TIMES_NOTE: &str =
+    "These are hints, not commitments. Pick one and propose a plan, then \
     wait for real answers. Anyone in not_sharing isn't covered, so ask them another way.";
 /// F37
 const MAX_ITEMS: i64 = 30;
@@ -148,11 +151,18 @@ pub struct FreeTime {
 }
 
 fn free_times(spans: &[Span]) -> Vec<FreeTime> {
-    spans.iter().map(|&(start, end)| FreeTime { starts_at: iso(start), ends_at: iso(end) }).collect()
+    spans
+        .iter()
+        .map(|&(start, end)| FreeTime { starts_at: iso(start), ends_at: iso(end) })
+        .collect()
 }
 
 /// F27, F28: replaces this side's whole list. Returns how many windows that came to.
-pub fn set_free_times(state: &AppState, caller: &Caller, windows: &[WindowInput]) -> ApiResult<usize> {
+pub fn set_free_times(
+    state: &AppState,
+    caller: &Caller,
+    windows: &[WindowInput],
+) -> ApiResult<usize> {
     ops::no_house_bot(caller)?;
     if state.db.free_sharing(&caller.person_id)?.is_none() {
         return Err(ApiError::conflict(
@@ -195,7 +205,8 @@ pub fn my_free_times(state: &AppState, caller: &Caller) -> ApiResult<Vec<FreeTim
 /// earlier than now, less the plans they've said yes to.
 fn free_spans(state: &AppState, person_id: &str, now: i64) -> ApiResult<Vec<Span>> {
     let windows = state.db.free_windows(person_id, now, now - STALE_SECS)?;
-    let clipped: Vec<Span> = windows.into_iter().map(|(start, end)| (start.max(now), end)).collect();
+    let clipped: Vec<Span> =
+        windows.into_iter().map(|(start, end)| (start.max(now), end)).collect();
     let busy = merged(state.db.busy_spans(person_id, now)?);
     Ok(without(&merged(clipped), &busy))
 }
@@ -237,9 +248,12 @@ fn people_asked_about(
 ) -> ApiResult<Vec<Person>> {
     let everyone = state.db.city_members(city_id)?;
     let Some(asked) = input.with.as_deref().filter(|asked| !asked.is_empty()) else {
-        let house = state.db.house_of_person_in_city(city_id, &caller.person_id)?.ok_or_else(|| {
-            ApiError::bad_request("your owner doesn't live in a house here, so say who with `with`")
-        })?;
+        let house =
+            state.db.house_of_person_in_city(city_id, &caller.person_id)?.ok_or_else(|| {
+                ApiError::bad_request(
+                    "your owner doesn't live in a house here, so say who with `with`",
+                )
+            })?;
         let others: Vec<Person> = state
             .db
             .residents(&house.id)?
@@ -247,7 +261,9 @@ fn people_asked_about(
             .filter(|person| person.id != caller.person_id)
             .collect();
         if others.is_empty() {
-            return Err(ApiError::bad_request("nobody else lives in your owner's house, so say who with `with`"));
+            return Err(ApiError::bad_request(
+                "nobody else lives in your owner's house, so say who with `with`",
+            ));
         }
         return Ok(others);
     };
@@ -340,7 +356,9 @@ fn plan_you_are_going_to(state: &AppState, caller: &Caller, event_id: &str) -> A
         return Err(ApiError::conflict("that plan is over or was cancelled"));
     }
     if !going(&event, &caller.person_id) {
-        return Err(ApiError::forbidden("a plan's list is for those going: say yes or maybe first"));
+        return Err(ApiError::forbidden(
+            "a plan's list is for those going: say yes or maybe first",
+        ));
     }
     Ok(event)
 }
@@ -351,7 +369,11 @@ pub fn plan_list(state: &AppState, caller: &Caller, event_id: &str) -> ApiResult
 }
 
 /// The items on this room's plans that this side is going to, for its page.
-pub fn items_for_room(state: &AppState, caller: &Caller, events: &[Event]) -> ApiResult<Vec<PlanItem>> {
+pub fn items_for_room(
+    state: &AppState,
+    caller: &Caller,
+    events: &[Event],
+) -> ApiResult<Vec<PlanItem>> {
     let mut items = Vec::new();
     for event in events.iter().filter(|event| going(event, &caller.person_id)) {
         items.extend(state.db.plan_items(&event.id)?);
@@ -360,7 +382,12 @@ pub fn items_for_room(state: &AppState, caller: &Caller, events: &[Event]) -> Ap
 }
 
 /// F37
-pub fn add_item(state: &AppState, caller: &Caller, event_id: &str, text: &str) -> ApiResult<PlanItem> {
+pub fn add_item(
+    state: &AppState,
+    caller: &Caller,
+    event_id: &str,
+    text: &str,
+) -> ApiResult<PlanItem> {
     let event = plan_you_are_going_to(state, caller, event_id)?;
     // I17: a list is words for the room, even if it adds no line to chat.
     items::no_quiet(state, caller, &event.hangout_id)?;
@@ -466,7 +493,10 @@ pub fn plan_soon(
     event: &Event,
     now: i64,
 ) -> ApiResult<Option<PlanSoon>> {
-    if event.status == "cancelled" || event.starts_at > now + SOON_SECS || !going(event, &caller.person_id) {
+    if event.status == "cancelled"
+        || event.starts_at > now + SOON_SECS
+        || !going(event, &caller.person_id)
+    {
         return Ok(None);
     }
     let items = state.db.plan_items(&event.id)?;
@@ -480,7 +510,9 @@ pub fn plan_soon(
         on_calendar: event.status == "confirmed",
         your_items: items
             .into_iter()
-            .filter(|item| !item.done && item.claimed_by.as_deref() == Some(caller.person_id.as_str()))
+            .filter(|item| {
+                !item.done && item.claimed_by.as_deref() == Some(caller.person_id.as_str())
+            })
             .map(|item| item.text)
             .collect(),
         open_items: open,
@@ -535,7 +567,9 @@ pub fn set_house_note(
             city::refresh_house(state, &house);
             Ok(())
         }
-        NoteWrite::Full => Err(ApiError::conflict(format!("a house holds {MAX_HOUSE_NOTES} notes"))),
+        NoteWrite::Full => {
+            Err(ApiError::conflict(format!("a house holds {MAX_HOUSE_NOTES} notes")))
+        }
         NoteWrite::PersonsWord => Err(ApiError::conflict(PERSONS_WORD)),
     }
 }
@@ -566,7 +600,11 @@ pub fn set_shows_plans(state: &AppState, caller: &Caller, on: bool) -> ApiResult
     Ok(())
 }
 
-pub fn house_calendar(state: &AppState, caller: &Caller, house_id: &str) -> ApiResult<Vec<HousePlan>> {
+pub fn house_calendar(
+    state: &AppState,
+    caller: &Caller,
+    house_id: &str,
+) -> ApiResult<Vec<HousePlan>> {
     let house = your_house(state, caller, house_id)?;
     let now = now();
     Ok(state.db.house_calendar(&house.id, now, now + CALENDAR_SECS)?)

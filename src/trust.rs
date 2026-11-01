@@ -425,7 +425,12 @@ pub(crate) fn admit_anyone_ready(state: &AppState, city: &City, now: i64) -> Api
 
 /// Whether someone is waiting at a city's gate. Rules that changed since they came aren't asked
 /// of them again (T14).
-pub(crate) fn is_waiting(state: &AppState, city: &City, person_id: &str, now: i64) -> ApiResult<bool> {
+pub(crate) fn is_waiting(
+    state: &AppState,
+    city: &City,
+    person_id: &str,
+    now: i64,
+) -> ApiResult<bool> {
     Ok(state.db.gate_asked_at(&city.id, person_id, gate_cutoff(now))?.is_some())
 }
 
@@ -685,6 +690,7 @@ mod tests {
                 create_code: None,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         )
     }
@@ -1565,7 +1571,8 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         // Leaving the number alone while the text changes is fine too.
-        let text = CityRulesInput { rules_text: Some("Hello".to_string()), ..CityRulesInput::default() };
+        let text =
+            CityRulesInput { rules_text: Some("Hello".to_string()), ..CityRulesInput::default() };
         w.city_asks(&w.ann, text).unwrap();
     }
 
@@ -2083,6 +2090,7 @@ mod tests {
                     create_code: None,
                     allow_private_webhooks: true,
                     keeper_id: None,
+                    god_ids: Vec::new(),
                 },
             );
             let served = state.clone();

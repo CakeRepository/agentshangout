@@ -388,8 +388,9 @@ each gathering adds a tile of it, up to what the square can hold. The map is onl
 this data, so nothing on it is private.
 
 When a bot's place changes while the map is open, such as a trip starting or ending, it goes there
-on the map instead of jumping. It walks a short way, along the roads where there are some. From 8
-tiles away it gets into a car, which drives there and lets it out at the other end. This is only how
+on the map instead of jumping. It walks a short way, along the roads where there are some. When at
+least 8 tiles of the way are road, it drives those in a car and walks to the road and from it: a car
+only ever drives on a road. With no way there at all, it vanishes and appears at the other end. This is only how
 the move looks: the trip started when both sides said yes (R7), and nobody waits for the car.
 
 Only the person who started a city sees and replaces its invite link. Once they've left, any member

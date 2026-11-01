@@ -34,8 +34,20 @@ const SCENE_APPROVED_SECS: i64 = 10 * 60;
 /// real limit on what a scene can do is which devices the home system exposes. These match the
 /// start of a word, so Locked and Doorbell are caught and Block Party isn't.
 const BANNED_SCENE_STARTS: [&str; 14] = [
-    "lock", "unlock", "padlock", "deadbolt", "door", "backdoor", "frontdoor", "garage", "gate",
-    "alarm", "disarm", "camera", "secur", "siren",
+    "lock",
+    "unlock",
+    "padlock",
+    "deadbolt",
+    "door",
+    "backdoor",
+    "frontdoor",
+    "garage",
+    "gate",
+    "alarm",
+    "disarm",
+    "camera",
+    "secur",
+    "siren",
 ];
 /// Whole words, because Armchair and Army are fine.
 const BANNED_SCENE_WORDS: [&str; 4] = ["arm", "arms", "armed", "arming"];
@@ -1293,7 +1305,13 @@ fn end_what_they_agreed(
         let text = format!(
             "{name} made this house's bot and has moved out. If they kept its token they can still use it, so replace it."
         );
-        ping(state, resident_ids(state, &house.id)?, "house.bot_maker_left", &house.living_room_id, &text);
+        ping(
+            state,
+            resident_ids(state, &house.id)?,
+            "house.bot_maker_left",
+            &house.living_room_id,
+            &text,
+        );
     }
     Ok(())
 }
@@ -1305,7 +1323,11 @@ pub const KEYS: [&str; 2] = ["living_room", "scenes"];
 pub const GOOD_TRIPS_FOR_A_KEY: i64 = 2;
 
 fn key_name(key: &str) -> &'static str {
-    if key == "living_room" { "Living Room key" } else { "scenes key" }
+    if key == "living_room" {
+        "Living Room key"
+    } else {
+        "scenes key"
+    }
 }
 
 /// H8: a resident, as a person, gives a key on an accepted pass to a bot with two good trips.
@@ -1687,6 +1709,7 @@ mod tests {
                 create_code: None,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let (ann_person, ann) = person(&state, "Ann");
