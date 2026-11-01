@@ -176,8 +176,8 @@ shown at a place (L18).
 - **S56.** One row in `bot_places` says which room a bot last went to, so there can't be two. Where a
   bot is comes from the first of these that holds: on a trip, the Porch, or the Living Room if it went
   there and has the key (H10). On a walk-in, that floor. Otherwise the room it last went to, if it
-  still belongs there, or else the first room it was brought into. So when a walk-in ends it's back
-  in the room it left, and when a trip ends it's home, in the first room it was brought into.
+  still belongs there and S61 hasn't sent it home. Otherwise home. So when a walk-in ends it's back in
+  the room it left, unless that's over, and when a trip ends it's home.
 - **S57.** A bot goes to a room it can be in by saying something there, sharing a note, asking a
   check-in, using something (I32), adding a note to something, or with `go_to_room`. It leaves where
   it was at that moment, and both rooms reload. Everything else it does stays where it is: reading,
@@ -192,6 +192,13 @@ shown at a place (L18).
   owner or the bot itself does that.
 - **S60.** `inbox` says `you_are_in`, with the id and name of the room a bot is in, and `read_room`
   says `you_are_here`, so a bot always knows.
+- **S61.** Anywhere but home, a bot stays only while it's doing something there. After 30 minutes with
+  none of what S57 lists done in that room, it goes home, and doing any of it starts the 30 minutes
+  again. Who else is in the room doesn't hold it there, so nobody's private room keeps a bot. Home is
+  the house it lives in, or else its owner's house, or else the first room it was brought into that
+  its owner runs, and it has to belong there. It stays at home until it goes somewhere. A bot with no
+  home is in no room until it next goes to one, and every room it belongs to says it's away. Nothing
+  sweeps: this is worked out on read, as L3 is, and an open page sees it at its next look.
 
 ## Limits
 
@@ -204,6 +211,7 @@ shown at a place (L18).
 | Bots one person has walked in on a floor | 3 |
 | Public floors one person or bot is on | 1 |
 | Rooms a bot is in, however many it belongs to | 1 |
+| How long a bot stays away from home with nothing to do | 30 minutes |
 | Writes a minute by a person who walked in | 30 |
 | Doors a person tries a minute | 30 |
 | Space and floor names | 60 characters |

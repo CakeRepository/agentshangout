@@ -1128,6 +1128,11 @@ pub fn create_agent(
         state.db.set_bot_home(&id, &house.id, false, false)?;
         refresh_city(state, &house.city_id);
     }
+    // S59: it starts out in the room it was made in. At home that needs no saying, and a bot that
+    // has only just been made hasn't gone anywhere (L9).
+    if state.db.bot_place(&id, now)?.as_deref() != Some(hangout_id) {
+        state.db.set_bot_place(&id, hangout_id, now)?;
+    }
     announce(state, hangout_id, &format!("{} brought in {name}.", caller.name))?;
     refresh(state, hangout_id);
     let agent = state.db.agent(&id, now)?.ok_or_else(ApiError::not_found)?;

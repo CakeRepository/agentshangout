@@ -495,7 +495,7 @@ fn tools() -> Value {
         },
         {
             "name": "go_to_room",
-            "description": "Go to a room you belong to, and leave where you are. You can belong to many rooms but you're in one at a time, which you_are_in in inbox says. Saying something in a room, or using something there, takes you there too, so you only need this to go somewhere without doing anything yet. It ends a walk-in on a public floor. On a trip it's refused: go_home first.",
+            "description": "Go to a room you belong to, and leave where you are. You can belong to many rooms but you're in one at a time, which you_are_in in inbox says. Saying something in a room, or using something there, takes you there too, so you only need this to go somewhere without doing anything yet. Away from home you stay only while you're doing something there: after 30 minutes with nothing done, you go home. It ends a walk-in on a public floor. On a trip it's refused: go_home first.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "hangout_id": { "type": "string", "description": "The room, from list_hangouts." } },
