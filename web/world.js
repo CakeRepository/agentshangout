@@ -3999,11 +3999,12 @@ const DRIVE_FACTOR = 3;
 
 const screenOf = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
-// How a disaster looks (W65). A step is a minute, so the art plays out over about that.
-const DOOM_STEP = 60;
-const DOOM_FALL = 1.4;
-const DOOM_HOP = 5;
+// How a disaster looks (W65). A step of one is 5 seconds, and the art plays out over about that.
+const DOOM_STEP = 5;
+const DOOM_HOP = 3.5;
 const DOOM_TRAIL = 180;
+// How many tiles a fire spreads in a step, so the ring keeps creeping between one view and the next.
+const FIRE_CREEP = 4;
 const DOOM_LOOK = {
   meteors: { tint: '#7a2a12', trail: 'rgba(40, 26, 20, 0.34)' },
   flood: { tint: '#1f4f8a', trail: 'rgba(46, 112, 184, 0.34)' },
@@ -4014,7 +4015,7 @@ const DOOM_LOOK = {
 // Where a disaster's circle falls on the map. A circle of tiles is an ellipse on an isometric map.
 function doomSpot([x, y, r]) {
   const [sx, sy] = screenOf(x + 0.5, y + 0.5);
-  return { sx, sy, rx: r * HW * Math.SQRT2, ry: r * HH * Math.SQRT2 };
+  return { sx, sy, r, rx: r * HW * Math.SQRT2, ry: r * HH * Math.SQRT2 };
 }
 
 export class World {
@@ -4030,7 +4031,7 @@ export class World {
     this.limits = { road: 16, ...(options.limits || {}) };
     this.framing = options.framing || {};
     this.labels = [];
-    // The end of the old city, as the last view told it (W66, W67).
+    // The disaster, as the last view told it (W66, W67).
     this.doom = null;
     this.doomKey = '';
     this.doomAt = 0;
@@ -5814,7 +5815,7 @@ export class World {
     this.placeTip();
   }
 
-  // --- The end of the old city ------------------------------------------------------------------
+  // --- Disasters -----------------------------------------------------------------------------
 
   // W66, W67: a disaster is painted over the map from what the view says. Nothing here changes a tile:
   // those come down in the next view, and a step takes a minute, so what's painted plays over that.
@@ -5850,14 +5851,14 @@ export class World {
     bg.globalCompositeOperation = 'source-over';
     bg.globalAlpha = 1;
     bg.setTransform(scale, 0, 0, scale, tx, ty);
-    if (doom.stage === 'omen' && doom.kind === 'meteors') this.drawFallingStars(bg, t);
+    if (doom.kind === 'meteors' && doom.stage !== 'over') this.drawFallingStars(bg, t);
     if (doom.stage !== 'striking' || !Array.isArray(doom.hits)) return;
     const hits = doom.hits.filter(Array.isArray).map(doomSpot);
     const age = this.calm ? DOOM_STEP / 2 : Math.max(0, t - this.doomAt);
     // All in one path, so overlapping circles read as one mark and not as a pile of discs.
     bg.fillStyle = look.trail;
     bg.beginPath();
-    for (const mark of this.doomTrail.map(doomSpot)) {
+    for (const mark of doom.kind === 'meteors' ? [] : this.doomTrail.map(doomSpot)) {
       bg.moveTo(mark.sx + mark.rx, mark.sy);
       bg.ellipse(mark.sx, mark.sy, mark.rx, mark.ry, 0, 0, Math.PI * 2);
     }
@@ -5865,7 +5866,7 @@ export class World {
     if (doom.kind === 'flood') this.drawFlood(bg, hits, t);
     else if (doom.kind === 'twister') this.drawTwister(bg, hits, age, t);
     else if (doom.kind === 'frog') this.drawGiantFrog(bg, hits[0], age, t);
-    else this.drawMeteors(bg, hits, age);
+    else this.drawFire(bg, hits, age, t);
   }
 
   // Omens of meteors: bright streaks high over wherever you're looking.
@@ -5887,37 +5888,64 @@ export class World {
     }
   }
 
-  drawMeteors(bg, hits, age) {
-    hits.forEach((hit, k) => {
-      const land = 4 + (k * DOOM_STEP * 0.8) / hits.length;
-      const fall = (age - land + DOOM_FALL) / DOOM_FALL;
-      if (fall < 0) return;
-      if (fall < 1) {
-        const y = hit.sy - (1 - fall) * 460;
-        const x = hit.sx + (1 - fall) * 230;
-        bg.strokeStyle = 'rgba(255, 170, 70, 0.8)';
-        bg.lineWidth = 6;
-        bg.lineCap = 'round';
-        bg.beginPath();
-        bg.moveTo(x, y);
-        bg.lineTo(x + 70, y - 140);
-        bg.stroke();
-        bg.fillStyle = '#fff1c4';
-        bg.beginPath();
-        bg.arc(x, y, 8, 0, Math.PI * 2);
-        bg.fill();
-        return;
-      }
-      const after = age - land;
-      const blast = Math.min(1, after / 1.1);
-      bg.fillStyle = `rgba(255, 150, 50, ${0.7 * (1 - blast) + 0.1})`;
-      bg.beginPath();
-      bg.ellipse(hit.sx, hit.sy, hit.rx * blast, hit.ry * blast, 0, 0, Math.PI * 2);
-      bg.fill();
-      bg.strokeStyle = `rgba(255, 240, 200, ${1 - blast})`;
-      bg.lineWidth = 3;
-      bg.stroke();
+  // Fire spreading from where each meteor came down. Scorched ground inside, and flames only where a
+  // fire meets what hasn't burned, so overlapping fires read as one.
+  drawFire(bg, hits, age, t) {
+    const creep = (clamp(age / DOOM_STEP, 0, 1) * FIRE_CREEP) / Math.max(1, ...hits.map((hit) => hit.r));
+    const fires = hits.map((hit) => {
+      const grown = 1 + creep * (hit.r ? 1 : 0);
+      return { ...hit, rx: hit.rx * grown, ry: hit.ry * grown };
     });
+    const ring = (lay) => {
+      bg.beginPath();
+      for (const fire of fires) {
+        bg.moveTo(fire.sx + fire.rx, fire.sy);
+        bg.ellipse(fire.sx, fire.sy, fire.rx, fire.ry, 0, 0, Math.PI * 2);
+      }
+      lay();
+    };
+    ring(() => {
+      bg.fillStyle = 'rgba(34, 22, 14, 0.36)';
+      bg.fill();
+    });
+    const v = this.view;
+    for (const [n, fire] of fires.entries()) {
+      // About a flame every 26 pixels round the edge, however far the fire has got.
+      const flames = clamp(Math.round((fire.rx + fire.ry) * Math.PI / 26), 12, 320);
+      for (let k = 0; k < flames; k++) {
+        const angle = (k / flames) * Math.PI * 2 + n;
+        const x = fire.sx + Math.cos(angle) * fire.rx;
+        const y = fire.sy + Math.sin(angle) * fire.ry;
+        if (x < v.x0 || x > v.x1 || y < v.y0 - 40 || y > v.y1 + 40) continue;
+        // Inside another fire there's nothing left to burn.
+        if (fires.some((other) => other !== fire && ((x - other.sx) / other.rx) ** 2 + ((y - other.sy) / other.ry) ** 2 < 1)) continue;
+        const lick = 16 + 9 * Math.sin(t * 8 + k * 1.9 + n);
+        bg.fillStyle = 'rgba(255, 96, 24, 0.28)';
+        bg.beginPath();
+        bg.ellipse(x, y - lick * 0.3, 24, 20 + lick * 0.6, 0, 0, Math.PI * 2);
+        bg.fill();
+        bg.fillStyle = 'rgba(255, 112, 28, 0.9)';
+        bg.beginPath();
+        bg.ellipse(x, y - lick * 0.6, 7, lick, 0, 0, Math.PI * 2);
+        bg.fill();
+        bg.fillStyle = 'rgba(255, 224, 120, 0.95)';
+        bg.beginPath();
+        bg.ellipse(x, y - lick * 0.35, 3.5, lick * 0.5, 0, 0, Math.PI * 2);
+        bg.fill();
+      }
+    }
+    // The newest meteor, coming down into the middle of its fire.
+    const newest = fires[fires.length - 1];
+    if (newest && newest.r <= 3 && age < 1) {
+      const fall = 1 - age;
+      bg.strokeStyle = 'rgba(255, 170, 70, 0.85)';
+      bg.lineWidth = 7;
+      bg.lineCap = 'round';
+      bg.beginPath();
+      bg.moveTo(newest.sx + fall * 230, newest.sy - fall * 460);
+      bg.lineTo(newest.sx + fall * 230 + 70, newest.sy - fall * 460 - 140);
+      bg.stroke();
+    }
   }
 
   // One wall of water: the foam goes on first, so the water covers all of it but the leading edge.

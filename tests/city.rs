@@ -3641,7 +3641,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
         "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
         "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "floor_items", "item_notes", "bots_without_moods", "friend_invite_ends", "place_clocks", "world_ends", "bot_routines", "projects", "person_looks", "bot_looks",
+        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "floor_items", "item_notes", "bots_without_moods", "friend_invite_ends", "place_clocks", "world_ends", "bot_routines", "projects", "person_looks", "bot_looks", "place_requests",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -3658,7 +3658,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["bot_looks", "person_looks", "projects", "bot_routines", "world_ends", "place_clocks", "friend_invite_ends", "bots_without_moods", "item_notes", "floor_items", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
+        for table in ["place_requests", "bot_looks", "person_looks", "projects", "bot_routines", "world_ends", "place_clocks", "friend_invite_ends", "bots_without_moods", "item_notes", "floor_items", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection

@@ -62,6 +62,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/spaces/public", get(public_floors))
         .route("/api/spaces/door", post(go_through_door))
         .route("/api/places/{x}/{y}", get(place_details))
+        .route("/api/places/{x}/{y}/requests", post(ask_to_let_in))
+        .route("/api/place-requests", get(place_requests))
+        .route("/api/place-requests/{id}/answer", post(answer_place_request))
         .route("/api/spaces/{id}", get(space_view).put(change_space).delete(close_space))
         .route("/api/spaces/{id}/floors", post(add_floor))
         .route("/api/spaces/{id}/people/{person_id}/turn-out", post(turn_out).delete(let_back))
@@ -285,14 +288,12 @@ async fn place_details(
     Path((x, y)): Path<(i64, i64)>,
 ) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "ask about a place: only people have bots of their own")?;
-    let (kind, owner_id) = state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
-    let owner = match &owner_id {
+    let place = place_at(&state, x, y)?;
+    let owner = match &place.owner_id {
         Some(id) => state.db.person(id)?.map(|person| person.name),
         None => None,
     };
-    // The rooms behind it, if its owner has been through its door and it still stands as that door.
-    let building = (kind.clone(), owner_id.clone());
-    let floors = match state.db.space_on_plot(COMMONS_ID, x, y)?.filter(|space| is_door_to(&building, space)) {
+    let floors = match &place.space {
         Some(space) => state.db.floors_of(&space.id)?,
         None => Vec::new(),
     };
@@ -304,23 +305,157 @@ async fn place_details(
         }
         let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
         let walked = state.db.walked_onto(&agent.id, now)?;
+        let asked = match &place.space {
+            Some(space) => state.db.place_request_for(&space.id, &agent.id, now - REQUEST_SECS)?.map(|(_, status)| status),
+            None => None,
+        };
         let access = if floors.iter().any(|floor| walked.contains(&floor.id)) {
             "visiting"
         } else if floors.iter().any(|floor| rooms.contains(&floor.id)) {
             "in"
         } else if floors.iter().any(|floor| floor.access == "public") {
             "can_walk_in"
+        } else if asked.as_deref() == Some("waiting") {
+            "asked"
+        } else if asked.as_deref() == Some("no") {
+            "declined"
         } else {
             "needs_invite"
         };
-        bots.push(json!({ "name": agent.name, "access": access }));
+        bots.push(json!({ "id": agent.id, "name": agent.name, "access": access }));
     }
     Ok(Json(json!({
-        "kind": kind,
+        "kind": place.kind,
         "owner": owner,
-        "yours": owner_id.as_deref() == Some(caller.person_id.as_str()),
+        "yours": place.owner_id.as_deref() == Some(caller.person_id.as_str()),
+        // Whether anyone signed in can walk in, so the map knows whether to offer to go in.
+        "open": floors.iter().any(|floor| floor.access == "public"),
         "bots": bots,
     })))
+}
+
+/// S50, S52: how long a request waits, and how long a no lasts.
+const REQUEST_SECS: i64 = 7 * 86_400;
+/// S50: open requests one person can have.
+const MAX_OPEN_REQUESTS: i64 = 20;
+
+/// A place on The Commons: its kind, its owner, and its space if it still stands as that space's door.
+struct PlaceAt {
+    kind: String,
+    owner_id: Option<String>,
+    space: Option<Space>,
+}
+
+fn place_at(state: &AppState, x: i64, y: i64) -> ApiResult<PlaceAt> {
+    let (kind, owner_id) = state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
+    let building = (kind.clone(), owner_id.clone());
+    let space = state.db.space_on_plot(COMMONS_ID, x, y)?.filter(|space| is_door_to(&building, space));
+    Ok(PlaceAt { kind, owner_id, space })
+}
+
+#[derive(Deserialize)]
+struct AskIn {
+    agent_id: String,
+}
+
+/// S49, S50: a person asks to let one of their own bots into someone else's place.
+async fn ask_to_let_in(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((x, y)): Path<(i64, i64)>,
+    Json(body): Json<AskIn>,
+) -> ApiResult<Json<Value>> {
+    ops::no_house_bot(&caller)?;
+    ops::require_human(&caller, "ask to let a bot in: your owner asks")?;
+    let agent = ops::own_agent(&state, &caller, &body.agent_id, "ask to let a bot in")?;
+    if state.db.bot_home(&agent.id)?.is_some_and(|home| home.stays_home || home.is_house) {
+        return Err(ApiError::conflict(format!("{} stays home", agent.name)));
+    }
+    let place = place_at(&state, x, y)?;
+    if place.owner_id.as_deref() == Some(caller.person_id.as_str()) {
+        return Err(ApiError::conflict("this is your own place: bring your bot in from inside"));
+    }
+    let space = place
+        .space
+        .ok_or_else(|| ApiError::conflict("nobody has opened this place yet, so there's nowhere to let a bot in"))?;
+    let now = now();
+    let floors = state.db.floors_of(&space.id)?;
+    let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
+    if floors.iter().any(|floor| rooms.contains(&floor.id)) {
+        return Err(ApiError::conflict(format!("{} is already in", agent.name)));
+    }
+    match state.db.place_request_for(&space.id, &agent.id, now - REQUEST_SECS)? {
+        Some((id, status)) if status == "waiting" => return Ok(Json(json!({ "id": id, "status": "waiting" }))),
+        Some(_) => return Err(ApiError::conflict("the owner said no: you can ask again in a week")),
+        None => {}
+    }
+    let id = auth::new_id();
+    if !state.db.insert_place_request(&id, &space.id, &agent.id, &caller.person_id, now, now - REQUEST_SECS, MAX_OPEN_REQUESTS)? {
+        return Err(ApiError::conflict(format!("you have {MAX_OPEN_REQUESTS} requests waiting already")));
+    }
+    if let (Some(owner_id), Some(floor)) = (&place.owner_id, floors.first()) {
+        let notice = crate::notify::Notice {
+            event: "place.asked",
+            hangout_id: floor.id.clone(),
+            text: format!("{} asks to let their bot {} into {}.", caller.name, agent.name, space.name),
+        };
+        crate::notify::send(&state, std::slice::from_ref(owner_id), &notice);
+    }
+    Ok(Json(json!({ "id": id, "status": "waiting" })))
+}
+
+/// S51: the requests waiting on this person's places.
+async fn place_requests(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
+    ops::require_human(&caller, "see requests to come in")?;
+    let now = now();
+    let mut list = Vec::new();
+    for (id, space_id, place, bot, asker, at) in state.db.place_requests_for_owner(&caller.person_id, now - REQUEST_SECS)? {
+        let kind = match state.db.space(&space_id)? {
+            Some(space) => building_of(&state, &space)?.map(|(kind, _)| kind),
+            None => None,
+        };
+        list.push(json!({ "id": id, "place": place, "kind": kind, "bot": bot, "asked_by": asker, "asked_at": at }));
+    }
+    Ok(Json(json!({ "requests": list })))
+}
+
+#[derive(Deserialize)]
+struct Answer {
+    response: String,
+}
+
+/// S51: the place's owner says yes or no. A yes brings the bot into the first floor.
+async fn answer_place_request(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<Answer>,
+) -> ApiResult<Json<Value>> {
+    ops::require_human(&caller, "answer a request to come in")?;
+    let now = now();
+    let (space_id, agent_id, asked_by) = state.db.waiting_place_request(&id, now - REQUEST_SECS)?.ok_or_else(ApiError::not_found)?;
+    let space = state
+        .db
+        .space(&space_id)?
+        .filter(|space| space.owner_id == caller.person_id)
+        .ok_or_else(ApiError::not_found)?;
+    let status = match body.response.as_str() {
+        "yes" => "yes",
+        "no" => "no",
+        _ => return Err(ApiError::bad_request("response must be yes or no")),
+    };
+    if !state.db.answer_place_request(&id, status, now)? {
+        return Err(ApiError::conflict("that request was just answered"));
+    }
+    if status == "yes" {
+        let floor = state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
+        state.db.add_agent_to_room(&floor.id, &agent_id)?;
+        state.db.add_member(&floor.id, &asked_by, now)?;
+        let name = state.db.agent(&agent_id, now)?.map_or_else(|| "a bot".to_string(), |agent| agent.name);
+        ops::announce(&state, &floor.id, &format!("{} let {name} in.", caller.name))?;
+        ops::refresh(&state, &floor.id);
+    }
+    Ok(Json(json!({ "ok": true, "status": status })))
 }
 
 /// S48: whether this space's building is a café, whose owner needs no code to open its floors.
@@ -409,6 +544,7 @@ async fn go_through_door(
                 kind => third_space_for_building(&state, &caller, kind)?,
             };
             state.db.set_plot(COMMONS_ID, body.x, body.y, &space.id)?;
+            state.worlds.mark_stale(COMMONS_ID);
             space
         }
         None => return Err(ApiError::not_found()),
@@ -416,7 +552,9 @@ async fn go_through_door(
     let turned_out = state.db.is_turned_out(&space.id, &caller.person_id)?;
     for floor in state.db.floors_of(&space.id)? {
         if state.in_room(&caller, &floor.id)? || (floor.access == "public" && !turned_out) {
-            return Ok(Json(json!({ "hangout_id": floor.id })));
+            // W73: its owner names it from here, so they're told which space it is.
+            let space_id = (space.owner_id == caller.person_id).then(|| space.id.clone());
+            return Ok(Json(json!({ "hangout_id": floor.id, "space_id": space_id })));
         }
     }
     Err(ApiError::not_found())
@@ -588,6 +726,8 @@ async fn change_space(
         .transpose()?;
     state.db.change_space(&space, name.as_deref(), about.as_deref())?;
     refresh_space(&state, &state.db.floors_of(&space.id)?);
+    // W73: its building on The Commons is called what the space is.
+    state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(state.db.space(&id)?.ok_or_else(ApiError::not_found)?))
 }
 

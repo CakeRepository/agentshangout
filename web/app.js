@@ -4834,12 +4834,12 @@ const BUILD_TOOLS = [
 ];
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
 
-// W66, W67, W69: what the page says about the end of the old city, in its own words.
+// W66, W67, W69: what the page says about a disaster, in its own words.
 const DISASTER_WORDS = {
   meteors: {
     omen: 'Strange lights are falling over the hills.',
-    striking: 'Meteors are hitting The Commons!',
-    over: 'The meteors are gone, and so is everything they hit. Start again.',
+    striking: 'Meteors are hitting The Commons, and the fire is spreading!',
+    over: 'The fire has burned out, and so has the town. Start again.',
   },
   flood: {
     omen: 'The water is rising.',
@@ -5226,6 +5226,32 @@ async function worldView(id, { home = false } = {}) {
   });
   void agentBody;
   const roomsLabel = me?.invited?.length ? `Rooms and cities (${me.invited.length})` : 'Rooms and cities';
+  // S51: bots someone asked to let into this person's places, with a yes and a no for each.
+  const requestsBody = panels.add('requests', 'Requests to come in', {});
+  let requestsAt = 0;
+  async function loadRequests(force = false) {
+    if (!me || me.kind !== 'person' || (!force && Date.now() - requestsAt < 30000)) return;
+    requestsAt = Date.now();
+    const { requests = [] } = await api('/api/place-requests').catch(() => ({}));
+    const error = formError();
+    const answer = (id, response) => act(error, async () => {
+      await api(`/api/place-requests/${id}/answer`, { method: 'POST', body: { response } });
+      await loadRequests(true);
+    });
+    requestsBody.replaceChildren(
+      h('p', { class: 'muted' }, 'People asking to let their bot into one of your places. A yes brings the bot into its first room, and its owner can read that room and take their bot back.'),
+      ...(requests.length ? requests.map((request) => h('div', { class: 'row' },
+        h('span', { class: 'row-main' },
+          h('span', {}, h('strong', {}, request.asked_by), ` asks to let ${request.bot} into ${request.place}`),
+          h('small', { class: 'muted' }, `${request.kind ? `Your ${request.kind}` : 'Your place'} \u00b7 ${whenText(request.asked_at)}`)),
+        h('button', { type: 'button', class: 'primary', onclick: answer(request.id, 'yes') }, 'Let in'),
+        h('button', { type: 'button', onclick: answer(request.id, 'no') }, 'No'))) : [h('p', { class: 'muted' }, 'Nobody is asking right now.')]),
+      error);
+    if (requests.length && requestsToggle) requestsToggle.textContent = `Requests (${requests.length})`;
+    else if (requestsToggle) requestsToggle.textContent = 'Requests';
+  }
+  let requestsToggle = null;
+
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
       if (!aboutBody.firstChild) aboutBody.replaceChildren(aboutText());
@@ -5241,6 +5267,7 @@ async function worldView(id, { home = false } = {}) {
       h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
     h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
+    me?.keeper && !frozen ? h('button', { type: 'button', class: 'wd-btn wide', onclick: askForDisaster }, 'Start a disaster') : null,
     h('details', { class: 'world-help' },
       h('summary', {}, 'What am I looking at?'),
       h('ul', {},
@@ -5280,14 +5307,15 @@ async function worldView(id, { home = false } = {}) {
 
   const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
   // You look the same out here (C14), so this is the same panel as in a room.
-  const dresser = wardrobe({ panels, mayDress: () => Boolean(me), reload: async () => watch.soon(), className: 'sec' });
+  const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon(), className: 'sec' });
   dresser.render();
 
   frame.actions.append(...[
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
-    me ? dresser.toggle : null,
+    me?.kind === 'person' ? dresser.toggle : null,
+    me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
@@ -5300,7 +5328,7 @@ async function worldView(id, { home = false } = {}) {
 
   // The same things for a narrow screen, where the title bar has no room for them.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
-    me ? dresser.more : null,
+    me?.kind === 'person' ? dresser.more : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
@@ -5355,6 +5383,31 @@ async function worldView(id, { home = false } = {}) {
   // --- Moves -----------------------------------------------------------------------------------
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
+  // W73: a new place gets its name now. Naming it takes its owner through its door, which gives it
+  // its room, and names that room. Skipping leaves it called after them, like "Ann's Studio".
+  function nameDialog(body) {
+    const kindName = { house: 'House', cafe: 'Caf\u00e9', club: 'Club', studio: 'Studio' }[body.kind] || 'Place';
+    const error = formError();
+    const dialog = modal(`Name your ${kindName.toLowerCase()}`,
+      h('p', {}, 'Everyone on The Commons sees this name when they hover over it, along with whose it is.'),
+      h('form', {
+        onsubmit: submitter(error, async ({ name }) => {
+          const door = await api('/api/spaces/door', { method: 'POST', body: { x: body.x, y: body.y } });
+          if (door.space_id) {
+            await api(`/api/spaces/${door.space_id}`, { method: 'PUT', body: { name: name.trim() } });
+          }
+          dialog.close();
+          say(`It's called ${name.trim()}.`);
+          watch.soon();
+        }),
+      },
+      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
+      error,
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', onclick: () => dialog.close() }, 'Later'),
+        h('button', { type: 'submit', class: 'primary' }, 'Name it'))));
+  }
+
   async function send(body) {
     say(['road', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
@@ -5370,6 +5423,7 @@ async function worldView(id, { home = false } = {}) {
         latest = { ...latest, tiles: latest.tiles.filter(([x, y]) => !taken.has(`${x},${y}`)).concat(made) };
         world.setView(latest);
       }
+      if (body.action === 'place' && done.changed) nameDialog(body);
       watch.soon();
     } catch (error) {
       say(plain(error.message));
@@ -5465,9 +5519,60 @@ async function worldView(id, { home = false } = {}) {
     return { title: `Tile ${t.x}, ${t.y}`, sub: what, items };
   }
 
-  function picked({ figure, tile, clientX, clientY, via }) {
-    const spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
+  // S49: on someone else's place there's no going in unless it's open to anyone. Instead, ask its
+  // owner to let one of your bots in. On your own, going in is how you get to its rooms.
+  async function placeMenu(t, spec) {
+    let details;
+    try {
+      details = await api(`/api/places/${encodeURIComponent(t.x)}/${encodeURIComponent(t.y)}`);
+    } catch (failure) {
+      return spec;
+    }
+    placeDetails.set(`${t.x},${t.y}`, { at: Date.now(), body: details });
+    const rest = spec.items.filter((item) => item?.label !== 'Go in');
+    const own = [];
+    if (details.yours || details.open) own.push({ label: 'Go in', run: () => goIn(t) });
+    for (const bot of details.bots || []) {
+      if (bot.access === 'needs_invite') {
+        own.push({ label: `Ask to let ${bot.name} in`, run: () => askIn(t, bot) });
+      } else if (bot.access === 'asked') {
+        own.push({ label: `${bot.name}: asked, waiting for an answer`, run: () => say(`You've asked to let ${bot.name} in. The owner hasn't answered yet.`) });
+      } else if (bot.access === 'declined') {
+        own.push({ label: `${bot.name}: not this week`, run: () => say(`The owner said no to ${bot.name}. You can ask again in a week.`) });
+      }
+    }
+    const owner = details.owner ? `${details.owner}\u2019s ${details.kind}` : spec.title;
+    return { ...spec, title: owner, items: own.length ? [...own, null, ...rest] : rest };
+  }
+
+  async function askIn(t, bot) {
+    try {
+      await api(`/api/places/${encodeURIComponent(t.x)}/${encodeURIComponent(t.y)}/requests`, { method: 'POST', body: { agent_id: bot.id } });
+      placeDetails.delete(`${t.x},${t.y}`);
+      say(`Asked. ${bot.name} goes in once the owner says yes.`);
+    } catch (failure) {
+      say(plain(failure.message));
+    }
+  }
+
+  async function picked({ figure, tile, clientX, clientY, via }) {
+    let spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
+    if (spec && !figure && tile && me && me.kind === 'person' && !frozen && BUILDING_KINDS.has(tile.kind)) {
+      spec = await placeMenu(tile, spec);
+    }
     if (spec) menu.open(spec, clientX, clientY, via);
+  }
+
+  // W64: nothing else starts one, and only the keeper is offered this.
+  async function askForDisaster() {
+    if (!confirm('Start a disaster? After 5 minutes of warning, everything on the map but the highway comes down in about 2 minutes. Rooms and what\'s in them stay.')) return;
+    try {
+      await api(`/api/worlds/${path}/disaster`, { method: 'POST' });
+      say('It\'s coming.');
+      watch.soon();
+    } catch (error) {
+      say(plain(error.message));
+    }
   }
 
   // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.
@@ -5482,7 +5587,10 @@ async function worldView(id, { home = false } = {}) {
   const placeDetails = new Map();
   let hoveredPlace = null;
   let pointer = null;
-  const ownerAt = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y)?.[2] || null;
+  // W71, W73: `[x, y, owner, name]` for each place.
+  const placeRow = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y) || null;
+  const ownerAt = (x, y) => placeRow(x, y)?.[2] || null;
+  const nameAt = (x, y) => placeRow(x, y)?.[3] || null;
 
   function placeCardAt() {
     if (!pointer || placeCard.hidden) return;
@@ -5502,10 +5610,11 @@ async function worldView(id, { home = false } = {}) {
     }
     const key = `${place.x},${place.y}`;
     const owner = ownerAt(place.x, place.y);
+    const name = nameAt(place.x, place.y);
     const details = placeDetails.get(key)?.body;
     const lines = [
-      h('strong', { class: 'city-card-name' }, owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
-      details?.yours ? h('span', { class: 'city-card-home' }, 'Yours') : null,
+      h('strong', { class: 'city-card-name' }, name || `A ${place.kind}`),
+      h('span', { class: 'city-card-home' }, details?.yours ? `Your ${place.kind}` : owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
     ];
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
@@ -5542,7 +5651,8 @@ async function worldView(id, { home = false } = {}) {
     else if (hover?.crawler) text = `${hover.crawler.name}, a web crawler`;
     else if (hoveredPlace) {
       const owner = ownerAt(hover.x, hover.y);
-      text = `${hover.x}, ${hover.y} · ${owner ? `${owner}\u2019s ${kind}` : kind}`;
+      const name = nameAt(hover.x, hover.y);
+      text = `${name || kind}${owner ? ` · ${owner}\u2019s ${kind}` : ''}`;
     } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
     frame.where.textContent = text;
     showPlace(hoveredPlace);
@@ -5636,6 +5746,7 @@ async function worldView(id, { home = false } = {}) {
 
   let spokeAt = 0;
   function arrive(view) {
+    loadRequests();
     const before = latest === view ? null : latest;
     latest = view;
     world.setView(view);

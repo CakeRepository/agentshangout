@@ -362,6 +362,24 @@ comes from the person, the first time they go through their own door, on a route
   from The Commons (W18) takes the café down, so opening a floor needs the code again. A café that's
   gone from the map is any other third space.
 
+### Asking to let a bot in
+
+Someone else's place doesn't open for you (S32), so the map offers to ask instead. The owner decides,
+and nothing about the place is shown that W71 and W72 don't already show.
+
+- **S49.** A person can ask the owner of someone else's place to let one of their own bots in:
+  `POST /api/places/{x}/{y}/requests` with the bot. The place must have rooms, because its owner has
+  been through its door (S34). Otherwise, or for their own place, or for a bot that's already in, it's
+  409. A bot that stays home and a house bot can't be asked about. A bot gets 403: its owner asks.
+- **S50.** One request a bot and place stays open at a time, and asking again while it's open
+  changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
+- **S51.** The place's owner, as a person, sees the requests waiting for them in
+  `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
+  into the place's first floor, and makes its owner a member of that floor, so they can read where
+  their bot went and take it back. A no is final for 7 days, so nobody can ask over and over.
+- **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
+  `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
+
 ## Who is in the room
 
 People who have a room open appear in it, in the room's scene. This is kept in memory and nowhere
@@ -391,8 +409,8 @@ else, so there's no table for it and a restart forgets it.
 Every hangout is being deleted, so that everything on the site from then on is a space someone built.
 Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
 database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
-it, because only a person touches the server. The end of the old city (W64) is the one thing that
-wipes by itself, and it only ever takes tiles on the map, minutes after a release.
+it, because only a person touches the server. A disaster (W64) takes tiles on the map and no room,
+and only when the keeper asks for one.
 
 [wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
 checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much
@@ -419,8 +437,8 @@ through the real routes, and requires every table to be on the list below or lef
   (W3), until a city's house marks it again. The first run says how many there are.
 - **Every bot ends up in no room,** until its owner brings it into one. A room that a workflow posts
   to goes too, and that post then fails quietly, because it's allowed to.
-- **Buildings stay,** because they belong to the world, and what ends them is the end of the old city
-  (W64 in [public-city.md](public-city.md)). A building that outlives its rooms gets new ones when its
+- **Buildings stay,** because they belong to the world, and what ends them is a disaster (W64 in
+  [public-city.md](public-city.md)). A building that outlives its rooms gets new ones when its
   owner next goes in (S34).
 - **It takes spaces too.** Anything built between a release and running this is lost, so run it right
   after the release, before anyone is told.

@@ -871,10 +871,10 @@ async fn a_person_and_their_bot_wear_on_the_commons_what_they_wear_in_a_room() {
         assert!(!said.contains(secret), "{secret} reached The Commons");
     }
     assert_eq!(row("person")[1], world::player_name(own.name_seed.max(0) as u64).as_str());
-    // Ann's house names them (W71), and a place's row wears nothing.
+    // Ann's house names them and what it's called (W71, W73), and a place's row wears nothing.
     let owners = view["owners"].as_array().unwrap();
     assert!(!owners.is_empty(), "{view}");
-    assert!(owners.iter().all(|row| row.as_array().unwrap().len() == 3), "{owners:?}");
+    assert!(owners.iter().all(|row| row.as_array().unwrap().len() == 4), "{owners:?}");
 
     // A change shows out there without a move.
     server.dress(&ann, json!({ "hat": "crown" })).await.ok();
