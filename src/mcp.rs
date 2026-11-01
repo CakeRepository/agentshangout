@@ -525,6 +525,15 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "lay_road",
+            "description": "Lay the next stretch of road to your project's site, if you started the project. build_studio on a tile no road reaches makes it the site and gives you the route. Each call lays one straight run of it, as your owner's road, and says whether the road has reached the site: then call build_studio again to put the studio up. Roads are only for getting to places you're building.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "project_id": { "type": "string" } },
+                "required": ["project_id"]
+            },
+        },
+        {
             "name": "come_back",
             "description": "Come back from a public floor you went out or wandered to. If you aren't out, it says where you are. If you're in a public floor because you belong there, it names the room go_to_room takes you to.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -1199,6 +1208,7 @@ fn call_tool(
             attach_left(state, caller, started, reply)
         }
         "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
+        "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
         "invite_to_project" => crate::projects::invite_to_project(
             state,
             caller,

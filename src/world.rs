@@ -1112,6 +1112,87 @@ pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(),
     }
 }
 
+/// L22: how far from its site a route is looked for, in tiles either way.
+const ROUTE_REACH: i64 = 48;
+
+/// L22: the tiles a road needs, in order from beside the nearest road to beside `site`, keeping to
+/// the streets (W85) apart from the last 3 tiles, which are a lane. Empty if a road is already
+/// beside the site, and `None` if nothing can reach it. `tiles` must reach 3 tiles past every tile
+/// looked at, for the side streets.
+pub fn route_to(land: &Land, hoods: &[Hood], tiles: &Tiles, site: Pos) -> Option<Vec<Pos>> {
+    let is_road = |pos: Pos| tiles.get(&pos).is_some_and(|tile| tile.kind == Kind::Road);
+    let beside_road = |pos: Pos| neighbours(pos).into_iter().flatten().any(is_road);
+    if beside_road(site) {
+        return Some(Vec::new());
+    }
+    let (sx, sy) = (i64::from(site.0), i64::from(site.1));
+    let near_site = |pos: Pos| {
+        (i64::from(pos.0) - sx).abs() + (i64::from(pos.1) - sy).abs() <= LANE_TILES as i64
+    };
+    let passable = |pos: Pos| {
+        pos != site
+            && (i64::from(pos.0) - sx).abs() <= ROUTE_REACH
+            && (i64::from(pos.1) - sy).abs() <= ROUTE_REACH
+            && !tiles.contains_key(&pos)
+            && land.at(pos).is_some_and(|ground| ground.is_open())
+            && (near_site(pos) || on_street(hoods, tiles, pos))
+    };
+    // Out from the site, so the first tile that touches a road is the nearest way in.
+    let mut came_from: std::collections::HashMap<Pos, Option<Pos>> =
+        std::collections::HashMap::new();
+    let mut queue = std::collections::VecDeque::new();
+    for pos in neighbours(site).into_iter().flatten() {
+        if passable(pos) {
+            came_from.insert(pos, None);
+            queue.push_back(pos);
+        }
+    }
+    while let Some(pos) = queue.pop_front() {
+        if beside_road(pos) {
+            // Back towards the site: that's the order a road is laid in, from the road outwards.
+            let mut path = vec![pos];
+            let mut at = pos;
+            while let Some(Some(next)) = came_from.get(&at) {
+                path.push(*next);
+                at = *next;
+            }
+            return Some(path);
+        }
+        for next in neighbours(pos).into_iter().flatten() {
+            if !came_from.contains_key(&next) && passable(next) {
+                came_from.insert(next, Some(pos));
+                queue.push_back(next);
+            }
+        }
+    }
+    None
+}
+
+/// L22: a route cut into straight runs of up to 16 tiles, first to last, each of which W85 allows on
+/// its own: all on streets, or a lane of 3 tiles or fewer.
+pub fn route_runs(hoods: &[Hood], tiles: &Tiles, path: &[Pos]) -> Vec<(Pos, Pos)> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < path.len() {
+        let street = on_street(hoods, tiles, path[start]);
+        let mut end = start;
+        while end + 1 < path.len() {
+            let next = path[end + 1];
+            let straight = (next.0 == path[start].0 && path[end].0 == path[start].0)
+                || (next.1 == path[start].1 && path[end].1 == path[start].1);
+            let long = end + 1 - start + 1 > MAX_ROAD_TILES as usize;
+            let lane = !street && end + 1 - start + 1 > LANE_TILES;
+            if !straight || long || lane || on_street(hoods, tiles, next) != street {
+                break;
+            }
+            end += 1;
+        }
+        runs.push((path[start], path[end]));
+        start = end + 1;
+    }
+    runs
+}
+
 /// Both corners, on the map and the right way round. Everything after this can use plain maths,
 /// because a coordinate is now between 0 and 255.
 fn corners(land: &Land, span: Span) -> Result<(Pos, Pos), &'static str> {
