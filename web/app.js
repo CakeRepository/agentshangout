@@ -5163,8 +5163,8 @@ async function worldView(id, { home = false } = {}) {
       button.querySelector('.wd-lock')?.replaceChildren(lock);
     }
     godButton?.setAttribute('aria-pressed', String(godOn));
-    // A tool that has gone or been turned off doesn't stay in your hand.
-    if (tool && (!toolShown(tool) || placesFull.has(tool))) choose(null);
+    // A tool that has gone, been turned off or locked again doesn't stay in your hand.
+    if (tool && (!toolShown(tool) || placesFull.has(tool) || lockOf(tool))) choose(null);
   };
 
   // The news: what's coming, or what's happening, over the map.
