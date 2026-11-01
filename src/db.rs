@@ -815,6 +815,26 @@ CREATE TABLE IF NOT EXISTS world_road_removals (
 );
 CREATE INDEX IF NOT EXISTS world_road_removals_by_player
     ON world_road_removals (world_id, player_id, id DESC);
+-- L42, L43: immutable proposals; decisions use a compare-and-set before applying.
+CREATE TABLE IF NOT EXISTS project_changes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(space_id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    action TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_changes_pending ON project_changes(project_id, status, created_at);
+-- E37: house editing is a person's explicit grant, shared with that person's bots.
+CREATE TABLE IF NOT EXISTS house_editors (
+    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (player_id, person_id)
+);
+
 "#;
 
 #[derive(Debug, Serialize)]
@@ -4031,6 +4051,111 @@ impl Db {
                 |row| Ok((space_from_row(row)?, row.get(6)?)),
             )
             .optional()
+    }
+
+    /// L42, L43: reserve a bounded pending proposal, under one database lock.
+    pub fn propose_project_change(
+        &self,
+        change: &serde_json::Value,
+        at: i64,
+    ) -> rusqlite::Result<bool> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM project_changes WHERE created_at <= ?", [at - 7 * 86_400])?;
+        Ok(conn.execute(
+            "INSERT INTO project_changes (id, project_id, agent_id, reason, action, arguments, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+             WHERE (SELECT COUNT(*) FROM project_changes WHERE agent_id = ?3 AND status = 'pending' AND created_at > ?8) < 5
+               AND (SELECT COUNT(*) FROM project_changes WHERE project_id = ?2 AND status = 'pending' AND created_at > ?8) < 20",
+            params![change["id"].as_str(), change["project_id"].as_str(), change["agent_id"].as_str(),
+                    change["reason"].as_str(), change["action"].as_str(), change["arguments"].to_string(), at, at - 86_400],
+        )? == 1)
+    }
+
+    pub fn project_changes(
+        &self,
+        agent_id: &str,
+        at: i64,
+    ) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.project_id, c.agent_id, a.name, c.reason, c.action, c.arguments,
+                    c.status, c.decided_by, c.created_at
+             FROM project_changes c JOIN agents a ON a.id = c.agent_id
+             WHERE c.created_at > ?2 AND (c.agent_id = ?1 OR EXISTS
+               (SELECT 1 FROM room_agents r WHERE r.hangout_id = c.project_id AND r.agent_id = ?1))
+             ORDER BY c.created_at, c.id",
+        )?;
+        let rows = stmt.query_map(params![agent_id, at - 7 * 86_400], |row| {
+            let status: String = row.get(7)?;
+            let created: i64 = row.get(9)?;
+            let arguments: String = row.get(6)?;
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?, "project_id": row.get::<_, String>(1)?,
+                "agent_id": row.get::<_, String>(2)?, "proposed_by": row.get::<_, String>(3)?,
+                "reason": row.get::<_, String>(4)?, "action": row.get::<_, String>(5)?,
+                "arguments": serde_json::from_str::<serde_json::Value>(&arguments).unwrap_or_default(),
+                "status": if status == "pending" && created <= at - 86_400 { "expired" } else { &status },
+                "decided_by": row.get::<_, Option<String>>(8)?, "created_at": created,
+            }))
+        })?;
+        rows.collect()
+    }
+
+    pub fn decide_project_change(
+        &self,
+        id: &str,
+        by: &str,
+        status: &str,
+        at: i64,
+    ) -> rusqlite::Result<bool> {
+        Ok(self.conn().execute(
+            "UPDATE project_changes SET status = ?3, decided_by = ?2
+             WHERE id = ?1 AND status = 'pending' AND created_at > ?4",
+            params![id, by, status, at - 86_400],
+        )? == 1)
+    }
+
+    pub fn finish_project_change(&self, id: &str, status: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE project_changes SET status = ?2 WHERE id = ?1 AND status = 'applying'",
+            params![id, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn house_editor(&self, player_id: i64, person_id: &str) -> rusqlite::Result<bool> {
+        self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM house_editors WHERE player_id = ? AND person_id = ?)",
+            params![player_id, person_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn house_editors(&self, player_id: i64) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT p.id, p.name, p.color FROM house_editors e JOIN people p ON p.id = e.person_id WHERE e.player_id = ? ORDER BY p.name, p.id")?;
+        let rows = stmt.query_map([player_id], person_from_row)?;
+        rows.collect()
+    }
+
+    pub fn set_house_editor(
+        &self,
+        player_id: i64,
+        person_id: &str,
+        approved: bool,
+    ) -> rusqlite::Result<()> {
+        if approved {
+            self.conn().execute(
+                "INSERT OR IGNORE INTO house_editors (player_id, person_id) VALUES (?, ?)",
+                params![player_id, person_id],
+            )?;
+        } else {
+            self.conn().execute(
+                "DELETE FROM house_editors WHERE player_id = ? AND person_id = ?",
+                params![player_id, person_id],
+            )?;
+        }
+        Ok(())
     }
 
     /// The projects whose first floor this bot is in, oldest first, with the bot that started each.

@@ -1040,6 +1040,7 @@ pub fn answer_owner_question(
 /// it wakes up, whether a notification or its own schedule woke it.
 #[derive(Debug, Default, Serialize)]
 pub struct Inbox {
+    pub project_changes: Vec<serde_json::Value>,
     pub waiting_on_you: Vec<CheckIn>,
     pub your_check_ins: Vec<CheckIn>,
     pub plans_to_answer: Vec<Event>,
@@ -1136,6 +1137,7 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         inbox.nudge = crate::routines::call_of(state, agent_id, &caller.person_id, now)?
             .filter(|call| call.event != "meet");
     }
+    inbox.project_changes = crate::projects::changes_of(state, caller)?;
     Ok(inbox)
 }
 

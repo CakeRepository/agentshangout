@@ -1429,3 +1429,195 @@ async fn a_bot_furnishes_its_projects_room_as_its_owner_would() {
         .refused(&pip, "furnish_room", json!({ "project_id": project, "template": "study" }))
         .await;
 }
+
+// L42, L43: a visitor offers exact work; a current member decides, without granting membership.
+#[tokio::test]
+async fn project_changes_need_a_member_and_apply_only_once() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let started = server.tool(&town.fern, "start_project", json!({"name":"Circuit Shop"})).await;
+    let project = text(&started["project_id"]);
+    let offer = json!({"project_id":project,"reason":"Make room for electronics work",
+        "action":"furnish_room","arguments":{"template":"workshop"}});
+    server.refused(&town.rover, "propose_project_change", offer.clone()).await;
+    server
+        .put(
+            &town.ann.key,
+            &format!("/api/floors/{project}"),
+            json!({"access":"public","create_code":CODE}),
+        )
+        .await
+        .ok();
+    server
+        .post(
+            &town.bo.key,
+            &format!("/api/floors/{project}/walk-in"),
+            json!({"agent_id":town.rover_id}),
+        )
+        .await
+        .ok();
+    let before = server.state.db.floor_items(&project).unwrap().len();
+    let proposed = server.tool(&town.rover, "propose_project_change", offer).await;
+    assert_eq!(server.state.db.floor_items(&project).unwrap().len(), before);
+    let id = text(&proposed["id"]);
+    let answer = json!({"change_id":id,"approve":true});
+    server.refused(&town.rover, "answer_project_change", answer.clone()).await;
+    let listed = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(listed["project_changes"][0]["arguments"], json!({"template":"workshop"}));
+    assert_eq!(listed["project_changes"][0]["proposed_by"], "Rover");
+    let (_, member) = server.bot(&town.ann, &project, "Willow").await;
+    server.tool(&member, "answer_project_change", answer.clone()).await;
+    assert!(server.state.db.floor_items(&project).unwrap().len() > before);
+    server.refused(&town.fern, "answer_project_change", answer).await;
+    let own = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(own["project_changes"][0]["status"], "approved");
+    assert_eq!(own["your_projects"], json!([]));
+    server
+        .refused(&town.rover, "furnish_room", json!({"project_id":project,"template":"study"}))
+        .await;
+    // Approved work can target an upper floor, but cannot escape to another space.
+    let upper = server
+        .post(&town.ann.key, &format!("/api/spaces/{project}/floors"), json!({"name":"Upstairs"}))
+        .await
+        .ok();
+    let upper_id = text(&upper["id"]);
+    let offer = json!({"project_id":project,"reason":"Add a seat upstairs","action":"furnish_room",
+        "arguments":{"floor_id":upper_id,"place":[{"kind":"stool","x":39,"y":13}]}});
+    let proposed = server.tool(&town.rover, "propose_project_change", offer).await;
+    let done = server
+        .tool(
+            &town.fern,
+            "answer_project_change",
+            json!({"change_id":proposed["id"],"approve":true}),
+        )
+        .await;
+    assert_eq!(done["status"], "approved");
+    assert_eq!(server.state.db.floor_items(&upper_id).unwrap().len(), 1);
+    let before = server.state.db.floor_items(&town.cafe).unwrap().len();
+    let offer = json!({"project_id":project,"reason":"An offer with the wrong floor","action":"furnish_room",
+        "arguments":{"floor_id":town.cafe,"template":"workshop"}});
+    let proposed = server.tool(&town.rover, "propose_project_change", offer).await;
+    let done = server
+        .tool(
+            &town.fern,
+            "answer_project_change",
+            json!({"change_id":proposed["id"],"approve":true}),
+        )
+        .await;
+    assert_eq!(done["status"], "failed");
+    assert_eq!(server.state.db.floor_items(&town.cafe).unwrap().len(), before);
+}
+
+// E37: house editors are chosen only by the owner; their bots inherit and lose that grant.
+#[tokio::test]
+async fn houses_allow_only_the_owners_bots_and_explicitly_approved_people() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let (x, y) = server.state.db.house_of_person(COMMONS, &town.ann.id).unwrap().unwrap();
+    let edit = json!({"x":x,"y":y,"outside":{"parts":{"walls":{"style":"stucco"}}}});
+    server.tool(&town.fern, "decorate_house", edit.clone()).await;
+    server.refused(&town.rover, "decorate_house", edit.clone()).await;
+    let spaces = server.get(&town.ann.key, "/api/spaces").await.ok();
+    let floor = text(&spaces["house"]["space"]["id"]);
+    // I65: own bots furnish the interior, but room presence alone never grants editing.
+    let furnish = json!({"floor_id":floor,"place":[{"kind":"stool","x":28,"y":0,"facing":0}]});
+    server.tool(&town.fern, "furnish_house", furnish).await;
+    server
+        .refused(&town.rover, "furnish_house", json!({"floor_id":floor,"template":"study"}))
+        .await;
+    let grants = format!("/api/places/{x}/{y}/editors");
+    let grant = format!("{grants}/{}", town.bo.id);
+    assert_eq!(server.put(&town.fern, &grant, json!({})).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(server.put(&town.bo.key, &grant, json!({})).await.status, StatusCode::FORBIDDEN);
+    server.put(&town.ann.key, &grant, json!({})).await.ok();
+    assert_eq!(server.get(&town.ann.key, &grants).await.ok()["editors"][0]["id"], town.bo.id);
+    server.tool(&town.rover, "decorate_house", edit.clone()).await;
+    server
+        .tool(
+            &town.rover,
+            "furnish_house",
+            json!({"floor_id":floor,"place":[{"kind":"stool","x":30,"y":0,"facing":0}]}),
+        )
+        .await;
+    assert_eq!(
+        server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    server
+        .put(&town.bo.key, &format!("/api/places/{x}/{y}/outside"), edit["outside"].clone())
+        .await
+        .ok();
+    server.delete(&town.ann.key, &grant).await.ok();
+    server.refused(&town.rover, "decorate_house", edit).await;
+    assert_eq!(
+        server.put(&town.bo.key, &format!("/api/places/{x}/{y}/outside"), json!({})).await.status,
+        StatusCode::FORBIDDEN
+    );
+}
+
+// L42, L43: declined, expired and failed proposals never become permission; queues are bounded.
+#[tokio::test]
+async fn project_proposals_are_bounded_expire_and_do_not_retry_failure() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let started = server.tool(&town.fern, "start_project", json!({"name":"Shop"})).await;
+    let project = text(&started["project_id"]);
+    server
+        .put(
+            &town.ann.key,
+            &format!("/api/floors/{project}"),
+            json!({"access":"public","create_code":CODE}),
+        )
+        .await
+        .ok();
+    server
+        .post(
+            &town.bo.key,
+            &format!("/api/floors/{project}/walk-in"),
+            json!({"agent_id":town.rover_id}),
+        )
+        .await
+        .ok();
+    let offer = json!({"project_id":project,"reason":"Help with workshop layout","action":"furnish_room","arguments":{"template":"not-a-template"}});
+    let failed = server.tool(&town.rover, "propose_project_change", offer.clone()).await;
+    let answer = json!({"change_id":failed["id"],"approve":true});
+    assert_eq!(
+        server.tool(&town.fern, "answer_project_change", answer.clone()).await["status"],
+        "failed"
+    );
+    server.refused(&town.fern, "answer_project_change", answer).await;
+    let declined = server.tool(&town.rover, "propose_project_change", offer.clone()).await;
+    server
+        .tool(
+            &town.fern,
+            "answer_project_change",
+            json!({"change_id":declined["id"],"approve":false}),
+        )
+        .await;
+    server
+        .refused(
+            &town.fern,
+            "answer_project_change",
+            json!({"change_id":declined["id"],"approve":true}),
+        )
+        .await;
+    let expired = json!({"id":"expired-proposal","project_id":project,"agent_id":town.rover_id,
+        "reason":"Old offer","action":"furnish_room","arguments":{"template":"study"}});
+    assert!(server.state.db.propose_project_change(&expired, now() - DAY - 1).unwrap());
+    server
+        .refused(
+            &town.fern,
+            "answer_project_change",
+            json!({"change_id":"expired-proposal","approve":true}),
+        )
+        .await;
+    for _ in 0..5 {
+        server.tool(&town.rover, "propose_project_change", offer.clone()).await;
+    }
+    server.refused(&town.rover, "propose_project_change", offer).await;
+    let (room, stranger) = server.someone("Stranger").await;
+    let (_, outsider) = server.bot(&stranger, &room, "Unknown").await;
+    assert_eq!(server.tool(&outsider, "inbox", json!({})).await["project_changes"], json!([]));
+}

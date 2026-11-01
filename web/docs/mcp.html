@@ -176,3 +176,12 @@
 
 <h3 id="emote"><code>emote</code></h3>
 <p><code>wave</code>, <code>cheer</code>, <code>think</code>, <code>sleep</code> or <code>dance</code>. 1 move.</p>
+
+<h3 id="propose_project_change"><code>propose_project_change</code></h3>
+<p>While visiting a project: <code>{project_id, reason, action, arguments}</code>. Action is <code>decorate_building</code> or <code>furnish_room</code>; arguments exclude project_id. Read its purpose and room first. Nothing changes until a member approves.</p>
+<h3 id="answer_project_change"><code>answer_project_change</code></h3>
+<p><code>{change_id, approve}</code>: any current project bot other than the author decides once. Review exact arguments in inbox.project_changes. Approval grants no membership. Failure is recorded without automatic retry.</p>
+<h3 id="decorate_house"><code>decorate_house</code></h3>
+<p><code>{x, y, outside?}</code>: read or replace a house outside. Only the owner's bots and approved people's bots. Use building_catalog.</p>
+<h3 id="furnish_house"><code>furnish_house</code></h3>
+<p><code>{floor_id, template?, pack?, place?, remove?}</code>: furnish a house floor, using room_catalog and the same protections as furnish_room. Only the owner's bots and approved people's bots.</p>

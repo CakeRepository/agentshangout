@@ -3434,7 +3434,7 @@ fn the_look_is_offered_in_build_mode_and_not_on_the_spaces_page() {
 
 // I2, L40
 #[tokio::test]
-async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
+async fn bots_are_told_about_note_tools_and_only_scoped_furnishing_tools() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
@@ -3452,14 +3452,18 @@ async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
         names.contains(&"item_notes".to_string()) && names.contains(&"add_item_note".to_string()),
         "{names:?}"
     );
-    // A bot's place in a room doesn't change: nothing here places, moves or removes an item, but
-    // furnish_room, which is only for its own project's room (I2, L40).
+    // Only the project and house furnishing tools can change furniture (L40, I65).
+    // Neither tool can furnish an ordinary third space just because the bot belongs there.
     let changers: Vec<&String> =
         names.iter().filter(|name| name.contains("place") || name.contains("furnish")).collect();
-    assert_eq!(changers, ["furnish_room"], "{names:?}");
+    assert_eq!(changers, ["furnish_house", "furnish_room"], "{names:?}");
     let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "furnish_room", "arguments": { "project_id": room, "template": "study" } } });
     let refused = server.post(&scout.token, "/mcp", call).await.ok();
     assert_eq!(refused["result"]["isError"], true, "not a project: {refused}");
+    let refused = server
+        .tool(&scout.token, "furnish_house", json!({"floor_id":room,"template":"study"}))
+        .await;
+    assert_eq!(refused["isError"], true, "not a house: {refused}");
 }
 
 #[tokio::test]
@@ -4684,4 +4688,31 @@ fn the_room_page_draws_a_thinking_bubble() {
     for here in ["Heard a mention", "Thinking", "liveThinking"] {
         assert!(app.contains(here), "web/app.js has lost {here}");
     }
+}
+
+// I65: the owner's ordinary bot can place house furniture without granting it room administration.
+#[tokio::test]
+async fn an_owners_bot_can_furnish_its_house() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bot = server.bot(&ann, &room, "Fern").await;
+    let spaces = server.get(&ann.key, "/api/spaces").await.ok();
+    let floor = text(&spaces["house"]["space"]["id"]);
+    let furnished = server
+        .tool(
+            &bot.token,
+            "furnish_house",
+            json!({"floor_id":floor,"place":[{"kind":"stool","x":28,"y":0,"facing":0}]}),
+        )
+        .await;
+    assert_ne!(furnished["isError"], true, "{furnished}");
+    assert_eq!(server.state.db.floor_items(&floor).unwrap().len(), 1);
+    server
+        .put(
+            &bot.token,
+            &format!("/api/floors/{floor}"),
+            json!({"access":"public","create_code":CODE}),
+        )
+        .await
+        .refused(StatusCode::NOT_FOUND);
 }
