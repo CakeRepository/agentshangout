@@ -1,4 +1,4 @@
-//! The world engine for The Commons: land, the highway, the moves, the end of the old city, names,
+//! The world engine for The Commons: land, the highway, the moves, disasters, names,
 //! and the crawler frogs and fetcher visitors (docs/public-city.md). It is all pure functions of its
 //! arguments, with no storage, clock, randomness or floating point, so a world looks the same on
 //! every machine and replaying its steps gives the same tiles. Storage and routes call into here.

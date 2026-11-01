@@ -1289,7 +1289,7 @@ fn a_tip_is_always_one_of_the_fixed_sentences_for_any_town_and_any_player() {
                 for moves in [0u32, 1, 30] {
                     let tip = world::tip(&own, person, moves);
                     assert!(world::TIPS.contains(&tip), "{tip:?} is not a fixed tip");
-                    // The one for the end of the old city is said by the server, never worked out from tiles.
+                    // The one for a disaster is said by the server, never worked out from tiles.
                     assert_ne!(tip, world::TIP_STRIKING);
                     if moves == 0 {
                         assert_eq!(tip, world::TIPS[0], "out of moves says so first");

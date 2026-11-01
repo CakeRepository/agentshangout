@@ -3939,7 +3939,7 @@ export class World {
     this.limits = { road: 16, ...(options.limits || {}) };
     this.framing = options.framing || {};
     this.labels = [];
-    // The end of the old city, as the last view told it (W66, W67).
+    // The disaster, as the last view told it (W66, W67).
     this.doom = null;
     this.doomKey = '';
     this.doomAt = 0;
@@ -5723,7 +5723,7 @@ export class World {
     this.placeTip();
   }
 
-  // --- The end of the old city ------------------------------------------------------------------
+  // --- Disasters -----------------------------------------------------------------------------
 
   // W66, W67: a disaster is painted over the map from what the view says. Nothing here changes a tile:
   // those come down in the next view, and a step takes a minute, so what's painted plays over that.
