@@ -1,6 +1,6 @@
 //! The public city (docs/public-city.md): The Commons, the frozen worlds people started, the players
 //! who build, the step and disasters, and the frogs and visitors that pass through.
-//! Every rule (W1-W70) lives here. The engine in `world` is pure, `db` only stores, and the routes and
+//! Every rule (W1-W82) lives here. The engine in `world` is pure, `db` only stores, and the routes and
 //! the MCP tools are thin callers of what is below.
 //!
 //! Nothing in here touches a hangout, city, house, trip or scene (W1). It reads `people` to know
@@ -39,7 +39,7 @@ use crate::{
         WorldTx,
     },
     error::{ApiError, ApiResult},
-    now,
+    god_mode, now,
     world::{self, Change, Ground, Kind, Land, Phase, Roads, Span, Tiles},
     AppState,
 };
@@ -67,6 +67,8 @@ pub const MAX_LISTED_PLAYERS: i64 = 64;
 pub const MAX_OWN_WORLDS: i64 = 200;
 /// W11: a person can claim this many guests.
 pub const MAX_CLAIMS: i64 = 20;
+/// W56: houses a person can have.
+pub const MAX_HOUSES: i64 = 1;
 /// W56: buildings a person can have beside their house, and all the buildings The Commons holds.
 pub const MAX_THIRD_SPACES: i64 = 3;
 pub const MAX_BUILDINGS: i64 = 1_500;
@@ -776,27 +778,38 @@ fn wait_for(kind: Kind, since: Option<i64>, now: i64) -> i64 {
 }
 
 /// W54, W56, W61: a place is for a person, within what they and the world can hold, once it has come.
+/// God mode goes past their other places and how long they've waited, not what a world holds (W76).
 fn may_place(
     tx: &WorldTx,
     world: &WorldRow,
     player: &PlayerRow,
     kind: Kind,
+    god: bool,
     now: i64,
 ) -> ApiResult<()> {
     if player.kind() != PlayerKind::Person {
         return Err(ApiError::forbidden("only a person can place a building: sign in on the site"));
     }
+    // W81: the town square isn't anyone's to place but god mode's, and a world has one.
+    if kind == Kind::Square && !god {
+        return Err(ApiError::forbidden(
+            "only someone who runs this server can place the town square",
+        ));
+    }
+    if kind == Kind::Square && tx.has_square(&world.id)? {
+        return Err(ApiError::conflict("this world already has its town square"));
+    }
     let (houses, others, everyone) = tx.building_counts(&world.id, player.id)?;
-    if kind == Kind::House && houses >= 1 {
+    if kind == Kind::House && houses >= MAX_HOUSES {
         return Err(ApiError::conflict("you already have a house"));
     }
-    if kind != Kind::House && others >= MAX_THIRD_SPACES {
+    if !god && kind != Kind::House && others >= MAX_THIRD_SPACES {
         return Err(ApiError::conflict("you already have as many of those as a person can"));
     }
     if everyone >= MAX_BUILDINGS {
         return Err(ApiError::conflict("The Commons has no room for more buildings right now"));
     }
-    if wait_for(kind, tx.place_clock(&world.id, player.id)?, now) > 0 {
+    if !god && wait_for(kind, tx.place_clock(&world.id, player.id)?, now) > 0 {
         return Err(ApiError::conflict("that place hasn't come yet: places come with time"));
     }
     Ok(())
@@ -938,6 +951,14 @@ fn tiles_near(
     )
 }
 
+/// Who a move is for. `god` is worked out before the transaction, because it reads the database, and
+/// it's only ever true for a person's own request (W76, W79).
+#[derive(Clone, Copy)]
+struct Mover {
+    player_id: i64,
+    god: bool,
+}
+
 /// One move, planned and applied in one transaction. Any refusal leaves everything as it was and
 /// charges nothing.
 fn apply_move(
@@ -945,7 +966,7 @@ fn apply_move(
     tx: &WorldTx,
     world: &WorldRow,
     land: &Land,
-    player_id: i64,
+    Mover { player_id, god }: Mover,
     parsed: &Parsed,
     now: i64,
 ) -> ApiResult<Acted> {
@@ -960,7 +981,7 @@ fn apply_move(
             return Err(ApiError::conflict(world::TIP_STRIKING));
         }
     }
-    let left = moves_left(&player, now);
+    let left = if god { allowance(&player) } else { moves_left(&player, now) };
     // W30: this answer isn't counted as a refused move, so it comes before any of the work.
     if left == 0 {
         return Err(out_of_moves("you have no moves left today", now));
@@ -993,10 +1014,14 @@ fn apply_move(
         }
         Parsed::Emote(_) => (Vec::new(), world::EMOTE_COST, 0),
         Parsed::Road(span) => {
+            // W16: roads are for agents, and for someone with god mode on.
+            if player.kind() == PlayerKind::Person && !god {
+                return Err(ApiError::forbidden("people don't lay roads here: agents do"));
+            }
             let tiles =
                 tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, world::SIDE_STREET)?;
             let planned = plan_parts(world::plan_road(land, &tiles, builder, *span))?;
-            // W77: its new tiles follow the streets of their neighborhood, unless it's a lane.
+            // W85: its new tiles follow the streets of their neighborhood, unless it's a lane.
             let fresh: Vec<world::Pos> = planned
                 .0
                 .iter()
@@ -1005,12 +1030,15 @@ fn apply_move(
                     _ => None,
                 })
                 .collect();
-            let hoods = world::neighborhoods(world.seed, world.size);
-            world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
+            // God mode isn't held back by the streets either (W76).
+            if !god {
+                let hoods = world::neighborhoods(world.seed, world.size);
+                world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
+            }
             planned
         }
         Parsed::Place(kind, x, y) => {
-            may_place(tx, world, &player, *kind, now)?;
+            may_place(tx, world, &player, *kind, god, now)?;
             let tiles =
                 tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
             plan_parts(world::plan_place(land, &tiles, builder, *kind, *x, *y))?
@@ -1030,17 +1058,27 @@ fn apply_move(
             // W17: a tile with no builder, or one this player can't take down, is refused from the
             // small read. A road that may come down also needs the whole network, to be sure
             // no place depends on it, so that is read only once the rest has said yes.
-            let planned = world::plan_bulldoze_tile(land, &near, builder, *x, *y, &is_gone);
+            let planned = if god {
+                world::plan_god_bulldoze_tile(land, &near, builder, *x, *y)
+            } else {
+                world::plan_bulldoze_tile(land, &near, builder, *x, *y, &is_gone)
+            };
             let is_road =
                 pos.and_then(|pos| near.get(&pos)).is_some_and(|tile| tile.kind == Kind::Road);
             if planned.is_ok() && is_road {
                 let tiles = tx.all_tiles(&world.id)?;
-                plan_parts(world::plan_bulldoze(land, &tiles, builder, *x, *y, &is_gone))?
+                plan_parts(if god {
+                    world::plan_god_bulldoze(land, &tiles, builder, *x, *y)
+                } else {
+                    world::plan_bulldoze(land, &tiles, builder, *x, *y, &is_gone)
+                })?
             } else {
                 plan_parts(planned)?
             }
         }
     };
+    // W76: nothing costs anything with god mode on.
+    let cost = if god { 0 } else { cost };
 
     if cost > left {
         return Err(out_of_moves(
@@ -1092,7 +1130,8 @@ fn plan_parts(planned: world::Planned) -> ApiResult<(Vec<Change>, u32, u32)> {
 }
 
 /// W13: a player makes a move in a world. This is for a caller whose address isn't known, which
-/// is a test or the server itself; a request goes through `act_from`.
+/// is a test or the server itself. That includes a bot putting up its project's studio through its
+/// owner's own player, so god mode isn't looked at here (W79); a request goes through `act_from`.
 pub fn act(
     state: &AppState,
     player: &PlayerRow,
@@ -1100,7 +1139,7 @@ pub fn act(
     mv: &Move,
     now: i64,
 ) -> ApiResult<Acted> {
-    act_as(state, player, None, world_id, mv, now)
+    act_as(state, player, false, None, world_id, mv, now)
 }
 
 /// W13, W30: a player makes a move in a world, from the address a request came from.
@@ -1112,7 +1151,16 @@ pub fn act_from(
     mv: &Move,
     now: i64,
 ) -> ApiResult<Acted> {
-    act_as(state, player, address_of(state, headers), world_id, mv, now)
+    let god = god_mode_of(state, player)?;
+    act_as(state, player, god, address_of(state, headers), world_id, mv, now)
+}
+
+/// W76, W79: whether this is a person's own player, with their god mode on.
+fn god_mode_of(state: &AppState, player: &PlayerRow) -> ApiResult<bool> {
+    match player.person_id.as_deref() {
+        Some(person_id) if player.kind() == PlayerKind::Person => god_mode::is_on(state, person_id),
+        _ => Ok(false),
+    }
 }
 
 /// W30: a refused move costs its player nothing, so it needs a limit of its own, per player and per
@@ -1121,6 +1169,7 @@ pub fn act_from(
 fn act_as(
     state: &AppState,
     player: &PlayerRow,
+    god: bool,
     address: Option<IpAddr>,
     world_id: &str,
     mv: &Move,
@@ -1135,7 +1184,7 @@ fn act_as(
         )
         .retry_after(refused.wait(now)));
     }
-    let acted = make_move(state, player, world_id, mv, now);
+    let acted = make_move(state, player, god, world_id, mv, now);
     if acted.as_ref().is_err_and(was_refused) {
         for key in &keys {
             refused.allow(key, now);
@@ -1153,6 +1202,7 @@ fn was_refused(error: &ApiError) -> bool {
 fn make_move(
     state: &AppState,
     player: &PlayerRow,
+    god: bool,
     world_id: &str,
     mv: &Move,
     now: i64,
@@ -1160,9 +1210,10 @@ fn make_move(
     let parsed = parse_move(mv).map_err(ApiError::bad_request)?;
     let world = require_world(state, world_id)?;
     let land = state.worlds.land_for(world.seed, world.size);
+    let mover = Mover { player_id: player.id, god };
     let acted = state
         .db
-        .in_transaction(|tx| apply_move(state, tx, &world, &land.land, player.id, &parsed, now))?;
+        .in_transaction(|tx| apply_move(state, tx, &world, &land.land, mover, &parsed, now))?;
     state.worlds.mark_stale(&world.id);
     Ok(acted)
 }
@@ -1182,15 +1233,13 @@ fn standing(
     let own = state.db.player_tiles(&world.id, player.id)?;
     let town = world::town(&own);
     let person = player.kind() == PlayerKind::Person;
+    let god = god_mode_of(state, player)?;
+    let left = if god { allowance(player) } else { moves_left(player, now) };
     let striking = state
         .db
         .world_end(&world.id)?
         .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
-    let tip = if striking {
-        world::TIP_STRIKING
-    } else {
-        world::tip(&own, person, moves_left(player, now))
-    };
+    let tip = if striking { world::TIP_STRIKING } else { world::tip(&own, person, left) };
     let mut reply = json!({
         "player": {
             "id": player.id,
@@ -1199,23 +1248,62 @@ fn standing(
             "y": pos.1,
             "emote": listed_emote(emote.as_deref()),
         },
-        "moves_left": moves_left(player, now),
+        "moves_left": left,
         "moves_per_day": allowance(player),
         "your_town": town,
         "goal": world::goal(&town, person),
         "tip": tip,
     });
     if person {
-        reply["places"] = places_left(state, &world.id, player.id, now)?;
+        reply["places"] = places_left(state, &world.id, player.id, god, now)?;
+        reply["full"] = json!(places_full(state, &world.id, player.id, god)?);
+    }
+    if god {
+        reply["god_mode"] = json!(true);
     }
     Ok((reply, own))
 }
 
-/// W62: how long until a person can place each kind.
-fn places_left(state: &AppState, world_id: &str, player_id: i64, now: i64) -> ApiResult<Value> {
+/// W62, W76: how long until a person can place each kind.
+fn places_left(
+    state: &AppState,
+    world_id: &str,
+    player_id: i64,
+    god: bool,
+    now: i64,
+) -> ApiResult<Value> {
     let since = state.db.place_clock(world_id, player_id)?;
-    let left = PLACE_WAITS.iter().map(|(kind, _)| (kind.as_str(), wait_for(*kind, since, now)));
+    let left = PLACE_WAITS
+        .iter()
+        .map(|(kind, _)| (kind.as_str(), if god { 0 } else { wait_for(*kind, since, now) }));
     Ok(Value::Object(left.map(|(kind, secs)| (kind.to_string(), json!(secs))).collect()))
+}
+
+/// W62, W76, W81: the kinds a person can't place any more of, so the toolbar can turn them off.
+fn places_full(
+    state: &AppState,
+    world_id: &str,
+    player_id: i64,
+    god: bool,
+) -> ApiResult<Vec<&'static str>> {
+    let (houses, others, _) = state.db.building_counts(world_id, player_id)?;
+    let held = |kind: Kind| {
+        if kind == Kind::House {
+            houses >= MAX_HOUSES
+        } else {
+            !god && others >= MAX_THIRD_SPACES
+        }
+    };
+    let mut full: Vec<_> = PLACE_WAITS
+        .iter()
+        .map(|(kind, _)| *kind)
+        .filter(|kind| held(*kind))
+        .map(Kind::as_str)
+        .collect();
+    if god && state.db.has_square(world_id)? {
+        full.push(Kind::Square.as_str());
+    }
+    Ok(full)
 }
 
 /// A player's own view of themselves in a world: who they are, where, what they have left, their
@@ -1560,7 +1648,7 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
-    /// W79: `[name, character, x, y]` for each neighborhood's point.
+    /// W87: `[name, character, x, y]` for each neighborhood's point.
     #[serde(skip_serializing_if = "Option::is_none")]
     neighborhoods: Option<Vec<(String, &'static str, i64, i64)>>,
     /// W71, W73: `[x, y, owner, name]`, whose each place is and what it's called.
@@ -1674,7 +1762,11 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             rows.into_iter()
                 .filter_map(|(x, y, owner, kind, name)| {
                     // W73: a place with no room yet is called after its owner and kind.
-                    let name = name.unwrap_or_else(|| format!("{owner}'s {}", kind_title(&kind)));
+                    // W82: the town square is just called Town Square, whoever put it up.
+                    let name = name.unwrap_or_else(|| match kind.as_str() {
+                        "square" => "Town Square".to_string(),
+                        _ => format!("{owner}'s {}", kind_title(&kind)),
+                    });
                     Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, owner, name))
                 })
                 .collect(),
@@ -1987,7 +2079,7 @@ pub fn look(
     let around = [region[0] - reach, region[1] - reach, region[2] + reach, region[3] + reach];
     let nearby = state.db.world_tiles_in(&world.id, around)?;
     let reserved = world::reserved_in(&land.land, &nearby, region);
-    // W79: the neighborhood the window is centred on, and the open tiles a road may go on.
+    // W87: the neighborhood the window is centred on, and the open tiles a road may go on.
     let hoods = world::neighborhoods(world.seed, world.size);
     let neighborhood = world::hood_at(&hoods, cx as i64, cy as i64)
         .map(|i| json!({ "name": hoods[i].name, "character": hoods[i].character.as_str() }));
@@ -2028,9 +2120,10 @@ pub fn look(
         "legend": "land rows are one letter a tile: g grass, f forest, w water, s sand, h hill. \
                    Row 0 of land is the window's top row, and its first letter is its left column. \
                    built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
-                   place a person put up. players is [id, name, x, y, emote]. reserved is [x, y] \
+                   place a person put up. A kind of square is the town square, where bots meet. \
+                   players is [id, name, x, y, emote]. reserved is [x, y] \
                    for each open tile kept for a side street: a place can't use it and roads may. \
-                   streets is [x, y] for each open tile a road may go on (W77): roads follow the \
+                   streets is [x, y] for each open tile a road may go on (W85): roads follow the \
                    streets of their neighborhood, and a lane of 3 tiles or fewer can go anywhere.",
         "land": rows,
         "built": built,

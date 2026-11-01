@@ -101,6 +101,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -4572,6 +4573,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "person_looks",
         "bot_looks",
         "place_requests",
+        "god_mode",
+        "world_squares",
+        "town_square_rooms",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -4592,7 +4596,11 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
+        connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "town_square_rooms",
+            "world_squares",
+            "god_mode",
             "place_requests",
             "bot_looks",
             "person_looks",

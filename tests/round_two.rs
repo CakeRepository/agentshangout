@@ -213,6 +213,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -771,7 +772,7 @@ fn the_whole_map_says(
             .is_none_or(|p| at - p.seen_at >= world::GONE_SECS)
     };
     match m.action.as_str() {
-        // W77: and its new tiles follow the streets of their neighborhood, unless it's a lane.
+        // W85: and its new tiles follow the streets of their neighborhood, unless it's a lane.
         "road" => world::plan_road(land, tiles, builder, span).and_then(|plan| {
             let fresh: Vec<world::Pos> = plan
                 .changes
@@ -890,7 +891,7 @@ fn random_move(
     }
 }
 
-/// A road that starts beside an existing one and runs along a street (W76) for 4 to 16 tiles, as an
+/// A road that starts beside an existing one and runs along a street (W84) for 4 to 16 tiles, as an
 /// agent reading `streets` in look would lay it.
 fn street_road(
     rng: &mut Rng,
@@ -981,7 +982,7 @@ fn fuzz_a_world(
         let who = &players[rng.below(players.len() as u64) as usize];
         let person = who.kind() == PlayerKind::Person;
         let m = random_move(&mut rng, size, &roads, &targets, &kept);
-        // W79: an agent builds along the streets look shows it, so half the roads tried do too.
+        // W87: an agent builds along the streets look shows it, so half the roads tried do too.
         let m = if m.action == "road" && rng.below(2) == 0 {
             street_road(&mut rng, &hoods, &before, &roads, size).unwrap_or(m)
         } else {
@@ -1010,8 +1011,15 @@ fn fuzz_a_world(
                 assert_eq!(after, before, "{text}: refused and changed tiles");
                 stats.held += 1;
             }
+            // W16: a road isn't a person's to lay, and being told so changes nothing.
+            (_, Err(error)) if m.action == "road" && error.status == StatusCode::FORBIDDEN => {
+                assert!(person, "{text}: a guest was told no road");
+                assert_eq!(after, before, "{text}: refused and changed tiles");
+                stats.held += 1;
+            }
             (Ok(plan), Ok(acted)) => {
                 assert!(person || !is_place, "{text}: somebody who is not a person put up a place");
+                assert!(!person || m.action != "road", "{text}: a person laid a road");
                 assert_eq!(
                     (acted.cost, acted.changed as usize, acted.skipped),
                     (plan.cost, plan.changes.len(), plan.skipped),
@@ -1328,7 +1336,7 @@ async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_wi
     let mut player_moves = 0;
     for step in 0..3_000 {
         at += 60;
-        // Roads follow the streets now (W77), so more of a random player's moves are refused: one
+        // Roads follow the streets now (W85), so more of a random player's moves are refused: one
         // every 5 steps keeps enough of them landing for the run to prove something.
         if step % 5 == 0 {
             // A player makes a move near the middle, where the highway ends.
@@ -1853,6 +1861,7 @@ fn measure_how_many_networks_it_takes_to_get_honest_addresses_refused_views() {
             create_code: None,
             allow_private_webhooks: false,
             keeper_id: None,
+            god_ids: Vec::new(),
         },
     );
     let at = now();
@@ -2675,17 +2684,9 @@ async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leav
             tile(Kind::House, 0, Some(player.id as u64)),
         )],
     );
-    let over = Move {
-        action: "road".into(),
-        x: Some(first.0),
-        y: Some(first.1),
-        x2: None,
-        y2: None,
-        kind: None,
-        emote: None,
-    };
-    let laid = worlds::act(&server.state, &player, COMMONS, &over, now_t + 4).unwrap_err();
-    assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.message);
+    let agent = server.guest().await;
+    let laid = server.act(&agent.token, COMMONS, road_move(first, first)).await;
+    assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.show());
     assert_eq!(server.tiles(COMMONS)[&(first.0 as u16, first.1 as u16)].kind, Kind::House);
 }
 
@@ -3059,6 +3060,7 @@ async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing
         "crawler_sightings",
         "place_clocks",
         "world_ends",
+        "world_squares",
     ];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
@@ -4163,7 +4165,7 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let start = server.me(&dee.key, COMMONS).await;
     assert_eq!(
         sorted_keys(&start),
-        ["goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]
+        ["full", "goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]
     );
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");

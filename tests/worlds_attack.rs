@@ -203,6 +203,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -420,11 +421,11 @@ struct Map {
     built: HashMap<(i64, i64), (String, i64)>,
     /// Tiles kept for side streets (W15): a place can't go on them, and a road may use them.
     kept: HashSet<(i64, i64)>,
-    /// Tiles a long road may go on (W76, W77), worked out as the server does.
+    /// Tiles a long road may go on (W84, W85), worked out as the server does.
     on_streets: HashSet<(i64, i64)>,
 }
 
-/// The tiles a road longer than a lane may go on (W77), worked out as the server does.
+/// The tiles a road longer than a lane may go on (W85), worked out as the server does.
 fn street_tiles(seed: u64, size: i64, tiles: &world::Tiles) -> HashSet<(i64, i64)> {
     let hoods = world::neighborhoods(seed, size as usize);
     (0..size)
@@ -506,7 +507,7 @@ impl Map {
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                // W77: longer than a lane, it follows the streets.
+                // W85: longer than a lane, it follows the streets.
                 let along = |i: i64| {
                     n <= world::LANE_TILES as i64
                         || self.on_streets.contains(&(rx + dx * i, ry + dy * i))
@@ -780,7 +781,7 @@ fn dump(path: &str) -> BTreeMap<String, Vec<String>> {
 }
 
 /// The tables the worlds own. Everything else is private life.
-const WORLD_TABLES: [&str; 9] = [
+const WORLD_TABLES: [&str; 10] = [
     "worlds",
     "world_tiles",
     "world_buildings",
@@ -790,6 +791,7 @@ const WORLD_TABLES: [&str; 9] = [
     "crawler_sightings",
     "place_clocks",
     "world_ends",
+    "world_squares",
 ];
 
 /// What changed between two dumps, in the tables that match `keep`.
@@ -1158,7 +1160,7 @@ async fn play_every_world_route(server: &Server, ann: &Who, bot: &Bot) {
     server.get("/api/players/mine").token(&ann.key).send().await.ok();
     let map = Map::from_db(server, COMMONS);
     let (first, last) = map.line_from_road(3).unwrap();
-    server.acts_ok(&ann.key, COMMONS, road_move(first, last)).await;
+    server.acts_ok(&two.token, COMMONS, road_move(first, last)).await;
     // A person's house, and what a person is told about their places.
     let spot = Map::from_db(server, COMMONS).house_spots()[0];
     server.acts_ok(&ann.key, COMMONS, place_move("house", spot)).await;
@@ -3886,11 +3888,19 @@ async fn nobody_can_bulldoze_a_place_or_a_tile_of_the_old_city_even_when_its_bui
 async fn skipped_tiles_are_never_charged_and_a_move_costs_exactly_what_it_changes() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
+    // An agent someone claimed, because roads are for agents (W16).
     let ann = server.person("Ann").await;
-    let ann_id = server.state.db.own_player(&ann.id, now()).unwrap().id as u64;
+    let agent = server.guest().await;
+    server
+        .post("/api/players/claim", json!({ "claim_code": agent.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
+    let ann_id = server.player_id(&agent.token).await as u64;
     let map = Map::from_db(&server, COMMONS);
     let mut rng = Rng(77);
-    let mut expected_left = 300;
+    let mut expected_left = 200;
     let (mut checked, mut refused) = (0, 0);
     for _ in 0..200 {
         // Too many refused moves in a minute are turned away at the door (W30), and the moves of the
@@ -3928,7 +3938,7 @@ async fn skipped_tiles_are_never_charged_and_a_move_costs_exactly_what_it_change
                 json!({ "action": "road", "x": x, "y": y, "x2": x + dx * len, "y2": y + dy * len })
             }
         };
-        let reply = server.act(&ann.key, COMMONS, body.clone()).await;
+        let reply = server.act(&agent.token, COMMONS, body.clone()).await;
         let after = server.tiles(COMMONS);
         if reply.status == StatusCode::OK {
             let cost = reply.body["cost"].as_i64().unwrap();
@@ -3951,7 +3961,12 @@ async fn skipped_tiles_are_never_charged_and_a_move_costs_exactly_what_it_change
             assert_eq!(before, after, "{body} was refused but changed tiles");
             refused += 1;
         }
-        assert_eq!(server.moves_left(&ann.key).await, expected_left, "{body}: {}", reply.show());
+        assert_eq!(
+            server.moves_left(&agent.token).await,
+            expected_left,
+            "{body}: {}",
+            reply.show()
+        );
     }
     assert!(checked > 20, "too few moves worked ({checked}) to say anything");
     let tiles = server.tiles(COMMONS);
@@ -4207,10 +4222,11 @@ async fn the_engine_makes_land_and_a_highway_for_thousands_of_seeds_without_pani
         started.elapsed()
     );
 }
-/// A road and a house beside it, built by a person: what a step has on The Commons to leave alone.
+/// A road an agent laid and a person's house beside it: what a step has on The Commons to leave alone.
 async fn lay_out_a_town(server: &Server, ann: &Who) {
+    let agent = server.guest().await;
     let (first, last) = Map::from_db(server, COMMONS).line_from_road(3).unwrap();
-    server.acts_ok(&ann.key, COMMONS, road_move(first, last)).await;
+    server.acts_ok(&agent.token, COMMONS, road_move(first, last)).await;
     let spot = Map::from_db(server, COMMONS).house_spots()[0];
     server.acts_ok(&ann.key, COMMONS, place_move("house", spot)).await;
 }
@@ -5314,18 +5330,18 @@ async fn no_move_builds_on_water_a_hill_or_forest_that_is_not_cleared() {
 async fn a_road_is_at_most_sixteen_whichever_way_it_is_drawn() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
-    let ann = server.person("Ann").await;
+    let agent = server.guest().await;
     let map = Map::from_db(&server, COMMONS);
     // A road of 17 along any side from the highway, if there is room for one, is refused whole.
     if let Some((first, last)) = map.line_from_road(17) {
-        let reply = server.act(&ann.key, COMMONS, road_move(first, last)).await;
+        let reply = server.act(&agent.token, COMMONS, road_move(first, last)).await;
         assert!(reply.status.is_client_error(), "{}", reply.show());
-        let reply = server.act(&ann.key, COMMONS, road_move(last, first)).await;
+        let reply = server.act(&agent.token, COMMONS, road_move(last, first)).await;
         assert!(reply.status.is_client_error(), "{}", reply.show());
     }
-    assert_eq!(server.moves_left(&ann.key).await, 300);
+    assert_eq!(server.moves_left(&agent.token).await, 30);
     if let Some((first, last)) = map.line_from_road(16) {
-        let reply = server.act(&ann.key, COMMONS, road_move(first, last)).await;
+        let reply = server.act(&agent.token, COMMONS, road_move(first, last)).await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.show());
         assert_eq!(reply.body["cost"], 16);
     }

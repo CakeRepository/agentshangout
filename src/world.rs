@@ -787,6 +787,8 @@ pub enum Kind {
     Cafe,
     Club,
     Studio,
+    /// W81: the town square. A world has one.
+    Square,
 }
 
 impl Kind {
@@ -802,6 +804,7 @@ impl Kind {
             Kind::Cafe => "cafe",
             Kind::Club => "club",
             Kind::Studio => "studio",
+            Kind::Square => "square",
         }
     }
 
@@ -817,6 +820,7 @@ impl Kind {
             Kind::Cafe,
             Kind::Club,
             Kind::Studio,
+            Kind::Square,
         ]
         .into_iter()
         .find(|kind| kind.as_str() == word)
@@ -824,7 +828,7 @@ impl Kind {
 
     /// W54: what a person places by hand: somewhere they can go into.
     pub fn is_building(self) -> bool {
-        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio)
+        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio | Kind::Square)
     }
 }
 
@@ -969,14 +973,14 @@ fn reserved_by(pos: Pos, street: impl Fn(Pos) -> bool) -> bool {
     })
 }
 
-// Neighborhoods (W75 to W79)
+// Neighborhoods (W83 to W87)
 
-/// W75: a neighborhood's point sits every this many tiles, moved by up to `HOOD_JITTER`.
+/// W83: a neighborhood's point sits every this many tiles, moved by up to `HOOD_JITTER`.
 pub const HOOD_EVERY: i64 = 24;
 const HOOD_JITTER: i64 = 8;
-/// W76: tiles on either side of where two neighborhoods meet, free for joining their streets.
+/// W84: tiles on either side of where two neighborhoods meet, free for joining their streets.
 const HOOD_SEAM: i64 = 2;
-/// W77: a road this short, or shorter, goes anywhere.
+/// W85: a road this short, or shorter, goes anywhere.
 pub const LANE_TILES: usize = 3;
 pub const OFF_STREET: &str =
     "roads follow the streets of their neighborhood: look shows them as streets. A lane of 3 tiles or fewer can go anywhere";
@@ -990,7 +994,7 @@ const HOMES_ENDS: &[&str] = &["Heights", "Gardens", "Hollow", "Green", "Park", "
 const MAKERS_ENDS: &[&str] = &["Works", "Yard", "Mill", "Forge", "Lofts"];
 const MARKET_ENDS: &[&str] = &["Market", "Square", "Row", "Exchange", "Cross"];
 
-/// W78: what a neighborhood is for. A hint only.
+/// W86: what a neighborhood is for. A hint only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Character {
     Homes,
@@ -1008,7 +1012,7 @@ impl Character {
     }
 }
 
-/// W75, W76: one neighborhood: its point, name, character and streets.
+/// W83, W84: one neighborhood: its point, name, character and streets.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hood {
     pub name: String,
@@ -1021,7 +1025,7 @@ pub struct Hood {
     pub oy: i64,
 }
 
-/// W75: a world's neighborhoods, from its seed alone, in a fixed order.
+/// W83: a world's neighborhoods, from its seed alone, in a fixed order.
 pub fn neighborhoods(seed: u64, size: usize) -> Vec<Hood> {
     let size = size as i64;
     let mut hoods = Vec::new();
@@ -1063,7 +1067,7 @@ pub fn neighborhoods(seed: u64, size: usize) -> Vec<Hood> {
     hoods
 }
 
-/// W75: which neighborhood a tile is in: the nearest point, the earlier one on a tie.
+/// W83: which neighborhood a tile is in: the nearest point, the earlier one on a tie.
 pub fn hood_at(hoods: &[Hood], x: i64, y: i64) -> Option<usize> {
     let mut best: Option<(usize, i64)> = None;
     for (i, hood) in hoods.iter().enumerate() {
@@ -1075,7 +1079,7 @@ pub fn hood_at(hoods: &[Hood], x: i64, y: i64) -> Option<usize> {
     best.map(|(i, _)| i)
 }
 
-/// W76, W77: whether a road may go on this tile: a street of its neighborhood, near where it
+/// W84, W85: whether a road may go on this tile: a street of its neighborhood, near where it
 /// meets another, or a side street. `tiles` must reach 3 tiles past it, for the side streets.
 pub fn on_street(hoods: &[Hood], tiles: &Tiles, pos: Pos) -> bool {
     let (x, y) = (i64::from(pos.0), i64::from(pos.1));
@@ -1090,7 +1094,7 @@ pub fn on_street(hoods: &[Hood], tiles: &Tiles, pos: Pos) -> bool {
     seam || is_reserved(tiles, pos)
 }
 
-/// W77: a road's new tiles follow the streets, or it's a lane of 3 tiles or fewer.
+/// W85: a road's new tiles follow the streets, or it's a lane of 3 tiles or fewer.
 pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(), &'static str> {
     if hoods.is_empty()
         || fresh.len() <= LANE_TILES
@@ -1200,12 +1204,31 @@ pub fn plan_bulldoze(
     gone: &dyn Fn(u64) -> bool,
 ) -> Planned {
     let plan = plan_bulldoze_tile(land, tiles, player, x, y, gone)?;
+    leaves_every_place_a_road(land, tiles, x, y)?;
+    Ok(plan)
+}
+
+/// W77: what god mode takes down: anything built, whoever built it. `tiles` must be every tile in the
+/// world when the tile is a road, because a road a place depends on stays, as in W17.
+pub fn plan_god_bulldoze(land: &Land, tiles: &Tiles, player: u64, x: i64, y: i64) -> Planned {
+    let plan = plan_god_bulldoze_tile(land, tiles, player, x, y)?;
+    leaves_every_place_a_road(land, tiles, x, y)?;
+    Ok(plan)
+}
+
+/// W17: refuses to take down a road that a place depends on.
+fn leaves_every_place_a_road(
+    land: &Land,
+    tiles: &Tiles,
+    x: i64,
+    y: i64,
+) -> Result<(), &'static str> {
     let road =
         land.locate(x, y).filter(|pos| tiles.get(pos).is_some_and(|tile| tile.kind == Kind::Road));
     if road.is_some_and(|pos| strands_a_building(tiles, pos)) {
         return Err(NEEDED);
     }
-    Ok(plan)
+    Ok(())
 }
 
 /// W17: whether a tile can be taken down, which needs the tile and nothing around it. A road that
@@ -1218,6 +1241,30 @@ pub fn plan_bulldoze_tile(
     x: i64,
     y: i64,
     gone: &dyn Fn(u64) -> bool,
+) -> Planned {
+    let allowed = |tile: &Tile| {
+        // W57: a building stays on the map however long its owner is away.
+        let abandoned =
+            tile.level == 0 && !tile.kind.is_building() && tile.player.is_some_and(gone);
+        tile.player == Some(player) || abandoned
+    };
+    clear_tile(land, tiles, player, (x, y), &allowed, "you can only bulldoze what you built")
+}
+
+/// W77: the same for god mode, from the tile alone. The highway has no builder, and every road joins it.
+pub fn plan_god_bulldoze_tile(land: &Land, tiles: &Tiles, player: u64, x: i64, y: i64) -> Planned {
+    let allowed = |tile: &Tile| tile.kind != Kind::Road || tile.player.is_some();
+    clear_tile(land, tiles, player, (x, y), &allowed, "the highway stays where it is")
+}
+
+/// What taking a tile down does, if `allowed` says it may come down.
+fn clear_tile(
+    land: &Land,
+    tiles: &Tiles,
+    player: u64,
+    (x, y): (i64, i64),
+    allowed: &dyn Fn(&Tile) -> bool,
+    refused: &'static str,
 ) -> Planned {
     let pos = land.locate(x, y).ok_or(OFF_MAP)?;
     let cleared = Tile { kind: Kind::Cleared, level: 0, player: Some(player) };
@@ -1235,11 +1282,8 @@ pub fn plan_bulldoze_tile(
     if tile.kind == Kind::Cleared {
         return Err("that forest is already cleared");
     }
-    let mine = tile.player == Some(player);
-    // W57: a building stays on the map however long its owner is away.
-    let abandoned = tile.level == 0 && !tile.kind.is_building() && tile.player.is_some_and(gone);
-    if !mine && !abandoned {
-        return Err("you can only bulldoze what you built");
+    if !allowed(tile) {
+        return Err(refused);
     }
     let change = if forest { Change::Set(pos, cleared) } else { Change::Remove(pos) };
     Ok(Plan { changes: vec![change], cost: BULLDOZE_COST, skipped: 0 })
