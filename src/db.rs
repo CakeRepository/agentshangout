@@ -756,8 +756,6 @@ pub struct FloorChange<'a> {
     pub size: Option<&'a str>,
     pub paint: Option<&'a str>,
     pub flooring: Option<&'a str>,
-    /// Comma-separated words, already checked.
-    pub hidden: Option<&'a str>,
     /// Whose bots stay when this opens the floor to the public.
     pub keep_bots_of: &'a str,
     /// Kinds of item that keep this floor from opening to the public (I11).
@@ -1910,6 +1908,11 @@ fn space_from_row(row: &Row) -> rusqlite::Result<Space> {
     })
 }
 
+/// What a floor leaves out, from the comma-separated words stored for it.
+fn hidden_words(hidden: &str) -> Vec<String> {
+    hidden.split(',').filter(|word| !word.is_empty()).map(str::to_string).collect()
+}
+
 fn floor_from_row(row: &Row) -> rusqlite::Result<Floor> {
     let hidden: String = row.get(8)?;
     Ok(Floor {
@@ -1921,7 +1924,7 @@ fn floor_from_row(row: &Row) -> rusqlite::Result<Floor> {
         size: row.get(5)?,
         paint: row.get(6)?,
         flooring: row.get(7)?,
-        hidden: hidden.split(',').filter(|word| !word.is_empty()).map(str::to_string).collect(),
+        hidden: hidden_words(&hidden),
     })
 }
 
@@ -3826,23 +3829,41 @@ impl Db {
         }
         tx.execute(
             "UPDATE floors SET access = COALESCE(?2, access), size = COALESCE(?3, size),
-                paint = COALESCE(?4, paint), flooring = COALESCE(?5, flooring),
-                hidden = COALESCE(?6, hidden)
+                paint = COALESCE(?4, paint), flooring = COALESCE(?5, flooring)
              WHERE hangout_id = ?1",
-            params![
-                change.id,
-                change.access,
-                change.size,
-                change.paint,
-                change.flooring,
-                change.hidden
-            ],
+            params![change.id, change.access, change.size, change.paint, change.flooring],
         )?;
         if let Some(name) = change.name {
             tx.execute("UPDATE hangouts SET name = ?2 WHERE id = ?1", params![change.id, name])?;
         }
         tx.commit()?;
         Ok(Some(taken_off))
+    }
+
+    /// Sets what a floor leaves out to the comma-separated words `choose` gives, from what it leaves
+    /// out now and what's on it. In one step, so nothing can be put down where the couch is about to
+    /// come back to (I3).
+    pub fn choose_hidden<E>(
+        &self,
+        hangout_id: &str,
+        choose: impl FnOnce(&[String], &[FloorItem]) -> Result<String, E>,
+    ) -> rusqlite::Result<Result<(), E>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let hidden: String =
+            tx.query_row("SELECT hidden FROM floors WHERE hangout_id = ?", [hangout_id], |row| {
+                row.get(0)
+            })?;
+        let chosen = match choose(&hidden_words(&hidden), &items_on(&tx, hangout_id)?) {
+            Ok(chosen) => chosen,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        tx.execute(
+            "UPDATE floors SET hidden = ? WHERE hangout_id = ?",
+            params![chosen, hangout_id],
+        )?;
+        tx.commit()?;
+        Ok(Ok(()))
     }
 
     /// Swaps a floor with the one above or below it. At the end of the stack this does nothing.
@@ -7085,22 +7106,24 @@ impl Db {
             .optional()
     }
 
-    /// Stores an item if `check` allows it, given the floor's access and what's on the floor. In one
-    /// step, so two people can't both take the last place or the same spot (I3, I4), and a flirty
-    /// item can't land on a floor that's opening (I11).
+    /// Stores an item if `check` allows it, given the floor's access, what it leaves out and what's
+    /// on it. In one step, so two people can't both take the last place or the same spot (I3, I4),
+    /// and a flirty item can't land on a floor that's opening (I11).
     pub fn place_item<E>(
         &self,
         item: &NewFloorItem,
-        check: impl FnOnce(&str, &[FloorItem]) -> Result<(), E>,
+        check: impl FnOnce(&str, &[String], &[FloorItem]) -> Result<(), E>,
     ) -> rusqlite::Result<Result<(), E>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
-        let access: String = tx.query_row(
-            "SELECT access FROM floors WHERE hangout_id = ?",
+        let (access, hidden): (String, String) = tx.query_row(
+            "SELECT access, hidden FROM floors WHERE hangout_id = ?",
             [item.hangout_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        if let Err(refused) = check(&access, &items_on(&tx, item.hangout_id)?) {
+        if let Err(refused) =
+            check(&access, &hidden_words(&hidden), &items_on(&tx, item.hangout_id)?)
+        {
             return Ok(Err(refused));
         }
         tx.execute(
@@ -7121,19 +7144,25 @@ impl Db {
         Ok(Ok(()))
     }
 
-    /// Moves or turns an item if `check` allows it, given everything else on the floor. In one step
-    /// for the same reason as `place_item`. False if the item has gone in the meantime.
+    /// Moves or turns an item if `check` allows it, given what the floor leaves out and everything
+    /// else on it. In one step for the same reason as `place_item`. False if the item has gone in the
+    /// meantime.
     pub fn change_item<E>(
         &self,
         item: &FloorItem,
         (x, y, facing): (i64, i64, i64),
-        check: impl FnOnce(&[FloorItem]) -> Result<(), E>,
+        check: impl FnOnce(&[String], &[FloorItem]) -> Result<(), E>,
     ) -> rusqlite::Result<Result<bool, E>> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        let hidden: String = tx.query_row(
+            "SELECT hidden FROM floors WHERE hangout_id = ?",
+            [&item.hangout_id],
+            |row| row.get(0),
+        )?;
         let mut others = items_on(&tx, &item.hangout_id)?;
         others.retain(|other| other.id != item.id);
-        if let Err(refused) = check(&others) {
+        if let Err(refused) = check(&hidden_words(&hidden), &others) {
             return Ok(Err(refused));
         }
         let changed = tx.execute(

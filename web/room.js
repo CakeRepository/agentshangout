@@ -21,20 +21,34 @@ const SIT_CHANCE = 0.35;
 const BLOCKED = [
   [0, 0, W, WALL + 8],
   [174, 124, 132, 46], // table
-  [12, 190, 96, 34], // couch
-  [24, 98, 92, 38], // control desk
   [0, 0, 6, H],
   [W - 6, 0, 6, H],
   [0, H - 6, W, 6],
 ];
 
-// What an owner can leave out of a floor and bots would otherwise walk round. The table, couch and
-// desk stay, because where a bot stands there says what it's doing.
+// What an owner can leave out of a floor and bots would otherwise walk round. The table stays,
+// because a bot that's busy sits there.
 const REMOVABLE = {
   bar: [370, 66, 110, 36],
   arcade: [428, 124, 50, 48],
   plants: [460, 224, 20, 28],
+  couch: [12, 190, 96, 34],
+  desk: [24, 98, 92, 38],
 };
+
+// Where the things that come with a room are drawn, nearest first, so build mode can tell what a
+// click landed on. Plants are in two places.
+const FURNITURE = [
+  ['couch', 12, 188, 96, 36],
+  ['beanbags', 120, 230, 88, 14],
+  ['plants', 460, 224, 20, 28],
+  ['arcade', 432, 124, 42, 48],
+  ['table', 176, 124, 128, 48],
+  ['desk', 24, 96, 92, 40],
+  ['bar', 372, 49, 106, 51],
+  ['plants', 6, 66, 16, 28],
+  ['rug', 128, 104, 224, 100],
+];
 
 // A floor's look. These are listed words on the server, so nothing typed reaches the drawing.
 const PAINTS = {
@@ -44,6 +58,7 @@ const PAINTS = {
   clay: { upper: '#8a5a44', stripe: '#94614a', lower: '#6b4333', panel: '#5a382a' },
   butter: { upper: '#b89a5e', stripe: '#c2a468', lower: '#8f7646', panel: '#7a643a' },
   ink: { upper: '#23293a', stripe: '#292f42', lower: '#1a1f2d', panel: '#141824' },
+  sky: { upper: '#86bedb', stripe: '#90c6e1', lower: '#5f93ad', panel: '#527f97' },
   haunted: { upper: '#2c2042', stripe: '#33264c', lower: '#20172f', panel: '#2b1a2e', webs: true },
 };
 const FLOORINGS = {
@@ -51,6 +66,7 @@ const FLOORINGS = {
   walnut: { a: '#6e4a30', b: '#67442b', line: '#523521', style: 'planks' },
   tile: { a: '#c9c4b5', b: '#8d8a80', line: '#77746b', style: 'tile' },
   carpet: { a: '#4d6a78', b: '#4a6673', line: '#415a66', style: 'carpet' },
+  grass: { a: '#5f9a4f', b: '#6ba85a', line: '#4f8441', style: 'grass' },
   crypt: { a: '#57545f', b: '#4e4b56', line: '#34323c', style: 'flagstones' },
 };
 const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
@@ -276,11 +292,33 @@ function paintFloor(g, { a, b, line, style }) {
     }
     return;
   }
+  if (style === 'grass') {
+    r(g, a, 0, WALL + 1, W, H - WALL - 1);
+    // Tufts at places that don't line up, so it doesn't read as a pattern.
+    for (let y = WALL + 4, row = 0; y < H; y += 6, row++) {
+      for (let x = (row * 13) % 17; x < W; x += 17 + (row * 3) % 5) {
+        r(g, b, x, y, 1, 3);
+        r(g, b, x + 2, y + 1, 1, 2);
+        r(g, line, x + 1, y + 3, 2, 1);
+      }
+    }
+    return;
+  }
   for (let y = WALL + 1, row = 0; y < H; y += 10, row++) {
     r(g, row % 2 ? a : b, 0, y, W, 10);
     r(g, line, 0, y + 9, W, 1);
     for (let x = (row * 37) % 60; x < W; x += 60) r(g, line, x, y, 1, 9);
   }
+}
+
+// Under the table.
+function paintRug(g) {
+  r(g, '#6a2a3c', 128, 104, 224, 100);
+  r(g, '#c9a86a', 132, 108, 216, 1);
+  r(g, '#c9a86a', 132, 199, 216, 1);
+  r(g, '#c9a86a', 132, 108, 1, 92);
+  r(g, '#c9a86a', 347, 108, 1, 92);
+  r(g, '#7b3346', 138, 114, 204, 80);
 }
 
 function paintRoom(g, hour, look) {
@@ -302,15 +340,7 @@ function paintRoom(g, hour, look) {
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
   r(g, 'rgba(30,20,50,.20)', 0, WALL + 1, W, 3);
 
-  // Rug under the table
-  if (!look.hidden.includes('rug')) {
-    r(g, '#6a2a3c', 128, 104, 224, 100);
-    r(g, '#c9a86a', 132, 108, 216, 1);
-    r(g, '#c9a86a', 132, 199, 216, 1);
-    r(g, '#c9a86a', 132, 108, 1, 92);
-    r(g, '#c9a86a', 347, 108, 1, 92);
-    r(g, '#7b3346', 138, 114, 204, 80);
-  }
+  if (!look.hidden.includes('rug')) paintRug(g);
 
   // Whiteboard frame; the words on it are an HTML overlay
   r(g, '#20283e', 148, 5, 184, 52);
@@ -336,17 +366,8 @@ function paintBar(g, t) {
 }
 
 function paintArcade(g, t) {
-  for (const [x, glow] of [[432, '#2fd6d6'], [454, '#ff7ad9']]) {
-    r(g, '#26233f', x, 124, 20, 48);
-    r(g, '#3a3560', x, 124, 20, 3);
-    r(g, '#0d1020', x + 3, 130, 14, 14);
-    const blip = Math.floor(t / 300 + x) % 3;
-    r(g, glow, x + 5 + blip * 3, 134 + blip, 3, 3);
-    r(g, shade(glow, 0.4), x + 7, 140, 6, 1);
-    r(g, '#3a3560', x + 2, 148, 16, 5);
-    r(g, '#ffd24d', x + 5, 149, 2, 2);
-    r(g, '#ff5d7a', x + 12, 149, 2, 2);
-  }
+  paintMachine(g, 432, 124, '#2fd6d6', t);
+  paintMachine(g, 454, 124, '#ff7ad9', t);
 }
 
 function paintDesk(g, t, lit) {
@@ -1007,6 +1028,669 @@ function paintSkeleton(g, x, y, t) {
   r(g, hollow, x + 2, y - 24, 1, 1);
 }
 
+// What people furnish a place with in games like RimWorld and The Sims (I47). Most of these are a block
+// or two with a little detail on the front, so adding another is a few lines here and one in ITEMS.
+
+// A block on the floor from the front, `tall` high, with a lighter top. Gives back its left edge.
+function paintBlock(g, x, y, wide, tall, top, face) {
+  const left = x - wide / 2;
+  r(g, SHADOW, left, y - 2, wide, 2);
+  r(g, face, left, y - tall + 3, wide, tall - 4);
+  r(g, top, left, y - tall, wide, 3);
+  r(g, shade(top, 0.16), left, y - tall, wide, 1);
+  return left;
+}
+
+function paintDiningChair(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#6b4628', x - 5, y - 10, 2, 9);
+  r(g, '#6b4628', x + 3, y - 10, 2, 9);
+  r(g, '#a0703f', x - 6, y - 13, 12, 3);
+  r(g, '#6b4628', x - 5, y - 24, 2, 11);
+  r(g, '#6b4628', x + 3, y - 24, 2, 11);
+  r(g, '#8a5c37', x - 5, y - 24, 10, 3);
+  r(g, '#8a5c37', x - 5, y - 19, 10, 2);
+}
+
+function paintBench(g, x, y) {
+  const left = x - 23;
+  r(g, SHADOW, left, y - 2, 46, 2);
+  r(g, '#6b4628', left + 3, y - 20, 3, 19);
+  r(g, '#6b4628', left + 40, y - 20, 3, 19);
+  r(g, '#a0703f', left, y - 12, 46, 3);
+  r(g, '#c08a52', left, y - 12, 46, 1);
+  r(g, '#8a5c37', left, y - 22, 46, 3);
+  r(g, '#a0703f', left, y - 17, 46, 2);
+}
+
+function paintThrone(g, x, y) {
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, '#b88a2e', x - 10, y - 38, 20, 28);
+  for (const tip of [-10, -2, 6]) r(g, '#ffd24d', x + tip, y - 41, 4, 3);
+  r(g, '#8a2f4e', x - 7, y - 34, 14, 22);
+  r(g, '#b88a2e', x - 12, y - 16, 24, 15);
+  r(g, '#a83f62', x - 8, y - 16, 16, 6);
+  r(g, '#cf5f84', x - 8, y - 16, 16, 1);
+  r(g, '#ffd24d', x - 12, y - 17, 5, 2);
+  r(g, '#ffd24d', x + 7, y - 17, 5, 2);
+}
+
+function paintEndTable(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#6b4628', x - 5, y - 10, 2, 9);
+  r(g, '#6b4628', x + 3, y - 10, 2, 9);
+  r(g, '#7d5231', x - 5, y - 11, 10, 5);
+  r(g, '#ffd24d', x - 1, y - 9, 2, 1);
+  r(g, '#8a5c37', x - 6, y - 14, 12, 3);
+  r(g, '#a0703f', x - 6, y - 14, 12, 1);
+}
+
+function paintDiningTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 10, '#a0703f', '#6f4728', '#6b4628');
+  const apart = Math.floor(wide / 4);
+  for (const at of [-apart, 0, apart]) {
+    r(g, '#f4f1e8', x + at - 4, top + 8, 8, 5);
+    r(g, '#d9d3c3', x + at - 2, top + 9, 4, 3);
+  }
+  r(g, '#3fb573', x - 2, top - 3, 4, 5);
+  r(g, '#4f9dff', x - 1, top + 2, 2, 4);
+}
+
+function paintPicnicTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 9, '#b58a55', '#8a6b4a', '#8a6b4a');
+  r(g, '#8a6b4a', x - wide / 2 + 3, y - 5, wide - 6, 2);
+  for (let i = 0; i * 6 < wide - 14; i++) {
+    r(g, i % 2 ? '#d6453f' : '#f4f1e8', x - wide / 2 + 7 + i * 6, top + 2, 6, deep - 10);
+  }
+}
+
+function paintBedroll(g, x, y) {
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#3f6a8c', x - 11, y - 7, 18, 6);
+  r(g, '#5277ad', x - 11, y - 8, 18, 2);
+  r(g, '#2f5069', x - 4, y - 8, 1, 7);
+  r(g, '#f4f1e8', x + 6, y - 7, 5, 5);
+}
+
+const BLANKET = '#4a78b5';
+const WIDE_BLANKET = '#a83f62';
+
+// A bed from the side and a little above: a headboard at one end, a pillow, and the blanket.
+function paintBed(g, x, y, wide, deep, blanket) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const back = y - 8 - deep + 6;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, '#6b4628', left + 1, y - 8, across - 2, 7);
+  r(g, '#f4f1e8', left + 4, back, across - 6, deep - 6);
+  r(g, blanket, left + 17, back, across - 19, deep - 6);
+  r(g, shade(blanket, 0.16), left + 17, back, across - 19, 1);
+  r(g, shade(blanket, -0.2), left + 17, y - 9, across - 19, 1);
+  r(g, '#fff', left + 6, back + 2, 9, deep - 10);
+  r(g, '#6b4628', left, back - 8, 4, y - back + 7);
+  r(g, '#8a5c37', left, back - 9, 4, 2);
+}
+
+// The same bed from its foot, with the headboard along the back.
+function paintBedEnd(g, x, y, wide, deep, blanket) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const back = y - 8 - deep + 6;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, '#6b4628', left, back - 8, across, 9);
+  r(g, '#8a5c37', left, back - 9, across, 2);
+  r(g, '#6b4628', left, y - 8, across, 7);
+  r(g, '#f4f1e8', left + 2, back + 1, across - 4, deep - 7);
+  r(g, '#fff', left + 4, back + 2, across - 8, 6);
+  r(g, blanket, left + 2, back + 11, across - 4, deep - 17);
+}
+
+function paintBunkBed(g, x, y, t, wide) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, '#6b4628', left, y - 42, 3, 41);
+  r(g, '#6b4628', left + across - 3, y - 42, 3, 41);
+  for (const level of [y - 6, y - 26]) {
+    r(g, '#8a5c37', left + 3, level - 3, across - 6, 3);
+    r(g, '#f4f1e8', left + 3, level - 7, across - 6, 4);
+    r(g, BLANKET, left + 14, level - 8, across - 20, 5);
+    r(g, '#fff', left + 5, level - 8, 8, 4);
+  }
+  r(g, '#a0703f', left + across - 10, y - 30, 2, 29);
+  r(g, '#a0703f', left + across - 5, y - 30, 2, 29);
+  for (let rung = 0; rung < 5; rung++) r(g, '#a0703f', left + across - 10, y - 26 + rung * 5, 7, 1);
+}
+
+function paintPetBed(g, x, y) {
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, '#8a4636', x - 12, y - 12, 24, 11);
+  r(g, '#c9775c', x - 12, y - 12, 24, 2);
+  r(g, '#e8d7b8', x - 9, y - 10, 18, 6);
+  r(g, '#b9a784', x - 3, y - 8, 2, 2);
+  r(g, '#b9a784', x + 1, y - 8, 2, 2);
+  r(g, '#b9a784', x - 1, y - 6, 2, 1);
+}
+
+function paintDresser(g, x, y) {
+  const left = paintBlock(g, x, y, 34, 24, '#8a5c37', '#6b4628');
+  for (let row = 0; row < 3; row++) {
+    r(g, '#7d5231', left + 2, y - 20 + row * 6, 30, 5);
+    r(g, '#ffd24d', x - 1, y - 18 + row * 6, 2, 1);
+  }
+}
+
+function paintWardrobe(g, x, y) {
+  const left = paintBlock(g, x, y, 34, 40, '#8a5c37', '#5a3a24');
+  for (const door of [left + 2, left + 18]) {
+    r(g, '#6f4728', door, y - 36, 14, 33);
+    r(g, '#7d5231', door + 2, y - 34, 10, 29);
+  }
+  r(g, '#ffd24d', x - 3, y - 20, 2, 3);
+  r(g, '#ffd24d', x + 1, y - 20, 2, 3);
+}
+
+function paintCrate(g, x, y) {
+  const left = paintBlock(g, x, y, 20, 16, '#b58a55', '#9c7443');
+  r(g, '#7a5a33', left, y - 9, 20, 1);
+  r(g, '#7a5a33', left + 2, y - 13, 2, 12);
+  r(g, '#7a5a33', left + 16, y - 13, 2, 12);
+}
+
+function paintChest(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 12, '#7d5231', '#6b4628');
+  r(g, '#8a5c37', left, y - 17, 22, 6);
+  r(g, '#a0703f', left + 1, y - 18, 20, 1);
+  r(g, '#c9a86a', left + 3, y - 17, 2, 16);
+  r(g, '#c9a86a', left + 17, y - 17, 2, 16);
+  r(g, '#ffd24d', x - 2, y - 12, 4, 4);
+}
+
+function paintStorageShelf(g, x, y) {
+  const left = x - 17;
+  r(g, SHADOW, left, y - 2, 34, 2);
+  r(g, '#5a6178', left, y - 32, 2, 31);
+  r(g, '#5a6178', left + 32, y - 32, 2, 31);
+  [0, 1, 2].forEach((row) => {
+    const shelf = y - 4 - row * 12;
+    r(g, '#7c8699', left, shelf, 34, 2);
+    r(g, '#b58a55', left + 4 + row * 3, shelf - 7, 10, 7);
+    r(g, '#7a5a33', left + 4 + row * 3, shelf - 7, 10, 1);
+    r(g, BOOKS[row], left + 19, shelf - 5, 9, 5);
+  });
+}
+
+function paintSafe(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 22, '#4a4f66', '#3b4158');
+  r(g, '#2b3045', left + 3, y - 18, 16, 14);
+  r(g, '#c9c4b5', x - 3, y - 14, 6, 6);
+  r(g, '#77746b', x - 1, y - 12, 2, 2);
+  r(g, '#c9c4b5', x + 5, y - 13, 1, 4);
+}
+
+function paintLantern(g, x, y, t) {
+  const glow = `rgba(255,214,120,${Math.floor(t / 1900) % 2 ? 0.16 : 0.22})`;
+  r(g, glow, x - 8, y - 20, 16, 18);
+  r(g, SHADOW, x - 5, y - 2, 10, 2);
+  r(g, '#fff0b8', x - 4, y - 14, 8, 10);
+  r(g, '#ffde59', x - 1, y - 12, 2, 6);
+  r(g, '#3b4158', x - 5, y - 4, 10, 3);
+  r(g, '#3b4158', x - 5, y - 16, 10, 2);
+  r(g, '#3b4158', x - 5, y - 14, 1, 10);
+  r(g, '#3b4158', x + 4, y - 14, 1, 10);
+  r(g, '#3b4158', x - 1, y - 20, 2, 4);
+}
+
+function paintTorch(g, x, y, t) {
+  const flick = Math.floor(t / 150) % 2;
+  r(g, 'rgba(255,160,70,.14)', x - 9, y - 36, 18, 18);
+  r(g, SHADOW, x - 4, y - 2, 8, 2);
+  r(g, '#4a3120', x - 1, y - 22, 3, 21);
+  r(g, '#3b4158', x - 3, y - 24, 7, 3);
+  r(g, '#ff8a3d', x - 2, y - 31 + flick, 5, 7);
+  r(g, '#ffde59', x - 1, y - 28 + flick, 3, 4);
+}
+
+function paintCampfire(g, x, y, t) {
+  const flick = Math.floor(t / 130);
+  r(g, 'rgba(255,150,60,.14)', x - 16, y - 10, 32, 10);
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, '#4a3120', x - 9, y - 8, 18, 3);
+  r(g, '#6b4628', x - 6, y - 10, 12, 3);
+  for (let i = 0; i < 4; i++) {
+    const tall = 8 + ((flick + i * 3) % 5) * 2;
+    r(g, '#ff8a3d', x - 7 + i * 4, y - 9 - tall, 3, tall);
+    r(g, '#ffde59', x - 6 + i * 4, y - 5 - tall, 1, tall - 4);
+  }
+  for (let i = 0; i < 7; i++) r(g, i % 2 ? '#8d8a80' : '#77746b', x - 13 + i * 4, y - 5 + (i % 2), 3, 3);
+}
+
+function paintCandelabra(g, x, y, t) {
+  const flick = Math.floor(t / 210);
+  r(g, 'rgba(255,214,120,.16)', x - 10, y - 36, 20, 14);
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#d9a520', x - 5, y - 4, 10, 3);
+  r(g, '#d9a520', x - 1, y - 20, 2, 16);
+  r(g, '#d9a520', x - 8, y - 20, 16, 2);
+  [-8, -1, 6].forEach((at, i) => {
+    r(g, '#f4f1e8', x + at, y - 28, 2, 8);
+    r(g, (flick + i) % 2 ? '#ffb454' : '#ffde59', x + at, y - 31, 2, 3);
+  });
+}
+
+function paintCounter(g, x, y) {
+  const left = paintBlock(g, x, y, 46, 18, '#c9c4b5', '#8a5c37');
+  for (let door = 0; door < 4; door++) r(g, '#7d5231', left + 2 + door * 11, y - 13, 9, 10);
+  r(g, '#a0703f', left + 6, y - 21, 14, 3);
+  r(g, '#ff5d7a', left + 26, y - 21, 3, 3);
+  r(g, '#ffb454', left + 30, y - 21, 3, 3);
+  r(g, '#3ddc97', left + 34, y - 21, 3, 3);
+}
+
+function paintStove(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 24, '#9aa3b8', '#c9c4b5');
+  r(g, '#20283e', left + 3, y - 25, 6, 2);
+  r(g, '#20283e', left + 13, y - 25, 6, 2);
+  r(g, '#f4f1e8', left + 4, y - 19, 14, 1);
+  r(g, '#20283e', left + 4, y - 17, 14, 11);
+  r(g, '#ff8a3d', left + 6, y - 9, 10, 1);
+  r(g, '#3b4158', left + 6, y - 15, 10, 4);
+}
+
+function paintFridge(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 38, '#e8ecf4', '#c9d3df');
+  r(g, '#9aa3b8', left, y - 25, 22, 1);
+  r(g, '#77746b', left + 17, y - 33, 2, 6);
+  r(g, '#77746b', left + 17, y - 22, 2, 9);
+  r(g, '#ffb454', left + 4, y - 32, 4, 3);
+  r(g, '#ff5d7a', left + 9, y - 30, 3, 3);
+}
+
+function paintKitchenSink(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 18, '#c9c4b5', '#8a5c37');
+  r(g, '#77746b', left + 5, y - 18, 12, 2);
+  r(g, '#9aa3b8', x - 1, y - 26, 2, 8);
+  r(g, '#9aa3b8', x - 1, y - 26, 6, 2);
+  r(g, '#7d5231', left + 2, y - 13, 8, 10);
+  r(g, '#7d5231', left + 12, y - 13, 8, 10);
+}
+
+function paintCoffeeMachine(g, x, y, t) {
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  r(g, '#6b4628', x - 6, y - 10, 12, 9);
+  r(g, '#8a5c37', x - 7, y - 11, 14, 2);
+  r(g, '#b9c2d4', x - 6, y - 24, 12, 13);
+  r(g, '#7c8699', x - 4, y - 19, 8, 5);
+  r(g, '#ff5d7a', x + 3, y - 23, 2, 2);
+  r(g, '#f4f1e8', x - 2, y - 14, 4, 3);
+  r(g, '#fff', x - 1 + Math.floor(t / 900) % 2, y - 28, 1, 3);
+}
+
+function paintVendingMachine(g, x, y, t) {
+  const left = paintBlock(g, x, y, 22, 40, '#c8342c', '#a82a24');
+  r(g, '#0d1020', left + 3, y - 36, 12, 24);
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 3; col++) r(g, BOOKS[(row * 2 + col) % BOOKS.length], left + 4 + col * 4, y - 35 + row * 6, 3, 4);
+  }
+  r(g, '#f4f1e8', left + 16, y - 34, 4, 7);
+  r(g, Math.floor(t / 700) % 2 ? '#7fd4ff' : '#3f8fc4', left + 16, y - 25, 4, 2);
+  r(g, '#0d1020', left + 3, y - 9, 16, 5);
+}
+
+function paintToilet(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#e8ecf4', x - 6, y - 24, 12, 11);
+  r(g, '#c9d3df', x - 6, y - 14, 12, 1);
+  r(g, '#9aa3b8', x + 2, y - 21, 3, 1);
+  r(g, '#f4f7fb', x - 7, y - 13, 14, 5);
+  r(g, '#e8ecf4', x - 5, y - 8, 10, 7);
+  r(g, '#c9d3df', x - 5, y - 2, 10, 1);
+}
+
+function paintShower(g, x, y, t) {
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, '#c9d3df', x - 12, y - 8, 24, 7);
+  r(g, '#9aa3b8', x + 9, y - 44, 2, 37);
+  r(g, '#9aa3b8', x - 4, y - 44, 14, 2);
+  r(g, '#b9c2d4', x - 7, y - 42, 7, 3);
+  r(g, 'rgba(191,230,245,.25)', x - 12, y - 40, 24, 32);
+  for (let i = 0; i < 3; i++) r(g, '#7fd4ff', x - 6 + i * 2, y - 38 + Math.floor(t / 90 + i * 7) % 28, 1, 2);
+  r(g, '#e8ecf4', x - 12, y - 42, 1, 34);
+}
+
+function paintMirror(g, x, y) {
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  r(g, '#6b4628', x - 6, y - 3, 12, 2);
+  r(g, '#8a5c37', x - 7, y - 36, 14, 33);
+  r(g, '#bfe6f5', x - 5, y - 34, 10, 29);
+  r(g, '#e8f7fc', x - 3, y - 32, 2, 12);
+  r(g, '#e8f7fc', x, y - 30, 1, 6);
+}
+
+function paintBathtub(g, x, y, t) {
+  const left = x - 23;
+  r(g, SHADOW, left, y - 2, 46, 2);
+  r(g, '#e8ecf4', left, y - 18, 46, 15);
+  r(g, '#f4f7fb', left, y - 18, 46, 1);
+  r(g, '#7fd4ff', left + 3, y - 17, 40, 4);
+  r(g, '#bfe6f5', left + 6 + (Math.floor(t / 600) % 3) * 4, y - 16, 8, 1);
+  r(g, '#c9d3df', left, y - 5, 46, 2);
+  r(g, '#9aa3b8', left + 3, y - 3, 3, 2);
+  r(g, '#9aa3b8', left + 40, y - 3, 3, 2);
+  r(g, '#9aa3b8', left + 40, y - 23, 2, 6);
+  r(g, '#9aa3b8', left + 36, y - 23, 6, 2);
+}
+
+function paintRadio(g, x, y, t) {
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  r(g, '#7a5233', x - 7, y - 13, 14, 12);
+  r(g, '#a0703f', x - 7, y - 13, 14, 1);
+  for (let row = 0; row < 4; row++) r(g, '#c9c4b5', x - 5, y - 11 + row * 2, 6, 1);
+  r(g, '#ffd24d', x + 3, y - 11, 2, 2);
+  r(g, '#20283e', x + 3, y - 7, 2, 2);
+  r(g, '#9aa3b8', x + 5, y - 20, 1, 7);
+  if (t) r(g, '#ffd24d', x - 3, y - 16 - Math.floor(t / 240) % 7, 2, 2);
+}
+
+function paintComputer(g, x, y, t) {
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, '#c9c4b5', x - 11, y - 10, 22, 9);
+  r(g, '#9aa3b8', x - 11, y - 3, 22, 2);
+  r(g, '#20283e', x + 1, y - 8, 8, 2);
+  r(g, '#3ddc97', x - 9, y - 8, 2, 2);
+  r(g, '#c9c4b5', x - 9, y - 27, 18, 17);
+  r(g, '#0d1020', x - 7, y - 25, 14, 12);
+  r(g, '#3ddc97', x - 5, y - 23, 8, 1);
+  r(g, '#3ddc97', x - 5, y - 21, 5, 1);
+  r(g, Math.floor(t / 530) % 2 ? '#0d1020' : '#3ddc97', x - 5, y - 19, 3, 2);
+}
+
+function paintTelevision(g, x, y, t) {
+  r(g, SHADOW, x - 17, y - 2, 34, 2);
+  r(g, '#6b4628', x - 16, y - 8, 32, 7);
+  r(g, '#8a5c37', x - 17, y - 9, 34, 2);
+  r(g, '#20283e', x - 15, y - 31, 30, 22);
+  r(g, '#3b4158', x - 15, y - 31, 30, 1);
+  r(g, ['#2a6fdb', '#3a9d73', '#c9694a'][Math.floor(t / 2600) % 3], x - 13, y - 29, 26, 18);
+  r(g, '#f4f1e8', x - 11, y - 27, 9, 2);
+  r(g, '#f4f1e8', x - 11, y - 23, 16, 1);
+  r(g, '#f4f1e8', x - 11, y - 20, 12, 1);
+}
+
+function paintTelescope(g, x, y) {
+  r(g, SHADOW, x - 10, y - 2, 20, 2);
+  r(g, '#6b4628', x - 9, y - 12, 2, 11);
+  r(g, '#6b4628', x + 7, y - 12, 2, 11);
+  r(g, '#6b4628', x - 1, y - 14, 2, 13);
+  r(g, '#4a3120', x - 6, y - 15, 12, 3);
+  for (let i = 0; i < 6; i++) r(g, i > 3 ? '#d9a520' : '#3b4158', x - 9 + i * 3, y - 20 - i * 3, 6, 5);
+  r(g, '#7fd4ff', x + 9, y - 35, 3, 2);
+}
+
+function paintDartboard(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#4a3120', x - 5, y - 3, 10, 2);
+  r(g, '#4a3120', x - 1, y - 16, 2, 13);
+  r(g, '#20283e', x - 8, y - 30, 16, 16);
+  r(g, '#f4f1e8', x - 7, y - 29, 14, 14);
+  r(g, '#c8342c', x - 6, y - 28, 12, 12);
+  r(g, '#f4f1e8', x - 4, y - 26, 8, 8);
+  r(g, '#3a9d73', x - 2, y - 24, 4, 4);
+  r(g, '#c8342c', x - 1, y - 23, 2, 2);
+  r(g, '#ffd24d', x + 2, y - 27, 4, 1);
+}
+
+function paintChessTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 8, '#6b4628', '#4a3120', '#4a3120');
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 6; col++) r(g, (row + col) % 2 ? '#f4f1e8' : '#20283e', x - 9 + col * 3, top + 2 + row * 3, 3, 3);
+  }
+  r(g, '#ffd24d', x - 6, top - 1, 2, 4);
+  r(g, '#c8342c', x + 4, top + 5, 2, 4);
+}
+
+// One arcade machine, standing with its top left at `left` and `top`.
+function paintMachine(g, left, top, glow, t) {
+  r(g, '#26233f', left, top, 20, 48);
+  r(g, '#3a3560', left, top, 20, 3);
+  r(g, '#0d1020', left + 3, top + 6, 14, 14);
+  const blip = Math.floor(t / 300 + left) % 3;
+  r(g, glow, left + 5 + blip * 3, top + 10 + blip, 3, 3);
+  r(g, shade(glow, 0.4), left + 7, top + 16, 6, 1);
+  r(g, '#3a3560', left + 2, top + 24, 16, 5);
+  r(g, '#ffd24d', left + 5, top + 25, 2, 2);
+  r(g, '#ff5d7a', left + 12, top + 25, 2, 2);
+}
+
+function paintArcadeCabinet(g, x, y, t) {
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  paintMachine(g, x - 10, y - 48, '#ffb454', t);
+}
+
+function paintPinball(g, x, y, t) {
+  const blip = Math.floor(t / 250) % 4;
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#3a3560', x - 10, y - 12, 2, 11);
+  r(g, '#3a3560', x + 8, y - 12, 2, 11);
+  r(g, '#26233f', x - 11, y - 24, 22, 12);
+  r(g, '#0d3a5c', x - 9, y - 23, 18, 8);
+  r(g, '#ff7ad9', x - 6, y - 21, 3, 3);
+  r(g, '#ffd24d', x + 3, y - 22, 3, 3);
+  r(g, '#f4f1e8', x - 7 + blip * 4, y - 21 + (blip % 2) * 3, 2, 2);
+  r(g, '#3a3560', x - 11, y - 14, 22, 3);
+  r(g, '#26233f', x - 10, y - 36, 20, 12);
+  r(g, '#ff7ad9', x - 8, y - 34, 16, 8);
+  r(g, '#ffd24d', x - 6, y - 32, 12, 2);
+}
+
+function paintBilliards(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 11, '#6b4628', '#4a3120', '#4a3120');
+  const left = x - wide / 2 + 4;
+  const across = wide - 8;
+  const down = deep - 12;
+  r(g, '#2f7d5b', left, top + 3, across, down);
+  r(g, '#3a9d73', left, top + 3, across, 1);
+  for (const [px, py] of [[0, 0], [across - 3, 0], [0, down - 3], [across - 3, down - 3]]) r(g, '#141014', left + px, top + 3 + py, 3, 3);
+  r(g, '#f4f1e8', x - 18, top + 11, 3, 3);
+  [[8, 8], [11, 6], [11, 10], [14, 4], [14, 8], [14, 12]].forEach(([bx, by], i) => r(g, BOOKS[i], x + bx, top + 3 + by, 3, 3));
+}
+
+function paintGuitar(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#20283e', x - 5, y - 3, 10, 2);
+  r(g, '#6b4628', x - 1, y - 32, 2, 16);
+  r(g, '#20283e', x - 2, y - 35, 4, 4);
+  r(g, '#c9843a', x - 5, y - 19, 10, 8);
+  r(g, '#c9843a', x - 6, y - 12, 12, 9);
+  r(g, '#2c1d12', x - 2, y - 12, 4, 4);
+  r(g, '#f4f1e8', x, y - 32, 1, 26);
+}
+
+function paintDrumKit(g, x, y, t) {
+  const hit = Math.floor(t / 320) % 2;
+  r(g, SHADOW, x - 17, y - 2, 34, 2);
+  r(g, '#a83f62', x - 9, y - 17, 18, 16);
+  r(g, '#f4f1e8', x - 7, y - 15, 14, 12);
+  r(g, '#c9c4b5', x - 7, y - 10, 14, 1);
+  for (const at of [-10, 1]) {
+    r(g, '#a83f62', x + at, y - 24, 9, 7);
+    r(g, '#f4f1e8', x + at, y - 25, 9, 2);
+  }
+  for (const [at, tilt] of [[-16, hit], [14, 1 - hit]]) {
+    r(g, '#9aa3b8', x + at, y - 22, 1, 21);
+    r(g, '#d9a520', x + at - 4, y - 24 + tilt, 9, 2);
+  }
+}
+
+function paintHarp(g, x, y) {
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  for (let i = 0; i < 6; i++) r(g, '#f4f1e8', x - 5 + i * 3, y - 38 + i * 2, 1, 33 - i * 2);
+  r(g, '#d9a520', x - 10, y - 5, 20, 4);
+  r(g, '#d9a520', x - 9, y - 40, 3, 36);
+  r(g, '#ffd24d', x - 9, y - 40, 1, 36);
+  for (let i = 0; i < 7; i++) r(g, '#d9a520', x - 7 + i * 3, y - 40 + i * 2, 4, 3);
+  r(g, '#b88a2e', x + 8, y - 28, 3, 24);
+}
+
+function paintCactus(g, x, y) {
+  r(g, '#b0623d', x - 5, y - 7, 10, 7);
+  r(g, '#8f4c2d', x - 5, y - 2, 10, 2);
+  r(g, '#2f8f5b', x - 3, y - 24, 6, 17);
+  r(g, '#3fb573', x - 2, y - 24, 2, 17);
+  r(g, '#2f8f5b', x - 7, y - 18, 4, 3);
+  r(g, '#2f8f5b', x - 7, y - 21, 3, 4);
+  r(g, '#2f8f5b', x + 3, y - 15, 4, 3);
+  r(g, '#2f8f5b', x + 4, y - 20, 3, 6);
+  r(g, '#ff7ad9', x - 1, y - 26, 3, 2);
+}
+
+function paintFlowerBox(g, x, y) {
+  const left = paintBlock(g, x, y, 34, 10, '#8a5c37', '#6b4628');
+  for (let i = 0; i < 8; i++) {
+    r(g, '#2f8f5b', left + 2 + i * 4, y - 14, 2, 5);
+    r(g, BOOKS[i % BOOKS.length], left + 1 + i * 4, y - 17 + (i % 2), 4, 4);
+  }
+}
+
+function paintHedge(g, x, y) {
+  const left = x - 17;
+  r(g, SHADOW, left, y - 2, 34, 2);
+  r(g, '#2f7d4b', left, y - 20, 34, 19);
+  r(g, '#3fb573', left + 1, y - 21, 32, 1);
+  for (let i = 0; i < 16; i++) r(g, i % 3 ? '#3fb573' : '#256b3f', left + (i * 13) % 31, y - 19 + (i * 7) % 16, 3, 2);
+}
+
+function paintBoulder(g, x, y) {
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#77746b', x - 11, y - 10, 22, 9);
+  r(g, '#8d8a80', x - 8, y - 14, 16, 5);
+  r(g, '#a9a69b', x - 1, y - 14, 8, 1);
+  r(g, '#4f7a35', x - 8, y - 14, 7, 3);
+  r(g, '#61805a', x + 3, y - 6, 5, 2);
+}
+
+function paintPottedTree(g, x, y, t) {
+  const sway = Math.floor(t / 1500) % 2;
+  r(g, '#b0623d', x - 7, y - 10, 14, 10);
+  r(g, '#8f4c2d', x - 7, y - 2, 14, 2);
+  r(g, '#6b4628', x - 2, y - 30, 4, 20);
+  r(g, '#2f8f5b', x - 11 + sway, y - 44, 22, 16);
+  r(g, '#3fb573', x - 8 + sway, y - 52, 16, 12);
+  r(g, '#2f8f5b', x - 4 + sway, y - 56, 8, 6);
+}
+
+function paintCoatRack(g, x, y) {
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#4a3120', x - 5, y - 3, 10, 2);
+  r(g, '#6b4628', x - 1, y - 34, 2, 31);
+  r(g, '#6b4628', x - 5, y - 32, 10, 1);
+  r(g, '#3a78d4', x - 7, y - 31, 5, 13);
+  r(g, '#2c5aa8', x - 7, y - 19, 5, 2);
+  r(g, '#b23a48', x + 2, y - 31, 4, 7);
+  r(g, '#20283e', x - 3, y - 37, 7, 3);
+}
+
+function paintGlobe(g, x, y, t) {
+  const land = x - 5 + (Math.floor(t / 600) % 4) * 2;
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, '#6b4628', x - 5, y - 3, 10, 2);
+  r(g, '#6b4628', x - 1, y - 8, 2, 5);
+  r(g, '#3f8fc4', x - 6, y - 20, 12, 12);
+  r(g, '#3f8fc4', x - 4, y - 22, 8, 16);
+  r(g, '#3fb573', land, y - 18, 3, 5);
+  r(g, '#3fb573', land + 1, y - 13, 2, 3);
+  r(g, '#c9a86a', x - 8, y - 22, 1, 15);
+  r(g, '#c9a86a', x - 8, y - 22, 4, 1);
+  r(g, '#c9a86a', x - 8, y - 7, 4, 1);
+}
+
+function paintFramedPainting(g, x, y) {
+  r(g, SHADOW, x - 10, y - 2, 20, 2);
+  r(g, '#4a3120', x - 7, y - 8, 2, 7);
+  r(g, '#4a3120', x + 5, y - 8, 2, 7);
+  r(g, '#c9a86a', x - 11, y - 32, 22, 25);
+  r(g, '#7fb6d9', x - 9, y - 30, 18, 12);
+  r(g, '#ffd24d', x + 3, y - 28, 3, 3);
+  r(g, '#3fb573', x - 9, y - 18, 18, 9);
+  r(g, '#6b4628', x - 5, y - 21, 5, 5);
+  r(g, '#c8342c', x - 6, y - 23, 7, 2);
+}
+
+function paintGrandfatherClock(g, x, y, t) {
+  const swing = t ? Math.round(Math.sin(t / 500) * 2) : 0;
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  r(g, '#5a3a24', x - 6, y - 40, 12, 39);
+  r(g, '#7d5231', x - 7, y - 44, 14, 5);
+  r(g, '#a0703f', x - 7, y - 44, 14, 1);
+  r(g, '#f4f1e8', x - 4, y - 38, 8, 8);
+  r(g, '#20283e', x - 1, y - 36, 1, 3);
+  r(g, '#20283e', x, y - 34, 2, 1);
+  r(g, '#2c1d12', x - 3, y - 27, 6, 20);
+  r(g, '#d9a520', x + swing, y - 27, 1, 14);
+  r(g, '#ffd24d', x - 1 + swing, y - 14, 3, 3);
+}
+
+function paintSculpture(g, x, y) {
+  paintBlock(g, x, y, 20, 12, '#c9c4b5', '#8d8a80');
+  r(g, '#e8e4d8', x - 6, y - 20, 12, 8);
+  r(g, '#c9c4b5', x + 2, y - 20, 4, 8);
+  r(g, '#e8e4d8', x - 2, y - 24, 4, 4);
+  r(g, '#e8e4d8', x - 4, y - 33, 8, 9);
+  r(g, '#c9c4b5', x + 1, y - 33, 3, 9);
+  r(g, '#8d8a80', x - 2, y - 29, 1, 1);
+  r(g, '#8d8a80', x + 1, y - 29, 1, 1);
+}
+
+function paintWorkbench(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 12, '#a0703f', '#6f4728', '#4a3120');
+  r(g, '#3b4158', x - 15, top + 6, 12, 4);
+  r(g, '#9aa3b8', x - 13, top + 3, 2, 3);
+  r(g, '#c9c4b5', x + 1, top + 4, 9, 2);
+  r(g, '#6b4628', x + 4, top + 6, 3, 6);
+  r(g, '#f4f1e8', x + 13, top + 3, 6, 8);
+  r(g, '#4f9dff', x + 14, top + 5, 4, 1);
+}
+
+function paintToolChest(g, x, y) {
+  const left = paintBlock(g, x, y, 22, 20, '#c8342c', '#a82a24');
+  for (let row = 0; row < 3; row++) {
+    r(g, '#8e221d', left + 2, y - 16 + row * 5, 18, 4);
+    r(g, '#c9c4b5', x - 3, y - 15 + row * 5, 6, 1);
+  }
+}
+
+function paintAnvil(g, x, y) {
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  r(g, '#6b4628', x - 7, y - 6, 14, 5);
+  r(g, '#3b4158', x - 5, y - 11, 10, 5);
+  r(g, '#4a4f66', x - 9, y - 15, 18, 4);
+  r(g, '#4a4f66', x + 9, y - 14, 3, 2);
+  r(g, '#6d7890', x - 9, y - 15, 18, 1);
+}
+
+function paintSewingTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 10, '#8a5c37', '#6f4728', '#6b4628');
+  r(g, '#20283e', x - 9, top - 2, 13, 4);
+  r(g, '#20283e', x + 1, top - 2, 3, 12);
+  r(g, '#20283e', x - 11, top + 9, 15, 2);
+  r(g, '#9aa3b8', x - 8, top + 2, 1, 7);
+  r(g, BOOKS[0], x + 8, top + 3, 4, 7);
+  r(g, BOOKS[1], x + 13, top + 3, 3, 7);
+}
+
+function paintResearchBench(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 14, '#c9c4b5', '#8d8a80', '#3b4158');
+  const bubble = Math.floor(t / 300) % 3;
+  r(g, '#3ddc97', x - 15, top + 5, 6, 6);
+  r(g, '#bfe6f5', x - 14, top + 1, 4, 4);
+  r(g, '#fff', x - 14 + bubble, top + 6, 1, 1);
+  r(g, '#ff7ad9', x - 5, top + 6, 5, 5);
+  r(g, '#bfe6f5', x - 4, top + 2, 3, 4);
+  r(g, '#20283e', x + 5, top, 14, 10);
+  r(g, '#7fd4ff', x + 6, top + 1, 12, 8);
+  r(g, '#20283e', x + 8, top + 3, 6, 1);
+}
+
 // These are listed words on the server. A word this page doesn't know is left out, so a newer
 // server can't break an older page. `rise` is how far up from its front edge it's painted, and a
 // `sign` changes what bots can do, so it's painted over everything else.
@@ -1115,6 +1799,72 @@ const ITEMS = {
   cauldron: { paint: paintCauldron, rise: 33 },
   gravestone: { paint: paintGravestone, rise: 22, words: true },
   skeleton: { paint: paintSkeleton, rise: 32 },
+  dining_chair: { paint: paintDiningChair, rise: 24 },
+  bench: { paint: paintBench, side: endOf(20, '#a0703f', '#6b4628'), rise: 22 },
+  throne: { paint: paintThrone, rise: 41 },
+  end_table: { paint: paintEndTable, rise: 14 },
+  dining_table: { paint: paintDiningTable, rise: 34 },
+  picnic_table: { paint: paintPicnicTable, rise: 27 },
+  bedroll: { paint: paintBedroll, side: endOf(6, '#5277ad', '#3f6a8c'), rise: 8 },
+  bed: {
+    paint: (g, x, y, t, wide, deep) => paintBed(g, x, y, wide, deep, BLANKET),
+    side: (g, x, y, t, wide, deep) => paintBedEnd(g, x, y, wide, deep, BLANKET),
+    rise: 35,
+  },
+  double_bed: {
+    paint: (g, x, y, t, wide, deep) => paintBed(g, x, y, wide, deep, WIDE_BLANKET),
+    side: (g, x, y, t, wide, deep) => paintBedEnd(g, x, y, wide, deep, WIDE_BLANKET),
+    rise: 47,
+  },
+  bunk_bed: { paint: paintBunkBed, side: endOf(40, '#8a5c37', '#6b4628'), rise: 42 },
+  pet_bed: { paint: paintPetBed, rise: 12 },
+  dresser: { paint: paintDresser, side: endOf(22, '#8a5c37', '#6b4628'), rise: 24 },
+  wardrobe: { paint: paintWardrobe, side: endOf(38, '#8a5c37', '#5a3a24'), rise: 40 },
+  crate: { paint: paintCrate, rise: 16 },
+  chest: { paint: paintChest, side: endOf(16, '#8a5c37', '#6b4628'), rise: 18 },
+  storage_shelf: { paint: paintStorageShelf, side: endOf(30, '#7c8699', '#5a6178'), rise: 32 },
+  safe: { paint: paintSafe, side: endOf(20, '#4a4f66', '#3b4158'), rise: 22 },
+  lantern: { paint: paintLantern, rise: 20 },
+  torch: { paint: paintTorch, rise: 31 },
+  campfire: { paint: paintCampfire, rise: 27 },
+  candelabra: { paint: paintCandelabra, rise: 31 },
+  counter: { paint: paintCounter, side: endOf(16, '#c9c4b5', '#8a5c37'), rise: 21 },
+  stove: { paint: paintStove, side: endOf(22, '#9aa3b8', '#c9c4b5'), rise: 25 },
+  fridge: { paint: paintFridge, side: endOf(36, '#e8ecf4', '#c9d3df'), rise: 38 },
+  kitchen_sink: { paint: paintKitchenSink, side: endOf(16, '#c9c4b5', '#8a5c37'), rise: 26 },
+  coffee_machine: { paint: paintCoffeeMachine, rise: 28 },
+  vending_machine: { paint: paintVendingMachine, side: endOf(38, '#c8342c', '#a82a24'), rise: 40 },
+  toilet: { paint: paintToilet, rise: 24 },
+  shower: { paint: paintShower, rise: 44 },
+  mirror: { paint: paintMirror, rise: 36 },
+  bathtub: { paint: paintBathtub, side: endOf(16, '#f4f7fb', '#e8ecf4'), rise: 23 },
+  radio: { paint: paintRadio, rise: 20 },
+  computer: { paint: paintComputer, side: endOf(25, '#c9c4b5', '#9aa3b8'), rise: 27 },
+  television: { paint: paintTelevision, side: endOf(29, '#3b4158', '#20283e'), rise: 31 },
+  telescope: { paint: paintTelescope, rise: 36 },
+  dartboard: { paint: paintDartboard, rise: 30 },
+  chess_table: { paint: paintChessTable, rise: 27 },
+  arcade_cabinet: { paint: paintArcadeCabinet, side: endOf(46, '#3a3560', '#26233f'), rise: 48 },
+  pinball: { paint: paintPinball, rise: 36 },
+  billiards: { paint: paintBilliards, rise: 41 },
+  guitar: { paint: paintGuitar, rise: 35 },
+  drum_kit: { paint: paintDrumKit, rise: 25 },
+  harp: { paint: paintHarp, side: edgeOf(38, '#ffd24d', '#d9a520'), rise: 40 },
+  cactus: { paint: paintCactus, rise: 26 },
+  flower_box: { paint: paintFlowerBox, side: endOf(10, '#3fb573', '#6b4628'), rise: 17 },
+  hedge: { paint: paintHedge, side: endOf(18, '#3fb573', '#2f7d4b'), rise: 21 },
+  boulder: { paint: paintBoulder, side: endOf(10, '#8d8a80', '#77746b'), rise: 14 },
+  potted_tree: { paint: paintPottedTree, side: paintPottedTree, rise: 56 },
+  coat_rack: { paint: paintCoatRack, rise: 37 },
+  globe: { paint: paintGlobe, rise: 22 },
+  framed_painting: { paint: paintFramedPainting, side: edgeOf(30, '#c9a86a', '#4a3120'), rise: 32 },
+  grandfather_clock: { paint: paintGrandfatherClock, rise: 44 },
+  sculpture: { paint: paintSculpture, rise: 33 },
+  workbench: { paint: paintWorkbench, rise: 30 },
+  tool_chest: { paint: paintToolChest, side: endOf(18, '#c8342c', '#a82a24'), rise: 20 },
+  anvil: { paint: paintAnvil, side: endOf(12, '#6d7890', '#3b4158'), rise: 15 },
+  sewing_table: { paint: paintSewingTable, rise: 28 },
+  research_bench: { paint: paintResearchBench, rise: 32 },
 };
 
 // Notes going up from whoever's making the music, drifting apart as they go.
@@ -1219,6 +1969,84 @@ export function itemPicture(item, w, h) {
   paint(canvas.getContext('2d'), canvas.width / 2, canvas.height - 1, 0, wide, deep);
   return canvas;
 }
+
+// What stands against the back wall and in the corners, which nobody goes behind.
+function paintBehind(g, hidden, t) {
+  if (!hidden.includes('bar')) paintBar(g, t);
+  if (!hidden.includes('plants')) {
+    paintPlant(g, 470, 250);
+    paintPlant(g, 14, 92);
+  }
+}
+
+// What comes with a room and stands among the people in it, with where each is sorted by height.
+function furnitureScene(g, hidden, t, lit, deskLit) {
+  return [
+    hidden.includes('desk') ? null : { y: 136, draw: () => paintDesk(g, t, deskLit) },
+    { y: 150, draw: () => paintTable(g, lit) },
+    hidden.includes('arcade') ? null : { y: 172, draw: () => paintArcade(g, t) },
+    hidden.includes('couch') ? null : { y: 200, draw: () => paintCouch(g) },
+    hidden.includes('beanbags') ? null : { y: 232, draw: () => paintBeanbags(g) },
+  ].filter(Boolean);
+}
+
+// A whole room on a canvas of its own, drawn still, for choosing a template. `items` are as the
+// server has them, and a word this page doesn't know is left out.
+export function roomPicture(look, items = []) {
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const g = canvas.getContext('2d');
+  paintRoom(g, 12, look);
+  paintBehind(g, look.hidden, 0);
+  const placed = items.filter(({ item }) => Object.hasOwn(ITEMS, item)).map(standing);
+  const scene = [
+    ...furnitureScene(g, look.hidden, 0, [], []),
+    ...placed.map((item) => ({ y: item.y, draw: () => paintItem(g, item, 0) })),
+  ];
+  scene.sort((a, b) => a.y - b.y);
+  for (const each of scene) each.draw();
+  return canvas;
+}
+
+const FURNITURE_ART = {
+  couch: paintCouch,
+  beanbags: paintBeanbags,
+  plants: (g) => paintPlant(g, 470, 250),
+  arcade: (g) => paintArcade(g, 0),
+  table: (g) => paintTable(g, []),
+  desk: (g) => paintDesk(g, 0, []),
+  bar: (g) => paintBar(g, 0),
+  rug: paintRug,
+};
+
+// What came with a room on a canvas of its own, drawn still, for the catalog.
+export function furniturePicture(word) {
+  const [, left, top, wide, deep] = FURNITURE.find(([each]) => each === word);
+  const canvas = document.createElement('canvas');
+  canvas.width = wide;
+  canvas.height = deep;
+  const g = canvas.getContext('2d');
+  g.translate(-left, -top);
+  FURNITURE_ART[word](g);
+  return canvas;
+}
+
+// A piece of an empty room at midday, for choosing a paint or a flooring.
+function surfacePicture(look, x, y, wide, deep) {
+  const whole = document.createElement('canvas');
+  whole.width = W;
+  whole.height = H;
+  paintRoom(whole.getContext('2d'), 12, { ...look, hidden: ['rug'] });
+  const canvas = document.createElement('canvas');
+  canvas.width = wide;
+  canvas.height = deep;
+  canvas.getContext('2d').drawImage(whole, x, y, wide, deep, 0, 0, wide, deep);
+  return canvas;
+}
+
+export const wallPicture = (paint) => surfacePicture({ paint, flooring: 'oak' }, 108, 0, 40, 64);
+export const floorPicture = (flooring) => surfacePicture({ paint: 'dusk', flooring }, 0, 72, 72, 48);
 
 function paintTable(g, lit) {
   r(g, '#00000030', 176, 168, 132, 4);
@@ -1715,9 +2543,24 @@ export class Room {
   setLook({ paint, flooring, hidden } = PLAIN_LOOK) {
     if (paint === this.look.paint && flooring === this.look.flooring
       && hidden.join() === this.look.hidden.join()) return;
+    const moved = hidden.join() !== this.look.hidden.join();
     this.look = { paint, flooring, hidden };
     fillGrid(hidden, this.items);
     this.paintedHour = -1;
+    if (!moved) return;
+    // A desk or a couch that came or went changes where bots belong.
+    for (const bot of this.bots.values()) {
+      if (bot.working || bot.state === 'offline') this.place(bot, bot.state, 'walk');
+    }
+    this.clearTheWay();
+  }
+
+  // Whoever's walking takes the new way round, and whoever something landed on steps off it.
+  clearTheWay() {
+    for (const who of [...this.bots.values(), ...this.people.values()]) {
+      if (who.path.length) this.route(who);
+      else if (who.pose === 'stand' && !clear(who.x, who.y)) this.send(who, standAt([[who.x, who.y]]), 'walk');
+    }
   }
 
   // Called on every render, so it does nothing unless what's on the floor changed.
@@ -1732,11 +2575,7 @@ export class Room {
     this.describe();
     fillGrid(this.look.hidden, this.items);
     for (const item of this.items) item.spots = spotsOf(item);
-    // Whoever's walking takes the new way round, and whoever something landed on steps off it.
-    for (const who of [...this.bots.values(), ...this.people.values()]) {
-      if (who.path.length) this.route(who);
-      else if (who.pose === 'stand' && !clear(who.x, who.y)) this.send(who, standAt([[who.x, who.y]]), 'walk');
-    }
+    this.clearTheWay();
     // A bot using something goes with it, wherever it went (I38).
     for (const bot of this.bots.values()) if (bot.using) this.place(bot, bot.state, 'walk');
   }
@@ -1765,6 +2604,17 @@ export class Room {
     return under.sort((a, b) => Number(Boolean(b.sign)) - Number(Boolean(a.sign)) || b.y - a.y)[0]?.id ?? null;
   }
 
+  // The word for what came with the room at a place on the page, if this floor shows it. An item
+  // stands in front of all of it, so this is for a click that found no item.
+  furnitureAt(clientX, clientY) {
+    const box = this.canvas.getBoundingClientRect();
+    if (!box.width || !box.height) return null;
+    const x = ((clientX - box.left) / box.width) * W;
+    const y = ((clientY - box.top) / box.height) * H;
+    return FURNITURE.find(([word, left, top, wide, deep]) => !this.look.hidden.includes(word)
+      && x >= left && x < left + wide && y >= top && y < top + deep)?.[0] ?? null;
+  }
+
   // What someone is about to put down: { item, x, y, w, h, facing, ok, lifted }, in cells, or null.
   // `lifted` is the id of the placed item it is, if it's being moved. `kept` is the boxes of cells
   // that stay clear, to shade while something's in hand.
@@ -1773,7 +2623,7 @@ export class Room {
     this.kept = kept;
   }
 
-  // The placed item that build mode has selected, by id.
+  // What build mode has selected: a placed item by id, or the word for what came with the room.
   setChosen(id) {
     this.chosen = id;
   }
@@ -1950,9 +2800,12 @@ export class Room {
     bot.desk = null;
     bot.spot = null;
     let goal = null;
-    // The desk comes first, because that says what a bot is really doing (I36).
+    // The desk comes first, because that says what a bot is really doing (I36). A floor with no desk
+    // has a bot that's controlling something sit at the table, and one with no couch has it nap by the
+    // door. Where the beanbags were is floor too.
+    const { hidden } = this.look;
     if (bot.working) {
-      goal = this.claim(DESKS, 'desk');
+      goal = hidden.includes('desk') ? null : this.claim(DESKS, 'desk');
       bot.desk = goal || null;
     }
     if (!goal && bot.using) {
@@ -1961,12 +2814,12 @@ export class Room {
     }
     if (goal) {
       // Already placed at the desk or an item.
-    } else if (state === 'active') {
+    } else if (state === 'active' || (bot.working && hidden.includes('desk'))) {
       goal = this.claim(SEATS, 'seat');
       bot.seat = goal || null;
       if (goal) this.vacate(goal);
     } else if (state === 'offline') {
-      goal = this.claim(NAPS, 'nap') || NAPS[NAPS.length - 1];
+      goal = this.claim(hidden.includes('couch') ? NAPS.slice(3) : NAPS, 'nap') || NAPS[NAPS.length - 1];
       bot.nap = goal;
     }
     this.send(bot, goal || standAt(SPOTS), how);
@@ -2090,7 +2943,7 @@ export class Room {
   update(bot, dt) {
     if (this.walk(bot, dt)) return;
     // A busy bot that didn't get a seat wanders too, and takes one when it frees up.
-    if (!bot.desk && !bot.spot && (bot.state === 'idle' || (bot.state === 'active' && !bot.seat))) {
+    if (!bot.desk && !bot.spot && !bot.seat && (bot.state === 'idle' || bot.state === 'active')) {
       bot.wait -= dt;
       if (bot.wait <= 0) this.place(bot, bot.state, 'walk');
     }
@@ -2115,6 +2968,9 @@ export class Room {
   drawHand(g, t) {
     const chosen = this.items.find((item) => item.id === this.chosen);
     if (chosen) outline(g, chosen, '#ffde59');
+    for (const [word, left, top, wide, deep] of FURNITURE) {
+      if (word === this.chosen && !this.look.hidden.includes(word)) outline(g, { left, top, wide, deep }, '#ffde59');
+    }
     if (!this.ghost) return;
     for (const { x, y, w, h } of this.kept) {
       r(g, 'rgba(255,93,122,.14)', x * FLOOR_CELL, FLOOR_TOP + y * FLOOR_CELL, w * FLOOR_CELL, h * FLOOR_CELL);
@@ -2140,11 +2996,7 @@ export class Room {
     const g = this.g;
     const { hidden } = this.look;
     g.drawImage(this.background, 0, 0);
-    if (!hidden.includes('bar')) paintBar(g, time);
-    if (!hidden.includes('plants')) {
-      paintPlant(g, 470, 250);
-      paintPlant(g, 14, 92);
-    }
+    paintBehind(g, hidden, time);
 
     const lit = SEATS.slice(0, 8).map((seat) =>
       [...this.bots.values()].some((bot) => bot.seat === seat && !bot.path.length),
@@ -2152,20 +3004,13 @@ export class Room {
     const deskLit = DESKS.map((desk) =>
       [...this.bots.values()].some((bot) => bot.desk === desk && !bot.path.length),
     );
-    const props = [
-      { y: 136, draw: () => paintDesk(g, time, deskLit) },
-      { y: 150, draw: () => paintTable(g, lit) },
-      hidden.includes('arcade') ? null : { y: 172, draw: () => paintArcade(g, time) },
-      { y: 200, draw: () => paintCouch(g) },
-      hidden.includes('beanbags') ? null : { y: 232, draw: () => paintBeanbags(g) },
-    ].filter(Boolean);
     const bots = [...this.bots.values()];
     const people = [...this.people.values()];
     for (const bot of bots) this.update(bot, dt);
     for (const person of people) this.updatePerson(person, dt);
     const still = this.calm ? 0 : time;
     const scene = [
-      ...props,
+      ...furnitureScene(g, hidden, time, lit, deskLit),
       ...this.items.filter((item) => !item.sign).map((item) => ({ y: item.y, draw: () => this.drawItem(g, item, still) })),
       ...bots.map((bot) => ({ y: (!bot.path.length && bot.spot?.over) || bot.y, draw: () => drawBot(g, bot, time) })),
       ...people.map((person) => ({ y: person.y, draw: () => drawPerson(g, person, still) })),

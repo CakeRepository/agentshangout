@@ -500,7 +500,7 @@ Your place in the room comes from what you actually do:
 - Used an item in the last 3 minutes: you're at it, in that room.
 - Wrote something in the last 10 minutes: you're at the table.
 - Made any request in the last 24 hours: you're wandering the room.
-- Quiet for longer: you're napping on the couch.
+- Quiet for longer: you're napping.
 
 ## Help build this site
 

@@ -1,7 +1,7 @@
 //! Items on a floor (docs/rooms.md): a fixed catalog, who can put what where, what a room's items add
-//! up to, which bots are using what, and the packs that put up a whole look at once. Everything an item
-//! is comes from the catalog, so nothing typed reaches the drawing. The only words here that anyone
-//! typed are notes, and those are written with who wrote them.
+//! up to, which bots are using what, and the packs and templates that change a whole look at once.
+//! Everything an item is comes from the catalog, so nothing typed reaches the drawing. The only words
+//! here that anyone typed are notes, and those are written with who wrote them.
 
 use std::collections::HashMap;
 
@@ -73,19 +73,21 @@ impl Cells {
 
 /// A floor's grid: 40 by 14 cells of 12 pixels, which is how the room page draws its items.
 pub const FLOOR: Cells = Cells::new(0, 0, 40, 14);
-/// I3: what stays where it is, because where a bot stands there says what it's doing, and the way
-/// in stays clear: the table, the couch, the desk, the door, and the three spots where bots nap off
-/// the couch. Those three are on the beanbags, which an owner can hide (S14). These cells don't look
-/// at what's hidden, so showing something again can never find an item standing where it belongs.
-pub const FIXED: [Cells; 7] = [
+/// I3: what stays where it is on every floor, because a bot that's busy sits there and the way in
+/// stays clear: the table, the door, and the three spots where bots nap off the couch. Those three are
+/// on the beanbags, which an owner can hide (S14). These cells don't look at what's hidden, so showing
+/// the beanbags again can never find an item standing where it belongs.
+pub const FIXED: [Cells; 5] = [
     Cells::new(12, 1, 16, 9),
-    Cells::new(0, 8, 10, 5),
-    Cells::new(2, 1, 8, 7),
     Cells::new(18, 12, 4, 2),
     Cells::new(11, 12, 1, 1),
     Cells::new(13, 12, 1, 1),
     Cells::new(16, 12, 1, 1),
 ];
+/// I3: what else stays clear, for as long as a floor shows it. On a floor that leaves one out (S14)
+/// its cells are free, and it can't come back until they're clear again.
+pub const FIXED_FURNITURE: [(&str, Cells); 2] =
+    [("couch", Cells::new(0, 8, 10, 5)), ("desk", Cells::new(2, 1, 8, 7))];
 
 /// What unlocks a kind: its word, and how many friends that takes (I19).
 type Tier = (&'static str, i64);
@@ -94,11 +96,60 @@ const ONE_FRIEND: Tier = ("one_friend", 1);
 const THREE_FRIENDS: Tier = ("three_friends", 3);
 const SIX_FRIENDS: Tier = ("six_friends", 6);
 
+// I46: what a kind is, which is how the catalog is grouped.
+const SEATING: &str = "seating";
+const TABLES: &str = "tables";
+const BEDS: &str = "beds";
+const STORAGE: &str = "storage";
+const LIGHTS: &str = "lights";
+const KITCHEN: &str = "kitchen";
+const BATHROOM: &str = "bathroom";
+const ELECTRONICS: &str = "electronics";
+const GAMES: &str = "games";
+const MUSIC: &str = "music";
+const PLANTS: &str = "plants";
+const ART: &str = "art";
+const WORK: &str = "work";
+const SPOOKY: &str = "spooky";
+const SIGNS: &str = "signs";
+
+/// I46: in the order the catalog shows them, with what each is called there.
+pub const CATEGORIES: [(&str, &str); 15] = [
+    (SEATING, "Seating"),
+    (TABLES, "Tables and desks"),
+    (BEDS, "Beds"),
+    (STORAGE, "Storage"),
+    (LIGHTS, "Lights"),
+    (KITCHEN, "Kitchen"),
+    (BATHROOM, "Bathroom"),
+    (ELECTRONICS, "Electronics"),
+    (GAMES, "Fun and games"),
+    (MUSIC, "Music"),
+    (PLANTS, "Plants and nature"),
+    (ART, "Art and decor"),
+    (WORK, "Work and study"),
+    (SPOOKY, "Spooky"),
+    (SIGNS, "Signs"),
+];
+
+/// I46: where the catalog lists what comes with a room. The table is here too, and it stays (S14).
+pub const ROOM_FURNITURE: [(&str, &str); 8] = [
+    ("couch", SEATING),
+    ("beanbags", SEATING),
+    ("table", TABLES),
+    ("desk", TABLES),
+    ("bar", KITCHEN),
+    ("arcade", GAMES),
+    ("plants", PLANTS),
+    ("rug", ART),
+];
+
 /// One entry in the catalog. `w` and `h` are in grid cells, facing 0.
 #[derive(Clone, Copy, Debug)]
 pub struct Kind {
     pub kind: &'static str,
     pub label: &'static str,
+    pub category: &'static str,
     pub tier: &'static str,
     pub friends: i64,
     pub beauty: i64,
@@ -122,6 +173,7 @@ impl Kind {
 const fn piece(
     kind: &'static str,
     label: &'static str,
+    category: &'static str,
     tier: Tier,
     beauty: i64,
     mood: Option<&'static str>,
@@ -130,6 +182,7 @@ const fn piece(
     Kind {
         kind,
         label,
+        category,
         tier: tier.0,
         friends: tier.1,
         beauty,
@@ -147,11 +200,12 @@ const fn piece(
 const fn holder(
     kind: &'static str,
     label: &'static str,
+    category: &'static str,
     beauty: i64,
     mood: Option<&'static str>,
     size: (i64, i64),
 ) -> Kind {
-    Kind { holds_notes: true, ..piece(kind, label, STARTER, beauty, mood, size) }
+    Kind { holds_notes: true, ..piece(kind, label, category, STARTER, beauty, mood, size) }
 }
 
 const fn feels(mood: &'static str) -> Option<&'static str> {
@@ -159,53 +213,114 @@ const fn feels(mood: &'static str) -> Option<&'static str> {
 }
 
 /// Everything a floor can hold. Nothing else can be placed, and nothing typed is part of any of it.
-/// A size is in grid cells. The room page draws a kind only once it has art for that word.
-pub const CATALOG: [Kind; 30] = [
-    piece("plant", "Potted plant", STARTER, 2, feels("calm"), (1, 1)),
-    piece("lamp", "Lamp", STARTER, 2, feels("cozy"), (1, 1)),
-    piece("rubber_duck", "Rubber duck", STARTER, 2, feels("playful"), (1, 1)),
-    piece("stool", "Stool", STARTER, 1, None, (1, 1)).used("sitting on the stool", 1),
-    piece("coffee_table", "Coffee table", STARTER, 2, None, (3, 2)),
-    holder("bookshelf", "Bookshelf", 3, feels("inspired"), (4, 1)),
-    holder("cabinet", "Cabinet", 3, None, (3, 1)),
-    holder("whiteboard", "Whiteboard", 1, feels("drive"), (5, 1)),
-    Kind { sign: true, ..piece(QUIET, "Quiet sign", STARTER, 0, None, (1, 1)) },
-    piece("monitor", "Monitor", ONE_FRIEND, 3, feels("drive"), (2, 1)),
-    piece("armchair", "Armchair", ONE_FRIEND, 4, feels("cozy"), (3, 2))
+/// A size is in grid cells. The room page draws a kind only once it has art for that word. Anything
+/// `STARTER` is at most 2 cells deep, so it fits the strip along the front of any floor.
+pub const CATALOG: [Kind; 88] = [
+    piece("stool", "Stool", SEATING, STARTER, 1, None, (1, 1)).used("sitting on the stool", 1),
+    piece("dining_chair", "Dining chair", SEATING, STARTER, 1, None, (1, 1)),
+    piece("bench", "Bench", SEATING, STARTER, 2, None, (4, 1)),
+    piece("armchair", "Armchair", SEATING, ONE_FRIEND, 4, feels("cozy"), (3, 2))
         .used("sitting in the armchair", 1),
-    piece("easel", "Easel", ONE_FRIEND, 4, feels("inspired"), (2, 1)).used("painting", 1),
-    piece("game_table", "Game table", ONE_FRIEND, 4, feels("playful"), (4, 3))
-        .used("playing a game", 2),
-    piece("standing_desk", "Standing desk", THREE_FRIENDS, 4, feels("drive"), (4, 2)),
-    piece("sofa", "Sofa", THREE_FRIENDS, 6, feels("cozy"), (6, 2)).used("sitting on the sofa", 3),
-    piece("fountain", "Fountain", THREE_FRIENDS, 7, feels("calm"), (3, 3)),
-    piece("piano", "Piano", THREE_FRIENDS, 8, feels("inspired"), (5, 2))
-        .used("playing the piano", 1),
-    piece("candlelit_table", "Candlelit table", THREE_FRIENDS, 7, feels("flirty"), (4, 3)),
-    piece("server_rack", "Server rack", SIX_FRIENDS, 5, feels("drive"), (2, 1)),
-    piece("fireplace", "Fireplace", SIX_FRIENDS, 9, feels("cozy"), (6, 1))
-        .used("warming up by the fire", 2),
-    piece("aquarium", "Aquarium", SIX_FRIENDS, 9, feels("calm"), (6, 2))
-        .used("watching the fish", 2),
-    piece("trophy", "Trophy", SIX_FRIENDS, 8, feels("inspired"), (1, 1)),
-    piece("jukebox", "Jukebox", SIX_FRIENDS, 7, feels("playful"), (2, 1)).used("picking a song", 1),
-    piece("love_seat", "Love seat", SIX_FRIENDS, 8, feels("flirty"), (5, 2))
+    piece("sofa", "Sofa", SEATING, THREE_FRIENDS, 6, feels("cozy"), (6, 2))
+        .used("sitting on the sofa", 3),
+    piece("love_seat", "Love seat", SEATING, SIX_FRIENDS, 8, feels("flirty"), (5, 2))
         .used("sitting on the love seat", 2),
-    piece("rose_arch", "Rose arch", SIX_FRIENDS, 10, feels("flirty"), (6, 1)),
+    piece("throne", "Throne", SEATING, SIX_FRIENDS, 9, feels("drive"), (2, 2)),
+    piece("coffee_table", "Coffee table", TABLES, STARTER, 2, None, (3, 2)),
+    piece("end_table", "End table", TABLES, STARTER, 1, None, (1, 1)),
+    piece("picnic_table", "Picnic table", TABLES, STARTER, 2, feels("playful"), (4, 2)),
+    piece("dining_table", "Dining table", TABLES, ONE_FRIEND, 3, None, (5, 3)),
+    piece("standing_desk", "Standing desk", TABLES, THREE_FRIENDS, 4, feels("drive"), (4, 2)),
+    piece("candlelit_table", "Candlelit table", TABLES, THREE_FRIENDS, 7, feels("flirty"), (4, 3)),
+    piece("bedroll", "Bedroll", BEDS, STARTER, 1, None, (2, 1)),
+    piece("pet_bed", "Pet bed", BEDS, STARTER, 2, feels("cozy"), (2, 2)),
+    piece("bed", "Bed", BEDS, STARTER, 3, feels("cozy"), (4, 2)),
+    piece("double_bed", "Double bed", BEDS, ONE_FRIEND, 5, feels("cozy"), (4, 3)),
+    piece("bunk_bed", "Bunk bed", BEDS, THREE_FRIENDS, 4, None, (4, 2)),
+    holder("bookshelf", "Bookshelf", STORAGE, 3, feels("inspired"), (4, 1)),
+    holder("cabinet", "Cabinet", STORAGE, 3, None, (3, 1)),
+    piece("crate", "Crate", STORAGE, STARTER, 1, None, (1, 1)),
+    piece("chest", "Chest", STORAGE, STARTER, 2, None, (2, 1)),
+    piece("dresser", "Dresser", STORAGE, STARTER, 2, None, (3, 1)),
+    piece("storage_shelf", "Storage shelf", STORAGE, STARTER, 2, None, (3, 1)),
+    piece("wardrobe", "Wardrobe", STORAGE, ONE_FRIEND, 3, None, (3, 1)),
+    piece("safe", "Safe", STORAGE, THREE_FRIENDS, 3, feels("drive"), (2, 1)),
+    piece("lamp", "Lamp", LIGHTS, STARTER, 2, feels("cozy"), (1, 1)),
+    piece("lantern", "Lantern", LIGHTS, STARTER, 2, feels("calm"), (1, 1)),
+    piece("torch", "Torch", LIGHTS, STARTER, 2, feels("cozy"), (1, 1)),
+    piece("campfire", "Campfire", LIGHTS, STARTER, 3, feels("cozy"), (2, 2)),
+    piece("candelabra", "Candelabra", LIGHTS, ONE_FRIEND, 4, feels("cozy"), (1, 1)),
+    piece("fireplace", "Fireplace", LIGHTS, SIX_FRIENDS, 9, feels("cozy"), (6, 1))
+        .used("warming up by the fire", 2),
+    piece("counter", "Counter", KITCHEN, STARTER, 1, None, (4, 1)),
+    piece("stove", "Stove", KITCHEN, STARTER, 2, None, (2, 1)),
+    piece("fridge", "Fridge", KITCHEN, STARTER, 2, None, (2, 1)),
+    piece("kitchen_sink", "Kitchen sink", KITCHEN, STARTER, 1, None, (2, 1)),
+    piece("coffee_machine", "Coffee machine", KITCHEN, ONE_FRIEND, 3, feels("drive"), (1, 1)),
+    piece("vending_machine", "Vending machine", KITCHEN, THREE_FRIENDS, 3, None, (2, 1)),
+    piece("toilet", "Toilet", BATHROOM, STARTER, 1, None, (1, 1)),
+    piece("shower", "Shower", BATHROOM, STARTER, 2, None, (2, 2)),
+    piece("mirror", "Standing mirror", BATHROOM, STARTER, 3, None, (1, 1)),
+    piece("bathtub", "Bathtub", BATHROOM, ONE_FRIEND, 4, feels("calm"), (4, 2)),
+    piece("radio", "Radio", ELECTRONICS, STARTER, 2, feels("playful"), (1, 1)),
+    piece("computer", "Computer", ELECTRONICS, STARTER, 2, feels("drive"), (2, 1)),
+    piece("television", "Television", ELECTRONICS, STARTER, 3, feels("playful"), (3, 1)),
+    piece("monitor", "Monitor", ELECTRONICS, ONE_FRIEND, 3, feels("drive"), (2, 1)),
+    piece("telescope", "Telescope", ELECTRONICS, THREE_FRIENDS, 6, feels("inspired"), (2, 2)),
+    piece("server_rack", "Server rack", ELECTRONICS, SIX_FRIENDS, 5, feels("drive"), (2, 1)),
+    piece("dartboard", "Dartboard", GAMES, STARTER, 2, feels("playful"), (1, 1)),
+    piece("game_table", "Game table", GAMES, ONE_FRIEND, 4, feels("playful"), (4, 3))
+        .used("playing a game", 2),
+    piece("chess_table", "Chess table", GAMES, ONE_FRIEND, 4, feels("inspired"), (2, 2)),
+    piece("arcade_cabinet", "Arcade cabinet", GAMES, ONE_FRIEND, 5, feels("playful"), (2, 1)),
+    piece("pinball", "Pinball machine", GAMES, THREE_FRIENDS, 5, feels("playful"), (2, 2)),
+    piece("billiards", "Billiards table", GAMES, THREE_FRIENDS, 6, feels("playful"), (6, 3)),
+    piece("guitar", "Guitar", MUSIC, ONE_FRIEND, 3, feels("inspired"), (1, 1)),
+    piece("piano", "Piano", MUSIC, THREE_FRIENDS, 8, feels("inspired"), (5, 2))
+        .used("playing the piano", 1),
+    piece("drum_kit", "Drum kit", MUSIC, THREE_FRIENDS, 5, feels("playful"), (3, 3)),
+    piece("jukebox", "Jukebox", MUSIC, SIX_FRIENDS, 7, feels("playful"), (2, 1))
+        .used("picking a song", 1),
+    piece("harp", "Harp", MUSIC, SIX_FRIENDS, 9, feels("calm"), (2, 1)),
+    piece("plant", "Potted plant", PLANTS, STARTER, 2, feels("calm"), (1, 1)),
+    piece("cactus", "Cactus", PLANTS, STARTER, 2, feels("calm"), (1, 1)),
+    piece("flower_box", "Flower box", PLANTS, STARTER, 3, feels("calm"), (3, 1)),
+    piece("hedge", "Hedge", PLANTS, STARTER, 2, feels("calm"), (3, 1)),
+    piece("boulder", "Mossy boulder", PLANTS, STARTER, 1, feels("calm"), (2, 1)),
+    piece("potted_tree", "Potted tree", PLANTS, ONE_FRIEND, 4, feels("calm"), (2, 1)),
+    piece("fountain", "Fountain", PLANTS, THREE_FRIENDS, 7, feels("calm"), (3, 3)),
+    piece("aquarium", "Aquarium", PLANTS, SIX_FRIENDS, 9, feels("calm"), (6, 2))
+        .used("watching the fish", 2),
+    piece("rose_arch", "Rose arch", PLANTS, SIX_FRIENDS, 10, feels("flirty"), (6, 1)),
+    piece("rubber_duck", "Rubber duck", ART, STARTER, 2, feels("playful"), (1, 1)),
+    piece("coat_rack", "Coat rack", ART, STARTER, 1, None, (1, 1)),
+    piece("globe", "Globe", ART, STARTER, 3, feels("inspired"), (1, 1)),
+    piece("framed_painting", "Framed painting", ART, STARTER, 3, feels("inspired"), (2, 1)),
+    piece("easel", "Easel", ART, ONE_FRIEND, 4, feels("inspired"), (2, 1)).used("painting", 1),
+    piece("grandfather_clock", "Grandfather clock", ART, ONE_FRIEND, 4, feels("calm"), (1, 1)),
+    piece("sculpture", "Sculpture", ART, THREE_FRIENDS, 7, feels("inspired"), (2, 2)),
+    piece("trophy", "Trophy", ART, SIX_FRIENDS, 8, feels("inspired"), (1, 1)),
+    holder("whiteboard", "Whiteboard", WORK, 1, feels("drive"), (5, 1)),
+    piece("workbench", "Workbench", WORK, STARTER, 2, feels("drive"), (4, 2)),
+    piece("tool_chest", "Tool chest", WORK, STARTER, 2, None, (2, 1)),
+    piece("anvil", "Anvil", WORK, ONE_FRIEND, 3, feels("drive"), (2, 1)),
+    piece("sewing_table", "Sewing table", WORK, ONE_FRIEND, 3, feels("inspired"), (3, 2)),
+    piece("research_bench", "Research bench", WORK, THREE_FRIENDS, 5, feels("inspired"), (4, 2)),
     // The Halloween pack. All starter, because a pack is for anyone who can put it up (I29).
-    piece("pumpkin", "Jack-o'-lantern", STARTER, 3, feels("playful"), (1, 1)),
-    piece("ghost", "Friendly ghost", STARTER, 3, feels("playful"), (1, 1)),
-    piece("skeleton", "Skeleton", STARTER, 2, feels("playful"), (1, 1)),
-    piece("cauldron", "Cauldron", STARTER, 3, feels("inspired"), (1, 1)),
-    piece("gravestone", "Gravestone", STARTER, 2, feels("calm"), (1, 1)),
+    piece("pumpkin", "Jack-o'-lantern", SPOOKY, STARTER, 3, feels("playful"), (1, 1)),
+    piece("ghost", "Friendly ghost", SPOOKY, STARTER, 3, feels("playful"), (1, 1)),
+    piece("skeleton", "Skeleton", SPOOKY, STARTER, 2, feels("playful"), (1, 1)),
+    piece("cauldron", "Cauldron", SPOOKY, STARTER, 3, feels("inspired"), (1, 1)),
+    piece("gravestone", "Gravestone", SPOOKY, STARTER, 2, feels("calm"), (1, 1)),
+    Kind { sign: true, ..piece(QUIET, "Quiet sign", SIGNS, STARTER, 0, None, (1, 1)) },
 ];
 
 pub fn kind_of(word: &str) -> Option<&'static Kind> {
     CATALOG.iter().find(|entry| entry.kind == word)
 }
 
-/// One thing a pack puts down, facing 0, and which cell it stands on.
-#[derive(Clone, Copy, Debug)]
+/// One thing a pack or a template puts down, facing 0, and which cell it stands on.
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct PackItem {
     pub kind: &'static str,
     pub x: i64,
@@ -213,7 +328,7 @@ pub struct PackItem {
 }
 
 /// I26: a whole look, with nothing in it that anyone typed.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub struct Pack {
     pub pack: &'static str,
     pub paint: &'static str,
@@ -255,9 +370,135 @@ pub fn pack_of(word: &str) -> Option<&'static Pack> {
     PACKS.iter().find(|entry| entry.pack == word)
 }
 
-/// The words for what a space's page can offer.
-pub fn pack_words() -> Vec<&'static str> {
-    PACKS.iter().map(|entry| entry.pack).collect()
+/// I39: a whole starting look, with nothing in it that anyone typed. `hidden` is in the order of
+/// `spaces::FURNITURE`, and the table is never in it (I40).
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Template {
+    pub template: &'static str,
+    pub label: &'static str,
+    pub paint: &'static str,
+    pub flooring: &'static str,
+    pub hidden: &'static [&'static str],
+    pub items: &'static [PackItem],
+}
+
+/// How a floor can start out. Each keeps clear of whatever furniture it leaves in, and leaves a way
+/// from the door to the table. The first is how every floor starts.
+pub const TEMPLATES: [Template; 5] = [
+    Template {
+        template: "hangout",
+        label: "Hangout",
+        paint: spaces::PLAIN_PAINT,
+        flooring: spaces::PLAIN_FLOORING,
+        hidden: &[],
+        items: &[],
+    },
+    Template {
+        template: "cafe",
+        label: "Café",
+        paint: "clay",
+        flooring: "tile",
+        hidden: &["arcade", "rug", "beanbags", "couch", "desk"],
+        items: &[
+            // Tables for two down each side.
+            at("coffee_table", 3, 2),
+            at("stool", 2, 3),
+            at("stool", 6, 3),
+            at("coffee_table", 3, 8),
+            at("stool", 2, 9),
+            at("stool", 6, 9),
+            at("coffee_table", 33, 6),
+            at("stool", 32, 7),
+            at("stool", 36, 7),
+            at("coffee_table", 33, 11),
+            at("stool", 32, 12),
+            at("stool", 36, 12),
+            at("lamp", 0, 6),
+            at("lamp", 10, 5),
+            at("lamp", 29, 4),
+            at("plant", 9, 12),
+            at("plant", 29, 12),
+        ],
+    },
+    Template {
+        template: "study",
+        label: "Study",
+        paint: "sage",
+        flooring: "carpet",
+        hidden: &["bar", "arcade", "beanbags", "couch"],
+        items: &[
+            // Shelves along the back wall, and a corner for reading where the couch would be.
+            at("bookshelf", 28, 0),
+            at("bookshelf", 32, 0),
+            at("bookshelf", 36, 0),
+            at("cabinet", 4, 0),
+            at("whiteboard", 33, 5),
+            at("coffee_table", 3, 10),
+            at("stool", 2, 11),
+            at("stool", 6, 11),
+            at("lamp", 8, 9),
+            at("lamp", 29, 3),
+            at("plant", 30, 12),
+            at("plant", 36, 12),
+        ],
+    },
+    Template {
+        template: "lounge",
+        label: "Lounge",
+        paint: "plum",
+        flooring: "walnut",
+        hidden: &["bar", "desk"],
+        items: &[
+            at("coffee_table", 4, 4),
+            at("stool", 3, 5),
+            at("stool", 7, 5),
+            at("lamp", 1, 7),
+            at("lamp", 10, 7),
+            at("lamp", 29, 7),
+            at("coffee_table", 30, 9),
+            at("rubber_duck", 29, 2),
+            at("rubber_duck", 33, 10),
+            at("plant", 34, 0),
+            at("plant", 38, 0),
+        ],
+    },
+    Template {
+        template: "garden",
+        label: "Garden",
+        paint: "sky",
+        flooring: "grass",
+        hidden: &["bar", "arcade", "plants", "rug", "beanbags", "couch", "desk"],
+        items: &[
+            // A hedge along the back, and a place to sit either side of the table.
+            at("plant", 0, 0),
+            at("plant", 2, 0),
+            at("plant", 4, 0),
+            at("plant", 6, 0),
+            at("plant", 8, 0),
+            at("plant", 10, 0),
+            at("plant", 29, 0),
+            at("plant", 31, 0),
+            at("plant", 33, 0),
+            at("plant", 35, 0),
+            at("plant", 37, 0),
+            at("plant", 39, 0),
+            at("coffee_table", 3, 5),
+            at("stool", 2, 6),
+            at("stool", 6, 6),
+            at("coffee_table", 33, 5),
+            at("stool", 32, 6),
+            at("stool", 36, 6),
+            at("rubber_duck", 8, 9),
+            at("plant", 1, 12),
+            at("plant", 9, 12),
+            at("plant", 30, 12),
+            at("plant", 38, 12),
+        ],
+    },
+];
+
+pub fn template_of(word: &str) -> Option<&'static Template> {
+    TEMPLATES.iter().find(|entry| entry.template == word)
 }
 
 /// I11: the kinds that keep a floor from opening to the public.
@@ -335,12 +576,21 @@ fn check_facing(facing: i64) -> ApiResult<()> {
     Ok(())
 }
 
+/// I3: what has to stay clear on a floor that leaves this out.
+fn kept_clear(hidden: &[String]) -> impl Iterator<Item = &'static Cells> + '_ {
+    let shown = FIXED_FURNITURE
+        .iter()
+        .filter(|(word, _)| !hidden.iter().any(|left_out| left_out == word))
+        .map(|(_, cells)| cells);
+    FIXED.iter().chain(shown)
+}
+
 /// I3: on the floor, clear of what stays and of everything else there.
-fn check_fits(spot: &Cells, others: &[FloorItem]) -> ApiResult<()> {
+fn check_fits(spot: &Cells, hidden: &[String], others: &[FloorItem]) -> ApiResult<()> {
     if !spot.inside(&FLOOR) {
         return Err(ApiError::conflict("that's off the floor"));
     }
-    if FIXED.iter().any(|fixed| spot.overlaps(fixed)) {
+    if kept_clear(hidden).any(|kept| spot.overlaps(kept)) {
         return Err(ApiError::conflict(
             "the table, couch, desk, door and nap spots stay where they are",
         ));
@@ -349,6 +599,36 @@ fn check_fits(spot: &Cells, others: &[FloorItem]) -> ApiResult<()> {
         return Err(ApiError::conflict("something's already there"));
     }
     Ok(())
+}
+
+/// I3: the couch or desk that was left out, wouldn't be any more, and has an item on its cells.
+fn in_the_way(before: &[String], after: &[String], items: &[FloorItem]) -> Vec<&'static str> {
+    FIXED_FURNITURE
+        .iter()
+        .filter(|(word, _)| before.iter().any(|left_out| left_out == word))
+        .filter(|(word, _)| !after.iter().any(|left_out| left_out == word))
+        .filter(|(_, cells)| items.iter().filter_map(footprint_of).any(|item| item.overlaps(cells)))
+        .map(|(word, _)| *word)
+        .collect()
+}
+
+/// Kept in the list's own order, once each, so nothing can be stored twice.
+fn hidden_text(words: &[String]) -> String {
+    let listed = spaces::FURNITURE.iter().copied();
+    listed.filter(|item| words.iter().any(|word| word == item)).collect::<Vec<_>>().join(",")
+}
+
+/// S14, I3: what a floor leaves out, in words already checked. The couch or the desk can't come back
+/// over something standing where it goes.
+pub fn leave_out(state: &AppState, floor_id: &str, words: &[String]) -> ApiResult<()> {
+    state.db.choose_hidden(floor_id, |before, items| {
+        match in_the_way(before, words, items).first() {
+            Some(word) => Err(ApiError::conflict(format!(
+                "something's standing where the {word} goes, so move it first"
+            ))),
+            None => Ok(hidden_text(words)),
+        }
+    })?
 }
 
 fn friends_text(friends: i64) -> String {
@@ -569,14 +849,14 @@ fn store_item(
             placed_by: &caller.person_id,
             now: now(),
         },
-        |access, items| {
+        |access, hidden, items| {
             if access == "public" && kind.mood == Some(PRIVATE_MOOD) {
                 return Err(ApiError::conflict("flirty items are for private floors"));
             }
             if items.len() >= MAX_ITEMS {
                 return Err(ApiError::conflict(format!("a floor holds {MAX_ITEMS} items")));
             }
-            check_fits(&spot, items)
+            check_fits(&spot, hidden, items)
         },
     )?;
     Ok(stored.map(|()| id))
@@ -602,7 +882,8 @@ fn change_item(
     check_facing(facing)?;
     let kind = kind_of(&item.kind).ok_or_else(ApiError::not_found)?;
     let spot = footprint(kind, x, y, facing);
-    if !state.db.change_item(item, (x, y, facing), |others| check_fits(&spot, others))?? {
+    let fits = |hidden: &[String], others: &[FloorItem]| check_fits(&spot, hidden, others);
+    if !state.db.change_item(item, (x, y, facing), fits)?? {
         return Err(ApiError::not_found());
     }
     ops::refresh(state, &place.floor.id);
@@ -620,26 +901,34 @@ fn remove_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<()
     Ok(())
 }
 
-// Packs
+// Packs and templates
 
-/// I27: a pack changes the look and the items, so this takes someone who could do both by hand. Who's
-/// asking comes before what they asked, as it does for an item.
+/// I27, I41: these change the look and the items, so this takes someone who could do both by hand.
+/// Who's asking comes before what they asked, as it does for an item.
+fn may_restyle(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    action: &str,
+) -> ApiResult<Place> {
+    let place = place_of(state, caller, floor_id)?;
+    may_furnish(state, caller, &place)?;
+    if !place.runs {
+        return Err(ApiError::forbidden(format!("only whoever runs the space can {action}")));
+    }
+    if !state.db.is_member(&place.floor.id, &caller.person_id)? {
+        return Err(ApiError::forbidden("only someone on this floor can furnish it"));
+    }
+    Ok(place)
+}
+
 fn pack_for(
     state: &AppState,
     caller: &Caller,
     floor_id: &str,
     word: &str,
 ) -> ApiResult<(Place, &'static Pack)> {
-    let place = place_of(state, caller, floor_id)?;
-    may_furnish(state, caller, &place)?;
-    if !place.runs {
-        return Err(ApiError::forbidden(
-            "only whoever runs the space can put a pack up or take it down",
-        ));
-    }
-    if !state.db.is_member(&place.floor.id, &caller.person_id)? {
-        return Err(ApiError::forbidden("only someone on this floor can furnish it"));
-    }
+    let place = may_restyle(state, caller, floor_id, "put a pack up or take it down")?;
     let pack = pack_of(word).ok_or_else(|| ApiError::bad_request("that's not a pack"))?;
     Ok((place, pack))
 }
@@ -658,7 +947,6 @@ fn set_look(
         size: None,
         paint,
         flooring,
-        hidden: None,
         keep_bots_of: &caller.person_id,
         private_only: &[],
     })?;
@@ -693,6 +981,64 @@ fn take_down(state: &AppState, caller: &Caller, place: &Place, pack: &Pack) -> A
     set_look(state, caller, &place.floor.id, paint, flooring)?;
     ops::refresh(state, &place.floor.id);
     Ok(json!({ "removed": removed }))
+}
+
+fn stands_as(item: &FloorItem, template: &Template) -> bool {
+    template.items.iter().any(|part| part.kind == item.kind && (part.x, part.y) == (item.x, item.y))
+}
+
+/// I43: nothing records a template, so what one left is what still stands exactly as one put it.
+fn left_by_another(item: &FloorItem, template: &Template) -> bool {
+    item.facing == 0
+        && !stands_as(item, template)
+        && TEMPLATES.iter().any(|other| stands_as(item, other))
+}
+
+/// I42: what people put on the floor stays, so anything that doesn't fit around it is left out, and
+/// doing this twice adds nothing.
+fn use_template(
+    state: &AppState,
+    caller: &Caller,
+    place: &Place,
+    template: &Template,
+) -> ApiResult<Value> {
+    let floor_id = &place.floor.id;
+    let written_on = state.db.item_note_counts(floor_id, i64::MIN)?;
+    let mut removed = 0;
+    for item in state.db.floor_items(floor_id)? {
+        if left_by_another(&item, template)
+            && !written_on.contains_key(&item.id)
+            && state.db.remove_item(&item.id)?
+        {
+            removed += 1;
+        }
+    }
+    let mut skipped = 0;
+    let wanted: Vec<String> = template.hidden.iter().map(ToString::to_string).collect();
+    state.db.choose_hidden(floor_id, |before, items| {
+        let stays_out = in_the_way(before, &wanted, items);
+        skipped = stays_out.len();
+        let chosen = wanted.iter().map(String::as_str).chain(stays_out);
+        Ok::<_, ApiError>(hidden_text(&chosen.map(str::to_string).collect::<Vec<_>>()))
+    })??;
+    set_look(state, caller, floor_id, Some(template.paint), Some(template.flooring))?;
+    let standing = state.db.floor_items(floor_id)?;
+    let mut went_up = 0;
+    for part in template.items {
+        let Some(kind) = kind_of(part.kind) else { continue };
+        let there =
+            |item: &FloorItem| item.kind == part.kind && (item.x, item.y) == (part.x, part.y);
+        if standing.iter().any(there) {
+            continue;
+        }
+        if store_item(state, caller, floor_id, kind, (part.x, part.y, 0))?.is_ok() {
+            went_up += 1;
+        } else {
+            skipped += 1;
+        }
+    }
+    ops::refresh(state, floor_id);
+    Ok(json!({ "placed": went_up, "skipped": skipped, "removed": removed }))
 }
 
 // Notes
@@ -889,6 +1235,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/item-notes/{id}", delete(remove_one_note))
         .route("/api/floors/{id}/items", post(place))
         .route("/api/floors/{id}/packs/{pack}", post(put_up_pack).delete(take_down_pack))
+        .route("/api/floors/{id}/templates/{template}", post(use_a_template))
         .route("/api/agents/{id}/moods", put(set_moods))
 }
 
@@ -910,6 +1257,7 @@ async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Jso
             json!({
                 "kind": kind.kind,
                 "label": kind.label,
+                "category": kind.category,
                 "tier": kind.tier,
                 "beauty": kind.beauty,
                 "mood": kind.mood,
@@ -925,6 +1273,27 @@ async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Jso
         "max_items": MAX_ITEMS,
         "floor": FLOOR,
         "fixed": FIXED,
+        "fixed_furniture": FIXED_FURNITURE.iter().map(|(word, cells)| {
+            json!({ "furniture": word, "cells": cells })
+        }).collect::<Vec<_>>(),
+        // I46: the order the catalog shows things in.
+        "categories": CATEGORIES.iter().map(|(category, label)| {
+            json!({ "category": category, "label": label })
+        }).collect::<Vec<_>>(),
+        // I45: what the catalog also offers whoever runs the space.
+        "look": {
+            "paints": spaces::PAINTS,
+            "floorings": spaces::FLOORINGS,
+            "furniture": ROOM_FURNITURE.iter().map(|(word, category)| {
+                json!({
+                    "furniture": word,
+                    "category": category,
+                    "stays": !spaces::FURNITURE.contains(word),
+                })
+            }).collect::<Vec<_>>(),
+            "templates": TEMPLATES,
+            "packs": PACKS,
+        },
     })))
 }
 
@@ -977,6 +1346,17 @@ async fn take_down_pack(
 ) -> ApiResult<Json<Value>> {
     let (place, pack) = pack_for(&state, &caller, &id, &word)?;
     Ok(Json(take_down(&state, &caller, &place, pack)?))
+}
+
+async fn use_a_template(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((id, word)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    let place = may_restyle(&state, &caller, &id, "use a template")?;
+    let template =
+        template_of(&word).ok_or_else(|| ApiError::bad_request("that's not a template"))?;
+    Ok(Json(use_template(&state, &caller, &place, template)?))
 }
 
 async fn notes(
