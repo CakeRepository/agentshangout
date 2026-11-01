@@ -399,14 +399,32 @@ fn furnish_at(
         None => Vec::new(),
     };
     let (template, pack) = (args["template"].as_str(), args["pack"].as_str());
-    if template.is_none() && pack.is_none() && remove.is_empty() && add.is_empty() {
+    // I67: where the table goes and what it's like.
+    let table: Option<crate::items::TableChange> = match list("table") {
+        Some(value) => Some(serde_json::from_value(value).map_err(|error| {
+            ApiError::bad_request(format!("table is {{x, y, style}}: {error}"))
+        })?),
+        None => None,
+    };
+    if template.is_none()
+        && pack.is_none()
+        && remove.is_empty()
+        && add.is_empty()
+        && table.is_none()
+    {
         return Err(ApiError::bad_request(
-            "give a template, a pack, items to place or items to remove: see room_catalog",
+            "give a template, a pack, a table, items to place or items to remove: see room_catalog",
         ));
     }
     ops::note_agent_write(state, caller)?;
-    let done =
-        crate::items::furnish_for_project(state, caller, floor_id, template, pack, &remove, &add)?;
+    let asked = crate::items::BotFurnishing {
+        template,
+        pack,
+        table: table.as_ref(),
+        remove: &remove,
+        add: &add,
+    };
+    let done = crate::items::furnish_for_project(state, caller, floor_id, asked)?;
     ops::announce(state, announcement_room, &format!("{} rearranged the room.", caller.name))?;
     ops::refresh(state, announcement_room);
     Ok(done)

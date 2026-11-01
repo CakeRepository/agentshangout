@@ -1413,18 +1413,30 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
   }
 
   // What stays clear on this floor: the couch and the desk only while it shows them (I3).
-  function keptClear() {
-    const { fixed, fixed_furniture: furniture } = catalog;
-    const hidden = view().floor?.floor.hidden ?? [];
-    return [...fixed, ...furniture.filter((each) => !hidden.includes(each.furniture)).map((each) => each.cells)];
+  // I67: this floor's table, as cells, wherever it stands.
+  function tableCells() {
+    const table = view().floor?.table;
+    const size = catalog?.table || { w: 16, h: 9 };
+    return { x: table?.x ?? 12, y: table?.y ?? 1, w: size.w, h: size.h };
   }
 
-  // Green where the server would take it and red where it wouldn't, as far as this page can tell.
+  function keptClear({ withTable = true } = {}) {
+    const { fixed, fixed_furniture: furniture } = catalog;
+    const hidden = view().floor?.floor.hidden ?? [];
+    return [...fixed, ...(withTable ? [tableCells()] : []), ...furniture.filter((each) => !hidden.includes(each.furniture)).map((each) => each.cells)];
+  }
+
+  const isFlat = (word) => Boolean(kindOf(word)?.flat);
+
+  // Green where the server would take it and red where it wouldn't, as far as this page can tell. A rug
+  // only has to be on the floor, and nothing bumps into one (I67).
   function fits(spot) {
     const { floor } = catalog;
-    return spot.x >= 0 && spot.y >= 0 && spot.x + spot.w <= floor.w && spot.y + spot.h <= floor.h
-      && !keptClear().some((cells) => overlaps(spot, cells))
-      && !view().items.some((item) => item.id !== spot.item && overlaps(spot, item));
+    const onFloor = spot.x >= 0 && spot.y >= 0 && spot.x + spot.w <= floor.w && spot.y + spot.h <= floor.h;
+    if (!onFloor) return false;
+    if (spot.kind && isFlat(spot.kind)) return true;
+    return !keptClear({ withTable: !spot.table }).some((cells) => overlaps(spot, cells))
+      && !view().items.some((item) => item.id !== spot.item && !isFlat(item.kind) && overlaps(spot, item));
   }
 
   // The first place something fits, so a finger has something to start from, or else the top corner.
@@ -1440,7 +1452,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
 
   function showHand() {
     room.setGhost(hand && {
-      item: hand.kind,
+      item: hand.table ? 'table' : hand.kind,
       x: hand.x,
       y: hand.y,
       w: hand.w,
@@ -1498,6 +1510,8 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
   }
 
   function turnHand() {
+    // I67: a table faces the room whichever way it's put down.
+    if (hand.table) return;
     hand.facing = (hand.facing + 1) % 4;
     [hand.w, hand.h] = [hand.h, hand.w];
     moveHand(hand.x, hand.y);
@@ -1517,14 +1531,17 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
   async function putDown() {
     if (!hand || busy) return;
     const { item, kind, label, x, y, facing } = hand;
+    const moving = Boolean(item || hand.table);
     busy = true;
     try {
-      if (item) await api(`/api/items/${encodeURIComponent(item)}`, { method: 'PUT', body: { x, y, facing } });
+      // I67: the table goes wherever there's room for it and its seats.
+      if (hand.table) await api(`/api/floors/${encodeURIComponent(id)}/table`, { method: 'PUT', body: { x, y } });
+      else if (item) await api(`/api/items/${encodeURIComponent(item)}`, { method: 'PUT', body: { x, y, facing } });
       else await api(`/api/floors/${encodeURIComponent(id)}/items`, { method: 'POST', body: { kind, x, y, facing } });
       hand = null;
       await reload();
       showHand();
-      tell(`${label} ${item ? 'moved' : 'placed'}.`);
+      tell(`${label} ${moving ? 'moved' : 'placed'}.`);
       (tiles.get(kind)?.offsetParent ? tiles.get(kind) : catalogButton).focus({ preventScroll: true });
     } catch (error) {
       tell(error.message);
@@ -1609,7 +1626,32 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     choose(null);
     room.setChosen(word);
     if (word === 'table') {
-      tell('Every room keeps its table, because a bot that\'s busy sits there.');
+      // I67: the table stays, because a bot that's busy sits there, but it can go anywhere and be
+      // any kind of table.
+      if (!view().floor.runs_it) {
+        tell('Only whoever runs the space can move the table.');
+        return;
+      }
+      const now = tableCells();
+      const styles = catalog?.table?.styles || ['wood', 'round', 'glass', 'stone', 'picnic', 'dark'];
+      const current = view().floor.table?.style || 'wood';
+      menu.open({
+        title: 'Table',
+        sub: 'Every room keeps one, wherever you like',
+        items: [
+          { label: 'Move', run: () => hold({ table: true, kind: 'table', label: 'Table', x: now.x, y: now.y, w: now.w, h: now.h, facing: 0 }) },
+          null,
+          ...styles.map((style) => ({
+            label: `${wordName(style)} table`,
+            checked: style === current,
+            run: () => restyle(async () => {
+              await api(`/api/floors/${encodeURIComponent(id)}/table`, { method: 'PUT', body: { style } });
+              await reload();
+              return `${wordName(style)} table.`;
+            }),
+          })),
+        ],
+      }, event.clientX, event.clientY, press.touch ? 'press' : 'click');
       return;
     }
     if (!view().floor.runs_it) {
@@ -3030,7 +3072,7 @@ async function roomView(id) {
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
     // The items go first, because a bot using one is sent to it.
     // W98: an open-air place is out of doors.
-    room.setLook(snapshot.floor?.floor && { ...snapshot.floor.floor, outdoors: Boolean(snapshot.floor.outdoors) });
+    room.setLook(snapshot.floor?.floor && { ...snapshot.floor.floor, outdoors: Boolean(snapshot.floor.outdoors), table: snapshot.floor.table ?? null });
     room.setItems(snapshot.items);
     // S55: only the bots really here stand in the room. The crew list has the rest.
     const inRoom = snapshot.agents.filter((agent) => !agent.away);
