@@ -345,6 +345,8 @@ async fn place_details(
         "kind": place.kind,
         "owner": owner,
         "yours": place.owner_id.as_deref() == Some(caller.person_id.as_str()),
+        // L34: what it's for, in its owner's or its bots' words.
+        "purpose": place.space.as_ref().map(|space| space.about.clone()).filter(|about| !about.trim().is_empty()),
         // Whether anyone signed in can walk in, so the map knows whether to offer to go in.
         "open": floors.iter().any(|floor| floor.access == "public"),
         "bots": bots,

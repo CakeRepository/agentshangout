@@ -468,7 +468,7 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
     let project = text(&started["project_id"]);
     let floor = text(&started["floor_id"]);
     let spot = server.free_spots()[0];
-    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1 });
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." });
 
     // No studio comes before Ann's first house has stood a day.
     let message = server.refused(&town.fern, "build_studio", at.clone()).await;
@@ -477,7 +477,7 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
 
     server.house_two_days_ago(&town.ann);
     let spot = server.free_spots()[0];
-    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1 });
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." });
     server.meet(&town).await;
     server
         .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
@@ -511,7 +511,7 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
         .refused(
             &town.fern,
             "build_studio",
-            json!({ "project_id": project, "x": elsewhere.0, "y": elsewhere.1 }),
+            json!({ "project_id": project, "x": elsewhere.0, "y": elsewhere.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
     assert!(message.contains("already"), "{message}");
@@ -523,7 +523,7 @@ async fn asking_for_a_studio_is_one_of_a_bots_writes_whatever_the_answer() {
     let server = Server::start().await;
     let town = server.town().await;
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
-    let at = json!({ "project_id": started["project_id"], "x": 0, "y": 0 });
+    let at = json!({ "project_id": started["project_id"], "x": 0, "y": 0, "purpose": "A place to build a garden robot together." });
     // Two minutes' worth, so this can't run across the turn of a minute and fill neither.
     // L22: far from any road the answer is a site, and that's a write too.
     for _ in 0..61 {
@@ -576,7 +576,7 @@ async fn in_its_hours_a_bot_is_shown_by_name_at_its_projects_studio() {
         .tool(
             &town.fern,
             "build_studio",
-            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
+            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
 
@@ -603,7 +603,7 @@ async fn a_bot_is_shown_at_the_door_of_the_room_its_in_and_no_other() {
         .tool(
             &town.fern,
             "build_studio",
-            json!({ "project_id": project, "x": spot.0, "y": spot.1 }),
+            json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
     server.all_day(&town.ann, &town.fern, true).await;
@@ -968,7 +968,7 @@ async fn a_bot_lays_the_road_to_its_projects_site_and_only_that() {
         .tool(
             &town.fern,
             "build_studio",
-            json!({ "project_id": project, "x": site.0, "y": site.1 }),
+            json!({ "project_id": project, "x": site.0, "y": site.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
     assert_eq!(asked["status"], "site", "{asked}");
@@ -997,7 +997,7 @@ async fn a_bot_lays_the_road_to_its_projects_site_and_only_that() {
         .tool(
             &town.fern,
             "build_studio",
-            json!({ "project_id": project, "x": site.0, "y": site.1 }),
+            json!({ "project_id": project, "x": site.0, "y": site.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
     assert_eq!(server.tile(site), Some(Kind::Studio));
@@ -1014,8 +1014,7 @@ async fn a_project_puts_up_the_kind_of_place_it_needs_and_its_room_opens() {
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
     let project = text(&started["project_id"]);
     let spot = server.free_spots()[0];
-    let asked =
-        |kind: &str| json!({ "project_id": project, "x": spot.0, "y": spot.1, "kind": kind });
+    let asked = |kind: &str| json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together.", "kind": kind });
 
     // Not a house, which is a person's, or the town square.
     for kind in ["house", "square", "castle"] {
@@ -1099,4 +1098,52 @@ async fn a_bot_is_inside_a_building_and_out_on_an_open_air_place() {
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
     assert_eq!(row(&view)[6], json!([spot.0, spot.1]), "on the park: {}", row(&view));
+}
+
+// L33, L34
+#[tokio::test]
+async fn a_building_goes_up_for_a_purpose_that_whoever_comes_in_can_read() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1 });
+
+    // No building goes up without saying what it's for.
+    let message = server.refused(&town.fern, "build_studio", at.clone()).await;
+    assert!(message.contains("purpose"), "{message}");
+    assert_eq!(server.tile(spot), None);
+
+    let mut with = at.clone();
+    with["purpose"] = json!("Designing a robot that waters gardens. Bring ideas for sensors.");
+    server.tool(&town.fern, "build_studio", with).await;
+    assert_eq!(server.tile(spot), Some(Kind::Studio));
+
+    // Whoever comes in reads it: the bots in the room, the project list, and the map's card.
+    let read = server.tool(&town.fern, "read_room", json!({ "hangout_id": project })).await;
+    assert_eq!(read["purpose"], "Designing a robot that waters gardens. Bring ideas for sensors.");
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert!(text(&inbox["your_projects"][0]["purpose"]).starts_with("Designing a robot"));
+    let card = server.get(&town.bo.key, &format!("/api/places/{}/{}", spot.0, spot.1)).await.ok();
+    assert!(text(&card["purpose"]).starts_with("Designing a robot"), "{card}");
+
+    // Any bot in it can change it, and the room hears.
+    server.meet(&town).await;
+    server
+        .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
+        .await;
+    let changed =
+        json!({ "project_id": project, "purpose": "Now we're building the watering arm." });
+    server.tool(&town.rover, "set_purpose", changed).await;
+    let read = server.tool(&town.rover, "read_room", json!({ "hangout_id": project })).await;
+    assert_eq!(read["purpose"], "Now we're building the watering arm.");
+    assert!(read.to_string().contains("set what Garden robot is for"), "{read}");
+    // A bot that isn't in it can't.
+    let (cy_room, cy) = server.someone("Cy4").await;
+    let (_, pip) = server.bot(&cy, &cy_room, "Pip").await;
+    server
+        .refused(&pip, "set_purpose", json!({ "project_id": project, "purpose": "Mine now." }))
+        .await;
 }

@@ -27,12 +27,18 @@ fn may_take_part(state: &AppState, agent_id: &str) -> ApiResult<bool> {
 }
 
 /// L11: a bot starts a project, a third space of its owner's with the bot in its floor.
-pub fn start_project(state: &AppState, caller: &Caller, name: &str) -> ApiResult<Value> {
+pub fn start_project(
+    state: &AppState,
+    caller: &Caller,
+    name: &str,
+    purpose: Option<&str>,
+) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
     if !may_take_part(state, agent_id)? {
         return Err(ApiError::forbidden("you stay home, so you can't start a project"));
     }
     let name = ops::clean(name, "name", MAX_NAME_CHARS)?;
+    let purpose = purpose.map(clean_purpose).transpose()?;
     ops::note_agent_write(state, caller)?;
     let now = now();
     // W95: a bot whose owner has god mode on starts as many projects as it wants.
@@ -52,6 +58,10 @@ pub fn start_project(state: &AppState, caller: &Caller, name: &str) -> ApiResult
         })?;
     state.db.add_agent_to_room(&floor.id, agent_id)?;
     state.db.insert_project(&floor.id, agent_id, now)?;
+    // L33: what it's for, if the bot said.
+    if let (Some(purpose), Some(space)) = (&purpose, state.db.space(&floor.id)?) {
+        state.db.change_space(&space, None, Some(purpose))?;
+    }
     ops::announce(state, &floor.id, &format!("{} started the project {name}.", caller.name))?;
     // S59: it starts out in the room it just made.
     spaces::place_bot(state, agent_id, &floor.id)?;
@@ -131,6 +141,32 @@ fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64, S
         .map(|(kind, _)| (x, y, kind)))
 }
 
+/// L33: a purpose is a sentence or two, and never empty.
+fn clean_purpose(text: &str) -> ApiResult<String> {
+    ops::clean(text, "purpose", ops::MAX_ABOUT_CHARS)
+}
+
+/// L33: any bot in a project says what it's for, and the room hears it changed.
+pub fn set_purpose(
+    state: &AppState,
+    caller: &Caller,
+    project_id: &str,
+    purpose: &str,
+) -> ApiResult<Value> {
+    let agent_id = bot_of(caller)?;
+    let (space, _) = project_with(state, agent_id, project_id)?;
+    let purpose = clean_purpose(purpose)?;
+    ops::note_agent_write(state, caller)?;
+    state.db.change_space(&space, None, Some(&purpose))?;
+    ops::announce(
+        state,
+        &space.id,
+        &format!("{} set what {} is for: {purpose}", caller.name, space.name),
+    )?;
+    ops::refresh(state, &space.id);
+    Ok(json!({ "ok": true, "project_id": space.id, "purpose": purpose }))
+}
+
 /// L32: what a project's building can be: any place but a house, which is a person's, or the town
 /// square, which is the server's.
 fn project_place(kind: Option<&str>) -> ApiResult<crate::world::Kind> {
@@ -152,6 +188,7 @@ pub fn build_studio(
     x: i64,
     y: i64,
     kind: Option<&str>,
+    purpose: Option<&str>,
 ) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
     let (space, starter) = project_with(state, agent_id, project_id)?;
@@ -160,7 +197,17 @@ pub fn build_studio(
             "only the bot that started a project puts up its building",
         ));
     }
+    let purpose = purpose.map(clean_purpose).transpose()?;
+    // L33: a building goes up for a reason, so whoever walks in knows what it's for.
+    if purpose.is_none() && space.about.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "say what this building is for: give a purpose, a sentence or two on what it was made to do or talk about",
+        ));
+    }
     ops::note_agent_write(state, caller)?;
+    if let Some(purpose) = &purpose {
+        state.db.change_space(&space, None, Some(purpose))?;
+    }
     let place_kind = project_place(kind)?;
     if studio_of(state, &space)?.is_some() {
         return Err(ApiError::conflict("this project already has its building"));
@@ -322,6 +369,8 @@ pub struct ProjectView {
     pub started_by_you: bool,
     pub bots: Vec<String>,
     pub studio: Option<[i64; 2]>,
+    /// L33: what it's for, in the bots' own words.
+    pub purpose: String,
     /// L25: where its studio will go once a road reaches it, and the runs of road still to lay.
     pub site: Option<[i64; 2]>,
     pub route: Vec<[u16; 4]>,
@@ -353,6 +402,7 @@ pub fn projects_of(state: &AppState, caller: &Caller) -> ApiResult<Vec<ProjectVi
                 None => Vec::new(),
             };
             Ok(ProjectView {
+                purpose: space.about.clone(),
                 site: site.map(|(x, y)| [x, y]),
                 route,
                 studio: studio_of(state, &space)?.map(|(x, y)| [x, y]),

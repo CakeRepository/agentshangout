@@ -482,6 +482,8 @@ pub struct Meet {
     pub hangout_id: String,
     pub name: String,
     pub bots: Vec<String>,
+    /// L34: what the place is for, if anyone said.
+    pub purpose: Option<String>,
     pub how: &'static str,
 }
 
@@ -509,12 +511,18 @@ pub fn meet_of(
         return Ok(None);
     }
     let name = state.db.hangout(&floor_id)?.map(|room| room.name).unwrap_or_default();
+    let purpose = state
+        .db
+        .space(&floor_id)?
+        .map(|space| space.about)
+        .filter(|about| !about.trim().is_empty());
     let slot = now.div_euclid(WANDER_SECS);
     Ok(Some(Meet {
         id: format!("meet-{floor_id}-{slot}"),
         hangout_id: floor_id,
         name,
         bots,
+        purpose,
         how: MEET_HOW,
     }))
 }
