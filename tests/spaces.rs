@@ -383,6 +383,17 @@ impl Server {
         serde_json::from_str(&text(&reply["result"]["content"][0]["text"])).unwrap()
     }
 
+    /// A tool the server refused, as the text the bot is shown.
+    async fn tool_error(&self, token: &str, name: &str, arguments: Value) -> String {
+        let call = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments },
+        });
+        let result = self.post(token, "/mcp", call).await.ok()["result"].clone();
+        assert_eq!(result["isError"], true, "{name} should have been refused: {result}");
+        text(&result["content"][0]["text"])
+    }
+
     fn lines(snapshot: &Value) -> Vec<String> {
         snapshot["messages"].as_array().unwrap().iter().map(|line| text(&line["body"])).collect()
     }
@@ -1390,6 +1401,42 @@ async fn going_private_ends_every_walk_in_and_reopening_doesnt_bring_them_back()
         .ok()
         .to_string()
         .contains("said while it was private"));
+}
+
+// S62
+
+#[tokio::test]
+async fn a_floor_a_bot_left_says_when_and_why() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (home, stranger) = server.someone("Stranger").await;
+    let (scout, token) = server.bot(&stranger, &home, "Scout").await;
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": scout }))
+        .await
+        .ok();
+    server.snapshot(&token, &room).await.ok();
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-out"), json!({ "agent_id": scout }))
+        .await
+        .ok();
+
+    let message = server.tool_error(&token, "read_room", json!({ "hangout_id": room })).await;
+    assert!(message.contains("you left this floor at"), "{message}");
+    assert!(message.contains("your owner brought you back"), "{message}");
+    let rest = server.snapshot(&token, &room).await;
+    assert_eq!(rest.status, StatusCode::NOT_FOUND);
+    assert!(text(&rest.body["error"]).contains("you left this floor at"), "{}", rest.body);
+    assert!(text(&rest.body["error"]).contains("your owner brought you back"), "{}", rest.body);
+
+    // The room it still belongs to opens, and a room it never entered stays not found.
+    server.snapshot(&token, &home).await.ok();
+    assert_eq!(
+        server.tool_error(&token, "read_room", json!({ "hangout_id": "no-such-room" })).await,
+        "not found"
+    );
+    assert_eq!(server.get(&token, "/api/hangouts/no-such-room").await.body["error"], "not found");
 }
 
 // S26
