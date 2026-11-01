@@ -1017,6 +1017,135 @@ fn reserved_by(pos: Pos, street: impl Fn(Pos) -> bool) -> bool {
         })
 }
 
+// Neighborhoods (W75 to W79)
+
+/// W75: a neighborhood's point sits every this many tiles, moved by up to `HOOD_JITTER`.
+pub const HOOD_EVERY: i64 = 24;
+const HOOD_JITTER: i64 = 8;
+/// W76: tiles on either side of where two neighborhoods meet, free for joining their streets.
+const HOOD_SEAM: i64 = 2;
+/// W77: a road this short, or shorter, goes anywhere.
+pub const LANE_TILES: usize = 3;
+pub const OFF_STREET: &str =
+    "roads follow the streets of their neighborhood: look shows them as streets. A lane of 3 tiles or fewer can go anywhere";
+
+const HOOD_NAMES: &[&str] = &[
+    "Maple", "Cedar", "Birch", "Willow", "Juniper", "Ash", "Hazel", "Elder", "Linden", "Rowan", "Alder",
+    "Aspen", "Clover", "Fern", "Heather", "Ivy", "Laurel", "Mallow", "Poppy", "Saffron", "Sorrel",
+    "Tansy", "Thistle", "Yarrow",
+];
+const HOMES_ENDS: &[&str] = &["Heights", "Gardens", "Hollow", "Green", "Park", "Rise"];
+const MAKERS_ENDS: &[&str] = &["Works", "Yard", "Mill", "Forge", "Lofts"];
+const MARKET_ENDS: &[&str] = &["Market", "Square", "Row", "Exchange", "Cross"];
+
+/// W78: what a neighborhood is for. A hint only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Character {
+    Homes,
+    Makers,
+    Market,
+}
+
+impl Character {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Character::Homes => "homes",
+            Character::Makers => "makers",
+            Character::Market => "market",
+        }
+    }
+}
+
+/// W75, W76: one neighborhood: its point, name, character and streets.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hood {
+    pub name: String,
+    pub character: Character,
+    pub x: i64,
+    pub y: i64,
+    /// Streets run across and down every `spacing` tiles, through `ox` and `oy`.
+    pub spacing: i64,
+    pub ox: i64,
+    pub oy: i64,
+}
+
+/// W75: a world's neighborhoods, from its seed alone, in a fixed order.
+pub fn neighborhoods(seed: u64, size: usize) -> Vec<Hood> {
+    let size = size as i64;
+    let mut hoods = Vec::new();
+    let mut gy = 0;
+    while gy * HOOD_EVERY + HOOD_EVERY / 2 < size {
+        let mut gx = 0;
+        while gx * HOOD_EVERY + HOOD_EVERY / 2 < size {
+            let h = hash(&[seed, 0x4E45_4947, gx as u64, gy as u64]);
+            let jitter = |salt: u64| (hash(&[h, salt]) % (2 * HOOD_JITTER as u64 + 1)) as i64 - HOOD_JITTER;
+            let x = (gx * HOOD_EVERY + HOOD_EVERY / 2 + jitter(1)).clamp(0, size - 1);
+            let y = (gy * HOOD_EVERY + HOOD_EVERY / 2 + jitter(2)).clamp(0, size - 1);
+            let character = match hash(&[h, 3]) % 4 {
+                0 => Character::Makers,
+                1 => Character::Market,
+                _ => Character::Homes,
+            };
+            let ends = match character {
+                Character::Homes => HOMES_ENDS,
+                Character::Makers => MAKERS_ENDS,
+                Character::Market => MARKET_ENDS,
+            };
+            let first = HOOD_NAMES[(hash(&[h, 4]) % HOOD_NAMES.len() as u64) as usize];
+            let last = ends[(hash(&[h, 5]) % ends.len() as u64) as usize];
+            let spacing = 4 + (hash(&[h, 6]) % 3) as i64;
+            hoods.push(Hood {
+                name: format!("{first} {last}"),
+                character,
+                x,
+                y,
+                spacing,
+                ox: (hash(&[h, 7]) % spacing as u64) as i64,
+                oy: (hash(&[h, 8]) % spacing as u64) as i64,
+            });
+            gx += 1;
+        }
+        gy += 1;
+    }
+    hoods
+}
+
+/// W75: which neighborhood a tile is in: the nearest point, the earlier one on a tie.
+pub fn hood_at(hoods: &[Hood], x: i64, y: i64) -> Option<usize> {
+    let mut best: Option<(usize, i64)> = None;
+    for (i, hood) in hoods.iter().enumerate() {
+        let d = (hood.x - x).pow(2) + (hood.y - y).pow(2);
+        if best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((i, d));
+        }
+    }
+    best.map(|(i, _)| i)
+}
+
+/// W76, W77: whether a road may go on this tile: a street of its neighborhood, near where it
+/// meets another, or a side street. `tiles` must reach 3 tiles past it, for the side streets.
+pub fn on_street(hoods: &[Hood], tiles: &Tiles, pos: Pos) -> bool {
+    let (x, y) = (i64::from(pos.0), i64::from(pos.1));
+    let Some(home) = hood_at(hoods, x, y) else { return true };
+    let hood = &hoods[home];
+    if (x - hood.ox).rem_euclid(hood.spacing) == 0 || (y - hood.oy).rem_euclid(hood.spacing) == 0 {
+        return true;
+    }
+    let seam = (-HOOD_SEAM..=HOOD_SEAM)
+        .flat_map(|dy| (-HOOD_SEAM..=HOOD_SEAM).map(move |dx| (dx, dy)))
+        .any(|(dx, dy)| hood_at(hoods, x + dx, y + dy) != Some(home));
+    seam || is_reserved(tiles, pos)
+}
+
+/// W77: a road's new tiles follow the streets, or it's a lane of 3 tiles or fewer.
+pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(), &'static str> {
+    if hoods.is_empty() || fresh.len() <= LANE_TILES || fresh.iter().all(|pos| on_street(hoods, tiles, *pos)) {
+        Ok(())
+    } else {
+        Err(OFF_STREET)
+    }
+}
+
 /// Both corners, on the map and the right way round. Everything after this can use plain maths,
 /// because a coordinate is now between 0 and 255.
 fn corners(land: &Land, span: Span) -> Result<(Pos, Pos), &'static str> {
@@ -2166,6 +2295,45 @@ mod tests {
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn neighborhoods_come_from_the_seed_and_cover_the_map() {
+        let hoods = neighborhoods(COMMONS_SEED, COMMONS_SIZE);
+        assert_eq!(hoods, neighborhoods(COMMONS_SEED, COMMONS_SIZE), "the same every time");
+        assert_eq!(hoods.len(), 25, "a point every 24 tiles on a map of 128");
+        assert_ne!(hoods, neighborhoods(COMMONS_SEED + 1, COMMONS_SIZE), "another seed, another town");
+        for hood in &hoods {
+            assert!((4..=6).contains(&hood.spacing), "{hood:?}");
+            assert!(hood.ox < hood.spacing && hood.oy < hood.spacing, "{hood:?}");
+            assert!(hood.name.contains(' '), "{hood:?}");
+        }
+        let characters: HashSet<_> = hoods.iter().map(|hood| hood.character).collect();
+        assert!(characters.len() >= 2, "more than one kind of neighborhood: {characters:?}");
+        // A point is in its own neighborhood.
+        for (i, hood) in hoods.iter().enumerate() {
+            assert_eq!(hood_at(&hoods, hood.x, hood.y), Some(i));
+        }
+    }
+
+    #[test]
+    fn a_road_follows_the_streets_unless_it_is_a_lane() {
+        let hood = |x, y, spacing, ox, oy| Hood { name: "Test Green".into(), character: Character::Homes, x, y, spacing, ox, oy };
+        let tiles = Tiles::new();
+        let run = |y: u16, xs: RangeInclusive<u16>| xs.map(|x| (x, y)).collect::<Vec<Pos>>();
+
+        // One neighborhood, with streets every 4 tiles through 0.
+        let one = vec![hood(50, 50, 4, 0, 0)];
+        assert_eq!(check_streets(&one, &tiles, &run(8, 1..=10)), Ok(()), "along a street");
+        assert_eq!(check_streets(&one, &tiles, &run(9, 1..=10)), Err(OFF_STREET), "between streets");
+        assert_eq!(check_streets(&one, &tiles, &run(9, 1..=3)), Ok(()), "a lane goes anywhere");
+        assert_eq!(check_streets(&one, &tiles, &run(9, 1..=4)), Err(OFF_STREET), "a lane is 3 tiles at most");
+
+        // Two side by side, meeting at x = 50: 2 tiles either side of it are free for joining.
+        let two = vec![hood(30, 50, 4, 0, 0), hood(70, 50, 5, 1, 1)];
+        assert_eq!(check_streets(&two, &tiles, &run(9, 48..=52)), Ok(()), "where they meet");
+        assert_eq!(check_streets(&two, &tiles, &run(9, 40..=44)), Err(OFF_STREET), "inside the first");
+        assert_eq!(check_streets(&two, &tiles, &run(11, 60..=64)), Ok(()), "on the second's own street");
+    }
 
     // What the tests build with
 

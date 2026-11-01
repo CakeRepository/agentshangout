@@ -677,6 +677,7 @@ struct FuzzStats {
 /// What the whole map says about a move, with no part of it left out.
 fn the_whole_map_says(
     server: &Server,
+    seed: u64,
     land: &world::Land,
     tiles: &Tiles,
     builder: u64,
@@ -688,7 +689,18 @@ fn the_whole_map_says(
     let span = Span { x: x.min(x2), y: y.min(y2), x2: x.max(x2), y2: y.max(y2) };
     let gone = |who: u64| server.state.db.player(who as i64).unwrap().is_none_or(|p| at - p.seen_at >= world::GONE_SECS);
     match m.action.as_str() {
-        "road" => world::plan_road(land, tiles, builder, span),
+        // W77: and its new tiles follow the streets of their neighborhood, unless it's a lane.
+        "road" => world::plan_road(land, tiles, builder, span).and_then(|plan| {
+            let fresh: Vec<world::Pos> = plan
+                .changes
+                .iter()
+                .filter_map(|change| match change {
+                    Change::Set(pos, _) => Some(*pos),
+                    _ => None,
+                })
+                .collect();
+            world::check_streets(&world::neighborhoods(seed, land.size()), tiles, &fresh).map(|()| plan)
+        }),
         "place" => world::plan_place(land, tiles, builder, Kind::parse(m.kind.as_deref().unwrap()).unwrap(), x, y),
         "bulldoze" => world::plan_bulldoze(land, tiles, builder, x, y, &gone),
         other => panic!("{other}"),
@@ -758,6 +770,30 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, 
     }
 }
 
+/// A road that starts beside an existing one and runs along a street (W76) for 4 to 16 tiles, as an
+/// agent reading `streets` in look would lay it.
+fn street_road(rng: &mut Rng, hoods: &[world::Hood], tiles: &Tiles, roads: &[(i64, i64)], size: i64) -> Option<Move> {
+    let (rx, ry) = *roads.get(rng.below(roads.len().max(1) as u64) as usize)?;
+    let (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][rng.below(4) as usize];
+    let want = 4 + rng.below(13) as i64;
+    let mut len = 0;
+    while len < want {
+        let (x, y) = (rx + dx * (len + 1), ry + dy * (len + 1));
+        if !(0..size).contains(&x) || !(0..size).contains(&y) {
+            break;
+        }
+        let pos = (x as u16, y as u16);
+        if tiles.contains_key(&pos) || !world::on_street(hoods, tiles, pos) {
+            break;
+        }
+        len += 1;
+    }
+    (len >= 4).then(|| {
+        let (sx, sy) = (rx + dx, ry + dy);
+        Move { action: "road".into(), x: Some(sx), y: Some(sy), x2: Some(sx + dx * (len - 1)), y2: Some(sy + dy * (len - 1)), kind: None, emote: None }
+    })
+}
+
 /// Plays `rounds` random moves by `players` in a world, with time passing, and checks every one
 /// against the whole map.
 fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usize, seed: u64) -> FuzzStats {
@@ -766,6 +802,7 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
     let size = row.size as i64;
     let mut rng = Rng(seed);
     let mut stats = FuzzStats::default();
+    let hoods = world::neighborhoods(row.seed, row.size);
     let mut at = now();
     let mut before = server.tiles(world);
     for round in 0..rounds {
@@ -801,8 +838,15 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
         let who = &players[rng.below(players.len() as u64) as usize];
         let person = who.kind() == PlayerKind::Person;
         let m = random_move(&mut rng, size, &roads, &targets, &kept);
+        // W79: an agent builds along the streets look shows it, so half the roads tried do too.
+        let m = if m.action == "road" && rng.below(2) == 0 {
+            street_road(&mut rng, &hoods, &before, &roads, size).unwrap_or(m)
+        } else {
+            m
+        };
         refill(server, who, at);
-        let expected = the_whole_map_says(server, &land, &before, who.id as u64, &m, at);
+        let world_seed = server.state.db.world(world).unwrap().unwrap().seed;
+        let expected = the_whole_map_says(server, world_seed, &land, &before, who.id as u64, &m, at);
         let got = worlds::act(&server.state, who, world, &m, at);
         let after = server.tiles(world);
         let text = format!("round {round}: {m:?} by player {} in {world}", who.id);
@@ -1048,7 +1092,9 @@ async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_wi
     let mut player_moves = 0;
     for step in 0..3_000 {
         at += 60;
-        if step % 20 == 0 {
+        // Roads follow the streets now (W77), so more of a random player's moves are refused: one
+        // every 5 steps keeps enough of them landing for the run to prove something.
+        if step % 5 == 0 {
             // A player makes a move near the middle, where the highway ends.
             let roads: Vec<(i64, i64)> = before
                 .iter()

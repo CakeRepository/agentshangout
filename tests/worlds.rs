@@ -375,6 +375,17 @@ struct Map {
     built: HashMap<(i64, i64), (String, i64)>,
     /// Tiles kept for side streets (W15): a zone or a park skips them, and a road may use them.
     kept: HashSet<(i64, i64)>,
+    /// Tiles a long road may go on (W76, W77), worked out as the server does.
+    on_streets: HashSet<(i64, i64)>,
+}
+
+/// The tiles a road longer than a lane may go on (W77), worked out as the server does.
+fn street_tiles(seed: u64, size: i64, tiles: &world::Tiles) -> HashSet<(i64, i64)> {
+    let hoods = world::neighborhoods(seed, size as usize);
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .filter(|&(x, y)| world::on_street(&hoods, tiles, (x as u16, y as u16)))
+        .collect()
 }
 
 /// The tiles a world keeps for side streets, worked out as the server does.
@@ -428,7 +439,8 @@ impl Map {
             .map(|(&(x, y), _)| ((x as u16, y as u16), Tile { kind: Kind::Road, level: 0, player: None }))
             .collect();
         let size = ground.len() as i64;
-        Map { size, ground, built, kept: kept_tiles(size, &streets) }
+        let seed = view["seed"].as_u64().unwrap();
+        Map { size, ground, built, kept: kept_tiles(size, &streets), on_streets: street_tiles(seed, size, &streets) }
     }
 
     fn from_db(server: &Server, world: &str) -> Map {
@@ -443,7 +455,13 @@ impl Map {
             .iter()
             .map(|(&(x, y), tile)| ((i64::from(x), i64::from(y)), (tile.kind.as_str().to_string(), i64::from(tile.level))))
             .collect();
-        Map { size: row.size as i64, ground, built, kept: kept_tiles(row.size as i64, &tiles) }
+        Map {
+            size: row.size as i64,
+            ground,
+            built,
+            kept: kept_tiles(row.size as i64, &tiles),
+            on_streets: street_tiles(row.seed, row.size as i64, &tiles),
+        }
     }
 
     fn ground(&self, x: i64, y: i64) -> Option<char> {
@@ -479,7 +497,9 @@ impl Map {
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i)) {
+                // W77: longer than a lane, it follows the streets.
+                let along = |i: i64| n <= world::LANE_TILES as i64 || self.on_streets.contains(&(rx + dx * i, ry + dy * i));
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }
@@ -2960,7 +2980,7 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners"])
+        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners", "neighborhoods"])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];
@@ -3663,7 +3683,9 @@ fn branch_from_road(map: &Map, n: i64) -> ((i64, i64), (i64, i64)) {
             let stub: Vec<(i64, i64)> = (1..=n).map(|i| (rx + dx * i, ry + dy * i)).collect();
             let last = stub[stub.len() - 1];
             let out_of_reach = roads.iter().all(|&(x, y)| (x - last.0).abs() > 5 || (y - last.1).abs() > 5);
+            let along = stub.len() <= world::LANE_TILES || stub.iter().all(|spot| map.on_streets.contains(spot));
             if stub.iter().all(|&(x, y)| map.open(x, y))
+                && along
                 && stub[1..].iter().all(|&spot| !beside_a_road(map, spot))
                 && out_of_reach
             {
@@ -4039,4 +4061,35 @@ fn the_status_bar_under_the_map_stays_one_line_tall() {
     assert!(css.contains(".wd-map .wd-status .wd-town { order: 1; }"), "on a narrow screen the readout can't add a row");
     assert!(app.contains("frame.message.title = text;"), "a message that doesn't fit can still be read");
     assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
+}
+
+// W75, W76, W77, W79
+#[tokio::test]
+async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_anywhere() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+
+    // The view lists every neighborhood's point, name and character.
+    let view = server.fresh_view(COMMONS).await;
+    let hoods = view["neighborhoods"].as_array().unwrap();
+    assert_eq!(hoods.len(), 25, "{view}");
+    for hood in hoods {
+        assert!(hood[0].as_str().unwrap().contains(' '), "{hood}");
+        assert!(["homes", "makers", "market"].contains(&hood[1].as_str().unwrap()), "{hood}");
+    }
+
+    // Look says which neighborhood, and lists the guide's road out from the highway as streets.
+    let look = server.tool("look", json!({ "player_token": guest.token, "x": 51, "y": 42, "w": 16, "h": 8 })).await;
+    assert!(look["neighborhood"]["name"].is_string(), "{look}");
+    let streets: HashSet<(i64, i64)> =
+        look["streets"].as_array().unwrap().iter().map(|at| (at[0].as_i64().unwrap(), at[1].as_i64().unwrap())).collect();
+    assert!((47..=56).all(|x| streets.contains(&(x, 42))), "{look}");
+
+    // Along a street works. A long road between streets doesn't, and says why.
+    server.act(&guest.token, COMMONS, road_move((47, 42), (56, 42))).await.ok();
+    let between = server.act(&guest.token, COMMONS, road_move((47, 43), (56, 43))).await;
+    assert_eq!(between.status, StatusCode::BAD_REQUEST, "{}", between.show());
+    assert!(between.body.to_string().contains("roads follow the streets"), "{}", between.show());
+    // A lane of 3 tiles goes anywhere, as long as it touches a road.
+    server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
 }

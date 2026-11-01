@@ -396,6 +396,17 @@ struct Map {
     built: HashMap<(i64, i64), (String, i64)>,
     /// Tiles kept for side streets (W15): a place can't go on them, and a road may use them.
     kept: HashSet<(i64, i64)>,
+    /// Tiles a long road may go on (W76, W77), worked out as the server does.
+    on_streets: HashSet<(i64, i64)>,
+}
+
+/// The tiles a road longer than a lane may go on (W77), worked out as the server does.
+fn street_tiles(seed: u64, size: i64, tiles: &world::Tiles) -> HashSet<(i64, i64)> {
+    let hoods = world::neighborhoods(seed, size as usize);
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .filter(|&(x, y)| world::on_street(&hoods, tiles, (x as u16, y as u16)))
+        .collect()
 }
 
 /// The tiles a world keeps for side streets, worked out as the server does.
@@ -419,7 +430,13 @@ impl Map {
             .iter()
             .map(|(&(x, y), tile)| ((i64::from(x), i64::from(y)), (tile.kind.as_str().to_string(), i64::from(tile.level))))
             .collect();
-        Map { size: row.size as i64, ground, built, kept: kept_tiles(row.size as i64, &tiles) }
+        Map {
+            size: row.size as i64,
+            ground,
+            built,
+            kept: kept_tiles(row.size as i64, &tiles),
+            on_streets: street_tiles(row.seed, row.size as i64, &tiles),
+        }
     }
 
     fn ground(&self, x: i64, y: i64) -> Option<char> {
@@ -455,7 +472,9 @@ impl Map {
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i)) {
+                // W77: longer than a lane, it follows the streets.
+                let along = |i: i64| n <= world::LANE_TILES as i64 || self.on_streets.contains(&(rx + dx * i, ry + dy * i));
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }
