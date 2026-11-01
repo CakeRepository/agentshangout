@@ -76,8 +76,20 @@ pub const MAX_THIRD_SPACES: i64 = 3;
 pub const MAX_BUILDINGS: i64 = 1_500;
 /// W61: how long after their first house a person can place each kind, in seconds. A place that's
 /// open to strangers comes last, because this wait stands in for the server's code (S48).
-pub const PLACE_WAITS: [(Kind, i64); 4] =
-    [(Kind::House, 0), (Kind::Studio, 86_400), (Kind::Club, 3 * 86_400), (Kind::Cafe, 7 * 86_400)];
+/// W90: places to work on something come as a studio does, a lounge as a club, and a bar or a
+/// park as a cafe.
+pub const PLACE_WAITS: [(Kind, i64); 10] = [
+    (Kind::House, 0),
+    (Kind::Studio, 86_400),
+    (Kind::Office, 86_400),
+    (Kind::Workshop, 86_400),
+    (Kind::Library, 86_400),
+    (Kind::Club, 3 * 86_400),
+    (Kind::Lounge, 3 * 86_400),
+    (Kind::Cafe, 7 * 86_400),
+    (Kind::Bar, 7 * 86_400),
+    (Kind::Green, 7 * 86_400),
+];
 /// A walk goes at most this many tiles.
 pub const WALK_RANGE: i64 = 16;
 /// W31: `look` shows at most this many tiles across and down.
@@ -898,12 +910,7 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
         "place" => {
             only(&["x", "y", "kind"])?;
             let (x, y) = point()?;
-            let kind = mv
-                .kind
-                .as_deref()
-                .and_then(Kind::parse)
-                .filter(|kind| kind.is_building())
-                .ok_or("a building needs a kind: house, cafe, club or studio")?;
+            let kind = mv.kind.as_deref().and_then(Kind::parse_place).ok_or(world::NOT_A_PLACE)?;
             Ok(Parsed::Place(kind, x, y))
         }
         "bulldoze" => {
@@ -1759,12 +1766,7 @@ fn etag_of(body: &[u8]) -> String {
 
 /// How a kind of place reads in a name, like "Ann's Studio".
 fn kind_title(kind: &str) -> &'static str {
-    match kind {
-        "house" => "House",
-        "cafe" => "Café",
-        "club" => "Club",
-        _ => "Studio",
-    }
+    crate::spaces::place_title(kind)
 }
 
 /// W29, W31: builds a world's view: the land, everything built, the street, the sums, and in The
@@ -2189,8 +2191,10 @@ pub fn look(
         "window": { "x": x0, "y": y0, "w": wide, "h": high },
         "legend": "land rows are one letter a tile: g grass, f forest, w water, s sand, h hill. \
                    Row 0 of land is the window's top row, and its first letter is its left column. \
-                   built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
-                   place a person put up. A kind of square is the town square, where bots meet. \
+                   built is [x, y, kind, level], and a kind of house, cafe, club, studio, green \
+                   (a park), lounge, bar, office, workshop or library is a place someone put up. \
+                   A kind of square is the town square, where bots meet. A square or a green takes \
+                   2 by 2 tiles: its own and the three across and down, which are level 1. \
                    players is [id, name, x, y, emote]. reserved is [x, y] \
                    for each open tile kept for a side street: a place can't use it and roads may. \
                    streets is [x, y] for each open tile a road may go on (W85): roads follow the \
@@ -2735,7 +2739,12 @@ mod tests {
             parse(json!({ "action": "place", "x": 1, "y": 2 })).is_err(),
             "a place needs a kind"
         );
-        assert!(parse(json!({ "action": "place", "kind": "park", "x": 1, "y": 2 })).is_err());
+        // W90: a park is a place again, as a green. The old city's zones are still gone.
+        assert!(matches!(
+            parse(json!({ "action": "place", "kind": "park", "x": 1, "y": 2 })),
+            Ok(Parsed::Place(Kind::Green, 1, 2))
+        ));
+        assert!(parse(json!({ "action": "place", "kind": "homes", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "zone", "kind": "homes", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "park", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "road", "x": 1, "y": 2, "x2": 3 })).is_err());

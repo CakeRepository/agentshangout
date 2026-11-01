@@ -110,12 +110,32 @@ pub fn invite_to_project(
 /// Where a project's studio stands, if it still does. Only that one tile is read, because `inbox`
 /// asks this of every project and nothing limits how often a bot reads it (W30).
 fn studio_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64)>> {
+    Ok(building_of(state, space)?.map(|(x, y, _)| (x, y)))
+}
+
+/// L32: a project's building, of whatever kind, and where it stands, if it still does.
+fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64, String)>> {
     let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
         return Ok(None);
     };
-    let standing =
-        state.db.building_at(COMMONS_ID, x, y)?.is_some_and(|(kind, _)| kind == "studio");
-    Ok(standing.then_some((x, y)))
+    Ok(state
+        .db
+        .building_at(COMMONS_ID, x, y)?
+        .filter(|(kind, _)| kind != "house" && kind != "square")
+        .map(|(kind, _)| (x, y, kind)))
+}
+
+/// L32: what a project's building can be: any place but a house, which is a person's, or the town
+/// square, which is the server's.
+fn project_place(kind: Option<&str>) -> ApiResult<crate::world::Kind> {
+    use crate::world::Kind;
+    match kind.map_or(Some(Kind::Studio), Kind::parse_place) {
+        Some(Kind::House | Kind::Square) => Err(ApiError::bad_request(
+            "a house is a person's own, and the town square the server's",
+        )),
+        Some(kind) => Ok(kind),
+        None => Err(ApiError::bad_request(crate::world::NOT_A_PLACE)),
+    }
 }
 
 /// L13: the bot that started a project puts up its studio, as its owner's own place.
@@ -125,23 +145,30 @@ pub fn build_studio(
     project_id: &str,
     x: i64,
     y: i64,
+    kind: Option<&str>,
 ) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
     let (space, starter) = project_with(state, agent_id, project_id)?;
     if starter.as_deref() != Some(agent_id) {
-        return Err(ApiError::forbidden("only the bot that started a project puts up its studio"));
+        return Err(ApiError::forbidden(
+            "only the bot that started a project puts up its building",
+        ));
     }
     ops::note_agent_write(state, caller)?;
+    let place_kind = project_place(kind)?;
     if studio_of(state, &space)?.is_some() {
-        return Err(ApiError::conflict("this project already has its studio"));
+        return Err(ApiError::conflict("this project already has its building"));
     }
     let now = now();
     // L22: with no road beside the tile yet, it becomes the project's site, with the way to it.
     let (tiles, land, hoods) = map_of(state)?;
     let pos = land.land.locate(x, y).ok_or_else(|| ApiError::bad_request("that is off the map"))?;
-    let beside_road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
-        let at = (u16::try_from(i32::from(pos.0) + dx), u16::try_from(i32::from(pos.1) + dy));
-        matches!(at, (Ok(ax), Ok(ay)) if tiles.get(&(ax, ay)).is_some_and(|tile| tile.kind == crate::world::Kind::Road))
+    // W91: a big place is reached from beside any of its tiles.
+    let beside_road = crate::world::footprint(place_kind, pos).into_iter().any(|cell| {
+        [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
+            let at = (u16::try_from(i32::from(cell.0) + dx), u16::try_from(i32::from(cell.1) + dy));
+            matches!(at, (Ok(ax), Ok(ay)) if tiles.get(&(ax, ay)).is_some_and(|tile| tile.kind == crate::world::Kind::Road))
+        })
     });
     if !beside_road {
         if tiles.contains_key(&pos) || !land.land.at(pos).is_some_and(|ground| ground.is_open()) {
@@ -167,22 +194,41 @@ pub fn build_studio(
         y: Some(y),
         x2: None,
         y2: None,
-        kind: Some("studio".to_string()),
+        kind: Some(place_kind.as_str().to_string()),
         emote: None,
     };
     worlds::act(state, &player, COMMONS_ID, &place, now)?;
     state.db.set_plot(COMMONS_ID, x, y, &space.id)?;
     // L24: the studio is up, so the site has done its job.
     state.db.clear_project_site(&space.id)?;
-    // W73: the studio is called what the project is.
+    // W73: the building is called what the project is.
     state.worlds.mark_stale(COMMONS_ID);
+    // W92: it's open unless the project's owner closes it, and dressed for what it is.
+    open_for_everyone(state, &space)?;
+    crate::items::dress_for_place(state, caller, &space.id, place_kind.as_str())?;
+    let title = crate::spaces::place_title(place_kind.as_str()).to_lowercase();
     ops::announce(
         state,
         &space.id,
-        &format!("{} put up the studio for {} on The Commons.", caller.name, space.name),
+        &format!("{} put up the {title} for {} on The Commons.", caller.name, space.name),
     )?;
     ops::refresh(state, &space.id);
-    Ok(json!({ "ok": true, "x": x, "y": y }))
+    Ok(json!({ "ok": true, "x": x, "y": y, "kind": place_kind.as_str() }))
+}
+
+/// W92: a project's room opens to everyone when its building goes up. Its owner can close it.
+fn open_for_everyone(state: &AppState, space: &Space) -> ApiResult<()> {
+    state.db.change_floor(&crate::db::FloorChange {
+        id: &space.id,
+        name: None,
+        access: Some("public"),
+        size: None,
+        paint: None,
+        flooring: None,
+        keep_bots_of: &space.owner_id,
+        private_only: &crate::items::private_only(),
+    })?;
+    Ok(())
 }
 
 /// The Commons as a route needs it: everything built, the land and the neighborhoods.
