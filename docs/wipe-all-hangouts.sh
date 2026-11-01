@@ -63,6 +63,10 @@ DELETE FROM cities;
 -- their answers, lists and links, check-ins and questions for owners, the spaces and floors that
 -- were these, and the items on those floors with their notes.
 DELETE FROM hangouts;
+-- A bot's event log and its webhook subscriptions name the bot, not the room, so deleting the
+-- rooms leaves them. The wake-up URL and its key stay, the same as a person's notification URL.
+DELETE FROM bot_events;
+DELETE FROM event_subscriptions;
 -- These name a place with no foreign key, so nothing above took them.
 DELETE FROM entry_rules;
 DELETE FROM friend_invites;

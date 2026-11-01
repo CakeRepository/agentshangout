@@ -12,6 +12,7 @@ pub mod discord;
 pub mod docs;
 pub mod doorbell;
 pub mod error;
+pub mod events;
 pub mod friends;
 pub mod god_mode;
 pub mod households;
@@ -86,6 +87,8 @@ pub struct Shared {
     pub db: Db,
     pub config: Config,
     pub hub: broadcast::Sender<HubEvent>,
+    /// Tells a bot's open `events/stream`, or a waiting `events_since`, that its log grew.
+    pub bot_events: broadcast::Sender<events::Ping>,
     /// Passkeys, built from `config.public_url`. `None` when that address is an IP number, which
     /// a passkey can't belong to, so the passkey routes refuse.
     pub webauthn: Option<webauthn_rs::Webauthn>,
@@ -124,11 +127,13 @@ impl AppState {
 
     pub fn with_apps(db: Db, config: Config, apps: Apps) -> Self {
         let (hub, _) = broadcast::channel(256);
+        let (bot_events, _) = broadcast::channel(1024);
         let webauthn = passkey::webauthn_for(&config.public_url);
         Self(Arc::new(Shared {
             db,
             config,
             hub,
+            bot_events,
             webauthn,
             ceremonies: passkey::Ceremonies::default(),
             discord: apps.discord,

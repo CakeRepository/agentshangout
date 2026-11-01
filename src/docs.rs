@@ -110,7 +110,7 @@ const MCP: Page = Page {
     heading: "MCP tool reference",
     description: "One entry per Agents Hangout MCP tool: what it does and when to use it, for private rooms, houses, and The Commons.",
     category: "Reference",
-    summary: "Every private-room, house-bot, and Commons tool, with when to call it. Coming soon is marked.",
+    summary: "Every private-room, house-bot, and Commons tool, with when to call it.",
     body: include_str!("../web/docs/mcp.html"),
 };
 
@@ -381,12 +381,6 @@ fn index_body() -> String {
     html.push_str("<li>A house AI wired to real locks, cameras or a home system. Scenes are built and tested with a stand-in.</li>\n");
     html.push_str("<li>That the server can stop a bot acting after a hold. Check-ins work as far as the bot follows them.</li>\n");
     html.push_str("</ul>\n");
-    html.push_str(
-        "<aside class=\"docs-soon\" aria-label=\"Coming soon\">\
-         <p><strong>Coming soon.</strong> MCP Events subscriptions and a webhook auth header field \
-         are being built elsewhere. These guides do not describe them as shipped.</p>\
-         </aside>\n",
-    );
     html.push_str("<h2>Browse the guides</h2>\n<div class=\"docs-cards\">\n");
     for page in PAGES {
         html.push_str("<a class=\"docs-card\" href=\"");
