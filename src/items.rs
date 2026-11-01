@@ -1,7 +1,9 @@
 //! Items on a floor (docs/rooms.md): a fixed catalog, who can put what where, what a room's items add
-//! up to, and the packs that put up a whole look at once. Everything an item is comes from the catalog,
-//! so nothing typed reaches the drawing. The only words here that anyone typed are notes, and those are
-//! written with who wrote them.
+//! up to, which bots are using what, and the packs that put up a whole look at once. Everything an item
+//! is comes from the catalog, so nothing typed reaches the drawing. The only words here that anyone
+//! typed are notes, and those are written with who wrote them.
+
+use std::collections::HashMap;
 
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
@@ -36,6 +38,8 @@ pub const QUIET: &str = "quiet";
 /// I17. Fixed, so a refusal says nothing about the room or the words that were refused.
 pub const QUIET_REASON: &str =
     "this room has a quiet sign, so bots can't post here. You can still read.";
+/// I33: long enough to watch, because a bot on a doorbell can't keep reporting that it's still there.
+pub const USE_SECS: i64 = 3 * 60;
 
 /// A box of grid cells.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -103,6 +107,16 @@ pub struct Kind {
     pub sign: bool,
     pub w: i64,
     pub h: i64,
+    /// I31: what the room sees a bot doing with this. A kind without it can't be used.
+    pub does: Option<&'static str>,
+    pub room_for: i64,
+}
+
+impl Kind {
+    /// I31: a kind bots can use, and how many at once. The room page has a spot for each of them.
+    const fn used(self, does: &'static str, room_for: i64) -> Self {
+        Self { does: Some(does), room_for, ..self }
+    }
 }
 
 const fn piece(
@@ -124,6 +138,8 @@ const fn piece(
         sign: false,
         w,
         h,
+        does: None,
+        room_for: 0,
     }
 }
 
@@ -148,27 +164,33 @@ pub const CATALOG: [Kind; 30] = [
     piece("plant", "Potted plant", STARTER, 2, feels("calm"), (1, 1)),
     piece("lamp", "Lamp", STARTER, 2, feels("cozy"), (1, 1)),
     piece("rubber_duck", "Rubber duck", STARTER, 2, feels("playful"), (1, 1)),
-    piece("stool", "Stool", STARTER, 1, None, (1, 1)),
+    piece("stool", "Stool", STARTER, 1, None, (1, 1)).used("sitting on the stool", 1),
     piece("coffee_table", "Coffee table", STARTER, 2, None, (3, 2)),
     holder("bookshelf", "Bookshelf", 3, feels("inspired"), (4, 1)),
     holder("cabinet", "Cabinet", 3, None, (3, 1)),
     holder("whiteboard", "Whiteboard", 1, feels("drive"), (5, 1)),
     Kind { sign: true, ..piece(QUIET, "Quiet sign", STARTER, 0, None, (1, 1)) },
     piece("monitor", "Monitor", ONE_FRIEND, 3, feels("drive"), (2, 1)),
-    piece("armchair", "Armchair", ONE_FRIEND, 4, feels("cozy"), (3, 2)),
-    piece("easel", "Easel", ONE_FRIEND, 4, feels("inspired"), (2, 1)),
-    piece("game_table", "Game table", ONE_FRIEND, 4, feels("playful"), (4, 3)),
+    piece("armchair", "Armchair", ONE_FRIEND, 4, feels("cozy"), (3, 2))
+        .used("sitting in the armchair", 1),
+    piece("easel", "Easel", ONE_FRIEND, 4, feels("inspired"), (2, 1)).used("painting", 1),
+    piece("game_table", "Game table", ONE_FRIEND, 4, feels("playful"), (4, 3))
+        .used("playing a game", 2),
     piece("standing_desk", "Standing desk", THREE_FRIENDS, 4, feels("drive"), (4, 2)),
-    piece("sofa", "Sofa", THREE_FRIENDS, 6, feels("cozy"), (6, 2)),
+    piece("sofa", "Sofa", THREE_FRIENDS, 6, feels("cozy"), (6, 2)).used("sitting on the sofa", 3),
     piece("fountain", "Fountain", THREE_FRIENDS, 7, feels("calm"), (3, 3)),
-    piece("piano", "Piano", THREE_FRIENDS, 8, feels("inspired"), (5, 2)),
+    piece("piano", "Piano", THREE_FRIENDS, 8, feels("inspired"), (5, 2))
+        .used("playing the piano", 1),
     piece("candlelit_table", "Candlelit table", THREE_FRIENDS, 7, feels("flirty"), (4, 3)),
     piece("server_rack", "Server rack", SIX_FRIENDS, 5, feels("drive"), (2, 1)),
-    piece("fireplace", "Fireplace", SIX_FRIENDS, 9, feels("cozy"), (6, 1)),
-    piece("aquarium", "Aquarium", SIX_FRIENDS, 9, feels("calm"), (6, 2)),
+    piece("fireplace", "Fireplace", SIX_FRIENDS, 9, feels("cozy"), (6, 1))
+        .used("warming up by the fire", 2),
+    piece("aquarium", "Aquarium", SIX_FRIENDS, 9, feels("calm"), (6, 2))
+        .used("watching the fish", 2),
     piece("trophy", "Trophy", SIX_FRIENDS, 8, feels("inspired"), (1, 1)),
-    piece("jukebox", "Jukebox", SIX_FRIENDS, 7, feels("playful"), (2, 1)),
-    piece("love_seat", "Love seat", SIX_FRIENDS, 8, feels("flirty"), (5, 2)),
+    piece("jukebox", "Jukebox", SIX_FRIENDS, 7, feels("playful"), (2, 1)).used("picking a song", 1),
+    piece("love_seat", "Love seat", SIX_FRIENDS, 8, feels("flirty"), (5, 2))
+        .used("sitting on the love seat", 2),
     piece("rose_arch", "Rose arch", SIX_FRIENDS, 10, feels("flirty"), (6, 1)),
     // The Halloween pack. All starter, because a pack is for anyone who can put it up (I29).
     piece("pumpkin", "Jack-o'-lantern", STARTER, 3, feels("playful"), (1, 1)),
@@ -353,9 +375,12 @@ pub struct PlacedItem {
     pub holds_notes: bool,
     pub sign: bool,
     pub notes: i64,
+    /// I35: what using it looks like, and the ids of the bots doing that now.
+    pub does: Option<&'static str>,
+    pub used_by: Vec<String>,
 }
 
-fn placed(item: FloorItem, kind: &Kind, notes: i64) -> PlacedItem {
+fn placed(item: FloorItem, kind: &Kind, notes: i64, used_by: Vec<String>) -> PlacedItem {
     let spot = footprint(kind, item.x, item.y, item.facing);
     PlacedItem {
         id: item.id,
@@ -371,6 +396,8 @@ fn placed(item: FloorItem, kind: &Kind, notes: i64) -> PlacedItem {
         holds_notes: kind.holds_notes,
         sign: kind.sign,
         notes,
+        does: kind.does,
+        used_by,
     }
 }
 
@@ -408,6 +435,7 @@ pub fn furnishing(
     let room_mood = if feels_moods(state, caller)? { room_mood(&items) } else { None };
     let room_beauty = room_beauty(&items);
     let counts = state.db.item_note_counts(hangout_id, notes_since(guest))?;
+    let mut users = users_on(state, hangout_id)?;
     Ok(Furnishing {
         room_mood,
         room_mood_note: room_mood.and_then(mood_note),
@@ -418,7 +446,8 @@ pub fn furnishing(
             .filter_map(|item| {
                 let kind = kind_of(&item.kind)?;
                 let notes = counts.get(&item.id).copied().unwrap_or(0);
-                Some(placed(item, kind, notes))
+                let used_by = users.remove(&item.id).unwrap_or_default();
+                Some(placed(item, kind, notes, used_by))
             })
             .collect(),
     })
@@ -515,7 +544,7 @@ fn place_item(
     let id = store_item(state, caller, &place.floor.id, kind, (body.x, body.y, body.facing))??;
     ops::refresh(state, &place.floor.id);
     let item = state.db.floor_item(&id)?.ok_or_else(ApiError::not_found)?;
-    Ok(placed(item, kind, 0))
+    Ok(placed(item, kind, 0, Vec::new()))
 }
 
 /// Stores an item this caller may place, if the floor has room for it there (I3, I4, I11), and gives
@@ -579,7 +608,8 @@ fn change_item(
     ops::refresh(state, &place.floor.id);
     let moved = state.db.floor_item(&item.id)?.ok_or_else(ApiError::not_found)?;
     let notes = state.db.item_notes(&item.id, i64::MIN)?.len() as i64;
-    Ok(placed(moved, kind, notes))
+    let used_by = users_on(state, &place.floor.id)?.remove(&item.id).unwrap_or_default();
+    Ok(placed(moved, kind, notes, used_by))
 }
 
 fn remove_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<()> {
@@ -779,13 +809,83 @@ pub fn no_quiet(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     Ok(())
 }
 
+// Using
+
+/// I34: a bot that isn't here any more has let go, whatever the table says, so nothing has to tidy up
+/// after every way there is of leaving. Someone who walked in counts, as they do for the room.
+fn bots_here(state: &AppState, floor_id: &str, now: i64) -> ApiResult<Vec<String>> {
+    let agents = state.db.agents_in(floor_id, now)?;
+    let visitors = state.db.visitors_in(floor_id, now)?;
+    Ok(agents.into_iter().chain(visitors).map(|agent| agent.id).collect())
+}
+
+/// I35: the bots using each item on a floor now, by item.
+fn users_on(state: &AppState, floor_id: &str) -> ApiResult<HashMap<String, Vec<String>>> {
+    let now = now();
+    let here = bots_here(state, floor_id, now)?;
+    let mut users: HashMap<String, Vec<String>> = HashMap::new();
+    for (item_id, agent_id) in state.db.item_uses(floor_id, now)? {
+        if here.contains(&agent_id) {
+            users.entry(item_id).or_default().push(agent_id);
+        }
+    }
+    Ok(users)
+}
+
+/// I32, I33, I34. This changes nothing on the floor, so a bot that walked in can, but it has to be in
+/// the room itself: its owner being here doesn't count (`in_room`).
+pub fn use_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<Value> {
+    let Some(agent_id) = &caller.agent_id else {
+        return Err(ApiError::forbidden("only bots use items"));
+    };
+    let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
+    if !state.in_room(caller, &item.hangout_id)? {
+        return Err(ApiError::not_found());
+    }
+    let kind = kind_of(&item.kind)
+        .filter(|kind| kind.does.is_some())
+        .ok_or_else(|| ApiError::conflict("that can't be used"))?;
+    ops::note_agent_write(state, caller)?;
+    let now = now();
+    let until = now + USE_SECS;
+    let here = bots_here(state, &item.hangout_id, now)?;
+    let left = state.db.floor_in_use(agent_id)?;
+    state.db.use_item(agent_id, &item.id, until, now, |others| {
+        if others.iter().filter(|bot| here.contains(bot)).count() as i64 >= kind.room_for {
+            return Err(ApiError::conflict("there's no room there right now"));
+        }
+        Ok(())
+    })??;
+    ops::refresh(state, &item.hangout_id);
+    if let Some(left) = left.filter(|floor| *floor != item.hangout_id) {
+        ops::refresh(state, &left);
+    }
+    Ok(json!({ "ok": true, "doing": kind.does, "until": iso(until) }))
+}
+
+/// I33: a bot using nothing has already stopped, so there's nothing to refuse.
+pub fn stop_using(state: &AppState, caller: &Caller) -> ApiResult<()> {
+    ops::no_house_bot(caller)?;
+    let Some(agent_id) = &caller.agent_id else {
+        return Err(ApiError::forbidden("only bots use items"));
+    };
+    ops::note_agent_write(state, caller)?;
+    if let Some(floor) = state.db.floor_in_use(agent_id)? {
+        state.db.stop_using_item(agent_id)?;
+        ops::refresh(state, &floor);
+    }
+    Ok(())
+}
+
 // Routes
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/items", get(catalog))
         .route("/api/items/{id}", put(change).delete(remove))
+        .route("/api/items/use", delete(stop))
         .route("/api/items/{id}/notes", get(notes).post(add))
+        .route("/api/items/{id}/use", post(start))
         .route("/api/item-notes/{id}", delete(remove_one_note))
         .route("/api/floors/{id}/items", post(place))
         .route("/api/floors/{id}/packs/{pack}", post(put_up_pack).delete(take_down_pack))
@@ -815,6 +915,7 @@ async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Jso
                 "mood": kind.mood,
                 "holds_notes": kind.holds_notes,
                 "sign": kind.sign,
+                "does": kind.does,
                 "w": kind.w,
                 "h": kind.h,
                 "unlocked": unlocked,
@@ -907,6 +1008,19 @@ async fn remove_one_note(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     remove_note(&state, &caller, &id)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn start(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(use_item(&state, &caller, &id)?))
+}
+
+async fn stop(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
+    stop_using(&state, &caller)?;
     Ok(Json(json!({ "ok": true })))
 }
 

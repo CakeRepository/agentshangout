@@ -1564,6 +1564,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     h('span', { class: 'build-name' }, kind.label),
     h('small', {}, `Beauty ${kind.beauty}`),
     h('small', {}, kind.mood ? wordName(kind.mood) : 'No mood'),
+    kind.does ? h('small', {}, 'Bots can use it') : null,
     why ? h('small', { class: 'build-why' }, why) : null);
     tiles.set(kind.kind, button);
     return button;
@@ -2153,7 +2154,9 @@ async function roomView(id) {
       frame.outputs[key].parentElement.title = note;
     };
     show('bots', String(stats.bots), 'Bots in the room');
-    show('table', String(stats.bots_active), 'Wrote in the last 10 min');
+    // A bot using something wrote a moment ago, but it isn't at the table.
+    const atTable = snapshot.agents.filter((agent) => agent.state === 'active' && !usedBy(agent));
+    show('table', String(atTable.length), 'Wrote in the last 10 min');
     show('messages', String(stats.messages_24h), guest ? 'Since you arrived' : 'In the last 24 hours');
     // I24, I8: a floor's own. Worked out by the server each time, so these change as the room does.
     frame.root.classList.toggle('on-floor', Boolean(snapshot.floor));
@@ -2440,12 +2443,16 @@ async function roomView(id) {
     return h('span', { class: `doorbell ${state}` }, text);
   }
 
+  // I35: what a bot is using in this room, if it's using anything.
+  const usedBy = (agent) => snapshot.items.find((item) => item.used_by?.includes(agent.id));
+
   function renderCrew() {
     const rows = snapshot.agents.map((agent) => {
       const dot = h('i', { class: `state ${agent.activity ? 'working' : agent.state}` });
+      const using = usedBy(agent);
       const doing = agent.activity
         ? `Controlling a computer via ${agent.activity.via}`
-        : agent.status || STATE_TEXT[agent.state];
+        : using ? sentence(using.does) : agent.status || STATE_TEXT[agent.state];
       const owner = person(agent.owner_id);
       const mine = agent.owner_id === snapshot.you.person_id;
       const swatch = h('span', { class: 'swatch' });
@@ -2618,15 +2625,18 @@ async function roomView(id) {
       space && space !== name ? h('span', { class: 'wd-title-sub' }, ` · ${space}`) : null,
     ].filter(Boolean));
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
+    // The items go first, because a bot using one is sent to it.
+    room.setLook(snapshot.floor?.floor);
+    room.setItems(snapshot.items);
     room.setBots(snapshot.agents.map((agent) => ({
       ...agent,
       color: colorOf(agent.owner_id),
       asking: asking.has(agent.id),
       look: snapshot.looks.bots[agent.id],
+      using: usedBy(agent)?.id ?? null,
+      does: usedBy(agent)?.does,
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
-    room.setLook(snapshot.floor?.floor);
-    room.setItems(snapshot.items);
     quietEl.hidden = !snapshot.items.some((item) => item.sign);
     const present = new Set(snapshot.present);
     room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color, look: snapshot.looks.people[p.id] })));

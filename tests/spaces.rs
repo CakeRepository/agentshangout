@@ -1782,6 +1782,10 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         .post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" }))
         .await
         .ok();
+    let stool = json!({ "kind": "stool", "x": 30, "y": 5 });
+    let stool =
+        text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), stool).await.ok()["id"]);
+    server.post(&scout_token, &format!("/api/items/{stool}/use"), json!({})).await.ok();
     server
         .put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false }))
         .await

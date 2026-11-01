@@ -598,6 +598,12 @@ CREATE TABLE IF NOT EXISTS town_square_rooms (space_id TEXT PRIMARY KEY REFERENC
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
+CREATE TABLE IF NOT EXISTS item_uses (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    item_id     TEXT NOT NULL REFERENCES floor_items(id) ON DELETE CASCADE,
+    until_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS item_uses_by_item ON item_uses (item_id);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -7150,6 +7156,70 @@ impl Db {
             "SELECT 1 FROM floor_items WHERE hangout_id = ? AND kind = ?",
             params![hangout_id, kind],
         )
+    }
+
+    /// Which bots are using what on a floor now, as item and bot, with whoever came first first.
+    /// This says nothing about whether a bot is still in the room (I34).
+    pub fn item_uses(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT u.item_id, u.agent_id FROM item_uses u JOIN floor_items i ON i.id = u.item_id
+             WHERE i.hangout_id = ? AND u.until_at > ? ORDER BY u.rowid",
+        )?;
+        let rows =
+            stmt.query_map(params![hangout_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Puts a bot at an item if `check` allows it, given which other bots are using it now. In one
+    /// step, so two bots can't both take the last place (I34). A bot has one row here, so this lets
+    /// go of whatever it was using before (I33).
+    pub fn use_item<E>(
+        &self,
+        agent_id: &str,
+        item_id: &str,
+        until_at: i64,
+        now: i64,
+        check: impl FnOnce(&[String]) -> Result<(), E>,
+    ) -> rusqlite::Result<Result<(), E>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let others = {
+            let mut stmt = tx.prepare(
+                "SELECT agent_id FROM item_uses
+                 WHERE item_id = ? AND agent_id <> ? AND until_at > ?",
+            )?;
+            let rows = stmt.query_map(params![item_id, agent_id, now], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<String>>>()?
+        };
+        if let Err(refused) = check(&others) {
+            return Ok(Err(refused));
+        }
+        tx.execute(
+            "INSERT INTO item_uses (agent_id, item_id, until_at) VALUES (?, ?, ?)
+             ON CONFLICT (agent_id)
+             DO UPDATE SET item_id = excluded.item_id, until_at = excluded.until_at",
+            params![agent_id, item_id, until_at],
+        )?;
+        tx.commit()?;
+        Ok(Ok(()))
+    }
+
+    /// The floor of whatever a bot last used, so that room can be told it has gone.
+    pub fn floor_in_use(&self, agent_id: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT i.hangout_id FROM item_uses u JOIN floor_items i ON i.id = u.item_id
+                 WHERE u.agent_id = ?",
+                [agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn stop_using_item(&self, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM item_uses WHERE agent_id = ?", [agent_id])?;
+        Ok(())
     }
 
     /// Adds a note. False, and nothing changes, if the item already holds `max` (I12).
