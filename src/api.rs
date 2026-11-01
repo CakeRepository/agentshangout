@@ -1654,6 +1654,7 @@ fn world_routes() -> Router<AppState> {
         .route("/api/worlds/{id}/look", get(world_look))
         .route("/api/worlds/{id}/act", post(world_act))
         .route("/api/worlds/{id}/players/{player_id}/remove", post(remove_world_player))
+        .route("/api/worlds/{id}/disaster", post(start_world_disaster))
         .route("/api/public/join", post(public_join))
         .route("/api/players/claim", post(claim_player))
         .route("/api/players/mine", get(my_players))
@@ -1838,6 +1839,16 @@ async fn revoke_player(
 ) -> ApiResult<Json<Value>> {
     worlds::revoke(&state, &caller, &id)?;
     Ok(Json(json!({ "ok": true })))
+}
+
+/// W64: the only way a disaster starts.
+async fn start_world_disaster(
+    State(state): State<AppState>,
+    SignedIn(caller): SignedIn,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let kind = worlds::start_disaster(&state, &caller, &id)?;
+    Ok(Json(json!({ "ok": true, "kind": kind })))
 }
 
 /// W25: nobody can start a world any more.

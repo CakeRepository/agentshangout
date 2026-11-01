@@ -1,10 +1,10 @@
 //! Tests for what the map is since zones went: places you can go into, which come with time, the
-//! worlds that froze, and the end of the old city. They are written from the rules in
+//! worlds that froze, and disasters. They are written from the rules in
 //! docs/public-city.md (W13, W20 to W28, W46 to W49, W61 to W70) and docs/spaces.md (S47, S48). A
 //! comment such as `// W61` above a test names the rule it covers.
 //!
 //! The clock on a place is real seconds, so a test that looks days ahead calls `worlds::act` with a
-//! time of its own. The clock on a disaster is steps, so a test jumps the world's step forward.
+//! time of its own. A disaster goes by steps, so a test jumps the world's step forward.
 
 use std::{
     collections::HashSet,
@@ -79,6 +79,19 @@ impl Server {
     }
 
     async fn on(db: Db) -> Self {
+        Self::boot(db, None).await
+    }
+
+    /// A server whose keeper is a person made first, so their id can be set in the config.
+    async fn start_with_keeper() -> (Self, Who) {
+        let db = Db::open(":memory:").unwrap();
+        let key = auth::new_owner_key();
+        db.create_person("keeper", "Keeper", &auth::hash_secret(&key), "keeper-feed", now()).unwrap();
+        let server = Self::boot(db, Some("keeper".to_string())).await;
+        (server, Who { key, id: "keeper".to_string() })
+    }
+
+    async fn boot(db: Db, keeper_id: Option<String>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let base = format!("http://127.0.0.1:{port}");
@@ -88,7 +101,7 @@ impl Server {
                 public_url: base.clone(),
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
-                keeper_id: None,
+                keeper_id,
             },
         );
         let served = state.clone();
@@ -256,19 +269,16 @@ impl Server {
         self.state.db.world_end(COMMONS).unwrap()
     }
 
-    /// Starts the clock and jumps to the first step of the omens. Returns the step it will strike.
+    /// What the keeper's asking does, on this step. Returns the step it will strike.
     fn bring_the_omens(&self) -> u64 {
-        self.step();
-        let clock = self.end().expect("the clock started").clock_step;
-        let omens = clock + world::omens_after(world::COMMONS_SEED, clock);
-        self.jump_to(omens);
-        self.step();
-        assert_eq!(self.end().unwrap().omen_step, Some(omens), "the omens started");
-        omens + world::OMEN_STEPS
+        let step = self.state.db.world(COMMONS).unwrap().unwrap().step;
+        self.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.start_disaster(COMMONS, step)).unwrap();
+        assert_eq!(self.end().unwrap().omen_step, Some(step), "the omens started");
+        step + world::OMEN_STEPS
     }
 
-    /// Runs a disaster from the clock to its last step.
-    fn end_the_old_city(&self) {
+    /// Runs a disaster from being asked for to its last step.
+    fn run_a_disaster(&self) {
         self.jump_to(self.bring_the_omens());
         for _ in 0..world::STRIKE_STEPS {
             self.step();
@@ -332,8 +342,7 @@ async fn a_tile_of_the_old_city_neither_grows_nor_shrinks() {
     let server = Server::start().await;
     server.old_city();
     let before = server.state.db.world_tiles(COMMONS).unwrap();
-    // As many steps as there are before it can strike.
-    for _ in 0..5 {
+    for _ in 0..50 {
         server.step();
     }
     assert_eq!(server.state.db.world_tiles(COMMONS).unwrap(), before);
@@ -449,7 +458,7 @@ async fn a_world_someone_started_is_frozen_but_can_be_watched() {
     let view = server.get("", "/api/worlds/frozen").await.ok();
     assert_eq!(view["step"], 0, "it took no step");
     assert!(view["tiles"].as_array().unwrap().contains(&json!([3, 3, "homes", 2])));
-    assert!(server.state.db.world_end("frozen").unwrap().is_none(), "the end isn't for frozen worlds");
+    assert!(server.state.db.world_end("frozen").unwrap().is_none(), "a disaster isn't for frozen worlds");
 }
 
 // W61
@@ -645,68 +654,82 @@ async fn only_the_owner_of_a_cafe_opens_it_with_no_code() {
 
 // W64
 #[tokio::test]
-async fn a_commons_with_nothing_of_the_old_city_has_no_clock_and_no_disaster() {
+async fn nothing_starts_a_disaster_but_the_keeper_asking() {
     let server = Server::start().await;
+    server.old_city();
     let ann = server.person("Ann").await;
     server.build(&ann, "house").await;
-    for _ in 0..3 {
+    let before = server.state.db.world_tiles(COMMONS).unwrap();
+    server.jump_to(100_000);
+    for _ in 0..50 {
         server.step();
     }
-    assert!(server.end().is_none());
+    assert!(server.end().is_none(), "steps and old tiles started one");
+    assert_eq!(server.state.db.world_tiles(COMMONS).unwrap(), before);
     assert!(server.view().await["disaster"].is_null());
 }
 
-// W64
+// W64, W65, W69
 #[tokio::test]
-async fn the_first_step_that_finds_the_old_city_starts_a_clock_and_nothing_shows() {
-    let server = Server::start().await;
-    server.old_city();
-    server.jump_to(500);
-    server.step();
-    let end = server.end().expect("the clock started");
-    assert_eq!(end.clock_step, 500);
-    assert_eq!(end.omen_step, None);
-    assert_eq!(end.ended_step, None);
-    assert!(server.view().await["disaster"].is_null());
+async fn only_the_keeper_can_ask_for_a_disaster_and_only_when_none_is_under_way() {
+    let (server, keeper) = Server::start_with_keeper().await;
+    let path = format!("/api/worlds/{COMMONS}/disaster");
+    let ann = server.person("Ann").await;
     let guest = server.guest().await;
-    server.act(&guest, road_beside_the_highway(&server)).await.ok();
-    server.step();
-    assert_eq!(server.end().unwrap().clock_step, 500, "only the first step starts it");
+
+    server.post(&ann.key, &path, json!({})).await.refused(StatusCode::FORBIDDEN);
+    server.post(&guest, &path, json!({})).await.refused(StatusCode::UNAUTHORIZED);
+    server.post("", &path, json!({})).await.refused(StatusCode::UNAUTHORIZED);
+    assert!(server.end().is_none(), "a refused ask started something");
+
+    let tools = server.post("", "/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
+    assert!(!tools.to_string().contains("\"disaster\""), "{tools}");
+
+    server.frozen_world(&keeper);
+    server.post(&keeper.key, "/api/worlds/frozen/disaster", json!({})).await.refused(StatusCode::FORBIDDEN);
+    assert!(server.state.db.world_end("frozen").unwrap().is_none());
+
+    let asked = server.post(&keeper.key, &path, json!({})).await.ok();
+    let kind = world::disaster_for(world::COMMONS_SEED, 0);
+    assert_eq!(asked, json!({ "ok": true, "kind": kind.as_str() }));
+    server.post(&keeper.key, &path, json!({})).await.refused(StatusCode::CONFLICT);
+    assert_eq!(server.view().await["disaster"]["stage"], "omen");
+
+    // Once it's over it can be asked for again.
+    server.jump_to(world::OMEN_STEPS);
+    for _ in 0..world::STRIKE_STEPS {
+        server.step();
+    }
+    assert!(server.end().unwrap().ended_step.is_some());
+    server.post(&keeper.key, &path, json!({})).await.ok();
+    assert_eq!(server.end().unwrap().ended_step, None);
 }
 
 // W65
 #[test]
-fn the_wait_and_the_disaster_are_random_and_can_be_worked_out_again() {
-    let (mut soonest, mut latest) = (u64::MAX, 0);
+fn which_disaster_it_is_is_random_and_can_be_worked_out_again() {
     let mut seen = HashSet::new();
-    for clock in 0..3_000 {
-        let wait = world::omens_after(world::COMMONS_SEED, clock);
-        assert!((1..=5).contains(&wait), "{wait}");
-        soonest = soonest.min(wait);
-        latest = latest.max(wait);
-        seen.insert(world::disaster_for(world::COMMONS_SEED, clock));
-        assert_eq!(wait, world::omens_after(world::COMMONS_SEED, clock));
+    for step in 0..3_000 {
+        seen.insert(world::disaster_for(world::COMMONS_SEED, step));
+        assert_eq!(world::disaster_for(world::COMMONS_SEED, step), world::disaster_for(world::COMMONS_SEED, step));
     }
-    assert_eq!((soonest, latest), (1, 5));
     assert_eq!(seen.len(), Disaster::ALL.len(), "every disaster can come");
 }
 
-// W65, W66: it comes minutes after a release, and always after a deploy has seen the site come up.
-#[test]
-fn it_strikes_within_ten_minutes_of_the_clock_and_never_before_six() {
-    for clock in 0..3_000 {
-        let strikes = world::omens_after(world::COMMONS_SEED, clock) + world::OMEN_STEPS;
-        assert!((6..=10).contains(&strikes), "{strikes}");
-    }
-}
-
-// W65: a step that sits on the clock's own step doesn't start the omens.
+// W19, W66, W67: 5 minutes of warning, then steps of 5 seconds until it's over in about 2 minutes.
 #[tokio::test]
-async fn omens_never_start_on_the_step_the_clock_does() {
+async fn a_disaster_gives_five_minutes_of_warning_and_is_over_in_two() {
+    assert_eq!((world::OMEN_STEPS, world::STRIKE_STEPS), (5, 24));
     let server = Server::start().await;
-    server.old_city();
-    server.step();
-    assert_eq!(server.end().unwrap().omen_step, None);
+    assert_eq!(worlds::step_every(&server.state).unwrap(), 60);
+    let strikes = server.bring_the_omens();
+    assert_eq!(worlds::step_every(&server.state).unwrap(), 60, "omens go at the street's pace");
+    server.jump_to(strikes);
+    assert_eq!(worlds::step_every(&server.state).unwrap(), 5);
+    for _ in 0..world::STRIKE_STEPS {
+        server.step();
+    }
+    assert_eq!(worlds::step_every(&server.state).unwrap(), 60);
 }
 
 // W66
@@ -715,8 +738,8 @@ async fn omens_say_what_is_coming_and_moves_still_work() {
     let server = Server::start().await;
     server.old_city();
     let strikes = server.bring_the_omens();
-    let clock = server.end().unwrap().clock_step;
-    let kind = world::disaster_for(world::COMMONS_SEED, clock);
+    let asked = server.end().unwrap().clock_step;
+    let kind = world::disaster_for(world::COMMONS_SEED, asked);
     let view = server.view().await;
     assert_eq!(view["disaster"], json!({ "stage": "omen", "kind": kind.as_str() }));
 
@@ -735,15 +758,37 @@ async fn it_strikes_step_by_step_and_nobody_can_move_while_it_does() {
     let server = Server::start().await;
     server.old_city();
     let guest = server.guest().await;
-    server.jump_to(server.bring_the_omens());
+    let strikes = server.bring_the_omens();
+    server.jump_to(strikes);
+
+    // Nothing has struck yet, so there's nothing to draw.
+    let view = server.view().await;
+    assert_eq!(view["disaster"]["stage"], "striking");
+    assert_eq!(view["disaster"]["done"], 0);
+    assert_eq!(view["disaster"]["hits"], json!([]));
+
+    // A tile at the heart of the first step's circles, off the highway, for the page to find gone.
+    let kind = world::disaster_for(world::COMMONS_SEED, server.end().unwrap().clock_step);
+    let hits = world::strike(world::COMMONS_SEED, kind, 0, world::COMMONS_SIZE);
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let (x, y) = hits
+        .iter()
+        .flat_map(|&(x, y, _)| [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)].map(|(dx, dy)| (x + dx, y + dy)))
+        .find(|&(x, y)| !tiles.contains_key(&(x as u16, y as u16)))
+        .expect("a circle with room in it");
+    let target = Tile { kind: Kind::Homes, level: 2, player: None };
+    server.write(COMMONS, &[Change::Set((x as u16, y as u16), target)]);
+
     server.step();
+    assert_eq!(server.tile((x, y)), None, "it came down");
 
     let view = server.view().await;
     let disaster = &view["disaster"];
     assert_eq!(disaster["stage"], "striking");
     assert_eq!(disaster["done"], 1);
     assert_eq!(disaster["of"], world::STRIKE_STEPS);
-    assert!(!disaster["hits"].as_array().unwrap().is_empty(), "{disaster}");
+    // What a page draws has already happened.
+    assert_eq!(disaster["hits"], json!(hits), "{disaster}");
 
     server.act(&guest, json!({ "action": "emote", "emote": "wave" })).await.refused(StatusCode::CONFLICT);
     server.act(&guest, road_beside_the_highway(&server)).await.refused(StatusCode::CONFLICT);
@@ -752,7 +797,61 @@ async fn it_strikes_step_by_step_and_nobody_can_move_while_it_does() {
 
     let tip = server.me(&guest).await;
     assert!(world::TIPS.contains(&tip["tip"].as_str().unwrap()));
-    assert!(text(&tip["tip"]).contains("ending"), "{tip}");
+    assert!(text(&tip["tip"]).contains("striking"), "{tip}");
+}
+
+// W67: meteors fall where the city is, not on the empty edges of the map.
+#[test]
+fn meteors_fall_on_the_middle_half_of_the_map() {
+    let size = world::COMMONS_SIZE as i64;
+    for done in 0..world::STRIKE_STEPS {
+        for (x, y, _) in world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE) {
+            assert!((size / 4..size * 3 / 4).contains(&x) && (size / 4..size * 3 / 4).contains(&y), "{x},{y}");
+        }
+    }
+}
+
+// W67: a meteor's fire keeps spreading from where it came down, and more of them come down.
+#[test]
+fn a_meteors_fire_spreads_until_it_has_taken_the_city() {
+    let at = |done| world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE);
+    assert_eq!(at(0).len(), 1, "one comes down first");
+    assert!(at(7).len() > at(3).len(), "and more follow");
+    for done in 1..world::STRIKE_STEPS {
+        let (before, now) = (at(done - 1), at(done));
+        for (old, new) in before.iter().zip(&now) {
+            assert_eq!((old.0, old.1), (new.0, new.1), "a fire stays where it started");
+            assert!(new.2 > old.2, "and it grows");
+        }
+    }
+    // By half way the fire has reached everywhere the middle of the map was built.
+    let reach = at(world::STRIKE_STEPS / 2);
+    let city = (0..=127i64).flat_map(|y| (0..=127i64).map(move |x| (x, y)));
+    let covered = city
+        .filter(|&(x, y)| (38..=77).contains(&x) && (45..=78).contains(&y))
+        .all(|(x, y)| reach.iter().any(|&(hx, hy, r)| (x - hx).pow(2) + (y - hy).pow(2) <= r * r));
+    assert!(covered, "{reach:?}");
+}
+
+// W67: a fire's edge is rough, and it never goes past its circle.
+#[test]
+fn a_fire_has_a_rough_edge_inside_its_circle() {
+    let road = Tile { kind: Kind::Road, level: 0, player: Some(1) };
+    let mut tiles = world::Tiles::new();
+    for x in 0..=40u16 {
+        for y in 0..=40u16 {
+            tiles.insert((x, y), road);
+        }
+    }
+    let gone: HashSet<_> = world::strike_changes(&tiles, &[], &[(20, 20, 12)], false).iter().map(Change::pos).collect();
+    let distance = |&(x, y): &(u16, u16)| (i64::from(x) - 20).pow(2) + (i64::from(y) - 20).pow(2);
+    assert!(gone.iter().all(|pos| distance(pos) <= 144), "past its circle");
+    assert!(tiles.keys().filter(|pos| distance(pos) <= 100).all(|pos| gone.contains(pos)), "the middle went");
+    let edge = tiles.keys().filter(|pos| (101..=144).contains(&distance(pos)));
+    let (burned, left) = edge.fold((0, 0), |(burned, left), pos| {
+        if gone.contains(pos) { (burned + 1, left) } else { (burned, left + 1) }
+    });
+    assert!(burned > 0 && left > 0, "{burned} burned and {left} left of a perfect ring");
 }
 
 // W67, W31
@@ -767,7 +866,7 @@ fn every_disaster_strikes_on_the_map_in_a_fixed_number_of_circles() {
             assert!(!hits.is_empty() && hits.len() <= world::MAX_HITS, "{kind:?} {}", hits.len());
             for (x, y, r) in hits.iter().copied() {
                 assert!((0..size).contains(&x) && (0..size).contains(&y), "{kind:?} at {x},{y}");
-                assert!((1..=16).contains(&r), "{kind:?} r {r}");
+                assert!((1..=size).contains(&r), "{kind:?} r {r}");
                 sum += x + y;
             }
         }
@@ -805,7 +904,7 @@ async fn everything_goes_but_the_highway() {
     let cleared = Change::Set((9, 9), Tile { kind: Kind::Cleared, level: 0, player: Some(1) });
     server.write(COMMONS, &[cleared]);
 
-    server.end_the_old_city();
+    server.run_a_disaster();
 
     let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
     let highway: HashSet<_> = world::highway(world::COMMONS_SEED, &land).into_iter().collect();
@@ -817,7 +916,7 @@ async fn everything_goes_but_the_highway() {
 
 // W68
 #[tokio::test]
-async fn accounts_tokens_and_rooms_stay_and_everyone_starts_again_on_the_same_day() {
+async fn accounts_tokens_rooms_and_unlocks_all_stay() {
     let server = Server::start().await;
     server.old_city();
     let ann = server.person("Ann").await;
@@ -828,31 +927,40 @@ async fn accounts_tokens_and_rooms_stay_and_everyone_starts_again_on_the_same_da
     let later = server.build_later(&ann, "studio", 8);
     let studio = text(&server.go_in(&ann.key, later).await.ok()["hangout_id"]);
 
-    server.end_the_old_city();
+    server.run_a_disaster();
 
     assert!(server.me(&guest).await["player"]["id"].is_i64(), "a token still works");
     server.get(&ann.key, "/api/me").await.ok();
     server.go_in(&ann.key, house).await.refused(StatusCode::NOT_FOUND);
 
-    // The wait is whole again, even for someone who was 8 days in.
-    assert_eq!(server.me(&ann.key).await["places"]["studio"], DAY);
-    let there = server.build(&ann, "house").await;
-    server.place(&ann, "studio", server.free_spots()[0]).await.refused(StatusCode::CONFLICT);
-
-    // The rooms wait for their owner's next buildings (S35).
-    let back = text(&server.go_in(&ann.key, there).await.ok()["hangout_id"]);
-    assert_eq!(back, room);
+    // Every room is still there, with what was in it, and opens from its owner's list.
     let snapshot = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
     assert!(snapshot.to_string().contains("still here"), "{snapshot}");
     server.get(&ann.key, &format!("/api/hangouts/{studio}")).await.ok();
+    let spaces = server.get(&ann.key, "/api/spaces").await.ok();
+    assert_eq!(spaces["house"]["on_map"], false, "{spaces}");
+
+    // The next house is the same room's door.
+    let there = server.build(&ann, "house").await;
+    assert_eq!(text(&server.go_in(&ann.key, there).await.ok()["hangout_id"]), room);
+
+    // Nobody waits again for what they had. If the clock had started again with that house, a
+    // studio wouldn't come for a day.
+    assert!(server.me(&ann.key).await["places"]["studio"].as_i64().unwrap() <= DAY);
+    let at = now() + DAY - 3_600;
+    let spot = server.free_spots()[0];
+    assert!(server.place_at(&ann, "studio", spot, at).is_err(), "the first house went up just now");
+    let at = now() + DAY + 60;
+    server.place_at(&ann, "studio", spot, at).unwrap();
+    assert_eq!(text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]), studio);
 }
 
 // W69
 #[tokio::test]
-async fn it_comes_once_says_so_for_an_hour_and_then_says_nothing() {
+async fn it_says_so_for_an_hour_and_then_says_nothing() {
     let server = Server::start().await;
     server.old_city();
-    server.end_the_old_city();
+    server.run_a_disaster();
     let ended = server.end().unwrap().ended_step.expect("it finished");
     let view = server.view().await;
     assert_eq!(view["disaster"]["stage"], "over");
@@ -865,7 +973,7 @@ async fn it_comes_once_says_so_for_an_hour_and_then_says_nothing() {
     server.step();
     assert!(server.view().await["disaster"].is_null());
 
-    // Old tiles on The Commons can't start another.
+    // Old tiles on The Commons don't start another.
     server.old_city();
     let before = server.state.db.world_tiles(COMMONS).unwrap();
     for _ in 0..5 {
@@ -903,7 +1011,7 @@ async fn a_disaster_leaves_the_rooms_tables_alone() {
     let ann = server.person("Ann").await;
     let house = server.build(&ann, "house").await;
     let room = text(&server.go_in(&ann.key, house).await.ok()["hangout_id"]);
-    server.end_the_old_city();
+    server.run_a_disaster();
     let plot = server.state.db.plot_of(&room, COMMONS).unwrap();
     assert_eq!(plot, Some(house));
 }

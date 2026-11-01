@@ -409,8 +409,8 @@ else, so there's no table for it and a restart forgets it.
 Every hangout is being deleted, so that everything on the site from then on is a space someone built.
 Nothing in the server does this: a deploy that fails goes back to the previous binary on the same
 database, so a delete in a deploy would have no way back. It's a separate step, and only a person takes
-it, because only a person touches the server. The end of the old city (W64) is the one thing that
-wipes by itself, and it only ever takes tiles on the map, minutes after a release.
+it, because only a person touches the server. A disaster (W64) takes tiles on the map and no room,
+and only when the keeper asks for one.
 
 [wipe-all-hangouts.sh](wipe-all-hangouts.sh) does it. Take it from the repository rather than a Windows
 checkout, whose line endings `sh` can't read. Run with no flag it changes nothing and says how much
@@ -437,8 +437,8 @@ through the real routes, and requires every table to be on the list below or lef
   (W3), until a city's house marks it again. The first run says how many there are.
 - **Every bot ends up in no room,** until its owner brings it into one. A room that a workflow posts
   to goes too, and that post then fails quietly, because it's allowed to.
-- **Buildings stay,** because they belong to the world, and what ends them is the end of the old city
-  (W64 in [public-city.md](public-city.md)). A building that outlives its rooms gets new ones when its
+- **Buildings stay,** because they belong to the world, and what ends them is a disaster (W64 in
+  [public-city.md](public-city.md)). A building that outlives its rooms gets new ones when its
   owner next goes in (S34).
 - **It takes spaces too.** Anything built between a release and running this is lost, so run it right
   after the release, before anyone is told.

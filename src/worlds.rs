@@ -1,5 +1,5 @@
 //! The public city (docs/public-city.md): The Commons, the frozen worlds people started, the players
-//! who build, the step and the end of the old city, and the frogs and visitors that pass through.
+//! who build, the step and disasters, and the frogs and visitors that pass through.
 //! Every rule (W1-W70) lives here. The engine in `world` is pure, `db` only stores, and the routes and
 //! the MCP tools are thin callers of what is below.
 //!
@@ -107,6 +107,10 @@ const REBUILD_AFTER_CHANGE: Duration = Duration::from_secs(1);
 const REBUILD_AT_LEAST: Duration = Duration::from_secs(5);
 const CARDS_AFTER: Duration = Duration::from_secs(5);
 const LISTED_WORLDS: i64 = 50;
+
+/// W19: seconds between steps, and between steps while a disaster strikes.
+const STEP_SECS: u64 = 60;
+const STRIKE_STEP_SECS: u64 = 5;
 
 /// W13: the emotes there are.
 pub const EMOTES: [&str; 5] = ["wave", "cheer", "think", "sleep", "dance"];
@@ -946,7 +950,7 @@ fn apply_move(
     // W67: nothing moves while it strikes.
     if let Some(end) = tx.world_end(&world.id)? {
         if matches!(phase_of(&end, world), Phase::Striking(..)) {
-            return Err(ApiError::conflict(world::TIP_ENDING));
+            return Err(ApiError::conflict(world::TIP_STRIKING));
         }
     }
     let left = moves_left(&player, now);
@@ -1161,7 +1165,7 @@ fn standing(
         .world_end(&world.id)?
         .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
     let tip = if striking {
-        world::TIP_ENDING
+        world::TIP_STRIKING
     } else {
         world::tip(&own, person, moves_left(player, now))
     };
@@ -1527,9 +1531,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
-    /// W71: `[x, y, name]`, whose each place is.
+    /// W71, W73: `[x, y, owner, name]`, whose each place is and what it's called.
     #[serde(skip_serializing_if = "Option::is_none")]
-    owners: Option<Vec<(u16, u16, String)>>,
+    owners: Option<Vec<(u16, u16, String, String)>>,
     /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
     #[serde(skip_serializing_if = "Option::is_none")]
     bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
@@ -1537,7 +1541,7 @@ struct ViewOut<'a> {
     disaster: Option<DisasterOut>,
 }
 
-/// W66, W67, W69: what a view says about the end of the old city.
+/// W66, W67, W69: what a view says about a disaster.
 #[derive(Serialize)]
 struct DisasterOut {
     stage: &'static str,
@@ -1571,7 +1575,11 @@ fn disaster_of(world: &WorldRow, end: &WorldEnd) -> Option<DisasterOut> {
             kind: disaster.as_str(),
             done: Some(done),
             of: Some(world::STRIKE_STEPS),
-            hits: Some(world::strike(world.seed, disaster, done, world.size)),
+            // What has just struck, so what a page draws has already happened.
+            hits: Some(match done {
+                0 => Vec::new(),
+                _ => world::strike(world.seed, disaster, done - 1, world.size),
+            }),
         }),
     }
 }
@@ -1580,6 +1588,16 @@ fn etag_of(body: &[u8]) -> String {
     let digest = Sha256::digest(body);
     let hex: String = digest[..12].iter().map(|byte| format!("{byte:02x}")).collect();
     format!("\"{hex}\"")
+}
+
+/// How a kind of place reads in a name, like "Ann's Studio".
+fn kind_title(kind: &str) -> &'static str {
+    match kind {
+        "house" => "House",
+        "cafe" => "Café",
+        "club" => "Club",
+        _ => "Studio",
+    }
 }
 
 /// W29, W31: builds a world's view: the land, everything built, the street, the sums, and in The
@@ -1622,7 +1640,11 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         let rows = state.db.place_owners(&world.id)?;
         Some(
             rows.into_iter()
-                .filter_map(|(x, y, name)| Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, name)))
+                .filter_map(|(x, y, owner, kind, name)| {
+                    // W73: a place with no room yet is called after its owner and kind.
+                    let name = name.unwrap_or_else(|| format!("{owner}'s {}", kind_title(&kind)));
+                    Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, owner, name))
+                })
                 .collect(),
         )
     } else {
@@ -1995,7 +2017,7 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
-        let changes = end_of_the_old_city(state, tx, &world)?;
+        let changes = disaster_step(state, tx, &world)?;
         tx.write_changes(&world.id, &changes, now)?;
         tx.set_step(&world.id, world.step + 1)?;
         Ok(changes.len())
@@ -2004,21 +2026,12 @@ pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize
     Ok(changed)
 }
 
-/// W64 to W69: this step's part in the end of the old city. A step that fails is rolled back with
-/// the rest of the transaction and comes round again (W70).
-fn end_of_the_old_city(state: &AppState, tx: &WorldTx, world: &WorldRow) -> ApiResult<Vec<Change>> {
+/// W67 to W69: this step's part in a disaster, if one is striking. A step that fails is rolled back
+/// with the rest of the transaction and comes round again (W70).
+fn disaster_step(state: &AppState, tx: &WorldTx, world: &WorldRow) -> ApiResult<Vec<Change>> {
     let Some(end) = tx.world_end(&world.id)? else {
-        if world.id == COMMONS_ID && tx.has_old_city(&world.id)? {
-            tx.start_end_clock(&world.id, world.step)?;
-        }
         return Ok(Vec::new());
     };
-    if end.omen_step.is_none() {
-        if world.step >= end.clock_step + world::omens_after(world.seed, end.clock_step) {
-            tx.start_omens(&world.id, world.step)?;
-        }
-        return Ok(Vec::new());
-    }
     let Phase::Striking(disaster, done) = phase_of(&end, world) else {
         return Ok(Vec::new());
     };
@@ -2031,6 +2044,38 @@ fn end_of_the_old_city(state: &AppState, tx: &WorldTx, world: &WorldRow) -> ApiR
         tx.finish_end(&world.id, world.step)?;
     }
     Ok(changes)
+}
+
+/// W64: the keeper asks for a disaster. It's the only way one starts, and it's why it takes a person:
+/// it takes down what people built. Omens start now, and it's chosen by the step it's asked on (W65).
+pub fn start_disaster(state: &AppState, caller: &Caller, world_id: &str) -> ApiResult<&'static str> {
+    require_person(caller)?;
+    let world = require_world(state, world_id)?;
+    refuse_frozen(&world)?;
+    if state.config.keeper_id.as_deref() != Some(caller.person_id.as_str()) {
+        return Err(ApiError::forbidden("only the keeper can ask for a disaster"));
+    }
+    let disaster = state.db.in_transaction(|tx| -> ApiResult<world::Disaster> {
+        let world = tx.world(world_id)?.ok_or_else(not_found)?;
+        if tx.world_end(&world.id)?.is_some_and(|end| end.ended_step.is_none()) {
+            return Err(ApiError::conflict("a disaster is already under way"));
+        }
+        tx.start_disaster(&world.id, world.step)?;
+        Ok(world::disaster_for(world.seed, world.step))
+    })?;
+    state.worlds.mark_stale(world_id);
+    Ok(disaster.as_str())
+}
+
+/// W19: seconds until the next step of The Commons is due. A disaster goes much faster than the
+/// street does, so that a fire can be seen spreading.
+pub fn step_every(state: &AppState) -> ApiResult<u64> {
+    let striking = state
+        .db
+        .world(COMMONS_ID)?
+        .zip(state.db.world_end(COMMONS_ID)?)
+        .is_some_and(|(world, end)| matches!(phase_of(&end, &world), Phase::Striking(..)));
+    Ok(if striking { STRIKE_STEP_SECS } else { STEP_SECS })
 }
 
 /// W24: only The Commons steps, and always, because the people, agents and frogs on its street walk
@@ -2100,16 +2145,27 @@ pub fn step_all(state: &AppState, now: i64) -> StepReport {
     report
 }
 
-/// The background task: a step a minute, each world on a blocking thread of its own so the
-/// server's other work never waits on one, with a pause between worlds.
+/// The background task: a step a minute, or faster while a disaster strikes (W19), each world on a
+/// blocking thread of its own so the server's other work never waits on one, with a pause between
+/// worlds. It wakes as often as the fastest step, and steps when one is due.
 pub async fn run_steps(state: AppState) {
-    let mut ticks = tokio::time::interval_at(
-        tokio::time::Instant::now() + Duration::from_secs(60),
-        Duration::from_secs(60),
-    );
+    let tick = Duration::from_secs(STRIKE_STEP_SECS);
+    let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + tick, tick);
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut stepped = tokio::time::Instant::now();
     loop {
         ticks.tick().await;
+        let every_state = state.clone();
+        let every = tokio::task::spawn_blocking(move || step_every(&every_state)).await;
+        let every = match every {
+            Ok(Ok(every)) => every,
+            _ => STEP_SECS,
+        };
+        // A tick can come a moment early, so it's let through half a second short.
+        if stepped.elapsed() + Duration::from_millis(500) < Duration::from_secs(every) {
+            continue;
+        }
+        stepped = tokio::time::Instant::now();
         let due_state = state.clone();
         let due = tokio::task::spawn_blocking(move || worlds_due(&due_state, now())).await;
         let due = match due {
@@ -2328,9 +2384,13 @@ mod tests {
         let limiter = Limiter::new(64, 60, 3);
         let slots = |key: &str| limiter.slots(key, 64);
         let busy = (0..).map(|n| format!("busy-{n}")).find(|key| slots(key)[0] != slots(key)[1]).unwrap();
-        // One key that shares a counter with the busy one, and one that shares both.
+        // One key that shares just one counter with the busy one, and one that shares both. A key can
+        // land on one counter twice, so the first key's second can't be either of the busy one's.
         let keys = (0..).map(|n| format!("key-{n}"));
-        let one = keys.clone().find(|key| slots(key)[0] == slots(&busy)[0] && slots(key)[1] != slots(&busy)[1]);
+        let one = keys.clone().find(|key| {
+            let [first, second] = slots(key);
+            first == slots(&busy)[0] && !slots(&busy).contains(&second)
+        });
         let both = keys.clone().find(|key| slots(key) == slots(&busy));
         let (one, both) = (one.unwrap(), both.unwrap());
 

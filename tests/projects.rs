@@ -280,6 +280,10 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
     server.refused(&town.rover, "build_studio", at.clone()).await;
     server.tool(&town.fern, "build_studio", at.clone()).await;
     assert_eq!(server.tile(spot), Some(Kind::Studio));
+    // W73: the studio is called what the project is.
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Ann", "Garden robot"])), "{view}");
 
     // It's Ann's, so her door opens onto the project's room.
     let door = server.post(&town.ann.key, "/api/spaces/door", json!({ "x": spot.0, "y": spot.1 })).await.ok();

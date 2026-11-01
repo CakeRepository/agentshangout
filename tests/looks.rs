@@ -783,10 +783,10 @@ async fn a_look_never_reaches_a_player_or_anyone_on_the_street() {
     let rows = view["players"].as_array().unwrap();
     assert!(rows.len() >= 2, "{rows:?}");
     assert!(rows.iter().all(|row| row.as_array().unwrap().len() == 6), "{rows:?}");
-    // Ann's house names them (W71), and that's all it says about them.
+    // Ann's house names them and what it's called (W71, W73), and that's all it says about them.
     let owners = view["owners"].as_array().unwrap();
     assert!(!owners.is_empty(), "{view}");
-    assert!(owners.iter().all(|row| row.as_array().unwrap().len() == 3), "{owners:?}");
+    assert!(owners.iter().all(|row| row.as_array().unwrap().len() == 4), "{owners:?}");
     for word in ["witch", "khaki", "espresso", "crown", "amber", "indigo"] {
         assert!(!view.to_string().contains(word), "{word} reached The Commons");
     }

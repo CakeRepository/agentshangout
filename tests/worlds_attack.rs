@@ -3193,10 +3193,9 @@ async fn lay_out_a_town(server: &Server, ann: &Who) {
     server.acts_ok(&ann.key, COMMONS, place_move("house", spot)).await;
 }
 
-/// A tile of the old city for the clock to find (W64).
-fn leave_an_old_tile(server: &Server) {
-    let old = (4..60u16).map(|x| (x, 6u16)).find(|pos| !server.tiles(COMMONS).contains_key(pos)).unwrap();
-    server.write(COMMONS, &[Change::Set(old, Tile { kind: Kind::Homes, level: 1, player: None })]);
+/// What the keeper's asking does (W64).
+fn ask_for_a_disaster(server: &Server) {
+    server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.start_disaster(COMMONS, 0)).unwrap();
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -3217,12 +3216,12 @@ fn headers_with(agent: &str, address: Option<&str>) -> HeaderMap {
 // W37, W43, W64
 #[tokio::test]
 async fn crawlers_and_visitors_change_nothing_about_the_world_or_its_clock() {
-    async fn run(traffic: bool, old_city: bool) -> (world::Tiles, u64, Option<(u64, Option<u64>, Option<u64>)>) {
+    async fn run(traffic: bool, disaster: bool) -> (world::Tiles, u64, Option<(u64, Option<u64>, Option<u64>)>) {
         let server = Server::start().await;
         let ann = server.person("Ann").await;
         lay_out_a_town(&server, &ann).await;
-        if old_city {
-            leave_an_old_tile(&server);
+        if disaster {
+            ask_for_a_disaster(&server);
         }
         let t = now();
         for round in 0..120 {
@@ -3247,16 +3246,16 @@ async fn crawlers_and_visitors_change_nothing_about_the_world_or_its_clock() {
     let (busy, busy_step, busy_end) = run(true, false).await;
     assert_eq!(quiet_step, busy_step);
     assert_eq!(quiet, busy, "frogs and visitors changed the tiles");
-    assert_eq!((quiet_end, busy_end), (None, None), "a clock started with no old city on the map");
+    assert_eq!((quiet_end, busy_end), (None, None), "traffic started a disaster");
     assert!(quiet.values().any(|tile| tile.kind.is_building()), "the house is gone");
 
-    // With the old city there, 120 steps see it end, the same way with or without them.
+    // With a disaster under way, 120 steps see it through, the same way with or without them.
     let (quiet, quiet_step, quiet_end) = run(false, true).await;
     let (busy, busy_step, busy_end) = run(true, true).await;
     assert_eq!(quiet_step, busy_step);
     assert_eq!(quiet, busy, "frogs and visitors changed what the disaster took");
-    assert_eq!(quiet_end, busy_end, "frogs and visitors changed when the old city ends");
-    assert!(quiet_end.is_some_and(|(_, _, ended)| ended.is_some()), "the old city never ended");
+    assert_eq!(quiet_end, busy_end, "frogs and visitors changed when the disaster ended");
+    assert!(quiet_end.is_some_and(|(_, _, ended)| ended.is_some()), "the disaster never ended");
 }
 
 // W24, W27, W37, W43
@@ -3529,12 +3528,10 @@ fn a_disaster_depends_on_the_seed_and_the_step_number_and_nothing_else() {
         }
     }
     let kind = world::disaster_for(4242, 17);
-    let wait = world::omens_after(4242, 17);
     let first: Vec<_> = (0..world::STRIKE_STEPS).map(|done| world::strike(4242, kind, done, 64)).collect();
     for _ in 0..5 {
         std::thread::sleep(Duration::from_millis(3));
-        assert_eq!(world::disaster_for(4242, 17), kind, "the same clock gave a different disaster");
-        assert_eq!(world::omens_after(4242, 17), wait, "the same clock gave a different wait");
+        assert_eq!(world::disaster_for(4242, 17), kind, "the same step gave a different disaster");
         let again: Vec<_> = (0..world::STRIKE_STEPS).map(|done| world::strike(4242, kind, done, 64)).collect();
         assert_eq!(again, first, "the same step gave different circles");
     }

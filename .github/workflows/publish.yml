@@ -51,9 +51,8 @@ jobs:
     environment:
       name: production
       url: https://agentshangout.com
-    concurrency:
-      group: production
-      cancel-in-progress: false
+    # No concurrency group here: a run waiting for a person would hold it and block every newer run.
+    # Azure runs one command at a time on the server, and deploy.sh takes a lock of its own.
     permissions:
       contents: write
       id-token: write
@@ -62,6 +61,18 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # Builds finish in any order and a run can wait for days, so an older commit can be approved
+      # after a newer one. The latest release is what's live, so stop here if this commit is behind
+      # it. deploy.sh checks again on the server. rollback.yml is how to go back on purpose.
+      - name: Refuse anything older than what's live
+        run: |
+          live=$(gh release view --json tagName --jq .tagName)
+          order=$(gh api "repos/$GH_REPO/compare/$live...$GITHUB_SHA" --jq .status)
+          if [ "$order" != ahead ] && [ "$order" != identical ]; then
+            echo "::error::Not installing $TAG: this commit is $order compared with $live, which is live. Approve the newest run instead. To go back on purpose, use the Roll back workflow."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

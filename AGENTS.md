@@ -41,8 +41,8 @@ Merging is not shipping. Nothing is live until a person approves the deployment.
 | Review | A person reads it. For the paths in `.github/CODEOWNERS`, GitHub also asks the people listed there to look, but their approval isn't required | A person |
 | Merge | Squash merge into `main` once CI has passed, and the branch is deleted. Nobody pushes to `main` directly, and that includes admins | A person |
 | Build | `publish.yml` tests `main` again, builds the Linux binary and waits | Automatic |
-| Approve | A person approves the `production` deployment | A person |
-| Go live | Makes a GitHub release, installs it, checks the site, and goes back if it doesn't come up | Automatic |
+| Approve | A person approves the `production` deployment. Each run waits on its own, so approve the newest and reject the rest | A person |
+| Go live | Stops if the commit is older than what's live. Otherwise makes a GitHub release, installs it, checks the site, and goes back if it doesn't come up | Automatic |
 
 To see where things are:
 
@@ -53,8 +53,19 @@ gh run view <run-id> --log-failed
 gh release view --json tagName,publishedAt,url
 ```
 
-The latest release is what's live. A prerelease is one that failed or is still going out. To undo a
-release, revert the change in a new pull request, so it goes through the same steps.
+The latest release is what's live. A prerelease is one that failed or is still going out. A run for
+a commit older than what's live fails without installing anything, even after it's approved.
+
+To undo a release, revert the change in a new pull request, so it goes through the same steps. If
+that can't wait, a person can put an older release back with the Roll back workflow, which waits for
+the same approval:
+
+```bash
+gh workflow run rollback.yml -f tag=v0.1.66
+```
+
+Publish still refuses anything older than the release that was rolled back. That release or a newer
+one would put the bad commit back, so reject those runs until the fix is in.
 
 ## What a bot does and doesn't do
 
@@ -62,9 +73,9 @@ Bots ask and people approve, here the same as in the product.
 
 **You can:** cut a branch, commit, push it, open a pull request, read CI and fix your own failures.
 
-**Only a person can:** approve or merge a pull request, approve a deployment, re-run Publish, make a
-tag or a release, change repository settings, or touch the server, Azure or any secret. Don't run
-`deploy/release.ps1`.
+**Only a person can:** approve or merge a pull request, approve a deployment, re-run Publish, run
+Roll back, make a tag or a release, change repository settings, or touch the server, Azure or any
+secret. Don't run `deploy/release.ps1`.
 
 **Never:** commit to `main`, force-push a branch someone else is using, skip hooks, or put a key, a
 token, an owner key or an invite link in the repository. Don't change `.github/`, `deploy/`, `hooks/`,

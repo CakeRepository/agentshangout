@@ -952,6 +952,10 @@ pub struct RoutineRow {
     pub public_places: bool,
 }
 
+/// W71, W73: a place, its owner, its kind and the name of the room behind its door, if it has one:
+/// `(x, y, owner, kind, name)`.
+pub type PlaceOwnerRow = (i64, i64, String, String, Option<String>);
+
 /// S51: a request waiting on a place's owner: `(id, space_id, place, bot, asker, asked_at)`.
 pub type PlaceRequestRow = (String, String, String, String, String, i64);
 
@@ -6029,8 +6033,7 @@ pub struct Snapshot {
     pub active: i64,
 }
 
-/// W64: how far the end of the old city has got. A world has a row from its clock starting, and a
-/// world with none has nothing coming.
+/// W64: the last disaster a world had, or the one under way. A world with no row has never had one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorldEnd {
     pub clock_step: u64,
@@ -6527,42 +6530,23 @@ impl WorldTx<'_> {
         q_world_end(&self.tx, world_id)
     }
 
-    /// W64: whether a tile of the old city is on this world.
-    pub fn has_old_city(&self, world_id: &str) -> rusqlite::Result<bool> {
-        self.tx.query_row(
-            "SELECT EXISTS (SELECT 1 FROM world_tiles
-                            WHERE world_id = ?1 AND kind IN ('homes', 'shops', 'workshops', 'park'))",
-            [world_id],
-            |row| row.get(0),
-        )
-    }
-
-    /// W64: the clock starts, once.
-    pub fn start_end_clock(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
+    /// W64: a disaster starts on this step, omens first, in place of any that's over.
+    pub fn start_disaster(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
         self.tx.execute(
-            "INSERT INTO world_ends (world_id, clock_step) VALUES (?1, ?2)
-             ON CONFLICT (world_id) DO NOTHING",
+            "INSERT INTO world_ends (world_id, clock_step, omen_step) VALUES (?1, ?2, ?2)
+             ON CONFLICT (world_id) DO UPDATE SET
+                 clock_step = ?2, omen_step = ?2, ended_step = NULL",
             params![world_id, step as i64],
         )?;
         Ok(())
     }
 
-    /// W66: the omens start.
-    pub fn start_omens(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
-        self.tx.execute(
-            "UPDATE world_ends SET omen_step = ?2 WHERE world_id = ?1",
-            params![world_id, step as i64],
-        )?;
-        Ok(())
-    }
-
-    /// W68, W69: it's over, and everyone's wait starts again.
+    /// W69: it's over.
     pub fn finish_end(&self, world_id: &str, step: u64) -> rusqlite::Result<()> {
         self.tx.execute(
             "UPDATE world_ends SET ended_step = ?2 WHERE world_id = ?1",
             params![world_id, step as i64],
         )?;
-        self.tx.execute("DELETE FROM place_clocks WHERE world_id = ?", [world_id])?;
         Ok(())
     }
 
@@ -7163,16 +7147,22 @@ impl Db {
     }
 
     /// W71: every place in a world with its owner's name, `(x, y, name)`.
-    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+    /// W73: with its kind, and the name of the space behind its door if its owner has been through
+    /// and it still stands as that space's door (S33): `(x, y, owner, kind, name)`.
+    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<PlaceOwnerRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT b.x, b.y, pe.name FROM world_buildings b
+            "SELECT b.x, b.y, pe.name, b.kind,
+                    (SELECT s.name FROM space_plots d JOIN spaces s ON s.id = d.space_id
+                     WHERE d.world_id = b.world_id AND d.x = b.x AND d.y = b.y
+                       AND s.owner_id = pl.person_id AND (b.kind = 'house') = (s.kind = 'house'))
+             FROM world_buildings b
              JOIN players pl ON pl.id = b.player_id
              JOIN people pe ON pe.id = pl.person_id
              WHERE b.world_id = ?1
              ORDER BY b.y, b.x",
         )?;
-        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
         rows.collect()
     }
 
