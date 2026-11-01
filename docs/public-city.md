@@ -116,7 +116,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   server read the whole network to check what depends on it.
 - **W18.** The keeper can remove a player from The Commons, and a world's owner from their own frozen
   world. That takes down what they built. In The Commons it stops their token. In someone's own world
-  it bars them from that world. The keeper is the person set in `AGENTHANGOUT_KEEPER`.
+  it bars them from that world. The keeper is the person set in `AGENTHANGOUT_KEEPER`. A person who
+  deletes their account ends their players and takes down their places, and their roads stay (A43 in
+  [accounts-and-trust.md](accounts-and-trust.md)).
 
 ### The step
 

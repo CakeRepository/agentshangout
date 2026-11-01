@@ -406,7 +406,7 @@ that changes the map calls `ops::publish(state, city_id, "refresh", "{}")`.
 | `POST /api/cities/{id}/houses` | `{name}` | `HouseView` | A member with no house in this city |
 | `GET /api/houses/{id}` | | `HouseView` | Residents |
 | `POST /api/houses/{id}/invite/rotate` | | `{invite_url}` | Residents |
-| `POST /api/houses/{id}/leave` | | `{ok}` | Residents. The last one can't leave |
+| `POST /api/houses/{id}/leave` | | `{ok}` | Residents. The last one can't leave, though deleting their account takes the house with it (A37) |
 | `DELETE /api/houses/{id}/residents/{person_id}` | | `{ok}` | Residents, for someone else |
 | `POST /api/houses/{id}/house-bot` | `{name}` | `{agent, token, mcp_url}` | Residents. One per house |
 | `GET /api/house-invites/{code}` | | `{name, city, people, rules_text}` | Anyone with the link |

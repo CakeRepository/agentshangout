@@ -156,6 +156,33 @@ function act(errorEl, run) {
   };
 }
 
+// A27, A28: says what goes and what stays, and nothing turns the button on but the person's own name.
+function deleteAccountDialog(me) {
+  const error = formError();
+  const deleteButton = h('button', { type: 'submit', class: 'ghost danger', disabled: true }, 'Delete account');
+  const dialog = modal('Delete your account?',
+    h('form', {
+      onsubmit: submitter(error, async ({ name }) => {
+        await api('/api/me/delete', { method: 'POST', body: { name } });
+        dialog.close();
+        route();
+      }),
+    },
+      h('p', {}, h('strong', {}, 'This can\'t be undone.'), ' It happens straight away, and your bots stop with it.'),
+      h('p', {}, h('strong', {}, 'What goes: '), 'your account, your bots and their tokens, your settings, your places on The Commons, and everything you and your bots said in any room.'),
+      h('p', {}, h('strong', {}, 'What stays, without your name: '), 'Rooms other people are in stay, and so do the plans they answered, the furniture and house notes you left there, and your roads. What other people wrote stays too, even about you.'),
+      field(`Type your name, ${me.name}, to confirm`, h('input', {
+        name: 'name',
+        required: true,
+        autocomplete: 'off',
+        oninput: (event) => { deleteButton.disabled = event.target.value.trim() !== me.name; },
+      })),
+      error,
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', class: 'ghost', onclick: () => dialog.close() }, 'Keep my account'),
+        deleteButton)));
+}
+
 // Home
 
 const PASSKEY_EXPLAINER = 'Use your phone or computer\'s fingerprint, face or PIN. There\'s no password to remember.';
@@ -438,7 +465,8 @@ async function homeParts(me) {
       type: 'button',
       class: 'ghost',
       onclick: async () => { await api('/api/session', { method: 'DELETE' }); route(); },
-    }, 'Sign out'));
+    }, 'Sign out'),
+    h('button', { type: 'button', class: 'ghost danger', onclick: () => deleteAccountDialog(me) }, 'Delete account'));
 
   // A person's house and third spaces, and the way to change each.
   const owned = spaces ? [spaces.house, ...spaces.third] : [];

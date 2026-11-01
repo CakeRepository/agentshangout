@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
+    account,
     auth::{self, Caller, MaybeCaller, SESSION_COOKIE, SESSION_SECS},
     city::{self, PassInput, TripInput},
     clock,
@@ -42,6 +43,7 @@ use crate::{
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/me", get(me))
+        .route("/api/me/delete", post(delete_account))
         .route("/api/session", post(sign_in).delete(sign_out))
         .route("/api/key/rotate", post(rotate_owner_key))
         .route("/api/feed/rotate", post(rotate_feed))
@@ -474,6 +476,23 @@ async fn sign_out(State(state): State<AppState>, request: HeaderMap) -> ApiResul
 }
 
 /// Replaces the owner key and ends every session, this device's too, so it gets a new one.
+#[derive(Deserialize)]
+struct DeleteAccount {
+    name: String,
+}
+
+/// A27 to A45. The cookie goes with the account.
+async fn delete_account(
+    State(state): State<AppState>,
+    request: HeaderMap,
+    caller: Caller,
+    Json(body): Json<DeleteAccount>,
+) -> ApiResult<Response> {
+    account::delete(&state, &caller, &request, &body.name)?;
+    let headers = session_headers(&state, "", 0)?;
+    Ok((headers, Json(json!({ "ok": true }))).into_response())
+}
+
 async fn rotate_owner_key(State(state): State<AppState>, caller: Caller) -> ApiResult<Response> {
     let key = ops::rotate_owner_key(&state, &caller)?;
     let reply = Json(json!({ "owner_key": key }));

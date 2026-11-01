@@ -631,6 +631,10 @@ CREATE TABLE IF NOT EXISTS bot_places (
 CREATE INDEX IF NOT EXISTS room_agents_by_bot ON room_agents (agent_id);
 "#;
 
+/// A30: the one row in `people` that stands for everyone who has deleted their account.
+pub const SOMEONE_WHO_LEFT_ID: &str = "someone-who-left";
+pub const SOMEONE_WHO_LEFT: &str = "Someone who left";
+
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
 /// oldest, so the table can't be grown without limit.
 const MAX_SESSIONS_PER_PERSON: i64 = 50;
@@ -2025,6 +2029,383 @@ fn load_trips(
     ))?;
     let rows = stmt.query_map(params![key, since, now], |row| trip_from_row(row, now))?;
     rows.collect()
+}
+
+/// What deleting an account leaves for the caller to tell people about.
+#[derive(Debug, Default)]
+pub struct AccountGone {
+    /// Rooms they belonged to that other people are still in (A44).
+    pub rooms: Vec<String>,
+    /// Rooms that went, and rooms they or their bots were only visiting.
+    pub other_rooms: Vec<String>,
+    /// Plans still here that have lost their answer (A39).
+    pub plans: Vec<String>,
+    /// Cities they belonged to that are still here (A37).
+    pub cities: Vec<String>,
+    /// Houses whose house bot has passed to someone else (A33).
+    pub house_bots: Vec<String>,
+}
+
+/// A42: what happened holds a name here, and most of these have no id beside it.
+const NAME_RECORDS: [(&str, &str); 7] = [
+    ("trips", "asked_by"),
+    ("trips", "owner_ok_by"),
+    ("trips", "host_ok_by"),
+    ("trips", "ended_by"),
+    ("scene_requests", "asked_by"),
+    ("scene_requests", "answered_by"),
+    ("check_ins", "answered_by"),
+];
+
+fn strings(
+    conn: &Connection,
+    sql: &str,
+    params: impl rusqlite::Params,
+) -> rusqlite::Result<Vec<String>> {
+    conn.prepare(sql)?.query_map(params, |row| row.get(0))?.collect()
+}
+
+fn is_managed_room(conn: &Connection, hangout_id: &str) -> rusqlite::Result<bool> {
+    exists(
+        conn,
+        "SELECT 1 WHERE EXISTS (SELECT 1 FROM houses WHERE living_room = ?1 OR porch = ?1)
+            OR EXISTS (SELECT 1 FROM cities WHERE square_id = ?1)",
+        [hangout_id],
+    )
+}
+
+/// A34: belonging means being a member, so someone who walked in doesn't count.
+fn someone_else_belongs(
+    conn: &Connection,
+    hangout_id: &str,
+    person_id: &str,
+) -> rusqlite::Result<bool> {
+    exists(
+        conn,
+        "SELECT 1 FROM members WHERE hangout_id = ? AND person_id <> ?",
+        params![hangout_id, person_id],
+    )
+}
+
+/// Takes a room with everything in it. Invites name a place with no foreign key.
+fn remove_room(conn: &Connection, id: &str, gone: &mut AccountGone) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM friend_invites WHERE place_id = ?", [id])?;
+    conn.execute("DELETE FROM hangouts WHERE id = ?", [id])?;
+    gone.other_rooms.push(id.to_string());
+    Ok(())
+}
+
+/// Entry rules and invites name a city or a house with no foreign key.
+fn forget_place(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM entry_rules WHERE place_id = ?", [id])?;
+    conn.execute("DELETE FROM friend_invites WHERE place_id = ?", [id])?;
+    Ok(())
+}
+
+/// A house goes first, because a room can't go while a house points at it.
+fn remove_house(conn: &Connection, id: &str, gone: &mut AccountGone) -> rusqlite::Result<()> {
+    let (living_room, porch): (String, String) =
+        conn.query_row("SELECT living_room, porch FROM houses WHERE id = ?", [id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+    forget_place(conn, id)?;
+    conn.execute("DELETE FROM houses WHERE id = ?", [id])?;
+    remove_room(conn, &living_room, gone)?;
+    remove_room(conn, &porch, gone)
+}
+
+/// A37: a house or a city that was theirs, or that only they are left in, and that nobody else is in.
+fn remove_empty_households(
+    conn: &Connection,
+    person_id: &str,
+    gone: &mut AccountGone,
+) -> rusqlite::Result<()> {
+    let houses = strings(
+        conn,
+        "SELECT h.id FROM houses h
+         WHERE (h.created_by = ?1 OR EXISTS (SELECT 1 FROM residents r
+                                             WHERE r.house_id = h.id AND r.person_id = ?1))
+           AND NOT EXISTS (SELECT 1 FROM residents r WHERE r.house_id = h.id AND r.person_id <> ?1)",
+        [person_id],
+    )?;
+    for house in houses {
+        remove_house(conn, &house, gone)?;
+    }
+    let cities = strings(
+        conn,
+        "SELECT c.id FROM cities c
+         WHERE (c.created_by = ?1 OR EXISTS (SELECT 1 FROM city_members m
+                                             WHERE m.city_id = c.id AND m.person_id = ?1))
+           AND NOT EXISTS (SELECT 1 FROM city_members m
+                           WHERE m.city_id = c.id AND m.person_id <> ?1)",
+        [person_id],
+    )?;
+    for city in cities {
+        for house in strings(conn, "SELECT id FROM houses WHERE city_id = ?", [&city])? {
+            remove_house(conn, &house, gone)?;
+        }
+        let square: String =
+            conn.query_row("SELECT square_id FROM cities WHERE id = ?", [&city], |row| row.get(0))?;
+        forget_place(conn, &city)?;
+        conn.execute("DELETE FROM cities WHERE id = ?", [&city])?;
+        remove_room(conn, &square, gone)?;
+    }
+    Ok(())
+}
+
+/// A35: the floor a space began with can't go while the space stands, so nobody can reach this one
+/// and nothing is left on it to reach.
+fn shut_first_floor(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    for table in ["messages", "events", "check_ins", "floor_items", "floor_visits"] {
+        conn.execute(&format!("DELETE FROM {table} WHERE hangout_id = ?"), [id])?;
+    }
+    conn.execute("UPDATE floors SET access = 'private' WHERE hangout_id = ?", [id])?;
+    conn.execute(
+        "UPDATE hangouts SET invite_code = lower(hex(randomblob(16))) WHERE id = ?",
+        [id],
+    )?;
+    conn.execute("DELETE FROM friend_invites WHERE place_id = ?", [id])?;
+    Ok(())
+}
+
+/// A34, A35: rooms and spaces they had any part in that nobody else belongs to.
+fn remove_empty_rooms(
+    conn: &Connection,
+    person_id: &str,
+    gone: &mut AccountGone,
+) -> rusqlite::Result<()> {
+    let rooms = strings(
+        conn,
+        "SELECT id FROM hangouts WHERE created_by = ?1
+         UNION SELECT hangout_id FROM members WHERE person_id = ?1
+         UNION SELECT f.hangout_id FROM floors f JOIN spaces s ON s.id = f.space_id
+               WHERE s.owner_id = ?1",
+        [person_id],
+    )?;
+    let mut spaces = std::collections::BTreeSet::new();
+    for room in rooms {
+        if is_managed_room(conn, &room)? {
+            continue;
+        }
+        let space: Option<String> = conn
+            .query_row("SELECT space_id FROM floors WHERE hangout_id = ?", [&room], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        match space {
+            Some(space) => {
+                spaces.insert(space);
+            }
+            None if !someone_else_belongs(conn, &room, person_id)? => {
+                remove_room(conn, &room, gone)?;
+            }
+            None => {}
+        }
+    }
+    for space in spaces {
+        let floors = strings(conn, "SELECT hangout_id FROM floors WHERE space_id = ?", [&space])?;
+        let mut empty = Vec::new();
+        for floor in &floors {
+            if !someone_else_belongs(conn, floor, person_id)? {
+                empty.push(floor);
+            }
+        }
+        let all = empty.len() == floors.len();
+        for floor in empty {
+            if all || *floor != space {
+                remove_room(conn, floor, gone)?;
+            } else {
+                shut_first_floor(conn, floor)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A33: a house bot belongs to its house, so it stays with whoever has lived there longest. Whoever
+/// made it may still hold its token, so it gets a new one that nobody holds, and the address it
+/// reported to was theirs.
+fn pass_on_house_bots(
+    conn: &Connection,
+    person_id: &str,
+    gone: &mut AccountGone,
+) -> rusqlite::Result<()> {
+    let bots = strings(
+        conn,
+        "SELECT a.id FROM agents a JOIN bot_homes b ON b.agent_id = a.id AND b.is_house = 1
+         WHERE a.owner_id = ?",
+        [person_id],
+    )?;
+    for bot in bots {
+        let house: String =
+            conn.query_row("SELECT house_id FROM bot_homes WHERE agent_id = ?", [&bot], |row| {
+                row.get(0)
+            })?;
+        let next: Option<String> = conn
+            .query_row(
+                "SELECT person_id FROM residents WHERE house_id = ? AND person_id <> ?
+                 ORDER BY joined_at, rowid LIMIT 1",
+                params![house, person_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(next) = next {
+            conn.execute(
+                "UPDATE agents SET owner_id = ?, token_hash = lower(hex(randomblob(32))),
+                                   status = NULL WHERE id = ?",
+                params![next, bot],
+            )?;
+            conn.execute("DELETE FROM notify_targets WHERE owner_id = ?", [&bot])?;
+            gone.house_bots.push(house);
+        }
+    }
+    Ok(())
+}
+
+/// A38: whether a line in a room's history names someone: the whole name, not the start of a longer
+/// word, so "Al" leaves "Alice joined" alone.
+fn names(body: &str, name: &str) -> bool {
+    body.match_indices(name).any(|(at, _)| {
+        let before = body[..at].chars().next_back();
+        let after = body[at + name.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
+/// A36: a name the server built from theirs, such as "Ann's House", or one they typed the same way.
+/// A name that was cut short to fit is still theirs.
+fn without_their_name(name: &str, theirs: &str) -> Option<String> {
+    let (whose, what) = name.rsplit_once("'s ")?;
+    (!whose.is_empty() && theirs.starts_with(whose)).then(|| format!("Someone's {what}"))
+}
+
+/// A38: what they and their bots said, and the lines that name them.
+fn remove_their_words(conn: &Connection, person_id: &str, who: &[String]) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM messages WHERE person_id = ?1
+            OR agent_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+        [person_id],
+    )?;
+    conn.execute("DELETE FROM check_ins WHERE asked_by = ?", [person_id])?;
+    conn.execute("DELETE FROM item_notes WHERE person_id = ?", [person_id])?;
+    let belonged =
+        strings(conn, "SELECT hangout_id FROM members WHERE person_id = ?", [person_id])?;
+    for name in who {
+        let mut lines = conn.prepare(
+            "SELECT id, hangout_id, body FROM messages WHERE kind = 'system' AND instr(body, ?) > 0",
+        )?;
+        let lines: Vec<(i64, String, String)> = lines
+            .query_map([name], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        // Only rooms they had a part in, or anyone called "joined" could empty every room's history.
+        // A room they left still has a line that starts with their name.
+        let starts = format!("{name} ");
+        let mut rooms: std::collections::BTreeSet<&str> =
+            belonged.iter().map(String::as_str).collect();
+        rooms.extend(
+            lines
+                .iter()
+                .filter(|(_, _, body)| body.starts_with(&starts))
+                .map(|(_, room, _)| room.as_str()),
+        );
+        for (id, room, body) in &lines {
+            if rooms.contains(room.as_str()) && names(body, name) {
+                conn.execute("DELETE FROM messages WHERE id = ?", [id])?;
+            }
+        }
+        // An answer holds a name and no id, and what came with it was theirs to say.
+        for room in rooms {
+            conn.execute(
+                "UPDATE check_ins SET note = '' WHERE hangout_id = ? AND answered_by = ?",
+                params![room, name],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A39: a plan goes if nobody else has answered it, with the lines that quote it. Any other stays
+/// with "Someone who left" on it.
+fn settle_their_plans(conn: &Connection, person_id: &str) -> rusqlite::Result<()> {
+    let mut plans = conn.prepare(
+        "SELECT e.id, e.hangout_id, e.title FROM events e
+         WHERE e.proposed_by = ?1 AND NOT EXISTS (SELECT 1 FROM rsvps r
+                                                  WHERE r.event_id = e.id AND r.person_id <> ?1)",
+    )?;
+    let plans: Vec<(String, String, String)> = plans
+        .query_map([person_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (id, room, title) in plans {
+        conn.execute(
+            "DELETE FROM messages WHERE hangout_id = ? AND kind = 'system'
+               AND instr(body, '\"' || ? || '\"') > 0",
+            params![room, title],
+        )?;
+        conn.execute("DELETE FROM events WHERE id = ?", [id])?;
+    }
+    conn.execute(
+        "UPDATE events SET proposed_by = ?1, proposer = ?2 WHERE proposed_by = ?3",
+        params![SOMEONE_WHO_LEFT_ID, SOMEONE_WHO_LEFT, person_id],
+    )?;
+    Ok(())
+}
+
+/// Everything that stays and still points at them, so that `people` lets their row go.
+fn hand_over_what_stays(conn: &Connection, person_id: &str, name: &str) -> rusqlite::Result<()> {
+    let left = SOMEONE_WHO_LEFT_ID;
+    // F40: what they claimed is let go, as when anyone stops going.
+    conn.execute(
+        "UPDATE plan_items SET claimed_by = NULL, claimed_via = NULL, done = 0 WHERE claimed_by = ?",
+        [person_id],
+    )?;
+    conn.execute(
+        "UPDATE plan_items SET added_by = ?1, adder = ?2 WHERE added_by = ?3",
+        params![left, SOMEONE_WHO_LEFT, person_id],
+    )?;
+    // F47: a note a bot wrote stays a bot's, so `via_agent` keeps saying so, without the bot's name.
+    conn.execute(
+        "UPDATE house_notes SET written_by = ?1,
+            via_agent = CASE WHEN via_agent IS NULL THEN NULL ELSE ?2 END
+         WHERE written_by = ?3",
+        params![left, SOMEONE_WHO_LEFT, person_id],
+    )?;
+    for (table, column) in [
+        ("plan_invites", "created_by"),
+        ("floor_items", "placed_by"),
+        ("check_ins", "to_person"),
+        ("hangouts", "created_by"),
+        ("cities", "created_by"),
+        ("houses", "created_by"),
+    ] {
+        conn.execute(
+            &format!("UPDATE {table} SET {column} = ?1 WHERE {column} = ?2"),
+            params![left, person_id],
+        )?;
+    }
+    // A36: a person has one house and "Someone who left" isn't a person, so what stays of a house
+    // is a third space, which the people there can close.
+    for table in ["spaces", "hangouts"] {
+        let sql = format!(
+            "SELECT id, name FROM {table} WHERE id IN (SELECT id FROM spaces WHERE owner_id = ?)"
+        );
+        let mut rows = conn.prepare(&sql)?;
+        let rows: Vec<(String, String)> = rows
+            .query_map([person_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (id, old) in rows {
+            if let Some(new) = without_their_name(&old, name) {
+                conn.execute(
+                    &format!("UPDATE {table} SET name = ? WHERE id = ?"),
+                    params![new, id],
+                )?;
+            }
+        }
+    }
+    conn.execute(
+        "UPDATE spaces SET owner_id = ?, kind = 'third' WHERE owner_id = ?",
+        params![left, person_id],
+    )?;
+    Ok(())
 }
 
 /// An index made with `IF NOT EXISTS` keeps the definition it was first made with. When the schema
@@ -3818,12 +4199,7 @@ impl Db {
     /// Town Squares, Living Rooms and Porches, which people get into by being in the city or the
     /// house and never through a hangout invite.
     pub fn is_managed_room(&self, hangout_id: &str) -> rusqlite::Result<bool> {
-        exists(
-            &self.conn(),
-            "SELECT 1 WHERE EXISTS (SELECT 1 FROM houses WHERE living_room = ?1 OR porch = ?1)
-                OR EXISTS (SELECT 1 FROM cities WHERE square_id = ?1)",
-            [hangout_id],
-        )
+        is_managed_room(&self.conn(), hangout_id)
     }
 
     // Spaces and floors
@@ -8325,6 +8701,76 @@ impl Db {
         )?;
         let rows = stmt.query_map([day], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
+    }
+
+    // Deleting an account
+
+    /// A27 to A45: everything `people` holds of someone. Their row goes, so every cascade runs, and
+    /// a column added later without one makes this fail instead of keeping what it holds. It's one
+    /// transaction, so if anything fails they still have their account.
+    pub fn delete_person(&self, person_id: &str, name: &str) -> rusqlite::Result<AccountGone> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let mut gone = AccountGone::default();
+        // A30: both values are random and thrown away, so neither key nor calendar link works.
+        tx.execute(
+            "INSERT OR IGNORE INTO people (id, name, color, key_hash, feed_token, created_at)
+             VALUES (?, ?, '#8a8f98', lower(hex(randomblob(32))), lower(hex(randomblob(32))), 0)",
+            params![SOMEONE_WHO_LEFT_ID, SOMEONE_WHO_LEFT],
+        )?;
+        pass_on_house_bots(&tx, person_id, &mut gone)?;
+        gone.other_rooms.extend(strings(
+            &tx,
+            "SELECT hangout_id FROM floor_visits WHERE person_id = ?1
+             UNION SELECT h.porch FROM trips t JOIN houses h ON h.id = t.house_id
+                   JOIN agents a ON a.id = t.agent_id
+                   WHERE a.owner_id = ?1 AND t.status = 'here'",
+            [person_id],
+        )?);
+        remove_empty_households(&tx, person_id, &mut gone)?;
+        remove_empty_rooms(&tx, person_id, &mut gone)?;
+
+        let mut who = strings(&tx, "SELECT name FROM agents WHERE owner_id = ?", [person_id])?;
+        who.push(name.to_string());
+        remove_their_words(&tx, person_id, &who)?;
+        settle_their_plans(&tx, person_id)?;
+        hand_over_what_stays(&tx, person_id, name)?;
+        tx.execute(
+            "UPDATE trips SET host_ok_by = ?, host_ok_id = ? WHERE host_ok_id = ?",
+            params![SOMEONE_WHO_LEFT, SOMEONE_WHO_LEFT_ID, person_id],
+        )?;
+        for (table, column) in NAME_RECORDS {
+            for name in &who {
+                tx.execute(
+                    &format!("UPDATE {table} SET {column} = ? WHERE {column} = ?"),
+                    params![SOMEONE_WHO_LEFT, name],
+                )?;
+            }
+        }
+
+        // A43: places go with the player, and a road holds a number nothing leads back from.
+        tx.execute("DELETE FROM players WHERE person_id = ?", [person_id])?;
+        tx.execute("DELETE FROM worlds WHERE owner_id = ?", [person_id])?;
+        // This table holds a person's address or a bot's, with no foreign key to either.
+        tx.execute(
+            "DELETE FROM notify_targets WHERE owner_id = ?1
+                OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+            [person_id],
+        )?;
+
+        gone.plans = strings(&tx, "SELECT event_id FROM rsvps WHERE person_id = ?", [person_id])?;
+        gone.cities =
+            strings(&tx, "SELECT city_id FROM city_members WHERE person_id = ?", [person_id])?;
+        gone.rooms = strings(
+            &tx,
+            "SELECT m.hangout_id FROM members m WHERE m.person_id = ?1
+               AND EXISTS (SELECT 1 FROM members o
+                           WHERE o.hangout_id = m.hangout_id AND o.person_id <> ?1)",
+            [person_id],
+        )?;
+        tx.execute("DELETE FROM people WHERE id = ?", [person_id])?;
+        tx.commit()?;
+        Ok(gone)
     }
 }
 
