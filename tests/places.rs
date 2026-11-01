@@ -1237,3 +1237,16 @@ fn the_map_keeps_the_level_of_a_big_places_tiles() {
         .expect("applyTiles sets each tile's level");
     assert!(kept.contains("isBig(k)"), "a big place's level is read as 0: {kept}");
 }
+
+// W91: a big place is one place to look at. Hovering any tile outlines all four, and the square is
+// one design across them, with one jet, not a fountain on each tile.
+#[test]
+fn a_big_place_is_outlined_whole_and_the_square_has_one_fountain() {
+    let map = include_str!("../web/world.js").replace("\r\n", "\n");
+    let hover = map.find("hovering a place outlines all of it").expect("the hover outline");
+    assert!(map[hover..hover + 400].contains("this.placeAt(this.tile.x, this.tile.y)"));
+    let start = map.find("function squarePiece(corner) {").unwrap();
+    let piece = &map[start..start + map[start..].find("\n}\n").unwrap()];
+    assert!(!piece.contains("fountain("), "each quarter draws a whole fountain");
+    assert_eq!(piece.matches("if (corner === 3)").count(), 1, "one jet, on the last quarter drawn");
+}
