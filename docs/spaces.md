@@ -69,6 +69,8 @@ Every one of these needs a test in `tests/spaces.rs`.
 - **S6.** A space's house and a city's house are different things. A city's house is a household:
   residents, a Living Room, a Porch, trips and scenes. Town Squares, Living Rooms and Porches are not
   spaces, so they have no floors, sizes, looks or walk-ins, and nothing here changes R1 to R48.
+  A house on the map doesn't put its owner in a city, so `list_city` never shows it. When a bot's
+  owner has no city, it says The Commons isn't one and where to look instead (W1, W4).
 
 ### Who runs a space
 

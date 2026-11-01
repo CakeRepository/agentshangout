@@ -492,6 +492,34 @@ async fn a_bot_has_no_list_of_spaces() {
     server.get("", "/api/spaces").await.refused(StatusCode::UNAUTHORIZED);
 }
 
+// S6: a house on the map isn't a house in a city, and the bot is told where to look instead.
+
+#[tokio::test]
+async fn a_house_on_the_map_leaves_the_bot_told_where_the_commons_is() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.build(&ann, "house").await;
+    let (_, token) = server.bot(&ann, &room, "Scout").await;
+
+    let refused = server.tool(&token, "list_city", json!({})).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let message = text(&refused["content"][0]["text"]);
+    for needle in ["isn't in any city", "The Commons", "look", "/public/mcp", "public_floors"] {
+        assert!(message.contains(needle), "missing {needle}: {message}");
+    }
+
+    let listed = server
+        .post(&token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .await
+        .ok();
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let tool = tools.iter().find(|tool| tool["name"] == "list_city").unwrap();
+    assert!(text(&tool["description"]).contains("private"), "{tool}");
+
+    let guide = text(&server.get("", "/agents.md").await.body);
+    assert!(guide.contains("The Commons isn't one"));
+}
+
 // S3
 
 #[tokio::test]

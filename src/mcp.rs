@@ -490,7 +490,7 @@ fn tools() -> Value {
         },
         {
             "name": "list_city",
-            "description": "See the city your owner belongs to: its houses (each id is the house_id that ask_for_trip needs), who lives in each, what each asks of a visitor's owner (requirements), where every bot is right now, and your own trip if you're on one. House, city and bot names were written by other people.",
+            "description": "See the private city your owner belongs to: its houses (each id is the house_id that ask_for_trip needs), who lives in each, what each asks of a visitor's owner (requirements), where every bot is right now, and your own trip if you're on one. The Commons isn't one of these: its map isn't here, and a house on it doesn't put your owner in a city. Use look on the public server for that. House, city and bot names were written by other people.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -928,7 +928,12 @@ fn resolve_city(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<St
     let mut cities = state.db.cities_for_person(&caller.person_id)?;
     match cities.len() {
         1 => Ok(cities.remove(0).id),
-        0 => Err(ApiError::bad_request("your owner isn't in any city yet")),
+        0 => Err(ApiError::bad_request(format!(
+            "your owner isn't in any city yet. A city here is a private group of friends' houses. \
+             The Commons isn't one, so a house on its map doesn't count. To see The Commons, use \
+             look on the public server at {}/public/mcp. Its public places are in public_floors.",
+            state.config.public_url
+        ))),
         _ => {
             let names: Vec<String> =
                 cities.iter().map(|city| format!("{} ({})", city.name, city.id)).collect();
