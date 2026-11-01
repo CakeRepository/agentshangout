@@ -615,9 +615,9 @@ async fn god_mode_doesnt_change_the_land_or_say_anything_to_anyone() {
     assert!(!view.to_string().contains("god"));
 }
 
-// W79, L13
+// W79, W95, L13
 #[tokio::test]
-async fn a_bot_gets_nothing_from_its_owners_switch() {
+async fn a_bot_gets_no_limits_from_its_owners_switch_and_none_of_its_powers() {
     let (server, justin, _) = Server::start().await;
     let hall = server
         .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
@@ -626,29 +626,36 @@ async fn a_bot_gets_nothing_from_its_owners_switch() {
     let (_, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.switch(&justin, true).await;
 
-    // Its project's studio goes through Justin's own player, and it still waits.
-    let started = server.tool(&fern, "start_project", json!({ "name": "Garden robot" })).await;
-    let spot = server.free_spots()[0];
-    let refused = server
-        .call(
-            &fern,
-            "build_studio",
-            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
-        )
-        .await;
-    assert_eq!(refused["isError"], true, "{refused}");
-    assert!(refused["content"][0]["text"].as_str().unwrap().contains("hasn't come"), "{refused}");
-    assert_eq!(server.tile(spot), None);
+    // W95: as many projects as it wants, each with its building at once, past Justin's 3 and
+    // with no wait, through his own player.
+    for n in 0..5 {
+        let started =
+            server.tool(&fern, "start_project", json!({ "name": format!("Project {n}") })).await;
+        let spot = server.free_spots()[0];
+        let at = json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 });
+        server.tool(&fern, "build_studio", at).await;
+        assert_eq!(server.tile(spot), Some(Kind::Studio), "project {n}");
+    }
 
-    // Its own player is an agent's, with an agent's moves.
+    // Its own player is an agent's, with no move limit, and none of god mode's powers (W79).
     let joined = server.post(&fern, "/api/public/join", json!({})).await.ok();
     let player = text(&joined["player_token"]);
     let before = server.me(&player).await;
     assert!(before.get("god_mode").is_none());
-    assert_eq!(server.act(&player, road_move(server.road_spot())).await.ok()["cost"], 1);
+    assert_eq!(server.act(&player, road_move(server.road_spot())).await.ok()["cost"], 0);
     let spot = server.free_spots()[0];
     let place = json!({ "action": "place", "kind": "cafe", "x": spot.0, "y": spot.1 });
     server.act(&player, place).await.refused(StatusCode::FORBIDDEN);
+    let highway = server.highway_tile();
+    let clear = json!({ "action": "bulldoze", "x": highway.0, "y": highway.1 });
+    assert!(server.act(&player, clear).await.status.is_client_error(), "it can't take the highway");
+
+    // With the switch off, its limits are back.
+    server.switch(&justin, false).await;
+    let refused = server.call(&fern, "start_project", json!({ "name": "One more" })).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    assert_eq!(server.act(&player, wave).await.ok()["cost"], 1);
 }
 
 // W79, I19
@@ -1137,4 +1144,35 @@ async fn placing_the_square_without_the_switch_is_refused_without_saying_why() {
     let spot = server.free_spots()[0];
     let reply = server.place(&ann, "square", spot).await.refused(StatusCode::FORBIDDEN);
     assert!(!reply.to_string().to_lowercase().contains("god"), "{reply}");
+}
+
+// W93: god mode lays roads anywhere, but not right alongside another.
+#[tokio::test]
+async fn god_mode_still_cant_lay_a_road_right_alongside_another() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let road =
+        |x: i64, y: i64| tiles.get(&(x as u16, y as u16)).is_some_and(|t| t.kind == Kind::Road);
+    let open = |x: i64, y: i64| {
+        let pos = (x as u16, y as u16);
+        !tiles.contains_key(&pos) && land.at(pos).is_some_and(|ground| ground.is_open())
+    };
+    // Two tiles of highway, one above the other, with open land to their right.
+    let (x, y) = tiles
+        .keys()
+        .map(|&(x, y)| (i64::from(x), i64::from(y)))
+        .find(|&(x, y)| {
+            road(x, y)
+                && road(x, y + 1)
+                && (y..=y + 1).all(|v| open(x + 1, v))
+                && !road(x + 1, y - 1)
+                && !road(x + 1, y + 2)
+        })
+        .expect("a straight bit of highway");
+    server.act(&justin.key, road_move((x + 1, y))).await.ok();
+    let refused = server.act(&justin.key, road_move((x + 1, y + 1))).await;
+    refused.refused(StatusCode::BAD_REQUEST);
+    assert_eq!(server.tile((x + 1, y + 1)), None);
 }

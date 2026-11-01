@@ -817,7 +817,7 @@ fn may_place(
     world: &WorldRow,
     player: &PlayerRow,
     kind: Kind,
-    god: bool,
+    (god, unlimited): (bool, bool),
     now: i64,
 ) -> ApiResult<()> {
     if player.kind() != PlayerKind::Person {
@@ -836,13 +836,13 @@ fn may_place(
     if kind == Kind::House && houses >= MAX_HOUSES {
         return Err(ApiError::conflict("you already have a house"));
     }
-    if !god && kind != Kind::House && others >= MAX_THIRD_SPACES {
+    if !god && !unlimited && kind != Kind::House && others >= MAX_THIRD_SPACES {
         return Err(ApiError::conflict("you already have as many of those as a person can"));
     }
     if everyone >= MAX_BUILDINGS {
         return Err(ApiError::conflict("The Commons has no room for more buildings right now"));
     }
-    if !god && wait_for(kind, tx.place_clock(&world.id, player.id)?, now) > 0 {
+    if !god && !unlimited && wait_for(kind, tx.place_clock(&world.id, player.id)?, now) > 0 {
         return Err(ApiError::conflict("that place hasn't come yet: places come with time"));
     }
     Ok(())
@@ -985,6 +985,8 @@ fn tiles_near(
 struct Mover {
     player_id: i64,
     god: bool,
+    /// W95: no move limit and no cap on places, for a person with god mode on and for their bots.
+    unlimited: bool,
 }
 
 /// One move, planned and applied in one transaction. Any refusal leaves everything as it was and
@@ -994,7 +996,7 @@ fn apply_move(
     tx: &WorldTx,
     world: &WorldRow,
     land: &Land,
-    Mover { player_id, god }: Mover,
+    Mover { player_id, god, unlimited }: Mover,
     parsed: &Parsed,
     now: i64,
 ) -> ApiResult<Acted> {
@@ -1009,7 +1011,7 @@ fn apply_move(
             return Err(ApiError::conflict(world::TIP_STRIKING));
         }
     }
-    let left = if god { allowance(&player) } else { moves_left(&player, now) };
+    let left = if god || unlimited { allowance(&player) } else { moves_left(&player, now) };
     // W30: this answer isn't counted as a refused move, so it comes before any of the work.
     if left == 0 {
         return Err(out_of_moves("you have no moves left today", now));
@@ -1063,10 +1065,14 @@ fn apply_move(
                 let hoods = world::neighborhoods(world.seed, world.size);
                 world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
             }
+            // W93: and no road lies alongside another, whoever lays it.
+            if world::makes_a_block(&tiles, &fresh) {
+                return Err(ApiError::bad_request(world::SIDE_BY_SIDE));
+            }
             planned
         }
         Parsed::Place(kind, x, y) => {
-            may_place(tx, world, &player, *kind, god, now)?;
+            may_place(tx, world, &player, *kind, (god, unlimited), now)?;
             let tiles =
                 tiles_near(tx, &world.id, land, Span::point(*x, *y), 1, world::SIDE_STREET)?;
             plan_parts(world::plan_place(land, &tiles, builder, *kind, *x, *y))?
@@ -1105,8 +1111,8 @@ fn apply_move(
             }
         }
     };
-    // W76: nothing costs anything with god mode on.
-    let cost = if god { 0 } else { cost };
+    // W76, W95: nothing costs anything with god mode on, a person's or their bots'.
+    let cost = if god || unlimited { 0 } else { cost };
 
     if cost > left {
         return Err(out_of_moves(
@@ -1163,8 +1169,9 @@ fn plan_parts(planned: world::Planned) -> ApiResult<(Vec<Change>, u32, u32)> {
 }
 
 /// W13: a player makes a move in a world. This is for a caller whose address isn't known, which
-/// is a test or the server itself. That includes a bot putting up its project's studio through its
-/// owner's own player, so god mode isn't looked at here (W79); a request goes through `act_from`.
+/// is a test or the server itself. That includes a bot putting up its project's building through
+/// its owner's own player, so god mode's powers aren't looked at here (W79), only whether its owner
+/// lifted the limits (W95). A request goes through `act_from`.
 pub fn act(
     state: &AppState,
     player: &PlayerRow,
@@ -1172,7 +1179,19 @@ pub fn act(
     mv: &Move,
     now: i64,
 ) -> ApiResult<Acted> {
-    act_as(state, player, false, None, world_id, mv, now)
+    let unlimited = unlimited_of(state, player)?;
+    act_as(state, player, (false, unlimited), None, world_id, mv, now)
+}
+
+/// W95: whether a player's owner has god mode on, so its moves and places have no limit: a person's
+/// own player, or a bot's.
+pub fn unlimited_of(state: &AppState, player: &PlayerRow) -> ApiResult<bool> {
+    match player.person_id.as_deref() {
+        Some(person_id) if matches!(player.kind(), PlayerKind::Person | PlayerKind::Bot) => {
+            god_mode::is_on(state, person_id)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// W13, W30: a player makes a move in a world, from the address a request came from.
@@ -1185,7 +1204,9 @@ pub fn act_from(
     now: i64,
 ) -> ApiResult<Acted> {
     let god = god_mode_of(state, player)?;
-    let acted = act_as(state, player, god, address_of(state, headers), world_id, mv, now)?;
+    let unlimited = unlimited_of(state, player)?;
+    let acted =
+        act_as(state, player, (god, unlimited), address_of(state, headers), world_id, mv, now)?;
     // W52: a person whose own player just moved is on the street as that, and never twice.
     if player.kind() == PlayerKind::Person
         && world_id == COMMONS_ID
@@ -1210,7 +1231,7 @@ fn god_mode_of(state: &AppState, player: &PlayerRow) -> ApiResult<bool> {
 fn act_as(
     state: &AppState,
     player: &PlayerRow,
-    god: bool,
+    powers: (bool, bool),
     address: Option<IpAddr>,
     world_id: &str,
     mv: &Move,
@@ -1225,7 +1246,7 @@ fn act_as(
         )
         .retry_after(refused.wait(now)));
     }
-    let acted = make_move(state, player, god, world_id, mv, now);
+    let acted = make_move(state, player, powers, world_id, mv, now);
     if acted.as_ref().is_err_and(was_refused) {
         for key in &keys {
             refused.allow(key, now);
@@ -1243,7 +1264,7 @@ fn was_refused(error: &ApiError) -> bool {
 fn make_move(
     state: &AppState,
     player: &PlayerRow,
-    god: bool,
+    (god, unlimited): (bool, bool),
     world_id: &str,
     mv: &Move,
     now: i64,
@@ -1251,7 +1272,7 @@ fn make_move(
     let parsed = parse_move(mv).map_err(ApiError::bad_request)?;
     let world = require_world(state, world_id)?;
     let land = state.worlds.land_for(world.seed, world.size);
-    let mover = Mover { player_id: player.id, god };
+    let mover = Mover { player_id: player.id, god, unlimited };
     let acted = state
         .db
         .in_transaction(|tx| apply_move(state, tx, &world, &land.land, mover, &parsed, now))?;
@@ -2287,7 +2308,13 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
-        let changes = disaster_step(state, tx, &world)?;
+        let mut changes = disaster_step(state, tx, &world)?;
+        // W94: on The Commons, roads laid side by side are thinned out, but not while a disaster strikes.
+        if changes.is_empty() && world.id == COMMONS_ID {
+            let hoods = world::neighborhoods(world.seed, world.size);
+            let slab = world::slab_tiles(&hoods, &tx.all_tiles(&world.id)?);
+            changes.extend(slab.into_iter().map(Change::Remove));
+        }
         tx.write_changes(&world.id, &changes, now)?;
         tx.set_step(&world.id, world.step + 1)?;
         Ok(changes.len())
