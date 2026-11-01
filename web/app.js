@@ -3135,8 +3135,11 @@ async function roomView(id) {
     const result = h('p', { class: 'muted', hidden: true, role: 'status' });
     const url = h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' });
     const auth = h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' });
+    const who = h('select', { name: 'who' },
+      h('option', { value: 'room', selected: !saved.only_me }, 'Anyone in the room'),
+      h('option', { value: 'me', selected: saved.only_me }, 'Only me'));
     const save = async () => {
-      const body = { url: url.value || null };
+      const body = { url: url.value || null, only_me: who.value === 'me' };
       if (auth.value === '-') body.auth = null;
       else if (auth.value) body.auth = auth.value;
       else if (!saved.auth) body.auth = null;
@@ -3157,6 +3160,7 @@ async function roomView(id) {
       },
         field('Webhook URL', url, 'Saving this empty removes it.'),
         field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
+        field('Who can wake it with an @mention', who, 'Someone who walked onto a public floor can wake it only in its social hours, up to its daily cap. A wake-up starts your agent with whatever tools it has.'),
         error,
         result,
         h('div', { class: 'modal-actions' },

@@ -410,6 +410,7 @@ struct AgentNotifyBody {
     url: NotifyField,
     #[serde(default)]
     auth: NotifyField,
+    only_me: Option<bool>,
 }
 
 fn notify_update(field: &NotifyField) -> ops::NotifyAuth<'_> {
@@ -440,6 +441,7 @@ async fn set_agent_notify(
         &id,
         notify_update(&body.url),
         notify_update(&body.auth),
+        body.only_me,
     )?;
     Ok(Json(json!({ "ok": true })))
 }

@@ -709,6 +709,21 @@ CREATE TABLE IF NOT EXISTS floors_left (
     person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     PRIMARY KEY (hangout_id, person_id)
 );
+-- E25: whether only a bot's owner can wake it with an @mention. No row means E24 alone decides.
+CREATE TABLE IF NOT EXISTS wake_settings (
+    agent_id  TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    only_me   INTEGER NOT NULL
+);
+-- E22, E24: each @mention that rang a bot, so a ring that hasn't been read isn't repeated and a
+-- daily cap can be counted. `capped` marks the rings that count toward it.
+CREATE TABLE IF NOT EXISTS wake_rings (
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    capped      INTEGER NOT NULL,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS wake_rings_by_bot ON wake_rings (agent_id, rung_at);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -5078,9 +5093,9 @@ impl Db {
         Ok(())
     }
 
-    /// E22: whether a person's @mention of this bot in this room, newer than `since`, is unread.
-    /// A bot's doesn't count, because it rang nothing.
-    pub fn person_mention_unread(
+    /// E22: whether a ring in this room, newer than `since`, is unread. A mention that rang nothing
+    /// doesn't count, or one that couldn't ring would hold the bell against one that can.
+    pub fn wake_ring_unread(
         &self,
         agent_id: &str,
         hangout_id: &str,
@@ -5088,12 +5103,53 @@ impl Db {
     ) -> rusqlite::Result<bool> {
         exists(
             &self.conn(),
-            "SELECT 1 FROM mentions m JOIN messages msg ON msg.id = m.message_id
-             WHERE m.agent_id = ?1 AND m.hangout_id = ?2 AND m.read_at IS NULL
-               AND m.created_at > ?3 AND msg.agent_id IS NULL
+            "SELECT 1 FROM wake_rings r
+             JOIN mentions m ON m.message_id = r.message_id AND m.agent_id = r.agent_id
+             WHERE r.agent_id = ?1 AND m.hangout_id = ?2 AND r.rung_at > ?3 AND m.read_at IS NULL
              LIMIT 1",
             params![agent_id, hangout_id, since],
         )
+    }
+
+    /// E24: records that this message rang this bot and returns whether it did. With a `cap`, it
+    /// only does while fewer than that many capped rings went out this UTC day.
+    pub fn note_wake_ring(
+        &self,
+        agent_id: &str,
+        message_id: i64,
+        now: i64,
+        cap: Option<i64>,
+    ) -> rusqlite::Result<bool> {
+        const DAY_SECS: i64 = 24 * 60 * 60;
+        let today = now - now.rem_euclid(DAY_SECS);
+        let conn = self.conn();
+        conn.execute("DELETE FROM wake_rings WHERE rung_at < ?", [today - DAY_SECS])?;
+        let rung = conn.execute(
+            "INSERT OR IGNORE INTO wake_rings (message_id, agent_id, capped, rung_at)
+             SELECT ?1, ?2, ?3, ?4
+             WHERE ?5 IS NULL OR (SELECT COUNT(*) FROM wake_rings
+                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6) < ?5",
+            params![message_id, agent_id, cap.is_some(), now, cap, today],
+        )?;
+        Ok(rung > 0)
+    }
+
+    /// E25: whether only this bot's owner can wake it with an @mention.
+    pub fn wakes_only_for_owner(&self, agent_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM wake_settings WHERE agent_id = ? AND only_me = 1",
+            [agent_id],
+        )
+    }
+
+    pub fn set_wakes_only_for_owner(&self, agent_id: &str, only_me: bool) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO wake_settings (agent_id, only_me) VALUES (?, ?)
+             ON CONFLICT (agent_id) DO UPDATE SET only_me = excluded.only_me",
+            params![agent_id, only_me],
+        )?;
+        Ok(())
     }
 
     pub fn unread_mentions(&self, agent_id: &str) -> rusqlite::Result<Vec<Mention>> {
