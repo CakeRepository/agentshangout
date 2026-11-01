@@ -583,6 +583,21 @@ CREATE TABLE IF NOT EXISTS place_requests (
     answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS place_requests_by_space ON place_requests (space_id, status);
+CREATE TABLE IF NOT EXISTS god_mode (
+    person_id  TEXT PRIMARY KEY REFERENCES people(id) ON DELETE CASCADE,
+    since      INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS world_squares (
+    world_id   TEXT PRIMARY KEY REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    built_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS town_square_rooms (space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE);
+CREATE VIEW IF NOT EXISTS world_places AS
+    SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
+    UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -801,6 +816,8 @@ pub struct PublicFloor {
     pub size: String,
     pub capacity: i64,
     pub here: i64,
+    /// L18: this floor is behind the world's town square.
+    pub town_square: bool,
 }
 
 pub struct NewVisit<'a> {
@@ -3024,7 +3041,7 @@ impl Db {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
         const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
-             JOIN world_buildings b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN world_places b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
              JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
                             AND pl.agent_id IS NULL AND pl.token_hash IS NULL
              JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
@@ -4034,8 +4051,8 @@ impl Db {
         rows.collect()
     }
 
-    /// The public floors this person hasn't been turned out of, fullest first (S28). `capacity`
-    /// is filled in by `spaces`, which knows what the sizes hold.
+    /// The public floors this person hasn't been turned out of, the town square's first (L18), then
+    /// fullest first (S28). `capacity` is filled in by `spaces`, which knows what the sizes hold.
     pub fn public_floors(
         &self,
         person_id: &str,
@@ -4044,14 +4061,19 @@ impl Db {
     ) -> rusqlite::Result<Vec<PublicFloor>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT f.hangout_id, h.name, s.name, p.name, s.about, f.size, {ON_FLOOR} AS here
+            "SELECT f.hangout_id, h.name, s.name, p.name, s.about, f.size, {ON_FLOOR} AS here,
+                    EXISTS (SELECT 1 FROM space_plots d
+                            JOIN world_squares q ON q.world_id = d.world_id AND q.x = d.x AND q.y = d.y
+                            JOIN players pl ON pl.id = q.player_id AND pl.person_id = s.owner_id
+                            WHERE d.space_id = s.id
+                              AND s.id IN (SELECT space_id FROM town_square_rooms)) AS town_square
              FROM floors f
              JOIN hangouts h ON h.id = f.hangout_id
              JOIN spaces s ON s.id = f.space_id
              JOIN people p ON p.id = s.owner_id
              WHERE f.access = 'public'
                AND NOT EXISTS (SELECT 1 FROM turned_out t WHERE t.space_id = s.id AND t.person_id = ?2)
-             ORDER BY here DESC, h.created_at DESC, f.hangout_id LIMIT ?3"
+             ORDER BY town_square DESC, here DESC, h.created_at DESC, f.hangout_id LIMIT ?3"
         ))?;
         let rows = stmt.query_map(params![now, person_id, limit], |row| {
             Ok(PublicFloor {
@@ -4063,6 +4085,7 @@ impl Db {
                 size: row.get(5)?,
                 capacity: 0,
                 here: row.get(6)?,
+                town_square: row.get(7)?,
             })
         })?;
         rows.collect()
@@ -5588,6 +5611,24 @@ impl Db {
         Ok(())
     }
 
+    /// W75: whether this person left god mode on. `god_mode::is_on` says whether that counts.
+    pub fn god_mode_on(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(&self.conn(), "SELECT 1 FROM god_mode WHERE person_id = ?", [person_id])
+    }
+
+    pub fn set_god_mode(&self, person_id: &str, on: bool, now: i64) -> rusqlite::Result<()> {
+        if on {
+            self.conn().execute(
+                "INSERT INTO god_mode (person_id, since) VALUES (?, ?)
+                 ON CONFLICT (person_id) DO NOTHING",
+                params![person_id, now],
+            )?;
+        } else {
+            self.conn().execute("DELETE FROM god_mode WHERE person_id = ?", [person_id])?;
+        }
+        Ok(())
+    }
+
     /// F51: whether this person's plans show on their house's calendar.
     pub fn shows_plans_to_house(&self, person_id: &str) -> rusqlite::Result<bool> {
         exists(&self.conn(), "SELECT 1 FROM house_plan_sharing WHERE person_id = ?", [person_id])
@@ -6357,6 +6398,28 @@ fn tile_from_row(row: &Row) -> rusqlite::Result<Option<(Pos, Tile)>> {
     )))
 }
 
+/// W56: a player's houses, their other places, and all the places in the world. The town square
+/// counts toward the last and nobody's own limit (W81).
+fn q_building_counts(
+    conn: &Connection,
+    world_id: &str,
+    player_id: i64,
+) -> rusqlite::Result<(i64, i64, i64)> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
+                COALESCE(SUM(player_id = ?2 AND kind NOT IN ('house', 'square')), 0),
+                COUNT(*)
+         FROM world_places WHERE world_id = ?1",
+        params![world_id, player_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+}
+
+/// W81: whether a world's town square stands.
+fn q_has_square(conn: &Connection, world_id: &str) -> rusqlite::Result<bool> {
+    exists(conn, "SELECT 1 FROM world_squares WHERE world_id = ?", [world_id])
+}
+
 /// The tiles of a world, or only those inside a box (both corners included). The box is for
 /// planning one move: the planners look at the tiles in a move and the ones beside it, no further.
 fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusqlite::Result<Tiles> {
@@ -6365,7 +6428,7 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
         None => {
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings WHERE world_id = ?1",
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places WHERE world_id = ?1",
             )?;
             let mut rows = stmt.query([world_id])?;
             while let Some(row) = rows.next()? {
@@ -6378,7 +6441,7 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5",
             )?;
             let mut rows = stmt.query(params![world_id, x0, x1, y0, y1])?;
@@ -6417,8 +6480,24 @@ fn q_write_changes(
     )?;
     let mut remove_building = conn
         .prepare_cached("DELETE FROM world_buildings WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
+    // The town square has its own table, for the same reason (W81).
+    let mut set_square = conn.prepare_cached(
+        "INSERT INTO world_squares (world_id, x, y, player_id, built_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut remove_square =
+        conn.prepare_cached("DELETE FROM world_squares WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
     for change in changes {
         match change {
+            Change::Set((x, y), tile) if tile.kind == Kind::Square => {
+                remove.execute(params![world_id, x, y])?;
+                set_square.execute(params![
+                    world_id,
+                    x,
+                    y,
+                    tile.player.map(|player| player as i64),
+                    now
+                ])?;
+            }
             Change::Set((x, y), tile) if tile.kind.is_building() => {
                 remove.execute(params![world_id, x, y])?;
                 set_building.execute(params![
@@ -6433,6 +6512,7 @@ fn q_write_changes(
             Change::Set((x, y), tile) => {
                 if tile.kind == Kind::Cleared {
                     remove_building.execute(params![world_id, x, y])?;
+                    remove_square.execute(params![world_id, x, y])?;
                 }
                 set.execute(params![
                     world_id,
@@ -6447,6 +6527,7 @@ fn q_write_changes(
             Change::Remove((x, y)) => {
                 remove.execute(params![world_id, x, y])?;
                 remove_building.execute(params![world_id, x, y])?;
+                remove_square.execute(params![world_id, x, y])?;
             }
         }
     }
@@ -6650,14 +6731,12 @@ impl WorldTx<'_> {
         world_id: &str,
         player_id: i64,
     ) -> rusqlite::Result<(i64, i64, i64)> {
-        self.tx.query_row(
-            "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
-                    COALESCE(SUM(player_id = ?2 AND kind <> 'house'), 0),
-                    COUNT(*)
-             FROM world_buildings WHERE world_id = ?1",
-            params![world_id, player_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
+        q_building_counts(&self.tx, world_id, player_id)
+    }
+
+    /// W81: whether this world's town square stands.
+    pub fn has_square(&self, world_id: &str) -> rusqlite::Result<bool> {
+        q_has_square(&self.tx, world_id)
     }
 
     pub fn all_tiles(&self, world_id: &str) -> rusqlite::Result<Tiles> {
@@ -6916,6 +6995,32 @@ impl Db {
     /// W61: when this player's first house went up.
     pub fn place_clock(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Option<i64>> {
         q_place_clock(&self.conn(), world_id, player_id)
+    }
+
+    /// W56: this player's houses, this player's other buildings, and all the buildings in the world.
+    pub fn building_counts(
+        &self,
+        world_id: &str,
+        player_id: i64,
+    ) -> rusqlite::Result<(i64, i64, i64)> {
+        q_building_counts(&self.conn(), world_id, player_id)
+    }
+
+    /// W81: whether this world's town square stands.
+    pub fn has_square(&self, world_id: &str) -> rusqlite::Result<bool> {
+        q_has_square(&self.conn(), world_id)
+    }
+
+    /// W82: whether this room is the one behind a town square, whatever it is called.
+    pub fn is_town_square_room(&self, space_id: &str) -> rusqlite::Result<bool> {
+        exists(&self.conn(), "SELECT 1 FROM town_square_rooms WHERE space_id = ?", [space_id])
+    }
+
+    /// W82: marks a room as the town square's, for good.
+    pub fn mark_town_square_room(&self, space_id: &str) -> rusqlite::Result<()> {
+        self.conn()
+            .execute("INSERT OR IGNORE INTO town_square_rooms (space_id) VALUES (?)", [space_id])?;
+        Ok(())
     }
 
     /// The tiles inside a box, corners included.
@@ -7447,7 +7552,7 @@ impl Db {
                     (SELECT s.name FROM space_plots d JOIN spaces s ON s.id = d.space_id
                      WHERE d.world_id = b.world_id AND d.x = b.x AND d.y = b.y
                        AND s.owner_id = pl.person_id AND (b.kind = 'house') = (s.kind = 'house'))
-             FROM world_buildings b
+             FROM world_places b
              JOIN players pl ON pl.id = b.player_id
              JOIN people pe ON pe.id = pl.person_id
              WHERE b.world_id = ?1
@@ -7469,7 +7574,7 @@ impl Db {
     ) -> rusqlite::Result<Option<(String, Option<String>)>> {
         self.conn()
             .query_row(
-                "SELECT b.kind, p.person_id FROM world_buildings b
+                "SELECT b.kind, p.person_id FROM world_places b
                  JOIN players p ON p.id = b.player_id
                  WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
                 params![world_id, x, y],
@@ -7484,7 +7589,7 @@ impl Db {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
             "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT x, y, kind, 0, player_id FROM world_buildings
+             UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
                        WHERE world_id = ?1 AND player_id = ?2",
         )?;
         let mut rows = stmt.query(params![world_id, player_id])?;
@@ -7712,6 +7817,9 @@ impl Db {
         )? + tx.execute(
             "DELETE FROM world_buildings WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
+        )? + tx.execute(
+            "DELETE FROM world_squares WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
@@ -7750,7 +7858,7 @@ impl Db {
             "SELECT 1 FROM world_players WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_members WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT 1 FROM world_buildings WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
+             UNION ALL SELECT 1 FROM world_places WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
             params![world_id, player_id],
         )
     }

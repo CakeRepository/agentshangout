@@ -4827,9 +4827,12 @@ const BUILD_TOOLS = [
   ['studio', 'Studio', 'Studio: click a tile beside a road. A private place away from home. 1 move.'],
   ['club', 'Club', 'Club: click a tile beside a road. A private place for the people you invite. 1 move.'],
   ['cafe', 'Cafe', 'Cafe: click a tile beside a road. A shared place: anyone signed in can walk in. 1 move.'],
+  ['square', 'Square', 'Town square: click a tile beside a road. The public place every bot meets, and a server has one.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
-const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square']);
+// W16, W81: tools nobody sees without god mode on.
+const GOD_TOOLS = new Set(['road', 'square']);
 
 // W66, W67, W69: what the page says about a disaster, in its own words.
 const DISASTER_WORDS = {
@@ -4869,6 +4872,7 @@ function moveSentence(body, done) {
   if (body.action === 'walk') return `Walking. ${left}`;
   if (body.action === 'emote') return `You're ${EMOTE_WORD[body.emote] || 'out and about'}. ${left}`;
   if (!done.changed) return `Nothing changed. ${left}`;
+  if (body.kind === 'square') return 'The town square is up and open. Bots with public places on will find it first.';
   if (body.action === 'place') return `Your ${body.kind} is up. ${left}`;
   const verb = { road: 'Road laid on', bulldoze: 'Cleared' }[body.action];
   const tiles = `${done.changed} ${done.changed === 1 ? 'tile' : 'tiles'}`;
@@ -4898,7 +4902,7 @@ function townText(mine) {
   return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
 }
 
-const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio' };
+const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square' };
 const LAND_NAME = { grass: 'Open grass', forest: 'Forest', water: 'Water', sand: 'Sand', hill: 'Hill' };
 const EMOTE_MENU = [['wave', 'Wave'], ['cheer', 'Cheer'], ['think', 'Think'], ['sleep', 'Sleep'], ['dance', 'Dance']];
 // A narrow screen gets sheets instead of side panels, and a dock along the bottom.
@@ -5123,6 +5127,8 @@ async function worldView(id, { home = false } = {}) {
       moves = data.moves_left;
       if (data.player) myId = String(data.player.id);
       placesLeft = data.places || null;
+      placesFull = new Set(data.full || []);
+      godOn = data.god_mode === true;
       showMoves();
       showTown(data);
       showLocks();
@@ -5134,16 +5140,28 @@ async function worldView(id, { home = false } = {}) {
 
   // How long until each place comes, for a person (W62). It's asked for along with their town.
   let placesLeft = mover?.places || null;
+  // W62: the kinds you have as many of as you can, whose buttons are off until there's room again.
+  let placesFull = new Set(mover?.full || []);
+  // W76: whether your god mode is on, which only a person with the switch ever hears.
+  let godOn = mover?.god_mode === true;
+  let godButton = null;
   const lockOf = (name) => {
     const left = placesLeft?.[name];
     return left > 0 ? waitText(left) : '';
   };
+  const toolShown = (name) => godOn || !GOD_TOOLS.has(name);
   const showLocks = () => {
     for (const [name, button] of buttons) {
-      const lock = lockOf(name);
+      const full = placesFull.has(name);
+      const lock = full ? 'Max' : lockOf(name);
+      button.hidden = !toolShown(name);
+      button.disabled = full;
       button.classList.toggle('locked', Boolean(lock));
       button.querySelector('.wd-lock')?.replaceChildren(lock);
     }
+    godButton?.setAttribute('aria-pressed', String(godOn));
+    // A tool that has gone, been turned off or locked again doesn't stay in your hand.
+    if (tool && (!toolShown(tool) || placesFull.has(tool) || lockOf(tool))) choose(null);
   };
 
   // The news: what's coming, or what's happening, over the map.
@@ -5335,6 +5353,12 @@ async function worldView(id, { home = false } = {}) {
 
   // --- The tools -------------------------------------------------------------------------------
 
+  function choose(name) {
+    tool = name;
+    for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === name));
+    world.setTool(name);
+  }
+
   function pick(name) {
     if (name && !me) {
       say('Sign in to build here. Looking around is free.');
@@ -5346,10 +5370,24 @@ async function worldView(id, { home = false } = {}) {
       say(`Places come with time: this one comes ${lockOf(name)}.`);
       return;
     }
-    tool = name;
-    for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === name));
-    world.setTool(name);
+    // W56: the menu on the map can still offer one, and a button can't.
+    if (name && placesFull.has(name)) {
+      say('You have as many of those as you can.');
+      return;
+    }
+    choose(name);
     say(hintNow());
+  }
+
+  // W75: flips the switch, and the server's answer about you is what turns the tools on or off.
+  async function flipGod() {
+    try {
+      await api('/api/god-mode', { method: 'PUT', body: { on: !godOn } });
+      await refreshTown();
+      say(godOn ? 'God mode is on: everything is unlocked, moves are free, and you can lay roads and clear anything.' : 'God mode is off.');
+    } catch (error) {
+      say(plain(error.message));
+    }
   }
 
   for (const [name, label, hint] of frozen ? [] : BUILD_TOOLS) {
@@ -5359,6 +5397,13 @@ async function worldView(id, { home = false } = {}) {
       BUILDING_KINDS.has(name) ? h('small', { class: 'wd-lock' }) : null);
     buttons.set(name, button);
     frame.tools.append(button);
+  }
+  // W75: only someone AGENTHANGOUT_GODS names is told about the switch, so nobody else's page has it.
+  if (!frozen && typeof me?.god_mode === 'boolean') {
+    godButton = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': 'God mode', title: 'God mode: shape The Commons by hand. Only you can see this.', onclick: flipGod },
+      h('span', { class: 'wd-glyph', 'aria-hidden': 'true' }, '✦'),
+      h('span', { class: 'wd-btn-label' }, 'God mode'));
+    frame.tools.append(godButton);
   }
   showLocks();
 
@@ -5411,6 +5456,8 @@ async function worldView(id, { home = false } = {}) {
       moves = done.moves_left;
       showMoves();
       say(moveSentence(body, done));
+      // W82: the town square is open from the moment it's up, and going through its door is what opens it.
+      if (body.kind === 'square') api('/api/spaces/door', { method: 'POST', body: { x: body.x, y: body.y } }).catch(() => null);
       refreshTown();
       // What was just built shows now. The server's own view follows a moment later and settles it.
       const made = movedTiles(body, done);
@@ -5419,13 +5466,16 @@ async function worldView(id, { home = false } = {}) {
         latest = { ...latest, tiles: latest.tiles.filter(([x, y]) => !taken.has(`${x},${y}`)).concat(made) };
         world.setView(latest);
       }
-      if (body.action === 'place' && done.changed) nameDialog(body);
+      // W82: the town square already has its name, so it isn't asked for one.
+      if (body.action === 'place' && done.changed && body.kind !== 'square') nameDialog(body);
       watch.soon();
     } catch (error) {
       say(plain(error.message));
       if (error.status === 401) {
         openAccount('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
       }
+      // A refused move can mean the toolbar is out of date: a second square, or the switch going off.
+      refreshTown();
     }
   }
 
@@ -5504,10 +5554,10 @@ async function worldView(id, { home = false } = {}) {
       if ((t.kind && t.kind !== 'cleared') || (!t.kind && t.land === 'forest')) {
         items.push({ label: 'Clear', cost: '1 move', run: () => send({ action: 'bulldoze', x: t.x, y: t.y }) });
       }
-      items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze').map(([key, label]) => ({
+      items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze' && toolShown(key)).map(([key, label]) => ({
         label,
         icon: menuIcon(key),
-        cost: lockOf(key) || undefined,
+        cost: (placesFull.has(key) ? 'Max' : lockOf(key)) || undefined,
         checked: tool === key,
         run: () => pick(key),
       })));
@@ -5572,7 +5622,7 @@ async function worldView(id, { home = false } = {}) {
   }
 
   // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.
-  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square']);
   const ACCESS_TEXT = {
     in: 'is inside',
     visiting: 'is visiting now',

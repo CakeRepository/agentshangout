@@ -28,7 +28,7 @@ use crate::{
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     error::{ApiError, ApiResult},
-    friends, households, items, looks, now,
+    friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals, routines, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -85,6 +85,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
         .merge(friends::routes())
+        .merge(god_mode::routes())
         .merge(spaces::routes())
         .merge(items::routes())
         .merge(looks::routes())
@@ -326,6 +327,10 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
     // W18: the keeper of The Commons is told so, so the page knows to offer the removal buttons.
     if state.config.keeper_id.as_deref() == Some(caller.person_id.as_str()) {
         me["keeper"] = json!(true);
+    }
+    // W75: someone with the God mode switch is told where it's set. Nobody else hears it exists.
+    if god_mode::may_use(&state, &caller.person_id) {
+        me["god_mode"] = json!(state.db.god_mode_on(&caller.person_id)?);
     }
     Ok(Json(me))
 }
@@ -1904,6 +1909,7 @@ mod tests {
                     create_code: create_code.map(str::to_string),
                     allow_private_webhooks: true,
                     keeper_id: None,
+                    god_ids: Vec::new(),
                 },
             );
             tokio::spawn(async move { axum::serve(listener, app(state)).await });

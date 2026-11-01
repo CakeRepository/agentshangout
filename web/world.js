@@ -50,9 +50,10 @@ const K_HOUSE = 7;
 const K_CAFE = 8;
 const K_CLUB = 9;
 const K_STUDIO = 10;
-const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio'];
+const K_SQUARE = 11;
+const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio', 'square'];
 const KIND_ID = Object.fromEntries(KIND_NAME.map((name, id) => [name, id]).slice(1));
-const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio'];
+const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio', 'Town square'];
 const isZone = (k) => k >= K_HOMES && k <= K_WORKS;
 
 const EMOTES = new Set(['wave', 'cheer', 'think', 'sleep', 'dance']);
@@ -1131,6 +1132,29 @@ function duck(g, x, y) {
 }
 const dot = (g, c, x, y) => rr(g, c, x - 0.4, y - 0.4, 0.8, 0.8);
 
+// A stone fountain in the middle of a tile.
+function fountain(g) {
+  disc(g, 'rgba(25,25,35,.25)', 18, 18, 8.4);
+  disc(g, '#9c9a8f', 16, 16, 7.2, 0);
+  disc(g, '#c9c6b8', 16, 16, 7.2, 3);
+  disc(g, '#7e7d72', 16, 16, 6, 3);
+  disc(g, '#4fa6d8', 16, 16, 5.6, 2.2);
+  disc(g, '#7bc4ec', 15.4, 15.4, 3.6, 2.3);
+  const [x, y] = P(16, 16, 3);
+  rr(g, '#d3d0c2', x - 1.6, y - 11, 3.2, 11);
+  ell(g, '#c9c6b8', x, y - 11, 4, 1.7);
+  ell(g, '#8ccaf0', x, y - 11.4, 3.2, 1.2);
+  for (let k = 0; k < 7; k++) {
+    const a = -1.4 + k * 0.47;
+    g.strokeStyle = 'rgba(210,240,255,.85)';
+    g.lineWidth = 0.9;
+    g.beginPath();
+    g.moveTo(x, y - 12);
+    g.quadraticCurveTo(x + Math.sin(a) * 7, y - 20, x + Math.sin(a) * 11, y - 4);
+    g.stroke();
+  }
+}
+
 function parkObject(variant, mask) {
   return object(`park:${variant}:${mask}`, (g) => {
     const tree = (u, v, type, s) => {
@@ -1139,26 +1163,8 @@ function parkObject(variant, mask) {
     };
     const free = (b) => !((mask >> b) & 1);
     if (variant === 0) {
-      // A stone fountain in the middle of the plaza.
-      disc(g, 'rgba(25,25,35,.25)', 18, 18, 8.4);
-      disc(g, '#9c9a8f', 16, 16, 7.2, 0);
-      disc(g, '#c9c6b8', 16, 16, 7.2, 3);
-      disc(g, '#7e7d72', 16, 16, 6, 3);
-      disc(g, '#4fa6d8', 16, 16, 5.6, 2.2);
-      disc(g, '#7bc4ec', 15.4, 15.4, 3.6, 2.3);
-      const [x, y] = P(16, 16, 3);
-      rr(g, '#d3d0c2', x - 1.6, y - 11, 3.2, 11);
-      ell(g, '#c9c6b8', x, y - 11, 4, 1.7);
-      ell(g, '#8ccaf0', x, y - 11.4, 3.2, 1.2);
-      for (let k = 0; k < 7; k++) {
-        const a = -1.4 + k * 0.47;
-        g.strokeStyle = 'rgba(210,240,255,.85)';
-        g.lineWidth = 0.9;
-        g.beginPath();
-        g.moveTo(x, y - 12);
-        g.quadraticCurveTo(x + Math.sin(a) * 7, y - 20, x + Math.sin(a) * 11, y - 4);
-        g.stroke();
-      }
+      // A fountain in the middle of the plaza.
+      fountain(g);
       if (free(1)) tree(27, 5, 'small', 3);
       if (free(2)) tree(5, 27, 'blossom', 5);
       if (free(3)) tree(27, 27, 'bush', 7);
@@ -2543,6 +2549,19 @@ function placedStudio(S, c) {
   }
 }
 
+// The town square (W81): a paved plaza round a fountain with benches, open to the sky, so it can't be
+// taken for anyone's building.
+function placedSquare(S) {
+  paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
+  if (!S.day) return;
+  paving(S, [7, 7, 25, 25], '#c7bc9f', '#a79c7e');
+  fountain(S.g);
+  bench(S.g, 16, 4);
+  bench(S.g, 16, 28);
+  bench(S.g, 4, 16, 'v');
+  bench(S.g, 28, 16, 'v');
+}
+
 const BUILDERS = {
   [K_HOMES]: [null, homeOne, homeTwo, homeThree],
   [K_SHOPS]: [null, shopOne, shopTwo, shopThree],
@@ -2551,6 +2570,7 @@ const BUILDERS = {
   [K_CAFE]: [placedCafe],
   [K_CLUB]: [placedClub],
   [K_STUDIO]: [placedStudio],
+  [K_SQUARE]: [placedSquare],
 };
 
 // A building as a sprite, with its lit-windows twin, its shadow, and the places smoke rises.
@@ -3940,6 +3960,13 @@ export function toolIcon(tool, size = 32) {
       slope(g, '#8fb7d0', [[ua, 9, 21], [ua + 5.6, 9, 21]], [[ua, 23, 15], [ua + 5.6, 23, 15]], 6, 2.4);
     }
     g.restore();
+  } else if (tool === 'square') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
+    fountain(g);
+    g.restore();
   } else {
     // A bulldozer blade and a cross.
     g.save();
@@ -3967,6 +3994,7 @@ const TOOL_COLOR = {
   studio: '#9ad0ff',
   club: '#c9a6ff',
   cafe: '#ffb04d',
+  square: '#8fe3c0',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));

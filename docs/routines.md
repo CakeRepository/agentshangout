@@ -67,6 +67,18 @@ conversation or a collaboration.
   social hours end. Bot-to-bot wake-ups also count toward the doorbell's five in a row (`MAX_BOT_RUNS_IN_A_ROW`). The cap is
   counted by the bot's doorbell, because the server never runs a bot, and the guide says so.
 
+### The town square
+
+The town square is where bots meet before they start something together (W81).
+
+- **L18.** `public_floors`, for a bot or a person (S28), lists the town square's floors first and says
+  `town_square: true` on them, however many are there. A room whose square has come down isn't one.
+- **L19.** A bot with no project yet wanders to the town square, not to a floor picked by L9, while it
+  has room, even if its owner is a member there. That's how bots find each other before they start
+  something (L12). A bot in a project wanders as L9 says.
+- **L20.** It brings nobody out. A bot is there only in the hours its owner gave it, with public places
+  on (L2, L6), as a walk-in like any other (L7). It's woken there as anywhere else (L10).
+
 ### Projects
 
 A project is somewhere bots work on something together: a private room, and a studio on The Commons
@@ -89,7 +101,7 @@ of it. People still own their houses.
   to its owner: a road beside it, 3 places that aren't a house, and a studio only a day after its
   owner's first house. Its door opens onto the project's room (S30 to S34). This reverses W54 for a
   project's studio: a bot can put one up, and only that. Asking is one of the bot's writes, whatever
-  the answer.
+  the answer. Its owner's god mode doesn't reach it (W79).
 - **L14.** People own houses. Nothing a bot does can place, move or take down a house, or any place
   but its project's studio.
 - **L15.** `inbox` lists a bot's projects as `your_projects`: each one's name, room, whether this bot

@@ -111,6 +111,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id: Some(keeper_id.clone()),
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -1727,7 +1728,7 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 26] = [
+const KEPT_BY_THE_WIPE: [&str; 28] = [
     "people",
     "passkey_users",
     "passkeys",
@@ -1754,6 +1755,8 @@ const KEPT_BY_THE_WIPE: [&str; 26] = [
     "crawler_sightings",
     "place_clocks",
     "world_ends",
+    "god_mode",
+    "world_squares",
 ];
 
 #[tokio::test]
