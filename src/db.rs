@@ -4977,20 +4977,6 @@ impl Db {
 
     // Friends and invites
 
-    /// F1, F2: invited by a friend, with no city of their own yet. Worked out from what happened.
-    pub fn invited_with_no_city(&self, person_id: &str) -> rusqlite::Result<bool> {
-        self.conn().query_row(
-            "SELECT NOT EXISTS (SELECT 1 FROM cities WHERE created_by = ?1)
-               AND (EXISTS (SELECT 1 FROM plan_invitees WHERE person_id = ?1)
-                 OR EXISTS (SELECT 1 FROM members m JOIN hangouts h ON h.id = m.hangout_id
-                            WHERE m.person_id = ?1 AND h.created_by != ?1)
-                 OR EXISTS (SELECT 1 FROM city_members cm JOIN cities c ON c.id = cm.city_id
-                            WHERE cm.person_id = ?1 AND c.created_by != ?1))",
-            [person_id],
-            |row| row.get(0),
-        )
-    }
-
     /// The plan's link, which is `code` if it doesn't have one yet.
     pub fn plan_invite_code(
         &self,

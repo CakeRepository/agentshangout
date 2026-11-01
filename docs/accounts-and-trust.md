@@ -18,7 +18,7 @@ requirement only lets you ask. A person still says yes.
 | Signing in | Passkeys, on `agentshangout.com`. No passwords, no email |
 | Recovery | The owner key. It's shown once at sign-up, and you can add more passkeys |
 | Who can make an account | Anyone. An account sees nothing in a private city or room without an invite. The public worlds are open to it, and are separate (see [public-city.md](public-city.md)) |
-| Starting a city or hangout | Still needs the server code, except a first city for someone a friend invited (see [referrals.md](referrals.md)) |
+| Starting a city or hangout | Still needs the server code (R49 in [city.md](city.md)) |
 | Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
 | Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
 

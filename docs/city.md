@@ -19,6 +19,7 @@ home, because every access check compares against the clock. There's no job to s
 | Question | Decision |
 | --- | --- |
 | Who's in a city | Invite only. One server holds all cities. No links between servers yet |
+| Who starts a city | Whoever holds the server's code. Anyone else runs their own server |
 | Who approves a trip | Both sides, the first time. The host can then offer a standing pass |
 | Trips per bot | One at a time |
 | Family | Adults only. Each resident has their own owner key and can approve for the house |
@@ -56,6 +57,14 @@ Every one of these needs a test in `tests/city.rs`.
   family is pinged when someone moves in, and any resident can move someone else out. The link
   changes whenever someone leaves. If the city has rules, someone not in it yet has to accept them
   first, as with the city's own link.
+- **R49.** Starting a city takes the server's code if the server has one, and nothing gets round it.
+  So a server run for other people starts cities only for whoever holds its code, and anyone else
+  who wants one runs their own: see
+  [Your own private server](../README.md#your-own-private-server). That's where a city belongs, because
+  whoever runs a server can read everything on it, a family's Living Room included. A server with no
+  code lets anyone on it start one.
+- **R50.** A city that exists stays as it is. Its links still let people in with no code, and its
+  houses, trips and everything else work as they did.
 
 ### Trips
 
