@@ -1,4 +1,4 @@
-//! E1 to E25 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
+//! E1 to E28 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
 //! subscribe the way the events extension describes.
 
 use std::{
@@ -1181,6 +1181,29 @@ async fn another_bots_mention_rings_nothing() {
     assert_eq!(rings(&hook), 1, "the unread line from a bot doesn't hold the bell");
 }
 
+// E26: a sender-specific, human-owned opt-in; bots remain quiet by default.
+#[tokio::test]
+async fn an_owner_can_allow_one_of_their_bots_to_ring_another_at_home() {
+    let server = Server::start().await;
+    let (_, owner, _) = server.room().await;
+    let home = server.get(&owner, "/api/spaces").await;
+    let room = home.body["house"]["space"]["id"].as_str().unwrap();
+    let (_, target) = server.bot(&owner, room, "Scout").await;
+    let (sender, sender_id) = server.bot(&owner, room, "Don").await;
+    let (url, hook) = start_hook("echo").await;
+    let path = format!("/api/agents/{target}/notify");
+    server.put(&owner, &path, json!({ "url": url })).await;
+    server.say(&sender, room, "@Scout quiet by default").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0);
+
+    let saved = server.put(&owner, &path, json!({ "trusted_bots": [sender_id] })).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    server.say(&sender, room, "@Scout a permitted nudge").await;
+    wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    assert_eq!(rings(&hook), 1);
+}
+
 // E22, E24, L10
 #[tokio::test]
 async fn a_paused_bot_and_one_out_of_its_hours_are_not_rung() {
@@ -1269,4 +1292,162 @@ async fn ask_and_answer(server: &Server, bot: &str, owner: &str, room: &str, que
         )
         .await;
     assert_eq!(answered.status, StatusCode::OK, "{question}: {}", answered.body);
+}
+
+// E26: authorization, validation and atomic saves do not widen existing wake permissions.
+#[tokio::test]
+async fn trusted_bot_wakes_require_the_owner_and_validate_the_whole_save() {
+    let server = Server::start().await;
+    let (legacy, owner, other) = server.room().await;
+    let (target_token, target) = server.bot(&owner, &legacy, "Scout").await;
+    let (_, sender) = server.bot(&owner, &legacy, "Don").await;
+    let (_, stranger) = server.bot(&other, &legacy, "Guest").await;
+    let path = format!("/api/agents/{target}/notify");
+    let initial = server.get(&owner, &path).await.body;
+    assert_eq!(initial["trusted_bots"], json!([]));
+    for caller in [&other, &target_token] {
+        assert!(!server
+            .put(caller, &path, json!({"trusted_bots": [sender]}))
+            .await
+            .status
+            .is_success());
+    }
+    for ids in [
+        vec![target.clone()],
+        vec![stranger],
+        vec![sender.clone(), sender.clone()],
+        vec!["missing".into()],
+    ] {
+        let rejected = server
+            .put(
+                &owner,
+                &path,
+                json!({"url": "https://example.com/new", "only_me": true, "trusted_bots": ids}),
+            )
+            .await;
+        assert_eq!(rejected.status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            server.get(&owner, &path).await.body,
+            initial,
+            "invalid grant must not alter other settings"
+        );
+    }
+    assert_eq!(
+        server.put(&owner, &path, json!({"trusted_bots": [sender]})).await.status,
+        StatusCode::OK
+    );
+    server.put(&owner, &path, json!({"only_me": true})).await;
+    assert_eq!(server.get(&owner, &path).await.body["trusted_bots"], json!([sender]));
+    server.put(&owner, &path, json!({"trusted_bots": []})).await;
+    assert_eq!(server.get(&owner, &path).await.body["trusted_bots"], json!([]));
+}
+
+// E26/E28: opting in never bypasses Only me, Pause, home membership, or event visibility.
+#[tokio::test]
+async fn trusted_bot_wakes_keep_owner_controls_and_denied_mentions_readable() {
+    let server = Server::start().await;
+    let (legacy, owner, _) = server.room().await;
+    let home = server.get(&owner, "/api/spaces").await;
+    let room = home.body["house"]["space"]["id"].as_str().unwrap();
+    let (target_token, target) = server.bot(&owner, room, "Scout").await;
+    let (sender, sender_id) = server.bot(&owner, room, "Don").await;
+    let (url, hook) = start_hook("echo").await;
+    let path = format!("/api/agents/{target}/notify");
+    server
+        .put(&owner, &path, json!({"url": url, "trusted_bots": [sender_id], "only_me": true}))
+        .await;
+    server.say(&sender, room, "@Scout only me is respected").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0);
+    let inbox = server.tool(&target_token, "inbox", json!({})).await;
+    assert!(inbox.to_string().contains("only me is respected"));
+    let events = server.tool(&target_token, "events_since", json!({})).await;
+    assert!(events.to_string().contains("only me is respected"));
+    server.put(&owner, &path, json!({"only_me": false})).await;
+    server.put(&owner, &format!("/api/agents/{target}/doorbell"), json!({"paused": true})).await;
+    server.say(&sender, room, "@Scout pause is respected").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0);
+    server.put(&owner, &format!("/api/agents/{target}/doorbell"), json!({"paused": false})).await;
+    // Permanent membership elsewhere is insufficient, even for explicitly allowed same-owner bots.
+    assert_eq!(
+        server
+            .put(&owner, &format!("/api/hangouts/{legacy}/agents/{target}"), json!({}))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        server
+            .put(&owner, &format!("/api/hangouts/{legacy}/agents/{sender_id}"), json!({}))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    server.say(&sender, &legacy, "@Scout not in our house").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0);
+    // The actual allowed home path still works after both negative checks.
+    server.say(&sender, room, "@Scout now permitted").await;
+    wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    assert_eq!(rings(&hook), 1);
+    server.put(&owner, &path, json!({"trusted_bots": []})).await;
+    server.say(&sender, room, "@Scout revoked").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1);
+}
+
+// E27: durable reservations survive reads/settings edits and bound reciprocal bot chains.
+#[tokio::test]
+async fn trusted_bot_ring_reservations_deduplicate_limit_and_require_human_reset() {
+    let server = Server::start().await;
+    let (_, owner, _) = server.room().await;
+    let person =
+        server.get(&owner, "/api/me").await.body["person_id"].as_str().unwrap().to_string();
+    let home = server.get(&owner, "/api/spaces").await;
+    let room = home.body["house"]["space"]["id"].as_str().unwrap();
+    let (_, target) = server.bot(&owner, room, "Scout").await;
+    let (_, sender) = server.bot(&owner, room, "Don").await;
+    let path = format!("/api/agents/{target}/notify");
+    server
+        .put(&owner, &path, json!({"url": "https://example.com/hook", "trusted_bots": [sender]}))
+        .await;
+    let at = now();
+    let message = |time| {
+        server
+            .state
+            .db
+            .insert_message(&agenthangout::db::NewMessage {
+                hangout_id: room,
+                person_id: Some(&person),
+                agent_id: Some(&sender),
+                speaker: "Don",
+                kind: "chat",
+                body: "@Scout next",
+                now: time,
+            })
+            .unwrap()
+    };
+    let first = message(at);
+    assert!(server.state.db.note_bot_wake_ring(&target, first.id, at).unwrap());
+    assert!(!server.state.db.note_bot_wake_ring(&target, first.id, at + 181).unwrap());
+    let too_soon = message(at + 1);
+    assert!(!server.state.db.note_bot_wake_ring(&target, too_soon.id, at + 1).unwrap());
+    for i in 1..5 {
+        let msg = message(at + i * 181);
+        assert!(server.state.db.note_bot_wake_ring(&target, msg.id, at + i * 181).unwrap());
+    }
+    server.put(&owner, &path, json!({"trusted_bots": []})).await;
+    server.put(&owner, &path, json!({"trusted_bots": [sender]})).await;
+    let sixth = message(at + 2000);
+    assert!(!server.state.db.note_bot_wake_ring(&target, sixth.id, at + 2000).unwrap());
+    // Bot text naming its owner does not reset the count.
+    let pretend = message(at + 2001);
+    server.state.db.note_bot_wake_owner_chat(pretend.id).unwrap();
+    assert!(!server.state.db.note_bot_wake_ring(&target, sixth.id, at + 2002).unwrap());
+    server.say(&owner, room, "Continue the bounded collaboration").await;
+    let resumed = message(at + 3000);
+    assert!(server.state.db.note_bot_wake_ring(&target, resumed.id, at + 3000).unwrap());
+    // A bot ring never consumes a human ring reservation.
+    assert!(server.state.db.note_wake_ring(&target, resumed.id, at + 3000, None).unwrap());
 }

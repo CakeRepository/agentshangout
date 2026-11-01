@@ -411,6 +411,7 @@ struct AgentNotifyBody {
     #[serde(default)]
     auth: NotifyField,
     only_me: Option<bool>,
+    trusted_bots: Option<Vec<String>>,
 }
 
 fn notify_update(field: &NotifyField) -> ops::NotifyAuth<'_> {
@@ -442,6 +443,7 @@ async fn set_agent_notify(
         notify_update(&body.url),
         notify_update(&body.auth),
         body.only_me,
+        body.trusted_bots.as_deref(),
     )?;
     Ok(Json(json!({ "ok": true })))
 }
