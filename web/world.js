@@ -2558,23 +2558,83 @@ function placedStudio(S, c) {
   }
 }
 
-// W91: a quarter of the town square. Each piece is paved right up to the sides it shares with the
-// others, so the four read as one plaza, with the fountain on the first and benches round the rest.
+// W91: a quarter of the town square. The four are one design round the point where they meet: rings
+// of paving, a great round basin split between them, flower beds and lamps at the outer corners,
+// and benches facing in. The jet stands on the last quarter drawn, so it's on top of the rest.
 function squarePiece(corner) {
   return (S) => {
+    const g = S.g;
     const right = corner === 1 || corner === 3;
     const down = corner === 2 || corner === 3;
-    const R = [right ? 0 : 1, down ? 0 : 1, right ? 31 : 32, down ? 31 : 32];
-    paving(S, R, '#d6ccb1', '#b3a887');
-    if (!S.day) return;
-    const inner = [right ? 0 : 12, down ? 0 : 12, right ? 20 : 32, down ? 20 : 32];
-    paving(S, inner, '#c7bc9f', '#a79c7e');
-    if (corner === 0) fountain(S.g);
-    else if (corner === 1) bench(S.g, 16, 4);
-    else if (corner === 2) bench(S.g, 4, 16, 'v');
-    else {
-      bench(S.g, 16, 28);
-      bench(S.g, 28, 16, 'v');
+    // The middle of the square, and the corner of this quarter furthest from it.
+    const cu = right ? 0 : 32;
+    const cv = down ? 0 : 32;
+    const ou = 32 - cu;
+    const ov = 32 - cv;
+    const toward = (from, to, by) => from + Math.sign(to - from) * by;
+    paving(S, [right ? 0 : 1, down ? 0 : 1, right ? 31 : 32, down ? 31 : 32], '#d9cfb6', '#b3a887');
+    g.save();
+    pathOf(g, [P(0, 0), P(32, 0), P(32, 32), P(0, 32)]);
+    g.clip();
+    // Rings of paving, darker and lighter, out from the middle.
+    disc(g, '#cbbf9f', cu, cv, 30);
+    disc(g, '#e3dac4', cu, cv, 26);
+    disc(g, '#c2b594', cu, cv, 22.5);
+    disc(g, '#ece4cf', cu, cv, 21);
+    for (let k = 0; k < 8; k++) {
+      // Spokes of darker stone across the rings.
+      const a = (k / 8) * Math.PI * 2;
+      const [x0, y0] = P(cu + Math.cos(a) * 13, cv + Math.sin(a) * 13);
+      const [x1, y1] = P(cu + Math.cos(a) * 21, cv + Math.sin(a) * 21);
+      line(g, 'rgba(150,135,100,.55)', 1.2, x0, y0, x1, y1);
+    }
+    // The basin: a stone rim, then water with a glint.
+    disc(g, 'rgba(25,25,35,.22)', cu + 1.5, cv + 1.5, 13.5);
+    disc(g, '#9c9a8f', cu, cv, 13, 0);
+    disc(g, '#cfccbf', cu, cv, 13, 2.6);
+    disc(g, '#7e7d72', cu, cv, 11.6, 2.6);
+    disc(g, '#3f95c8', cu, cv, 11.1, 2);
+    disc(g, '#5fb4e2', cu, cv, 8.5, 2.05);
+    if (S.day) {
+      for (let k = 0; k < 5; k++) {
+        const a = k * 1.3 + corner;
+        const [x, y] = P(cu + Math.cos(a) * 7, cv + Math.sin(a) * 7, 2.1);
+        ell(g, 'rgba(255,255,255,.55)', x, y, 1.6, 0.5);
+      }
+    }
+    g.restore();
+    // A flower bed and a lamp at the outer corner, and a bench facing the fountain.
+    const bu = toward(ou, cu, 6);
+    const bv = toward(ov, cv, 6);
+    disc(g, '#7a5a38', bu, bv, 4.6);
+    disc(g, '#5f9a3e', bu, bv, 4, 0.6);
+    const petals = ['#ff8fb1', '#ffd34d', '#ffffff', '#c58cff', '#ff6b5a'];
+    for (let k = 0; k < 9; k++) {
+      const a = k * 0.7;
+      const [x, y] = P(bu + Math.cos(a) * 2.6, bv + Math.sin(a) * 2.6, 1.2);
+      dot(g, petals[(k + corner) % petals.length], x, y);
+    }
+    if (corner % 3 === 0) bench(g, 16, toward(ov, cv, 3.5));
+    else bench(g, toward(ou, cu, 3.5), 16, 'v');
+    const [lx, ly] = P(toward(ou, cu, 2.5), toward(ov, cv, 2.5));
+    lampPost(g, lx, ly, 30);
+    if (corner === 3) {
+      // The jet, at the middle of all four.
+      const [x, y] = P(0, 0, 2.6);
+      rr(g, '#cfccbf', x - 2.4, y - 6, 4.8, 6);
+      ell(g, '#bdb9aa', x, y - 6, 5.2, 2.2);
+      rr(g, '#d8d5c8', x - 1.4, y - 17, 2.8, 11);
+      ell(g, '#c9c6b8', x, y - 17, 3.4, 1.4);
+      ell(g, '#8ccaf0', x, y - 17.4, 2.6, 1);
+      for (let k = 0; k < 9; k++) {
+        const a = -1.6 + k * 0.4;
+        g.strokeStyle = S.day ? 'rgba(210,240,255,.85)' : 'rgba(150,200,255,.6)';
+        g.lineWidth = 1;
+        g.beginPath();
+        g.moveTo(x, y - 18);
+        g.quadraticCurveTo(x + Math.sin(a) * 10, y - 30, x + Math.sin(a) * 17, y - 3);
+        g.stroke();
+      }
     }
   };
 }
@@ -5317,6 +5377,15 @@ export class World {
     return mask;
   }
 
+  // W91: the place on a tile, as where it's stored and how many tiles across it is, or null.
+  placeAt(x, y) {
+    const k = this.kind[y * this.n + x];
+    if (k < K_HOUSE) return null;
+    if (!isBig(k)) return [x, y, 1];
+    const c = this.cornerOf(x, y, k);
+    return [x - (c & 1), y - (c >> 1), 2];
+  }
+
   // W91: which piece of a big place a tile is: 0 where it's stored, then across, down, and both.
   cornerOf(x, y, k) {
     const at = (tx, ty) => tx >= 0 && ty >= 0 && this.kind[ty * this.n + tx] === k && this.level[ty * this.n + tx] === 0;
@@ -6503,6 +6572,20 @@ export class World {
           strip(c, u0, v0, u0 + 2.4, v1);
           strip(c, u1 - 2.4, v0, u1, v1);
         }
+        bg.globalAlpha = 1;
+      }
+    }
+    // W91: hovering a place outlines all of it, so a square or a park reads as one place.
+    if (!this.tool && this.tile && this.hoverIsMouse) {
+      const whole = this.placeAt(this.tile.x, this.tile.y);
+      if (whole) {
+        const [ax, ay, size] = whole;
+        const [u0, v0, u1, v1] = [ax * 32, ay * 32, (ax + size) * 32, (ay + size) * 32];
+        bg.globalAlpha = 0.85;
+        strip('#ffffff', u0, v0, u1, v0 + 2);
+        strip('#ffffff', u0, v1 - 2, u1, v1);
+        strip('#ffffff', u0, v0, u0 + 2, v1);
+        strip('#ffffff', u1 - 2, v0, u1, v1);
         bg.globalAlpha = 1;
       }
     }
