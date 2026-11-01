@@ -5032,8 +5032,8 @@ const SLOWEST_MS = 60000;
 // Looks at a world now and then. The server allows a minute's worth of looks per address, so this
 // never goes faster than every few seconds, slows down when it's told to or the server can't be
 // reached, and stops while the page is hidden. An unchanged world comes back with the same tag, and
-// is not drawn again. With `first` given, the first look waits a turn.
-function watchWorld(id, { every = POLL_MS, first = false, onView, onTrouble }) {
+// is not drawn again, though `onLook` still runs. With `first` given, the first look waits a turn.
+function watchWorld(id, { every = POLL_MS, first = false, onView, onLook, onTrouble }) {
   const url = `/api/worlds/${encodeURIComponent(id)}`;
   let wait = every;
   let nextIn = null;
@@ -5060,6 +5060,7 @@ function watchWorld(id, { every = POLL_MS, first = false, onView, onTrouble }) {
       } else {
         const view = await response.json();
         wait = every;
+        onLook?.();
         const etag = response.headers.get('etag') || '';
         // A move made while this was on its way makes it stale.
         if (!stopped && started === epoch && (!etag || etag !== tag)) {
@@ -5642,10 +5643,15 @@ async function worldView(id, { home = false } = {}) {
   // S51: bots someone asked to let into this person's places, with a yes and a no for each.
   const requestsBody = panels.add('requests', 'Requests to come in', {});
   let requestsAt = 0;
+  let requestsKey = '';
   async function loadRequests(force = false) {
     if (!me || me.kind !== 'person' || (!force && Date.now() - requestsAt < 30000)) return;
     requestsAt = Date.now();
     const { requests = [] } = await api('/api/place-requests').catch(() => ({}));
+    // An open map keeps asking, so a list someone is answering only redraws when it changes.
+    const key = JSON.stringify(requests);
+    if (key === requestsKey) return;
+    requestsKey = key;
     const error = formError();
     const answer = (id, response) => act(error, async () => {
       await api(`/api/place-requests/${id}/answer`, { method: 'POST', body: { response } });
@@ -5660,10 +5666,16 @@ async function worldView(id, { home = false } = {}) {
         h('button', { type: 'button', class: 'primary', onclick: answer(request.id, 'yes') }, 'Let in'),
         h('button', { type: 'button', onclick: answer(request.id, 'no') }, 'No'))) : [h('p', { class: 'muted' }, 'Nobody is asking right now.')]),
       error);
-    if (requests.length && requestsToggle) requestsToggle.textContent = `Requests (${requests.length})`;
-    else if (requestsToggle) requestsToggle.textContent = 'Requests';
+    // S66: the button and More's row say the same. style.css lights More when the button is folded.
+    const label = requests.length ? `Requests (${requests.length})` : 'Requests';
+    for (const button of [requestsToggle, requestsRow]) button.textContent = label;
+    requestsToggle.setAttribute('aria-label', label);
+    requestsToggle.classList.toggle('wait', requests.length > 0);
+    moreToggle.setAttribute('aria-label', requests.length ? `More (${requests.length})` : 'More');
   }
   let requestsToggle = null;
+  let requestsRow = null;
+  let moreToggle = null;
 
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
@@ -5748,14 +5760,16 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     account.toggle,
     me?.kind === 'person' ? dresser.toggle : null,
-    panels.toggle('more', 'More', { className: 'more' }),
+    (moreToggle = panels.toggle('more', 'More', { className: 'more' })),
   ].filter(Boolean));
 
   // What a narrow screen's title bar has no room for, and two things no title bar does.
+  const moreRow = (name, label) =>
+    h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label);
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     guide ? h('button', { type: 'button', class: 'wd-btn wide mid', onclick: () => panels.open('tutorial') }, 'Tutorial') : null,
-    ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
-      h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
+    me?.kind === 'person' ? (requestsRow = moreRow('requests', 'Requests')) : null,
+    ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) => moreRow(name, label)),
     repoLink('wd-btn wide'),
     link('/docs', 'Docs', { class: 'wd-btn wide' }),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
@@ -6224,7 +6238,6 @@ async function worldView(id, { home = false } = {}) {
 
   let spokeAt = 0;
   function arrive(view) {
-    loadRequests();
     const before = latest === view ? null : latest;
     latest = view;
     world.setView(view);
@@ -6253,12 +6266,15 @@ async function worldView(id, { home = false } = {}) {
   const watch = watchWorld(id, {
     first: true,
     onView: arrive,
+    // S66: a request changes nothing on the map, so asking can't wait for a new view.
+    onLook: loadRequests,
     onTrouble: (text) => {
       trouble = true;
       say(text);
     },
   });
   arrive(latest);
+  loadRequests();
   say(mover?.trouble || idle);
 
   // --- Keys, and leaving -----------------------------------------------------------------------
