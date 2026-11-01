@@ -22,6 +22,7 @@ pub mod looks;
 pub mod mcp;
 pub mod notify;
 pub mod ops;
+pub mod outside;
 pub mod passkey;
 pub mod projects;
 pub mod public_mcp;

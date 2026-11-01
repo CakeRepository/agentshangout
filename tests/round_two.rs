@@ -1992,9 +1992,19 @@ async fn no_visit_to_a_private_page_or_route_is_ever_noticed_whatever_the_visito
         "/api/worlds/commons",
         "/api/worlds",
         "/api/worlds/commons/me",
+        "/api/worlds/commons/outsides",
+        "/api/outside",
+        "/api/places/1/1/outside",
         "/style.css",
         "/app.js",
         "/world.js",
+        "/outside.js",
+        "/outside-spec.js",
+        "/outside-art.js",
+        "/outside-building.js",
+        "/outside-yard.js",
+        "/outside-decor.js",
+        "/pets.js",
         "/favicon.svg",
         "/indexnow.txt",
         "/mcp",
@@ -2119,6 +2129,13 @@ async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carrie
         "/room.js",
         "/city.js",
         "/world.js",
+        "/outside.js",
+        "/outside-spec.js",
+        "/outside-art.js",
+        "/outside-building.js",
+        "/outside-yard.js",
+        "/outside-decor.js",
+        "/pets.js",
         "/passkey.js",
         "/plan-invite.js",
         "/favicon.svg",
@@ -2138,6 +2155,9 @@ async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carrie
         "/api/worlds/commons",
         "/api/worlds/commons/me",
         "/api/worlds/commons/look",
+        "/api/worlds/commons/outsides",
+        "/api/outside",
+        "/api/places/1/1/outside",
         "/api/worlds/commons/act",
         "/api/worlds/preview",
         "/api/worlds/mine",
@@ -2580,9 +2600,22 @@ fn read_web(name: &str) -> String {
 // W6, W8
 #[test]
 fn no_page_script_can_turn_a_string_from_the_api_into_markup_script_or_a_link_that_runs() {
-    for name in
-        ["app.js", "world.js", "city.js", "room.js", "passkey.js", "plan-invite.js", "tutorial.js"]
-    {
+    for name in [
+        "app.js",
+        "world.js",
+        "city.js",
+        "room.js",
+        "passkey.js",
+        "plan-invite.js",
+        "tutorial.js",
+        "outside.js",
+        "outside-spec.js",
+        "outside-art.js",
+        "outside-building.js",
+        "outside-yard.js",
+        "outside-decor.js",
+        "pets.js",
+    ] {
         let source = read_web(name);
         for banned in [
             "innerHTML",

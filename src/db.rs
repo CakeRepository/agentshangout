@@ -2,7 +2,11 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    sync::{Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -631,6 +635,17 @@ CREATE TABLE IF NOT EXISTS bot_places (
     since       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS room_agents_by_bot ON room_agents (agent_id);
+CREATE TABLE IF NOT EXISTS place_outsides (
+    world_id    TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    player_id   INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    outside     TEXT NOT NULL,
+    stamp       INTEGER NOT NULL,
+    changed_at  INTEGER NOT NULL,
+    PRIMARY KEY (world_id, player_id, kind, x, y)
+);
 CREATE TABLE IF NOT EXISTS floor_leaves (
     who         TEXT NOT NULL,
     hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
@@ -787,6 +802,19 @@ CREATE VIEW IF NOT EXISTS world_every_place AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_places
     UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
 "#;
+
+/// E30: how many outsides one player keeps waiting for each kind of place, after their places come
+/// down. Putting a place up takes the newest, so this is only what could pile up behind it.
+pub const MAX_WAITING_OUTSIDES: i64 = 4;
+/// E26: a stamp counts milliseconds from the start of 2025, so the sum of thousands of them still fits a
+/// number a page can hold.
+const STAMP_EPOCH_MS: i64 = 1_735_689_600_000;
+/// The last stamp given out in this process, so two changes in one millisecond still differ.
+static LAST_OUTSIDE_STAMP: AtomicI64 = AtomicI64::new(0);
+/// E31: a row for a tile shows only while the place standing there has its player and its kind. Takes
+/// the row as `o`.
+const OUTSIDE_IS_LIVE: &str = "JOIN world_every_place p ON p.world_id = o.world_id AND p.x = o.x
+    AND p.y = o.y AND p.player_id = o.player_id AND p.kind = o.kind";
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
 pub const SOMEONE_WHO_LEFT_ID: &str = "someone-who-left";
@@ -1655,7 +1683,13 @@ pub fn presence(last_active: Option<i64>, last_seen: Option<i64>, now: i64) -> &
 
 pub struct Db {
     conn: Mutex<Connection>,
+    /// E27: the last answer built for the map of outsides, the stamp it was built for and when. A page
+    /// asks every 30 seconds and so can anyone else, and a change makes it stale on its own (E26).
+    outside_map: Mutex<Option<(OutsideStamp, Instant, Arc<String>)>>,
 }
+
+/// E26: `(count, stamp)`.
+pub type OutsideStamp = (i64, i64);
 
 fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
     let last_active_at = row.get(4)?;
@@ -2746,7 +2780,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", true)?;
         remake_index(&conn, "players_one_own_per_person", "removed = 0")?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { conn: Mutex::new(conn), outside_map: Mutex::new(None) })
     }
 
     fn conn(&self) -> MutexGuard<'_, Connection> {
@@ -8201,6 +8235,7 @@ fn q_write_changes(
                     tile.player.map(|player| player as i64),
                     now
                 ])?;
+                q_wear_waiting_outside(conn, world_id, (*x, *y), tile.kind.as_str(), tile.player)?;
             }
             Change::Set((x, y), tile) if tile.kind == Kind::Square => {
                 remove.execute(params![world_id, x, y])?;
@@ -8211,6 +8246,7 @@ fn q_write_changes(
                     tile.player.map(|player| player as i64),
                     now
                 ])?;
+                q_wear_waiting_outside(conn, world_id, (*x, *y), "square", tile.player)?;
             }
             Change::Set((x, y), tile) if tile.kind.is_building() => {
                 remove.execute(params![world_id, x, y])?;
@@ -8222,6 +8258,7 @@ fn q_write_changes(
                     tile.player.map(|player| player as i64),
                     now
                 ])?;
+                q_wear_waiting_outside(conn, world_id, (*x, *y), tile.kind.as_str(), tile.player)?;
             }
             Change::Set((x, y), tile) => {
                 if tile.kind == Kind::Cleared {
@@ -8249,6 +8286,67 @@ fn q_write_changes(
             }
         }
     }
+    Ok(())
+}
+
+/// E26: a stamp above every one before it, in this world and in this process.
+fn next_outside_stamp(conn: &Connection, world_id: &str) -> rusqlite::Result<i64> {
+    let kept: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(stamp), 0) FROM place_outsides WHERE world_id = ?",
+        [world_id],
+        |row| row.get(0),
+    )?;
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_millis() as i64)
+        .unwrap_or(0)
+        - STAMP_EPOCH_MS;
+    let want = clock.max(kept + 1);
+    let mut last = LAST_OUTSIDE_STAMP.load(Ordering::SeqCst);
+    loop {
+        let next = want.max(last + 1);
+        match LAST_OUTSIDE_STAMP.compare_exchange(last, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Ok(next),
+            Err(seen) => last = seen,
+        }
+    }
+}
+
+/// E30, E31: a place of this kind has just gone up for this player. If they already have an outside for
+/// exactly this tile, from before they took it down and put it up again here, it shows again and
+/// there's nothing to move. Otherwise their newest outside with no place of its own standing moves
+/// onto the new one. Rows are keyed by player and kind, so another player's row on this tile is left
+/// alone and keeps waiting for them.
+fn q_wear_waiting_outside(
+    conn: &Connection,
+    world_id: &str,
+    (x, y): (u16, u16),
+    kind: &str,
+    player: Option<u64>,
+) -> rusqlite::Result<()> {
+    let Some(player) = player.map(|player| player as i64) else {
+        return Ok(());
+    };
+    let stamp = next_outside_stamp(conn, world_id)?;
+    let here = conn.execute(
+        "UPDATE place_outsides SET stamp = ?5
+         WHERE world_id = ?1 AND player_id = ?2 AND kind = ?3 AND x = ?4 AND y = ?6",
+        params![world_id, player, kind, x, stamp, y],
+    )?;
+    if here > 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE place_outsides SET x = ?4, y = ?5, stamp = ?6
+         WHERE rowid = (
+             SELECT o.rowid FROM place_outsides o
+              WHERE o.world_id = ?1 AND o.player_id = ?2 AND o.kind = ?3
+                AND NOT EXISTS (SELECT 1 FROM world_every_place p
+                                 WHERE p.world_id = o.world_id AND p.x = o.x AND p.y = o.y
+                                   AND p.player_id = o.player_id AND p.kind = o.kind)
+              ORDER BY o.changed_at DESC, o.stamp DESC LIMIT 1)",
+        params![world_id, player, kind, x, y, stamp],
+    )?;
     Ok(())
 }
 
@@ -9503,6 +9601,143 @@ impl Db {
             .optional()
     }
 
+    /// E6: the place standing on a tile: its kind, the player who put it up, and the person that player
+    /// belongs to (a project's studio is put up through its owner's own player, L13).
+    pub fn place_standing(
+        &self,
+        world_id: &str,
+        x: i64,
+        y: i64,
+    ) -> rusqlite::Result<Option<(String, i64, Option<String>)>> {
+        self.conn()
+            .query_row(
+                "SELECT b.kind, b.player_id, p.person_id FROM world_every_place b
+                 JOIN players p ON p.id = b.player_id
+                 WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
+                params![world_id, x, y],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+    }
+
+    /// E31: the outside stored for a tile, only while the place standing on it has the same player and
+    /// kind as the row.
+    pub fn outside_at(&self, world_id: &str, x: i64, y: i64) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                &format!(
+                    "SELECT o.outside FROM place_outsides o {OUTSIDE_IS_LIVE}
+                     WHERE o.world_id = ?1 AND o.x = ?2 AND o.y = ?3"
+                ),
+                params![world_id, x, y],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// E25: stores a checked outside for the place on a tile. It replaces the one there, and any
+    /// outside the player has waiting beyond the newest few is dropped (E30).
+    pub fn save_outside(
+        &self,
+        world_id: &str,
+        player_id: i64,
+        kind: &str,
+        (x, y): (i64, i64),
+        outside: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let stamp = next_outside_stamp(&tx, world_id)?;
+        tx.execute(
+            "INSERT INTO place_outsides (world_id, player_id, kind, x, y, outside, stamp, changed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT (world_id, player_id, kind, x, y) DO UPDATE SET
+                 outside = excluded.outside, stamp = excluded.stamp, changed_at = excluded.changed_at",
+            params![world_id, player_id, kind, x, y, outside, stamp, now],
+        )?;
+        let waiting = "NOT EXISTS (SELECT 1 FROM world_every_place p
+                                    WHERE p.world_id = o.world_id AND p.x = o.x AND p.y = o.y
+                                      AND p.player_id = o.player_id AND p.kind = o.kind)";
+        tx.execute(
+            &format!(
+                "DELETE FROM place_outsides WHERE rowid IN (
+                     SELECT o.rowid FROM place_outsides o
+                      WHERE o.world_id = ?1 AND o.player_id = ?2 AND o.kind = ?3 AND {waiting}
+                        AND o.rowid NOT IN (
+                            SELECT o.rowid FROM place_outsides o
+                             WHERE o.world_id = ?1 AND o.player_id = ?2 AND o.kind = ?3 AND {waiting}
+                             ORDER BY o.changed_at DESC, o.stamp DESC LIMIT ?4))"
+            ),
+            params![world_id, player_id, kind, MAX_WAITING_OUTSIDES],
+        )?;
+        tx.commit()
+    }
+
+    /// E1, E7: takes away what's stored for the place on a tile. Whether there was anything.
+    pub fn clear_outside(
+        &self,
+        world_id: &str,
+        player_id: i64,
+        kind: &str,
+        (x, y): (i64, i64),
+    ) -> rusqlite::Result<bool> {
+        let removed = self.conn().execute(
+            "DELETE FROM place_outsides
+             WHERE world_id = ?1 AND player_id = ?2 AND kind = ?3 AND x = ?4 AND y = ?5",
+            params![world_id, player_id, kind, x, y],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// E27: `[x, y, document]` for every outside that has its place, in the order of the map.
+    pub fn live_outsides(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare_cached(&format!(
+            "SELECT o.x, o.y, o.outside FROM place_outsides o {OUTSIDE_IS_LIVE}
+             WHERE o.world_id = ?1 ORDER BY o.y, o.x"
+        ))?;
+        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
+    /// E26: `(count, stamp)` of what `live_outsides` would give, without reading any document. Every
+    /// row has a stamp nobody else has, and a stamp goes up with every change, a place going up
+    /// included, so anything that changes E27's answer changes one of these.
+    pub fn outsides_stamp(&self, world_id: &str) -> rusqlite::Result<OutsideStamp> {
+        self.conn().query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(o.stamp), 0) FROM place_outsides o {OUTSIDE_IS_LIVE}
+                 WHERE o.world_id = ?1"
+            ),
+            [world_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
+
+    /// E27: the map of outsides as it was last built, if that was for this stamp and not long ago.
+    pub fn kept_outside_map(&self, stamp: OutsideStamp, longest: Duration) -> Option<Arc<String>> {
+        let kept = self.outside_map.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        kept.as_ref()
+            .filter(|(built_for, at, _)| *built_for == stamp && at.elapsed() < longest)
+            .map(|(_, _, body)| body.clone())
+    }
+
+    /// E27: keeps an answer built after reading `stamp`, so a change since only makes the next one stale.
+    pub fn keep_outside_map(&self, stamp: OutsideStamp, body: Arc<String>) {
+        *self.outside_map.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((stamp, Instant::now(), body));
+    }
+
+    /// How many rows a player holds in a world, waiting or not.
+    pub fn outside_rows(&self, world_id: &str, player_id: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM place_outsides WHERE world_id = ?1 AND player_id = ?2",
+            params![world_id, player_id],
+            |row| row.get(0),
+        )
+    }
+
     /// Everything a player has built in a world. It reads their tiles only, by the index on world
     /// and player, so it costs what they have built and not what the world holds.
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
@@ -9746,6 +9981,11 @@ impl Db {
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
+        )?;
+        // E32: what they made on those tiles goes with them.
+        tx.execute(
+            "DELETE FROM place_outsides WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
         )?;
         if ban {

@@ -11,6 +11,10 @@
 // things aren't drawn, and the loop stops when the page is hidden or scrolled out of view.
 
 import { EYES, FABRICS, HAIRS, LEGS, SKINS, hash, skyFor } from './room.js';
+import { paintOutsideGround, paintOutsideStanding } from './outside-art.js';
+import { doorPoint } from './outside-building.js';
+import { doorSideOf, keyOf } from './outside-spec.js';
+import { drawPet, makePet, stepPet } from './pets.js';
 
 // ---------------------------------------------------------------------------------------------
 // Numbers
@@ -23,9 +27,9 @@ const CELL_M = 2; // cells overlap by this much, so no seam shows where they mee
 const CW = CELL_W + CELL_M * 2;
 const CH = CELL_H + CELL_M * 2;
 const REACH_L = 92; // how far a tile's painting can reach left, right, up and down of its top vertex
-const REACH_R = 72;
+const REACH_R = 96;
 const REACH_U = 176;
-const REACH_D = 72;
+const REACH_D = 92;
 const CHUNK_PIXELS = 42e6; // canvas pixels the cell cache may hold
 const SLAB = 22; // how thick the island's edge is
 const WATER_Z = -5; // water sits a little below the land
@@ -117,7 +121,9 @@ function parse(hex) {
   return c;
 }
 function toHex(r, g, b) {
-  return `#${((1 << 24) | (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b)).toString(16).slice(1)}`;
+  // A mix pushed past 0 or 1 (a lighter tone taken off a dark colour) is held to the colour range, or it spills into its neighbour's digits.
+  const c = (n) => Math.max(0, Math.min(255, Math.round(n)));
+  return `#${((1 << 24) | (c(r) << 16) | (c(g) << 8) | c(b)).toString(16).slice(1)}`;
 }
 function mixHex(a, b, t) {
   const p = parse(a);
@@ -1419,7 +1425,9 @@ function paintWall(g, len, z0, z1, mat, seed) {
   g.beginPath();
   g.rect(0, top, len, h);
   g.clip();
-  if (mat.k === 'brick') {
+  if (mat.paint) {
+    mat.paint(g, len, z0, z1, rand);
+  } else if (mat.k === 'brick') {
     g.fillStyle = '#cdbfa6';
     g.fillRect(0, top, len, h);
     const bh = 2.7;
@@ -2754,11 +2762,15 @@ const BUILDERS = {
 };
 
 // A building as a sprite, with its lit-windows twin, its shadow, and the places smoke rises.
-function buildingObject(kind, level, variant, door, pal) {
-  const key = `b:${kind}:${level}:${variant}:${door}:${pal}`;
+// `outside` is what its owner has made of it (E4), or nothing, and then it looks as it always has.
+function buildingObject(kind, level, variant, door, pal, outside = null) {
+  const key = `b:${kind}:${level}:${variant}:${door}:${pal}${outside ? `:${outside.key}` : ''}`;
   let s = sprites.get(`${LOD}|${key}`);
   if (s) return s;
-  const build = BUILDERS[kind][level];
+  const build = outside ? (S, c) => paintOutsideStanding(S, KIND_NAME[kind], outside.outside, c) : BUILDERS[kind][level];
+  // E36: a big place spreads one yard over its four tiles, so its picture is twice the size.
+  const big = Boolean(outside) && isBig(kind);
+  const stand = big ? (k, draw) => sprite(k, OW * 2, OH * 2, OAX * 2, OAY * 2, draw, true) : object;
   const colors = {
     wall: SIDING[pal],
     roof: ROOFS[(pal + variant + 1) % 6],
@@ -2772,24 +2784,38 @@ function buildingObject(kind, level, variant, door, pal) {
       info.smoke.length = 0;
       info.shadows.length = 0;
     }
+    g.save();
+    if (big) g.scale(2, 2);
     build({ g, day, v: variant, pal, door, seed: ih(kind, level, variant * 11 + pal), n: 0, info: day ? info : null }, colors);
+    g.restore();
   };
-  s = object(key, run(true));
+  s = stand(key, run(true));
   s.info = info;
   let lit = null;
   let shade = null;
-  s.lit = () => lit || (lit = object(`${key}:lit`, (g) => {
-    // A warm pool of light by the door, then the lit windows.
-    const [px, py] = P(16, 22);
-    const pool = g.createRadialGradient(px, py, 2, px, py, 34);
-    pool.addColorStop(0, 'rgba(255,196,110,.3)');
-    pool.addColorStop(1, 'rgba(255,196,110,0)');
-    g.fillStyle = pool;
-    g.fillRect(px - 36, py - 20, 72, 40);
+  let yard = null;
+  // E29: what's on the ground goes under the shadows, with the land, and not with what stands up.
+  if (outside) {
+    s.ground = () => yard || (yard = sprite(`${key}:gr`, big ? 144 : 72, big ? 76 : 40, big ? 72 : 36, big ? 6 : 4, (g) => {
+      if (big) g.scale(2, 2);
+      paintOutsideGround({ g, day: true, v: variant, pal, door, seed: ih(kind, level, variant * 11 + pal), n: 0, info: null }, KIND_NAME[kind], outside.outside);
+    }));
+  }
+  s.lit = () => lit || (lit = stand(`${key}:lit`, (g) => {
+    // A warm pool of light by the door, then the lit windows. An outside says for itself what lights it.
+    if (!outside) {
+      const [px, py] = P(16, 22);
+      const pool = g.createRadialGradient(px, py, 2, px, py, 34);
+      pool.addColorStop(0, 'rgba(255,196,110,.3)');
+      pool.addColorStop(1, 'rgba(255,196,110,0)');
+      g.fillStyle = pool;
+      g.fillRect(px - 36, py - 20, 72, 40);
+    }
     run(false)(g);
   }));
   // The shadow, cast as one shape so overlapping parts don't double up.
-  s.shadow = () => shade || (shade = sprite(`${key}:sh`, 190, 150, 70, 40, (g) => {
+  s.shadow = () => shade || (shade = sprite(`${key}:sh`, big ? 380 : 190, big ? 300 : 150, big ? 140 : 70, big ? 80 : 40, (g) => {
+    if (big) g.scale(2, 2);
     g.beginPath();
     for (const [R, H] of info.shadows) {
       const throwLen = Math.min(H * 0.85, 30);
@@ -2806,6 +2832,24 @@ function buildingObject(kind, level, variant, door, pal) {
     g.fill();
   }, true));
   return s;
+}
+
+// E29: one tile painted straight onto `g`, whose origin is the tile's top vertex, for the outside view
+// and the catalog's pictures. `day` false is what shines at night: add it over a darkened picture.
+export function paintPlace(g, { kind, outside = null, door = 'L', pal = 0, variant = 0, day = true, layer = 'all' }) {
+  const k = Object.hasOwn(KIND_ID, kind) ? KIND_ID[kind] : 0;
+  if (!k) return;
+  const seed = ih(k, 0, variant * 11 + pal);
+  const S = { g, day, v: variant, pal, door, seed, n: 0, info: null };
+  const colors = {
+    wall: SIDING[pal],
+    roof: ROOFS[(pal + variant + 1) % 6],
+    door: DOORC[(pal + variant * 2) % 6],
+    awn: AWN[(pal + variant) % 6],
+    hue: pal * 7 + variant,
+  };
+  if (day && layer !== 'standing') paintOutsideGround(S, kind, outside);
+  if (layer !== 'ground') paintOutsideStanding(S, kind, outside, colors);
 }
 
 function convexHull(points) {
@@ -4202,11 +4246,22 @@ const TOOL_COLOR = {
   club: '#c9a6ff',
   cafe: '#ffb04d',
   square: '#8fe3c0',
+  // W90: the newer places. A tool not listed here can't be picked.
+  lounge: '#f0a3b8',
+  bar: '#ff8a8a',
+  office: '#a8c4e0',
+  workshop: '#e0b07a',
+  library: '#d8cfa0',
+  green: '#9be07a',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));
 const DIRS4 = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // bit order: north-east, south-east, south-west, north-west
 const BUILD_TIME = 0.8;
+// The closest a map can be zoomed out and still show pets (E29).
+const PET_SCALE = 0.75;
+// How many tiles away a pet notices someone on the street.
+const PET_SEES = 3;
 const MAX_ANIMS = 60;
 const MAX_PLAYERS = 400;
 // A figure going this many tiles or more takes a car instead of walking. A ride is only how the move
@@ -4245,6 +4300,8 @@ export class World {
     this.onPick = typeof options.onPick === 'function' ? options.onPick : null;
     // Told when the camera stops following a figure, and why: 'moved', 'gone' or 'other'.
     this.onFollow = typeof options.onFollow === 'function' ? options.onFollow : null;
+    // Whether a tile is the viewer's own, which is all `owner_watching` asks (E20).
+    this.isMine = typeof options.isMine === 'function' ? options.isMine : null;
     this.interactive = options.interactive !== false;
     this.limits = { road: 16, ...(options.limits || {}) };
     this.framing = options.framing || {};
@@ -4286,6 +4343,10 @@ export class World {
     this.people = new Map();
     this.visitors = new Map();
     this.anims = new Map();
+    // E27: what owners have made of their tiles, by tile, and the pets that live on them.
+    this.outsides = new Map();
+    this.outsideRows = [];
+    this.pets = new Map();
     this.puffs = [];
     this.ents = [];
     this.time = 0;
@@ -4587,6 +4648,66 @@ export class World {
     this.kick();
   }
 
+  // E27: `[x, y, outside]` for every place that has one. Only the tiles whose outside changed are
+  // painted again, and a pet that's still there carries on from where it was.
+  setOutsides(rows) {
+    this.outsideRows = Array.isArray(rows) ? rows : [];
+    if (this.ready) this.applyOutsides();
+  }
+
+  // E19: where a pet on guard stands: the door, on the side its place has it.
+  doorOf(x, y, i, outside) {
+    const side = doorSideOf(outside) || this.placeLook(x, y).door;
+    return { side, at: doorPoint(KIND_NAME[this.kind[i]], outside, side) };
+  }
+
+  applyOutsides() {
+    const n = this.n;
+    const next = new Map();
+    for (const row of this.outsideRows) {
+      if (!Array.isArray(row) || !row[2] || typeof row[2] !== 'object') continue;
+      const x = row[0] | 0;
+      const y = row[1] | 0;
+      if (x < 0 || y < 0 || x >= n || y >= n || this.kind[y * n + x] < K_HOUSE) continue;
+      next.set(y * n + x, { outside: row[2], key: keyOf(row[2]) });
+    }
+    for (const i of new Set([...this.outsides.keys(), ...next.keys()])) {
+      if (this.outsides.get(i)?.key === next.get(i)?.key) continue;
+      const x = i % n;
+      const y = (i - x) / n;
+      const span = isBig(this.kind[i]) ? 2 : 1;
+      for (let dy = 0; dy < span; dy++) for (let dx = 0; dx < span; dx++) this.markDirty(x + dx, y + dy);
+    }
+    this.outsides = next;
+    const pets = new Map();
+    for (const [i, { outside, key }] of next) {
+      const x = i % n;
+      const y = (i - x) / n;
+      const list = Array.isArray(outside.pets) ? outside.pets : [];
+      list.forEach((pet, k) => {
+        const id = `${i}:${k}`;
+        const was = this.pets.get(id);
+        // E27: a pet whose own document, yard and place are as they were carries on from where it is, even
+        // when its place's walls or lights changed. Only where it may walk, or what it is, sends it back to a start.
+        const same = JSON.stringify([pet, outside.body, outside.items, this.kind[i]]);
+        let p = was && was.same === same ? was : null;
+        if (p && p.key !== key) {
+          const door = this.doorOf(x, y, i, outside);
+          p.key = key;
+          p.outside = outside;
+          p.door = Array.isArray(door.at) ? door.at : null;
+          p.doorSide = door.side || 'L';
+        } else if (!p) {
+          p = makePet(id, x, y, pet, outside, key, KIND_NAME[this.kind[i]], this.doorOf(x, y, i, outside));
+          p.same = same;
+        }
+        pets.set(id, p);
+      });
+    }
+    this.pets = pets;
+    this.kick();
+  }
+
   // Opens a world looking at its town, and not at the middle of the map. A small town on a big map
   // would otherwise sit in a corner of a lot of empty grass: the view centres on where the buildings
   // are, and comes closer when they're few. A big town keeps the usual zoom. Roads on their own
@@ -4831,6 +4952,8 @@ export class World {
       if (animate && few && this.isNear(x, y)) this.startAnim(i, x, y, old.kind[i], old.level[i], nk[i], nl[i]);
       this.markDirty(x, y);
     }
+    // E31: a pet goes with the place it lives at, without waiting for the next read of the outsides.
+    if (changed.some((i) => nk[i] >= K_HOUSE || old.kind[i] >= K_HOUSE)) this.applyOutsides();
     let roads = 0;
     let buildings = 0;
     for (let i = 0; i < n * n; i++) {
@@ -5465,6 +5588,11 @@ export class World {
     }
     if (k === K_PARK) return parkObject(roll % 4, this.parkMask(x, y));
     if (k === K_CLEARED) return stumpObject(roll % 4);
+    // E36: with an outside a big place is one picture, on its first tile.
+    if (isBig(k)) {
+      const corner = this.cornerOf(x, y, k);
+      if (this.outsides.has((y - (corner >> 1)) * this.n + x - (corner & 1))) return corner ? null : this.buildingAt(x, y, k, 0);
+    }
     // W91: a big place is four pieces, each for its corner of it.
     if (k === K_GREEN) return parkObject(this.cornerOf(x, y, k), this.greenMask(x, y));
     if (k === K_SQUARE) return this.buildingAt(x, y, k, this.cornerOf(x, y, k));
@@ -5485,13 +5613,20 @@ export class World {
     return null;
   }
 
-  buildingAt(x, y, k, lv) {
+  // What a tile's building takes from where it stands, the same on every page.
+  placeLook(x, y) {
     // The door faces a road if there is one on a side that can be seen.
     let door = ih(x, y, 6) & 1 ? 'L' : 'R';
     if (this.roadAt(x, y + 1)) door = 'L';
     else if (this.roadAt(x + 1, y)) door = 'R';
     const h = ih(x, y, 3);
-    return buildingObject(k, lv, h % 3, door, (h >>> 4) % 6);
+    return { door, variant: h % 3, pal: (h >>> 4) % 6 };
+  }
+
+  buildingAt(x, y, k, lv) {
+    const { door, variant, pal } = this.placeLook(x, y);
+    const outside = this.outsides.get(y * this.n + x) || null;
+    return buildingObject(k, lv, variant, doorSideOf(outside?.outside) || door, pal, outside);
   }
 
   faceSegments(code, h, hn) {
@@ -5539,6 +5674,13 @@ export class World {
       }
     }
     if (code === WATER_L && this.owns(ch, lx, ly)) ch.sparkles.push(lx + ((ih(x, y, 8) % 31) - 15), ly + 12 + (ih(x, y, 9) % 10), ih(x, y, 10) % 300);
+  }
+
+  // E29: what's on the ground, over all of the land, because a big place's covers four tiles.
+  paintYard(g, x, y, lx, ly) {
+    const i = y * this.n + x;
+    const yard = this.objs[i]?.ground?.();
+    if (yard) g.drawImage(yard.c, lx - yard.ax, ly - this.height[i] - yard.ay, yard.w, yard.h);
   }
 
   paintShadow(g, x, y, lx, ly) {
@@ -5593,6 +5735,7 @@ export class World {
     }
     // The land first, then shadows on it, then everything that stands up, back to front.
     for (let k = 0; k < tiles.length; k += 2) this.paintGround(g, ch, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
+    for (let k = 0; k < tiles.length; k += 2) this.paintYard(g, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     for (let k = 0; k < tiles.length; k += 2) this.paintShadow(g, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     for (let k = 0; k < tiles.length; k += 2) this.paintObject(g, ch, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     ch.dirty = false;
@@ -5670,6 +5813,7 @@ export class World {
       const o = this.objectAt(x, y, i, this.kind[i], this.level[i]);
       if (o) {
         if (o.shadow) o.shadow();
+        o.ground?.();
         if (night && typeof o.lit === 'function') o.lit();
       }
     }
@@ -5821,6 +5965,7 @@ export class World {
     if (!dt) return;
     this.updatePlayers(dt);
     this.updateFrogs(dt);
+    this.updatePets(dt);
     for (let i = this.puffs.length - 1; i >= 0; i--) {
       const p = this.puffs[i];
       p.life += dt;
@@ -5829,6 +5974,36 @@ export class World {
       p.vy += 4 * dt;
       if (p.life >= p.max) this.puffs.splice(i, 1);
     }
+  }
+
+  // E20, E21: a pet is told only what anyone can see on this map, and only while it's on screen.
+  updatePets(dt) {
+    if (!this.pets.size || this.calm) return;
+    const v = this.view;
+    const shared = { hour: this.hourNow(), disaster: Boolean(this.doom) };
+    for (const p of this.pets.values()) {
+      const [sx, sy] = screenOf(p.tx + 0.5, p.ty + 0.5);
+      if (sx < v.x0 - 80 || sx > v.x1 + 80 || sy < v.y0 - 80 || sy > v.y1 + 80) continue;
+      // Asked for only when it checks its rules, because looking round the street isn't cheap.
+      stepPet(p, dt, () => ({ ...shared, ...this.nearby(p.tx, p.ty), owner: Boolean(this.isMine?.(p.tx, p.ty)) }));
+    }
+  }
+
+  // Who's on the street near a tile, in the words a pet's rules use.
+  nearby(x, y) {
+    const close = (e) => Math.abs(e.px - x - 0.5) < PET_SEES && Math.abs(e.py - y - 0.5) < PET_SEES;
+    let person = false;
+    let bot = false;
+    for (const p of this.players.values()) {
+      if (!close(p)) continue;
+      if (p.kind === 'person') person = true;
+      else bot = true;
+    }
+    for (const p of this.people.values()) if (close(p)) person = true;
+    for (const p of this.visitors.values()) if (close(p)) bot = true;
+    let frog = false;
+    for (const f of this.frogs.values()) if (close(f)) frog = true;
+    return { person, bot, frog };
   }
 
   // The camera eases after a figure it is following, and lets go if the figure has gone.
@@ -6414,6 +6589,13 @@ export class World {
       place(f, ...screenOf(f.px, f.py));
       if (inView(f.sx, f.sy) && ready(f.sx, f.sy)) ents.push(f);
     }
+    // E29: a pet is too small to see from far out.
+    if (scale >= PET_SCALE) {
+      for (const p of this.pets.values()) {
+        place(p, ...screenOf(p.px, p.py));
+        if (inView(p.sx, p.sy) && ready(p.sx, p.sy)) ents.push(p);
+      }
+    }
     for (const a of this.anims.values()) {
       const [X, Y] = screenOf(a.x + 0.5, a.y + 0.5);
       a.sx = X;
@@ -6434,6 +6616,9 @@ export class World {
           break;
         case 'frog':
           r4 = drawFrog(bg, e, t, this.time, this.hoverEnt === e, this.calm);
+          break;
+        case 'pet':
+          r4 = drawPet(bg, e, t, this.calm);
           break;
         default:
           r4 = this.drawBuildAnim(bg, e);
@@ -6457,10 +6642,11 @@ export class World {
   // Anything standing in front of a figure is painted over it again, so people walk behind houses.
   occlude(bg, e, r) {
     const n = this.n;
-    const tile = e.type === 'player' || e.type === 'frog' || e.type === 'visitor' || e.type === 'person';
+    const tile = e.type === 'player' || e.type === 'frog' || e.type === 'visitor' || e.type === 'person' || e.type === 'pet';
     const tx = tile ? Math.floor(e.px) : e.x;
     const ty = tile ? Math.floor(e.py) : e.y;
-    for (let s = 1; s <= 5; s++) {
+    // A pet that's gone round the back of its own building is behind it (E19).
+    for (let s = e.type === 'pet' && e.behind ? 0 : 1; s <= 5; s++) {
       for (let a = 0; a <= s; a++) {
         const b = s - a;
         if (Math.abs(a - b) > 1) continue;
@@ -7086,3 +7272,15 @@ export class World {
 }
 
 // @@WORLD_END
+
+// What web/outside-*.js and web/pets.js draw with. Those modules run before this one finishes loading,
+// so they use these only inside functions, never while they load.
+export {
+  ASPH, AWN, BRICKS, DOORC, FLOWER_COLORS, GLASS_BOT, GLASS_TOP, GRASS, GRASS_RAMP, HH, HW, KERB, LANE, PAVE, P, ROOFS,
+  SAND, SIDING, TRIM, ZEBRA,
+  acUnit, awning, bed, bench, boulder, box, brickChimney, bush, canopy, carSprite, castShadow, clamp, dark, disc, door,
+  dot, drawTree, drum, duck, ease, ell, flatRoof, flowerBunch,
+  fountain, fp, fp3, gable, grad, grain, hip, hslHex, ih, lampPost, layout, ledge, lerp, line, lite, mailbox,
+  makeCanvas, mixHex, onL, onR, paintWall, parkedCar, pathOf, paving, picket, porch, radial, rfill, rgba, rnd, rr,
+  rrect, seeded, shadeFace, shadow, sign, silo, slope, smallTree, topFace, win,
+};

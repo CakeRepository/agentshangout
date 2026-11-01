@@ -32,7 +32,7 @@ use crate::{
     error::{ApiError, ApiResult},
     events, friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
-    passkey, referrals, routines,
+    outside, passkey, referrals, routines,
     sign_in::{self, Site},
     spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -101,6 +101,7 @@ pub fn routes() -> Router<AppState> {
         .merge(god_mode::routes())
         .merge(spaces::routes())
         .merge(items::routes())
+        .merge(outside::routes())
         .merge(looks::routes())
         .merge(households::routes())
         .merge(routines::routes())

@@ -941,6 +941,7 @@ textarea.plain { font-family: inherit; font-size: 14px; }
 .wd .wd-icon canvas { width: 100%; height: 100%; display: block; }
 .wd-btn-label { font-size: 12px; line-height: 1.1; }
 .city-card-purpose { display: block; max-width: 260px; margin-top: 2px; font-style: italic; white-space: normal; }
+.wd-btn-label.long { font-size: 10px; letter-spacing: -.02em; white-space: nowrap; }
 .wd-lock { display: block; font-size: 10px; line-height: 1.1; color: #7a5b28; }
 .wd-lock:empty { display: none; }
 .wd .wd-btn.locked .wd-icon { filter: grayscale(1); opacity: .55; }
@@ -1447,6 +1448,7 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .game-palette > .wd-tools .wd-btn { flex: 1 1 0; height: 56px; padding: 2px 0; }
   .game-palette > .wd-tools .wd-icon { width: 28px; height: 28px; }
   .game-palette > .wd-tools .wd-btn-label { font-size: 11px; }
+  .game-palette > .wd-tools .wd-btn-label.long { font-size: 9.5px; }
   .game-palette > .game-view {
     grid-row: 3;
     grid-column: 1;
@@ -1769,6 +1771,63 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   border: 0;
 }
 
+/* The outside of a place: a stage over the map's well with the same dock and Build panel a room has.
+   The map keeps going underneath. Its tools give way to the dock, which takes their row. */
+.outside-stage { position: absolute; inset: 3px; z-index: 2; overflow: hidden; background: #79b7e0; }
+.outside-stage[hidden] { display: none; }
+.outside-canvas { display: block; touch-action: none; }
+.outside-stage.holding .outside-canvas { cursor: crosshair; }
+.outside-stage.over-item .outside-canvas { cursor: pointer; }
+.wd.wd-game.has-dock { grid-template-rows: auto auto minmax(0, 1fr) auto auto; }
+.wd.wd-game.has-dock > .wd-status { grid-row: 5; }
+.wd-game.outside-open > .game-palette { display: none; }
+@media (min-width: 760px) {
+  .wd-game.outside-panel .outside-stage { right: 424px; }
+}
+@media (max-width: 759px) {
+  .wd-game > .game-panel-outside { height: max(55%, calc(100% - 52.5vw - 18px)); }
+  .game-panel-outside .game-panel-body { flex: 1; }
+  .wd-game.outside-panel .outside-stage { bottom: calc(max(55%, calc(100% - 52.5vw - 18px)) + 6px); }
+  /* The dock says what the status bar would, and the town has no use here. */
+  .wd-game.outside-open > .wd-status { display: none; }
+}
+@media (max-width: 560px) {
+  .wd .outside-dock .wd-btn.wide { flex: 1 1 auto; padding-left: 8px; padding-right: 8px; }
+  .outside-dock .build-dock-buttons { flex: 1 1 100%; }
+}
+
+/* The catalog's extras: a small heading for each part, and the rows under its tiles. */
+.outside-part { display: grid; gap: 6px; }
+.outside-part h4 { font: 700 13px/1.2 var(--ui); color: #4d3620; }
+.build-pic.outside-pic canvas, .outside-whole canvas { image-rendering: auto; }
+.outside-colors { display: grid; gap: 5px; }
+.outside-colors .wardrobe-swatches { gap: 4px; }
+.outside-colors .wardrobe-swatch { width: 22px; height: 22px; border-width: 1px; }
+.outside-color-more { display: flex; flex-wrap: wrap; gap: 4px; }
+.wd .outside-colors .wd-btn { min-width: 0; min-height: 28px; padding: 2px 8px; flex-direction: row; gap: 6px; font-size: 12px; }
+.outside-any input { width: 26px; height: 20px; padding: 0; border: 1px solid #3a2712; background: none; cursor: pointer; }
+.outside-numbers { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.outside-numbers-label { flex: none; min-width: 5.5em; font-size: 12px; font-weight: 700; color: #4d3620; }
+.wd .outside-numbers .outside-number { min-width: 30px; min-height: 30px; padding: 2px 8px; flex-direction: row; font-size: 12px; }
+.outside-foot { display: flex; justify-content: flex-end; }
+.outside-yard { gap: 14px; }
+.outside-yard .build-group .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.outside-pet { display: grid; gap: 6px; padding: 8px; border: 1px solid rgba(120, 90, 44, .5); border-radius: 2px; background: rgba(255, 247, 220, .5); }
+.outside-pet + .outside-pet { margin-top: 8px; }
+.outside-pet-head { display: flex; align-items: center; gap: 8px; }
+.outside-pet-pic { flex: none; width: 48px; height: 48px; }
+.outside-pet-color { display: grid; gap: 3px; }
+.outside-pet h4 { margin-top: 4px; font: 700 12px/1.2 var(--ui); letter-spacing: .08em; text-transform: uppercase; color: #4d3620; }
+.outside-rules { list-style: none; margin: 0; padding: 0; display: grid; }
+.game-panel .outside-rules .row { padding: 4px 0; border-bottom: 1px solid rgba(120, 90, 44, .35); }
+.outside-rules button.link:disabled { opacity: .4; cursor: default; text-decoration: none; }
+.wd .outside-add { align-self: start; min-height: 34px; }
+@media (pointer: coarse) {
+  .game-panel button.link { min-height: 36px; padding: 4px 8px; }
+  .outside-colors .wardrobe-swatch { width: 30px; height: 30px; }
+}
+@media (max-width: 759px) {
+  .build-tiles.build-templates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* Public docs: paper sheets on the desk, readable with no JavaScript. */
 
 .docs-skip {

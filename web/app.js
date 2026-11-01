@@ -1,6 +1,7 @@
 import { LOOK_COLOURS, Room, figurePicture, floorPicture, furniturePicture, itemPicture, roomPicture, wallPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
+import { outsideBuilder } from './outside.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
 import { planInviteView } from './plan-invite.js';
 import { tutorial } from './tutorial.js';
@@ -5279,6 +5280,8 @@ const BUILD_TOOLS = [
   ['square', 'Square', 'Town square: click a tile beside a road. Takes 2 by 2 tiles. The public place every bot meets, and a server has one.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
+// W91: places that take 2 by 2 tiles.
+const BIG_KINDS = new Set(['square', 'green']);
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square', 'green', 'lounge', 'bar', 'office', 'workshop', 'library']);
 // W16, W81: tools nobody sees without god mode on.
 const GOD_TOOLS = new Set(['road', 'square']);
@@ -5351,7 +5354,7 @@ function townText(mine) {
   return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
 }
 
-const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square' };
+const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square', green: 'Park', lounge: 'Lounge', bar: 'Bar', office: 'Office', workshop: 'Workshop', library: 'Library' };
 const LAND_NAME = { grass: 'Open grass', forest: 'Forest', water: 'Water', sand: 'Sand', hill: 'Hill' };
 const EMOTE_MENU = [['wave', 'Wave'], ['cheer', 'Cheer'], ['think', 'Think'], ['sleep', 'Sleep'], ['dance', 'Dance']];
 // A narrow screen gets sheets instead of side panels, and a dock along the bottom.
@@ -5788,6 +5791,15 @@ async function worldView(id, { home = false } = {}) {
       if (house) world.focus(house.x, house.y, { zoom: 1.5 });
       pick('bulldoze');
     },
+    outside: ({ house }) => {
+      if (house) {
+        world.focus(house.x, house.y, { zoom: 1.5 });
+        say('Right-click your place, or press and hold on a touch screen, and choose Build outside.');
+      } else {
+        pick('house');
+        say('Put up your house first.');
+      }
+    },
     look: () => panels.open('look'),
     rooms: () => panels.open('rooms'),
     agent: () => panels.open('agent'),
@@ -5889,7 +5901,8 @@ async function worldView(id, { home = false } = {}) {
   for (const [name, label, hint] of frozen ? [] : BUILD_TOOLS) {
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
-      h('span', { class: 'wd-btn-label' }, label),
+      // A long one-word name, like Workshop, is set smaller so it fits the button whole.
+      h('span', { class: label.length > 7 && !label.includes(' ') ? 'wd-btn-label long' : 'wd-btn-label' }, label),
       BUILDING_KINDS.has(name) ? h('small', { class: 'wd-lock' }) : null);
     buttons.set(name, button);
     frame.tools.append(button);
@@ -6041,7 +6054,8 @@ async function worldView(id, { home = false } = {}) {
   }
 
   function tileMenu(t) {
-    const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
+    // W91: a big place's other tiles have a level, but that is which piece of it they are.
+    const what = t.kind ? `${KIND_NAME[t.kind] || t.kind}${t.level && !BIG_KINDS.has(t.kind) ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => account.open('Sign in to build here. Looking around is free.') });
@@ -6077,6 +6091,8 @@ async function worldView(id, { home = false } = {}) {
     const rest = spec.items.filter((item) => item?.label !== 'Go in');
     const own = [];
     if (details.yours || details.open) own.push({ label: 'Go in', run: () => goIn(t) });
+    // E6: only the owner, as a person, and this menu is only offered to people.
+    if (details.yours) own.push({ label: 'Build outside', run: () => outsideBuild.open(t) });
     for (const bot of details.bots || []) {
       if (bot.access === 'needs_invite') {
         own.push({ label: `Ask to let ${bot.name} in`, run: () => askIn(t, bot) });
@@ -6086,7 +6102,7 @@ async function worldView(id, { home = false } = {}) {
         own.push({ label: `${bot.name}: not this week`, run: () => say(`The owner said no to ${bot.name}. You can ask again in a week.`) });
       }
     }
-    const owner = details.owner ? `${details.owner}\u2019s ${details.kind}` : spec.title;
+    const owner = details.owner ? `${details.owner}\u2019s ${KIND_WORDS[details.kind] || details.kind}` : spec.title;
     return { ...spec, title: owner, items: own.length ? [...own, null, ...rest] : rest };
   }
 
@@ -6101,6 +6117,11 @@ async function worldView(id, { home = false } = {}) {
   }
 
   async function picked({ figure, tile, clientX, clientY, via }) {
+    // W91: any of a big place's four tiles is that place, and it is stored on the first.
+    if (tile && BIG_KINDS.has(tile.kind) && tile.level > 0) {
+      const [ax, ay] = anchorOf(tile.x, tile.y, tile.kind);
+      tile = { ...tile, x: ax, y: ay, level: 0 };
+    }
     let spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
     if (spec && !figure && tile && me && me.kind === 'person' && !frozen && BUILDING_KINDS.has(tile.kind)) {
       spec = await placeMenu(tile, spec);
@@ -6126,6 +6147,7 @@ async function worldView(id, { home = false } = {}) {
   const KIND_WORDS = { green: 'park', square: 'town square' };
   // W91: the tile a big place is stored on, for any of its four, from the view's tiles.
   const anchorOf = (x, y, kind) => {
+    if (!BIG_KINDS.has(kind)) return [x, y];
     const tiles = latest?.tiles || [];
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       if (tiles.some((t) => t[0] === x - dx && t[1] === y - dy && t[2] === kind && t[3] === 0)) return [x - dx, y - dy];
@@ -6187,6 +6209,8 @@ async function worldView(id, { home = false } = {}) {
       hoodAt(place.x, place.y) ? h('small', { class: 'city-card-hint' }, `In ${hoodAt(place.x, place.y)[0]}`) : null,
       // L34: what it's for, as plain text.
       details?.purpose ? h('span', { class: 'city-card-purpose' }, details.purpose) : null,
+      // A new owner would not otherwise find the builder, which is only in the menu.
+      details?.yours ? h('small', { class: 'city-card-hint' }, matchMedia('(pointer: coarse)').matches ? 'Press and hold to build outside' : 'Right-click to build outside') : null,
     ];
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
@@ -6216,7 +6240,7 @@ async function worldView(id, { home = false } = {}) {
   function hovered(hover) {
     let text = '';
     const kind = hover?.tile?.kind;
-    if (hover && hover.x !== null && (kind === 'green' || kind === 'square') && hover.tile?.level === 1) {
+    if (hover && hover.x !== null && BIG_KINDS.has(kind) && hover.tile?.level > 0) {
       const [ax, ay] = anchorOf(hover.x, hover.y, kind);
       hover = { ...hover, x: ax, y: ay };
     }
@@ -6238,7 +6262,7 @@ async function worldView(id, { home = false } = {}) {
     if (hoveredPlace && me && me.kind === 'person') loadPlace(hoveredPlace);
   }
 
-  const world = new World(frame.host, { interactive: true, onTile: build, onHover: hovered, onPick: picked, onFollow: followEnded });
+  const world = new World(frame.host, { interactive: true, onTile: build, onHover: hovered, onPick: picked, onFollow: followEnded, isMine: (x, y) => ownerAt(x, y) === me?.name });
   frame.host.parentElement.classList.add('wd-hovercard');
   frame.host.parentElement.append(placeCard);
   world.canvas.addEventListener('pointermove', (event) => {
@@ -6255,6 +6279,64 @@ async function worldView(id, { home = false } = {}) {
   world.canvas.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') menu.close();
   });
+
+  // --- The outside of a place ------------------------------------------------------------------
+
+  // E27: what owners have made of their tiles. The tile being changed is kept as its owner has it.
+  let outsideRows = [];
+  const outsideBuild = outsideBuilder({
+    h,
+    api,
+    modal,
+    popupMenu,
+    formError,
+    frame,
+    world,
+    panels,
+    say,
+    beside: matchMedia('(min-width: 760px)'),
+    current: (x, y) => outsideRows.find((row) => row[0] === x && row[1] === y)?.[2] || {},
+    changed: (x, y, outside) => {
+      outsideRows = outsideRows.filter((row) => row[0] !== x || row[1] !== y);
+      if (outside && Object.keys(outside).length) outsideRows.push([x, y, outside]);
+      world.setOutsides(outsideRows);
+    },
+  });
+  // E26, E27: the view says only that something changed. A page reads them when that happens, at once
+  // the first time and then at most every 30 seconds, and a change that comes in between waits for one
+  // later read. A read that fails changes nothing.
+  let outsidesWant = null;
+  let outsidesHave = null;
+  let outsidesAt = 0;
+  let outsidesTimer = null;
+  async function readOutsides() {
+    outsidesAt = Date.now();
+    const asked = outsidesWant;
+    try {
+      const body = await api(`/api/worlds/${path}/outsides`);
+      const held = outsideBuild.row();
+      outsideRows = (Array.isArray(body.outsides) ? body.outsides : []).filter((row) => !held || row[0] !== held[0] || row[1] !== held[1]);
+      if (held && Object.keys(held[2]).length) outsideRows.push(held);
+      outsidesHave = asked;
+      world.setOutsides(outsideRows);
+    } catch {
+      // What is shown stays, and the next look tries again.
+    }
+  }
+  function wantOutsides(view) {
+    if (!Array.isArray(view.outsides)) return;
+    outsidesWant = view.outsides.join(',');
+    if (outsidesWant === outsidesHave || outsidesTimer) return;
+    const wait = outsidesAt + 30000 - Date.now();
+    if (wait <= 0) {
+      readOutsides();
+    } else {
+      outsidesTimer = setTimeout(() => {
+        outsidesTimer = null;
+        readOutsides();
+      }, wait);
+    }
+  }
 
   // --- Who is around ---------------------------------------------------------------------------
 
@@ -6328,6 +6410,7 @@ async function worldView(id, { home = false } = {}) {
     const before = latest === view ? null : latest;
     latest = view;
     world.setView(view);
+    wantOutsides(view);
     showFacts(frame, view);
     setTitle(view);
     showNews(view.disaster);
@@ -6369,6 +6452,8 @@ async function worldView(id, { home = false } = {}) {
   // Escape closes the menu first, then the panel. It is heard before the map's own keys.
   const onKey = (event) => {
     if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+    // What is in hand on the outside view goes back first.
+    if (outsideBuild.takesEscape()) return;
     if (menu.isOpen) menu.close(true);
     else if (panels.current) panels.close();
     else return;
@@ -6384,6 +6469,8 @@ async function worldView(id, { home = false } = {}) {
   document.documentElement.classList.add('in-game');
   leaveRoom = () => {
     watch.stop();
+    clearTimeout(outsidesTimer);
+    outsideBuild.destroy();
     world.destroy();
     menu.close();
     document.removeEventListener('keydown', onKey, true);

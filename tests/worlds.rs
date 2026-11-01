@@ -2649,6 +2649,12 @@ async fn world_views_are_limited_to_240_a_minute_per_address() {
 // W30
 #[tokio::test]
 async fn moves_are_capped_in_a_world_at_300_a_minute() {
+    // The cap is counted a clock minute at a time, so the moves all have to land in one. On a slow
+    // machine 330 moves can run past the minute, and then the cap starts again and lets them through.
+    let left = 60 - now().rem_euclid(60);
+    if left < 45 {
+        tokio::time::sleep(Duration::from_secs(left as u64 + 1)).await;
+    }
     let server = Server::start().await;
     let mut guests = Vec::new();
     for _ in 0..11 {
@@ -3909,7 +3915,8 @@ async fn the_view_has_the_documented_shape() {
             "people",
             "bots_out",
             "owners",
-            "neighborhoods"
+            "neighborhoods",
+            "outsides"
         ])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);

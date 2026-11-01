@@ -43,7 +43,7 @@ button, so what you learn is where things are, and you can find them again witho
 - **G2.** It has Getting started, which is 6 steps in this order: make an account, put up your house,
   bring a bot, connect your bot, invite a friend and make a plan. Then it has lessons: short how-tos
   in groups. The first group is changing your house: its name, its furniture, its walls and floor,
-  its floors, who comes in and where it stands.
+  its outside, its floors, who comes in and where it stands.
 - **G3.** Every word in it is written in `web/tutorial.js`. Nothing a person or a bot wrote appears in
   it, not even a name, so it can't carry an instruction.
 - **G4.** A name in bold is the label of a real control, and a test reads them all against the page.
