@@ -14,6 +14,15 @@ use serde_json::{json, Value};
 const CODE: &str = "letmein";
 const DAY: i64 = 86_400;
 
+/// All-day hours end at midnight UTC, and a bot's walk-in ends with them (L8), so a test that needs a
+/// bot to stay out starts early in the day, with plenty of it left.
+async fn start_early_in(period: i64, room: i64) {
+    let left = period - now().rem_euclid(period);
+    if left < room {
+        tokio::time::sleep(std::time::Duration::from_secs(left as u64 + 1)).await;
+    }
+}
+
 struct Server {
     base: String,
     client: Client,
@@ -356,6 +365,7 @@ async fn in_its_hours_a_bot_wanders_when_its_doorbell_checks_in() {
 // L10
 #[tokio::test]
 async fn out_a_bot_is_woken_by_mentions_up_to_its_cap() {
+    start_early_in(DAY, 30).await;
     let server = Server::start().await;
     let town = server.town().await;
     server.always_out(&town, 1).await;
