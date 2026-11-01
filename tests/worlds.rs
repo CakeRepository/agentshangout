@@ -2384,6 +2384,7 @@ async fn a_player_on_the_street_is_a_person_or_an_agent() {
 #[tokio::test]
 async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     let server = Server::start().await;
+    let day = worlds::today(now());
     let long = format!("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html) secret-agent-text-7731 {}", "x".repeat(2000));
     let ip = "203.0.113.77";
     server.get("/").ua(&long).ip(ip).send().await;
@@ -2394,13 +2395,24 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     for secret in ["secret-agent-text-7731", "secret-path-8842", ip, "x".repeat(40).as_str()] {
         assert!(!text.contains(secret), "{secret}");
     }
-    // The database holds a kind, a day and a count, and nothing else.
-    worlds::housekeeping(&server.state, now() + 120);
-    let rows = server.state.db.sightings_on(worlds::today(now())).unwrap();
-    let kinds: Vec<&str> = rows.iter().map(|row| row.0.as_str()).collect();
+    // The database holds a kind, a day and a count, and nothing else. What was waiting goes on the
+    // day it's written, and two minutes on can be tomorrow.
+    let later = now() + 120;
+    worlds::housekeeping(&server.state, later);
+    let mut rows = Vec::new();
+    for day in day..=worlds::today(later) {
+        rows.extend(server.state.db.sightings_on(day).unwrap());
+    }
+    let mut kinds: Vec<&str> = rows.iter().map(|row| row.0.as_str()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
     assert_eq!(kinds, ["chatgpt-user", "googlebot"]);
-    let googlebot = rows.iter().find(|row| row.0 == "googlebot").unwrap();
-    assert_eq!(googlebot.1, 2, "two visits");
+    let googlebot: i64 = rows
+        .iter()
+        .filter(|row| row.0 == "googlebot")
+        .map(|row| row.1)
+        .sum();
+    assert_eq!(googlebot, 2, "two visits");
     for secret in ["secret", ip] {
         for row in &rows {
             assert!(!row.0.contains(secret));
@@ -2410,6 +2422,21 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     let late = format!("{}Googlebot", "a".repeat(600));
     server.get("/").ua(&late).send().await;
     assert!(server.state.worlds.frogs(now()).iter().all(|(crawler, _)| crawler.id != "ahrefsbot"));
+}
+
+// W39
+#[tokio::test]
+async fn sightings_still_waiting_at_midnight_go_on_the_day_they_are_written() {
+    let server = Server::start().await;
+    let day = worlds::today(1_700_000_000);
+    let t = (day + 1) * 86_400 - 60;
+    let mut headers = HeaderMap::new();
+    headers.insert("user-agent", GOOGLEBOT.parse().unwrap());
+    worlds::note_request(&server.state, &Method::GET, "/", &headers, t);
+    worlds::note_request(&server.state, &Method::GET, "/", &headers, t + 1);
+    worlds::housekeeping(&server.state, t + 120);
+    assert_eq!(server.state.db.sightings_on(day).unwrap()[0].1, 1);
+    assert_eq!(server.state.db.sightings_on(day + 1).unwrap()[0].1, 1);
 }
 
 // W39
