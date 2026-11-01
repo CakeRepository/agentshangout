@@ -1500,6 +1500,11 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .wd-room .wd-title-actions .wd-tbtn[aria-expanded="true"] { background: #cdb98a; box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6); }
 .wd .wd-tbtn.wait { background: linear-gradient(#ffd98a, #f0aa44); }
 .room-count { margin-left: 5px; padding: 0 4px; color: #ffc65c; background: #0a140d; font: 700 11px/1.35 "Courier New", Consolas, monospace; text-shadow: none; }
+/* The map's bar can't take another button on a phone, and a wider More would move the rest, so
+   More only lights up for what the bar has folded away. */
+@media (max-width: 1359px) {
+  .wd-map .wd-title-actions:has(.sec.wait) .more { background: linear-gradient(#ffd98a, #f0aa44); }
+}
 @media (max-width: 999px) {
   .wd-game .wd-title-actions .mid:not(.wait) { display: none; }
 }

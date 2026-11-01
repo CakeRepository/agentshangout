@@ -3555,3 +3555,69 @@ async fn a_yes_doesnt_bring_in_a_bot_told_to_stay_home_since_its_owner_asked() {
     let waiting = server.get(&ann.key, "/api/place-requests").await.ok();
     assert_eq!(waiting["requests"].as_array().unwrap().len(), 1, "it stays waiting: {waiting}");
 }
+
+// S66
+#[test]
+fn a_narrow_window_on_the_map_can_see_and_reach_requests_to_come_in() {
+    // A narrower window's bar folds the `sec` buttons away, and Requests had no row in More, so
+    // nobody in such a window could answer a request. Nothing here runs a browser, so this reads
+    // the page.
+    let app = include_str!("../web/app.js");
+    let map = app.split_once("async function worldView(").unwrap().1;
+    let more = map.split_once("panels.add('more'").unwrap().1.split_once("]));").unwrap().0;
+    for button in top_bar(app, "worldView").split("panels.toggle('").skip(1) {
+        let (name, rest) = button.split_once('\'').unwrap();
+        if rest.lines().next().unwrap().contains("'sec'") {
+            assert!(more.contains(&format!("'{name}'")), "{name} folds away with no row in More");
+        }
+    }
+    assert!(
+        more.contains("me?.kind === 'person' ? (requestsRow = "),
+        "the row is there for someone who can't have requests"
+    );
+
+    // The button and the row can't say different numbers, and a screen reader hears them.
+    let load = map.split_once("async function loadRequests(").unwrap().1;
+    let load = load.split_once("let requestsToggle").unwrap().0;
+    assert!(
+        load.contains(
+            "for (const button of [requestsToggle, requestsRow]) button.textContent = label;"
+        ),
+        "the button and the row don't both get the count"
+    );
+    assert!(
+        load.contains("requestsToggle.setAttribute('aria-label', label);"),
+        "a screen reader is told a different number from the one on the button"
+    );
+    assert!(
+        load.contains("moreToggle.setAttribute('aria-label', "),
+        "a screen reader can't tell that More lit up"
+    );
+
+    // A request changes nothing on the map, so asking about them can't wait for the map to change.
+    assert!(map.contains("onLook: loadRequests,"), "an open map doesn't ask about requests");
+    let look = app.split_once("function watchWorld(").unwrap().1;
+    let look = look.split_once("etag !== tag").unwrap().0;
+    assert!(look.contains("onLook?.();"), "an open map only asks once the map has changed");
+    assert!(
+        load.contains("if (key === requestsKey) return;"),
+        "asking again rebuilds a list someone may be using"
+    );
+
+    // The button lights up. Where it's folded away More does instead, and More stays the same
+    // width, so the buttons to its left don't move (S64).
+    assert!(
+        load.contains("requestsToggle.classList.toggle('wait', "),
+        "a waiting request doesn't light the button"
+    );
+    let css = include_str!("../web/style.css");
+    let width = |rule: &str| {
+        let before = css.split_once(rule).unwrap_or_else(|| panic!("{rule} is gone")).0;
+        before.rsplit_once("(max-width: ").unwrap().1.split_once(')').unwrap().0
+    };
+    assert_eq!(
+        width(".wd-map .wd-title-actions:has(.sec.wait) .more {"),
+        width(".wd-game:not(.wd-room) .wd-title-actions .sec {"),
+        "More lights up at a different width from the one that folds the button away"
+    );
+}
