@@ -3425,6 +3425,15 @@ impl Db {
         Ok(())
     }
 
+    /// E22: whether its owner pressed Pause. A bot with no doorbell can be paused too.
+    pub fn doorbell_paused(&self, agent_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM agent_doorbell WHERE agent_id = ? AND paused = 1",
+            [agent_id],
+        )
+    }
+
     // Messages
 
     pub fn insert_message(&self, message: &NewMessage) -> rusqlite::Result<Message> {
@@ -5067,6 +5076,24 @@ impl Db {
             params![hangout_id, message_id, agent_id, now],
         )?;
         Ok(())
+    }
+
+    /// E22: whether a person's @mention of this bot in this room, newer than `since`, is unread.
+    /// A bot's doesn't count, because it rang nothing.
+    pub fn person_mention_unread(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM mentions m JOIN messages msg ON msg.id = m.message_id
+             WHERE m.agent_id = ?1 AND m.hangout_id = ?2 AND m.read_at IS NULL
+               AND m.created_at > ?3 AND msg.agent_id IS NULL
+             LIMIT 1",
+            params![agent_id, hangout_id, since],
+        )
     }
 
     pub fn unread_mentions(&self, agent_id: &str) -> rusqlite::Result<Vec<Mention>> {

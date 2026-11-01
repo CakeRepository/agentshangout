@@ -24,6 +24,8 @@ const MAX_LOCATION_CHARS: usize = 200;
 const MAX_NOTE_CHARS: usize = 500;
 const MAX_STATUS_CHARS: usize = 120;
 const MAX_WHITEBOARD_CHARS: usize = 2000;
+/// E22: how long an unread @mention holds a bot's wake-up URL quiet: 20 rings an hour at most.
+const MENTION_RING_SECS: i64 = 3 * 60;
 const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
 /// Reports expire instead of being cleared, so an agent that crashes doesn't stay at the desk.
@@ -283,23 +285,44 @@ pub fn post_message(
     Ok(message)
 }
 
-/// B8: an @mention of a bot that's in this room, kept until that bot reads the room.
+/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22: a
+/// person's also rings a bot that belongs here.
 fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     if message.kind != "chat" {
         return Ok(());
     }
-    let mut bots = state.db.agents_in(&message.hangout_id, message.created_at)?;
-    bots.extend(state.db.visitors_in(&message.hangout_id, message.created_at)?);
+    let members = state.db.agents_in(&message.hangout_id, message.created_at)?;
+    let visitors = state.db.visitors_in(&message.hangout_id, message.created_at)?;
+    let bots = members.iter().map(|bot| (bot, true));
     let mut seen = std::collections::HashSet::new();
-    for bot in bots {
+    for (bot, belongs) in bots.chain(visitors.iter().map(|bot| (bot, false))) {
         if message.agent_id.as_deref() == Some(bot.id.as_str()) || !seen.insert(bot.id.clone()) {
             continue;
         }
         if crate::doorbell::mentions(&message.body, &bot.name) {
+            // Asked before adding this one, which would otherwise be what it's waiting to read.
+            let rings =
+                message.agent_id.is_none() && belongs && rings_for_mention(state, message, bot)?;
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
+            if rings {
+                let notice = notify::Notice {
+                    event: "mention",
+                    hangout_id: message.hangout_id.clone(),
+                    text: "Someone mentioned you. Call inbox. To reply in a room, call say."
+                        .to_string(),
+                };
+                notify::send(state, std::slice::from_ref(&bot.id), &notice);
+            }
         }
     }
     Ok(())
+}
+
+/// E22: a paused bot stays asleep, and one that hasn't read the last ring doesn't need another.
+fn rings_for_mention(state: &AppState, message: &Message, bot: &Agent) -> ApiResult<bool> {
+    let since = message.created_at - MENTION_RING_SECS;
+    Ok(!state.db.doorbell_paused(&bot.id)?
+        && !state.db.person_mention_unread(&bot.id, &message.hangout_id, since)?)
 }
 
 /// I49: the room's one slate. What's written replaces what was there, and an empty text wipes it.
@@ -1027,6 +1050,19 @@ pub fn set_agent_notify(
         }
     }
     Ok(())
+}
+
+/// E23: one try with what's saved, so an owner can see a refused key.
+pub async fn test_agent_notify(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+) -> ApiResult<serde_json::Value> {
+    own_agent(state, caller, agent_id, "test a bot's wake-up URL")?;
+    let url = state.db.notify_url(agent_id)?;
+    let url = url.ok_or_else(|| ApiError::bad_request("save a URL first"))?;
+    let auth = state.db.notify_auth(agent_id)?;
+    Ok(notify::test_wake_up(state, &url, auth.as_deref()).await)
 }
 
 /// The URL, and whether a key is saved. The key itself stays on the server.

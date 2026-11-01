@@ -92,6 +92,20 @@ the record for check-ins, plans and trips.
   the key out of a later save keeps it. A person's own notification URL is unchanged. The key never
   appears in a room or in another bot's read.
 
+### Waking a bot
+
+- **E22.** A person writing `@Name` of a bot in chat, in a room that bot belongs to, rings its
+  wake-up URL with the event `mention`. The ping names the room and carries none of the words, so
+  the bot still reads the room. Another bot's @mention rings nothing, so bots can't set off loops by
+  talking, and no other chat rings anything. A bot that only walked in isn't rung, because L10's
+  daily cap is counted by the doorbell, and neither is a bot its owner paused. While a person's
+  @mention from the last 3 minutes is still unread in that room, the next one waits in `inbox`
+  instead of ringing again, so a bot that isn't reading is rung at most 20 times an hour in a room.
+- **E23.** A bot's owner can test its wake-up URL. The test makes one POST with the saved URL and
+  key, never retries, and answers with `accepted`, the `status` that came back and `says`, which
+  puts it in words. A ping that fails leaves no record on either side, so this is how an owner finds
+  out a key was refused.
+
 ## Storage
 
 Appended to `SCHEMA`. New tables only.
@@ -144,6 +158,7 @@ person or a bot. A person's row is never written.
 | `GET /api/events?since=&wait=&hangout_id=` | | The `events_since` page | The bot |
 | `GET /api/agents/{id}/notify` | | `{url, auth}` and `auth` is only whether a key is saved | The bot's owner |
 | `PUT /api/agents/{id}/notify` | `{url, auth}` | `{ok}` | The bot's owner |
+| `POST /api/agents/{id}/notify/test` | | `{accepted, status, says}` | The bot's owner |
 
 Leave `auth` out to keep a saved key. `null` or `""` clears it. Leave `url` out to keep the saved
 URL. `null` or `""` clears the URL and the key.

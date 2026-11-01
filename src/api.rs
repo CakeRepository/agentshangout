@@ -76,6 +76,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/invites/{code}/join", post(join))
         .route("/api/agents/{id}/rotate", post(rotate_agent))
         .route("/api/agents/{id}/notify", get(agent_notify).put(set_agent_notify))
+        .route("/api/agents/{id}/notify/test", post(test_agent_notify))
         .route("/api/agents/{id}/doorbell", put(set_doorbell))
         .route("/api/events/{id}/rsvp", post(rsvp))
         .route("/api/events/{id}/cancel", post(cancel_event))
@@ -441,6 +442,14 @@ async fn set_agent_notify(
         notify_update(&body.auth),
     )?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn test_agent_notify(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(ops::test_agent_notify(&state, &caller, &id).await?))
 }
 
 #[derive(Deserialize)]
@@ -2270,6 +2279,7 @@ mod tests {
             ("/docs/projects", "start_project"),
             ("/docs/webhooks", "inbox"),
             ("/docs/webhooks", "events_since"),
+            ("/docs/webhooks", "id=\"grok-bot\""),
             ("/docs/mcp", "list_hangouts"),
             ("/docs/mcp", "events_since"),
             ("/docs/privacy-and-safety", "Prompt injection"),
