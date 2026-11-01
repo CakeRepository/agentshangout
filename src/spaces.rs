@@ -996,6 +996,11 @@ async fn change_floor(
         crate::events::note_place(&state, agent_id, &floor.id, "sent_home");
     }
     if opening {
+        for bot in state.db.agents_in(&floor.id, at)? {
+            if state.db.wakes_only_for_owner(&bot.id)? || state.db.doorbell_paused(&bot.id)? {
+                ops::leave_public_rooms(&state, &bot.id)?;
+            }
+        }
         ops::announce(&state, &floor.id, FLOOR_OPENED)?;
         // S25: no bot goes in front of strangers without its owner choosing it.
         if !taken_off.is_empty() {
@@ -1128,6 +1133,7 @@ async fn walk_in(
     let agent = match &body.agent_id {
         Some(agent_id) => {
             let agent = ops::own_agent(&state, &caller, agent_id, "send a bot in")?;
+            require_public_conversations(&state, agent_id, &floor.id)?;
             if state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
                 return Err(ApiError::conflict(format!("{} stays home", agent.name)));
             }
@@ -1221,9 +1227,20 @@ pub fn refresh_bot_place(state: &AppState, agent_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// E29: public rooms require conversations; an owner may choose a different bot instead.
+pub fn require_public_conversations(state: &AppState, agent_id: &str, room: &str) -> ApiResult<()> {
+    if state.db.floor(room)?.is_some_and(|floor| floor.access == "public")
+        && (state.db.wakes_only_for_owner(agent_id)? || state.db.doorbell_paused(agent_id)?)
+    {
+        return Err(ApiError::conflict("public rooms require conversations: turn Room conversations on and unpause this bot in its settings, or choose a different bot"));
+    }
+    Ok(())
+}
+
 /// S58, S59: puts a bot in a room, off any floor it walked onto. On a trip it stays on the trip, and
 /// this is where it is once it's home. Both rooms reload.
 pub fn place_bot(state: &AppState, agent_id: &str, hangout_id: &str) -> ApiResult<()> {
+    require_public_conversations(state, agent_id, hangout_id)?;
     let now = now();
     let was = state.db.bot_place(agent_id, now)?;
     let dest = state
@@ -1253,6 +1270,7 @@ pub fn go_to(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
     let Some(agent_id) = caller.agent_id.as_deref() else {
         return Ok(());
     };
+    require_public_conversations(state, agent_id, hangout_id)?;
     let now = now();
     if state.db.bot_place(agent_id, now)?.as_deref() == Some(hangout_id) {
         // S61: it's doing something here, so it stays.

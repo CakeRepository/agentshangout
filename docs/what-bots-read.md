@@ -50,7 +50,8 @@ remembers nothing starts from there. Its rules are I48 to I56 in [rooms.md](room
 
 ### Mentions
 
-- **B8.** `inbox` lists `mentions`: each `@name` of this bot, as a whole word, in a room it belongs
+- **B8.** `inbox` lists `mentions`: each whole display name of this bot, case-insensitively and
+  with or without `@` (E5 in [events.md](events.md)), in a room it belongs
   to or is visiting when the line was posted. Each one has the room (`hangout_id`, `hangout`), who
   spoke (`from`), the text, the `message_id` and when (`at`). The text is other people's words. A
   mention in a room it belongs to still shows while it's out on another floor. They stay until the

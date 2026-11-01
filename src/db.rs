@@ -3476,6 +3476,40 @@ impl Db {
         Ok(())
     }
 
+    /// E29: opting out ends all public memberships and visits together, with a reason for the bot.
+    pub fn leave_public_rooms(&self, agent_id: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let rooms = strings(&tx,
+            "SELECT f.hangout_id FROM floors f WHERE f.access = 'public' AND (
+                EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = f.hangout_id AND r.agent_id = ?1)
+                OR EXISTS (SELECT 1 FROM floor_visits v WHERE v.hangout_id = f.hangout_id
+                           AND (v.who = ?1 OR v.agent_id = ?1)))", [agent_id])?;
+        for room in &rooms {
+            tx.execute(
+                "DELETE FROM room_agents WHERE hangout_id = ?1 AND agent_id = ?2",
+                params![room, agent_id],
+            )?;
+            tx.execute(
+                "DELETE FROM floor_visits WHERE hangout_id = ?1 AND (who = ?2 OR agent_id = ?2)",
+                params![room, agent_id],
+            )?;
+            tx.execute(
+                "DELETE FROM bot_places WHERE hangout_id = ?1 AND agent_id = ?2",
+                params![room, agent_id],
+            )?;
+            remember_leave(
+                &tx,
+                agent_id,
+                room,
+                now,
+                "public rooms require conversations; your owner turned them off or paused you",
+            )?;
+        }
+        tx.commit()?;
+        Ok(rooms)
+    }
+
     /// Replaces a bot's token. Its public player's token goes in the same step (W3): the new bot
     /// token gets a new one by joining again.
     pub fn set_agent_token(&self, agent_id: &str, token_hash: &str) -> rusqlite::Result<()> {

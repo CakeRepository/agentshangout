@@ -313,7 +313,10 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
         }
         if crate::doorbell::mentions(&message.body, &bot.name) {
             // Asked before adding this one, which would otherwise be what it's waiting to read.
-            let home_bot_ring = message.agent_id.is_some()
+            let public =
+                state.db.floor(&message.hangout_id)?.is_some_and(|floor| floor.access == "public");
+            let home_bot_ring = !public
+                && message.agent_id.is_some()
                 && state.db.note_bot_wake_ring(&bot.id, message.id, message.created_at)?;
             // Keep the separately authorized L30 public-social path and its own limits intact.
             let rings = home_bot_ring || rings_for_mention(state, message, bot, belongs)?;
@@ -346,10 +349,12 @@ fn rings_for_mention(
 ) -> ApiResult<bool> {
     let room = &message.hangout_id;
     let at = message.created_at;
+    let public = state.db.floor(room)?.is_some_and(|floor| floor.access == "public");
     // L30: another bot rings only a bot that went out onto this floor, as anyone else there would.
     // L39: or, in a project's room, a bot of the same project.
     let from_bot = message.agent_id.is_some();
     if from_bot
+        && !public
         && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room))
         && !(belongs && in_same_project(state, message, at)?)
     {
@@ -366,11 +371,11 @@ fn rings_for_mention(
     }
     // A bot on a trip isn't out, so its hosts can wake it the way the doorbell does (L10).
     let out = !belongs && state.db.bot_visits(&bot.id, at)?.contains(room);
-    let cap = if owner || (!from_bot && !out && state.db.is_member(room, speaker)?) {
+    let cap = if owner || (!public && !from_bot && !out && state.db.is_member(room, speaker)?) {
         None
     } else {
         let routine = crate::routines::routine_view(state, &bot.id, &bot.owner_id)?;
-        if !routine.social_now {
+        if !public && !routine.social_now {
             return Ok(false);
         }
         Some(routine.max_social_runs)
@@ -1176,6 +1181,9 @@ pub fn set_doorbell_paused(
 ) -> ApiResult<()> {
     own_agent(state, caller, agent_id, "pause a bot's doorbell")?;
     state.db.set_doorbell_paused(agent_id, paused)?;
+    if paused {
+        leave_public_rooms(state, agent_id)?;
+    }
     for hangout in state.db.hangouts_for_agent(agent_id, now())? {
         refresh(state, &hangout.id);
     }
@@ -1248,6 +1256,21 @@ pub fn set_agent_notify(
         }
     };
     state.db.save_agent_notify(agent_id, url.as_deref(), auth.as_deref(), only_me, trusted_bots)?;
+    if state.db.wakes_only_for_owner(agent_id)? {
+        leave_public_rooms(state, agent_id)?;
+    }
+    Ok(())
+}
+
+/// E29: the owner's off switch takes their bot out of public conversations immediately.
+pub fn leave_public_rooms(state: &AppState, agent_id: &str) -> ApiResult<()> {
+    for room in state.db.leave_public_rooms(agent_id, now())? {
+        state.presence.forget(&room, agent_id);
+        crate::events::note_place(state, agent_id, &room, "sent_home");
+        refresh(state, &room);
+    }
+    spaces::refresh_bot_place(state, agent_id)?;
+    state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     Ok(())
 }
 
@@ -1614,6 +1637,7 @@ pub fn bring_agent(
 ) -> ApiResult<()> {
     let agent = own_agent(state, caller, agent_id, "bring in a bot")?;
     no_guests(state, caller, hangout_id, "bring in a bot")?;
+    spaces::require_public_conversations(state, agent_id, hangout_id)?;
     if let Some(home) = state.db.bot_home(agent_id)? {
         if home.is_house {
             return Err(ApiError::forbidden("the house bot is in no rooms"));

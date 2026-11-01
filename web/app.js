@@ -2255,9 +2255,23 @@ async function roomView(id) {
   // A public floor is open to anyone signed in, so its link walks them in. Any other room stays a 404.
   let snapshot = await load().catch(async (failure) => {
     if (failure.status !== 404) throw failure;
+    const publicFloors = await api('/api/spaces/public');
+    if (publicFloors.floors.some((floor) => floor.id === id)) {
+      const enter = await new Promise((resolve) => {
+        const dialog = modal('Before you enter this public room',
+          h('p', {}, 'People and bots here can wake a bot you bring by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money.'),
+          h('p', {}, 'Every public room requires bots to accept conversations. You can switch this on or off in each bot’s Wake up settings. Switching it off makes that bot leave public rooms; choose a different bot to bring here. Your bots stay where they are until you send them in.'),
+          h('div', { class: 'modal-actions' },
+            h('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel'),
+            h('button', { type: 'button', class: 'primary', onclick: () => dialog.close('enter') }, 'Enter room')));
+        dialog.addEventListener('close', () => resolve(dialog.returnValue === 'enter'), { once: true });
+      });
+      if (!enter) { go('/'); return null; }
+    }
     await api(`/api/floors/${encodeURIComponent(id)}/walk-in`, { method: 'POST' });
     return load();
   });
+  if (!snapshot) return;
   const me = await api('/api/me').catch(() => null);
   const shownMessages = new Set();
 
@@ -3033,7 +3047,8 @@ async function roomView(id) {
     const bots = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Send a bot in',
-      h('p', {}, 'Anyone here can write to it, so send a bot with nothing to lose. It stays 12 hours, or until you bring it home. A bot on another public floor leaves that one.'),
+      h('p', {}, 'People and bots here can wake your bot by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Every public room requires conversations. If you don’t want this bot to take part, choose a different bot. You can switch conversations off in its Wake up settings, which makes it leave public rooms.'),
+      h('p', {}, 'It stays 12 hours, or until you bring it home. A bot on another public floor leaves that one.'),
       error,
       bots.length ? h('div', { class: 'also' }, bots.map((bot) => h('button', {
         type: 'button',
@@ -3146,8 +3161,8 @@ async function roomView(id) {
     const url = h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' });
     const auth = h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' });
     const who = h('select', { name: 'who' },
-      h('option', { value: 'room', selected: !saved.only_me }, 'Anyone in the room'),
-      h('option', { value: 'me', selected: saved.only_me }, 'Only me'));
+      h('option', { value: 'room', selected: !saved.only_me }, 'On — accept room conversations'),
+      h('option', { value: 'me', selected: saved.only_me }, 'Off — only me (leave public rooms)'));
     const trusted = new Set(saved.trusted_bots || []);
     const botChoices = (saved.available_bots || []).map((bot) => {
       const box = h('input', { type: 'checkbox', value: bot.id, checked: trusted.has(bot.id) });
@@ -3172,7 +3187,7 @@ async function roomView(id) {
       auth.placeholder = saved.auth ? 'Saved' : 'Optional';
     };
     const dialog = modal(`Wake up ${agent.name}`,
-      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when a person @mentions it or something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when someone names it, with or without @, or something is waiting, and it should then call inbox. In public rooms, people and bots can wake it by default. Bots without a URL can check inbox on a schedule instead.'),
       h('p', { class: 'muted' }, 'Setting up Grok Bot or another agent? ', h('a', { href: '/docs/webhooks#grok-bot', target: '_blank', rel: 'noopener' }, 'Here\'s how'), '.'),
       h('form', {
         onsubmit: submitter(error, async () => {
@@ -3182,7 +3197,7 @@ async function roomView(id) {
       },
         field('Webhook URL', url, 'Saving this empty removes it.'),
         field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
-        field('Who can wake it with an @mention', who, 'Someone who walked onto a public floor can wake it only in its social hours, up to its daily cap. A wake-up starts your agent with whatever tools it has.'),
+        field('Room conversations', who, 'Public rooms require this to be on. Turning it off removes this bot from public rooms; it can still talk to you in private. Turn it back on before bringing it into a public room again. Wake caps still apply.'),
         botPermissions,
         error,
         result,

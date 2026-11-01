@@ -236,6 +236,89 @@ fn rings(hook: &Hook) -> usize {
     hook.hits().iter().filter(|hit| hit.body["event"] == "mention").count()
 }
 
+// E5, B8: a plain multiword name reaches inbox, polling and subscribed webhooks alike.
+#[tokio::test]
+async fn plain_names_reach_inbox_events_and_webhooks_from_people_and_bots() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (tree, id) = server.bot(&justin, &room, "Grokliver Tree").await;
+    let (ron, _) = server.bot(&kevin, &room, "ron").await;
+    let (url, hook) = start_hook("echo").await;
+    let saved =
+        server.put(&justin, &format!("/api/agents/{id}/notify"), json!({ "url": url })).await;
+    assert_eq!(saved.status, StatusCode::OK);
+    let subscribed = server
+        .mcp(
+            &tree,
+            json!(1),
+            "events/subscribe",
+            json!({
+                "name": "mention", "delivery": { "mode": "webhook", "url": url, "secret": SECRET }
+            }),
+        )
+        .await;
+    assert!(subscribed.body["error"].is_null(), "{}", subscribed.body);
+
+    for (sender, text) in [
+        (&justin, "Thanks, grokliver tree. Ideas welcome!"),
+        (&ron, "Thanks, Grokliver Tree. What should the library hold?"),
+        (&kevin, "@Grokliver Tree, still here?"),
+    ] {
+        let cursor = server.tool(&tree, "events_since", json!({})).await;
+        server.say(sender, &room, text).await;
+        let inbox = server.tool(&tree, "inbox", json!({})).await;
+        let mentions = inbox["structuredContent"]["mentions"].as_array().unwrap();
+        assert_eq!(mentions.len(), 1, "{inbox}");
+        let events = server
+            .tool(
+                &tree,
+                "events_since",
+                json!({
+                    "since": cursor["structuredContent"]["cursor"]
+                }),
+            )
+            .await;
+        let mentions: Vec<_> = events["structuredContent"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["name"] == "mention")
+            .collect();
+        assert_eq!(mentions.len(), 1, "{events}");
+        assert_eq!(mentions[0]["data"]["body"], text);
+        wait_for(&hook, |hit| hit.body["name"] == "mention" && hit.body["data"]["body"] == text)
+            .await;
+        server.tool(&tree, "read_room", json!({ "hangout_id": room })).await;
+    }
+    settle().await;
+    assert_eq!(rings(&hook), 2, "private bot chat keeps the existing wake-up permission");
+}
+
+// E5, L30: widening the match must not widen the daily bot wake budget.
+#[tokio::test]
+async fn plain_bot_names_share_the_explicit_mentions_wake_cap() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let (tree, id) = server.bot(&justin, &room, "Grokliver Tree").await;
+    let (ron, _) = server.bot(&kevin, &room, "ron").await;
+    let (url, hook) = start_hook("echo").await;
+    server.put(&justin, &format!("/api/agents/{id}/notify"), json!({ "url": url })).await;
+    server.put(&justin, &format!("/api/agents/{id}/routine"), json!({
+        "days": [], "starts": "12:00", "ends": "13:00", "max_social_runs": 1, "public_places": false
+    })).await;
+    server.say(&ron, &room, "Thanks, Grokliver Tree. Ideas welcome!").await;
+    wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    server.tool(&tree, "read_room", json!({ "hangout_id": room })).await;
+    for text in ["Grokliver Tree, another question?", "@Grokliver Tree still here?"] {
+        server.say(&ron, &room, text).await;
+    }
+    settle().await;
+    assert_eq!(rings(&hook), 1);
+    let inbox = server.tool(&tree, "inbox", json!({})).await;
+    assert_eq!(inbox["structuredContent"]["mentions"].as_array().unwrap().len(), 2);
+}
+
 /// Long enough for a ping that was going to go out to arrive.
 async fn settle() {
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -642,6 +725,66 @@ async fn a_stream_sends_the_active_notice_and_then_the_mention() {
 }
 
 // E14, E15, E18
+// E29: an owner can toggle conversations, but a muted or paused bot cannot remain in public.
+#[tokio::test]
+async fn public_rooms_require_conversations_and_the_owner_can_toggle_them() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let made = server
+        .post("", "/api/hangouts", json!({ "name": "Private home", "your_name": "Pat" }))
+        .await;
+    let pat = made.body["owner_key"].as_str().unwrap();
+    let home = made.body["hangout"]["id"].as_str().unwrap();
+    let (bot, id) = server.bot(pat, home, "Grokliver Tree").await;
+    let settings = format!("/api/agents/{id}/notify");
+    let enter = format!("/api/floors/{room}/walk-in");
+    server.put(pat, &settings, json!({ "only_me": true })).await;
+    let denied = server.post(pat, &enter, json!({ "agent_id": id })).await;
+    assert_eq!(denied.status, StatusCode::CONFLICT, "{}", denied.body);
+    assert!(denied.body.to_string().contains("choose a different bot"));
+    assert!(server.state.db.bot_visits(&id, now()).unwrap().is_empty());
+    server.put(pat, &settings, json!({ "only_me": false })).await;
+    assert_eq!(server.post(pat, &enter, json!({ "agent_id": id })).await.status, StatusCode::OK);
+    assert_eq!(server.state.db.bot_place(&id, now()).unwrap().as_deref(), Some(room.as_str()));
+    let forged = server.put(&bot, &settings, json!({ "only_me": true })).await;
+    assert_eq!(forged.status, StatusCode::FORBIDDEN);
+    server.put(pat, &settings, json!({ "only_me": true })).await;
+    assert!(server.state.db.bot_visits(&id, now()).unwrap().is_empty());
+    assert_eq!(server.state.db.bot_place(&id, now()).unwrap().as_deref(), Some(home));
+    assert!(server
+        .state
+        .db
+        .latest_floor_leave(&id, now() - 60)
+        .unwrap()
+        .unwrap()
+        .reason
+        .contains("conversations"));
+    server.put(pat, &settings, json!({ "only_me": false })).await;
+    assert!(
+        server.state.db.bot_visits(&id, now()).unwrap().is_empty(),
+        "turning on doesn't rejoin"
+    );
+    server.post(pat, &enter, json!({ "agent_id": id })).await;
+    server.put(pat, &format!("/api/agents/{id}/doorbell"), json!({ "paused": true })).await;
+    assert!(server.state.db.bot_visits(&id, now()).unwrap().is_empty());
+    assert_eq!(
+        server.post(pat, &enter, json!({ "agent_id": id })).await.status,
+        StatusCode::CONFLICT
+    );
+    server.put(pat, &format!("/api/agents/{id}/doorbell"), json!({ "paused": false })).await;
+    assert_eq!(server.post(pat, &enter, json!({ "agent_id": id })).await.status, StatusCode::OK);
+
+    // A house can be public too; its owner cannot keep an opted-out resident bot on the floor.
+    server.put(pat, &settings, json!({ "only_me": true })).await;
+    let opened =
+        server.put(pat, &format!("/api/floors/{home}"), json!({ "access": "public" })).await;
+    assert_eq!(opened.status, StatusCode::OK);
+    assert!(server.state.db.agents_in(home, now()).unwrap().iter().all(|agent| agent.id != id));
+    let brought = server.put(pat, &format!("/api/hangouts/{home}/agents/{id}"), json!({})).await;
+    assert_eq!(brought.status, StatusCode::CONFLICT);
+}
+
 #[tokio::test]
 async fn a_webhook_is_checked_signed_and_stopped() {
     let server = Server::start().await;
@@ -930,7 +1073,7 @@ async fn a_wake_up_url_can_carry_a_key_and_the_key_is_never_shown() {
 
 // E24: a public floor has no invite, so someone who walked in is held to L10's limits.
 #[tokio::test]
-async fn someone_who_walked_in_rings_only_in_its_hours_and_up_to_its_cap() {
+async fn someone_who_walked_in_rings_by_default_and_up_to_its_cap() {
     let server = Server::start().await;
     let (room, justin, _) = server.room().await;
     let (scout, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -946,10 +1089,11 @@ async fn someone_who_walked_in_rings_only_in_its_hours_and_up_to_its_cap() {
 
     server.say(&pat, &room, "@Scout hello").await;
     settle().await;
-    assert_eq!(rings(&hook), 0, "no social hours yet");
+    assert_eq!(rings(&hook), 1, "public wakes need no social hours");
+    server.tool(&scout, "read_room", json!({ "hangout_id": room })).await;
 
-    server.open_all_day(&justin, &scout_id, 2).await;
-    for ring in 1..=2 {
+    server.open_all_day(&justin, &scout_id, 3).await;
+    for ring in 2..=3 {
         server.say(&pat, &room, "@Scout hello again").await;
         settle().await;
         assert_eq!(rings(&hook), ring, "the one that rang nothing doesn't hold the bell");
@@ -957,16 +1101,16 @@ async fn someone_who_walked_in_rings_only_in_its_hours_and_up_to_its_cap() {
     }
     server.say(&pat, &room, "@Scout one more").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "that's its cap for the day");
+    assert_eq!(rings(&hook), 3, "that's its cap for the day");
 
     server.say(&justin, &room, "@Scout it's me").await;
     settle().await;
-    assert_eq!(rings(&hook), 3, "its owner isn't held to the cap");
+    assert_eq!(rings(&hook), 4, "its owner isn't held to the cap");
 }
 
 // E24, L10: a bot that's out is held to its hours and cap, whoever speaks, except its owner.
 #[tokio::test]
-async fn a_bot_that_walked_in_is_rung_in_its_hours_and_always_by_its_owner() {
+async fn a_bot_that_walked_in_rings_by_default_and_always_hears_its_owner() {
     let server = Server::start().await;
     let (room, justin, _) = server.room().await;
     let made = server.post("", "/api/hangouts", json!({ "name": "Out", "your_name": "Pat" })).await;
@@ -993,12 +1137,13 @@ async fn a_bot_that_walked_in_is_rung_in_its_hours_and_always_by_its_owner() {
 
     server.say(&justin, &room, "@Pixel hello").await;
     settle().await;
-    assert_eq!(rings(&hook), 1, "belonging in the room isn't enough while the bot is out");
+    assert_eq!(rings(&hook), 2, "public wakes need no social hours");
+    read().await;
 
     server.open_all_day(&pat, &pixel_id, 1).await;
     server.say(&justin, &room, "@Pixel hello again").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "in its hours");
+    assert_eq!(rings(&hook), 2, "the earlier public wake already used the cap");
     read().await;
     server.say(&justin, &room, "@Pixel and again").await;
     settle().await;
@@ -1219,12 +1364,13 @@ async fn out_on_a_public_floor_another_bots_mention_rings_within_the_cap() {
 
     server.say(rex, &room, "@Pixel shall we build something?").await;
     settle().await;
-    assert_eq!(rings(&hook), 0, "not in its social hours");
+    assert_eq!(rings(&hook), 1, "public wakes need no social hours");
+    server.tool(&bots[0].2, "read_room", json!({ "hangout_id": room })).await;
 
     server.open_all_day(&bots[0].0, &bots[0].1, 1).await;
     server.say(rex, &room, "@Pixel how about a workshop?").await;
     settle().await;
-    assert_eq!(rings(&hook), 1, "out in its hours, another bot can ring it");
+    assert_eq!(rings(&hook), 1, "the first public wake used the cap");
     server.tool(&bots[0].2, "read_room", json!({ "hangout_id": room })).await;
     server.say(rex, &room, "@Pixel still there?").await;
     settle().await;
@@ -1319,7 +1465,7 @@ async fn an_owner_can_allow_one_of_their_bots_to_ring_another_at_home() {
 
 // E22, E24, L10
 #[tokio::test]
-async fn a_paused_bot_and_one_out_of_its_hours_are_not_rung() {
+async fn a_paused_bot_stays_quiet_but_public_wakes_need_no_hours() {
     let server = Server::start().await;
     let (room, justin, kevin) = server.room().await;
     let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -1349,7 +1495,7 @@ async fn a_paused_bot_and_one_out_of_its_hours_are_not_rung() {
     assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
     server.say(&justin, &room, "@Pixel welcome").await;
     settle().await;
-    assert_eq!(rings(&hook), 0, "it walked in, and it has no social hours");
+    assert_eq!(rings(&hook), 1, "public wakes need no social hours");
 }
 
 // E23
