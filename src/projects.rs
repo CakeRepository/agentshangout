@@ -220,6 +220,12 @@ pub fn furnish_room(
         None => Vec::new(),
     };
     let (template, pack) = (args["template"].as_str(), args["pack"].as_str());
+    // W96: the first floor, or another of the building's.
+    let floor_id = match args["floor_id"].as_str() {
+        Some(id) if state.db.floors_of(&space.id)?.iter().any(|floor| floor.id == id) => id,
+        Some(_) => return Err(ApiError::not_found()),
+        None => space.id.as_str(),
+    };
     if template.is_none() && pack.is_none() && remove.is_empty() && add.is_empty() {
         return Err(ApiError::bad_request(
             "give a template, a pack, items to place or items to remove: see room_catalog",
@@ -227,7 +233,7 @@ pub fn furnish_room(
     }
     ops::note_agent_write(state, caller)?;
     let done =
-        crate::items::furnish_for_project(state, caller, &space.id, template, pack, &remove, &add)?;
+        crate::items::furnish_for_project(state, caller, floor_id, template, pack, &remove, &add)?;
     ops::announce(state, &space.id, &format!("{} rearranged the room.", caller.name))?;
     ops::refresh(state, &space.id);
     Ok(done)
@@ -408,6 +414,7 @@ pub fn build_studio(
     // W92: it's open unless the project's owner closes it, and dressed for what it is.
     open_for_everyone(state, &space)?;
     crate::items::dress_for_place(state, caller, &space.id, place_kind.as_str())?;
+    crate::spaces::build_upper_floors(state, caller, &space.id, place_kind.as_str())?;
     let title = crate::spaces::place_title(place_kind.as_str()).to_lowercase();
     ops::announce(
         state,
