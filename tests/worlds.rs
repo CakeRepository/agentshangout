@@ -5546,8 +5546,29 @@ async fn a_step_takes_up_roads_laid_side_by_side_and_leaves_every_road_joined() 
         .in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &slab, now()))
         .unwrap();
 
+    let before_count =
+        server.me(&guest.token, COMMONS).await["your_town"]["roads"].as_u64().unwrap();
     worlds::step_world(&server.state, COMMONS, now()).unwrap();
     let after = server.tiles(COMMONS);
+    let me = server.me(&guest.token, COMMONS).await;
+    let losses = me["road_removals"].as_array().expect("W97: explain roads that disappeared");
+    let after_count = me["your_town"]["roads"].as_u64().unwrap();
+    assert!(!losses.is_empty());
+    assert_eq!(before_count - after_count, losses.len() as u64);
+    for loss in losses {
+        assert_eq!(loss["reason"], "road_thinning");
+        let pos = (loss["x"].as_u64().unwrap() as u16, loss["y"].as_u64().unwrap() as u16);
+        assert!(!after.contains_key(&pos));
+        assert!(loss["removed_at"].as_str().unwrap().ends_with('Z'));
+    }
+    let other = server.guest().await;
+    assert!(server.me(&other.token, COMMONS).await["road_removals"].as_array().unwrap().is_empty());
+    worlds::step_world(&server.state, COMMONS, now()).unwrap();
+    assert_eq!(
+        server.me(&guest.token, COMMONS).await["road_removals"],
+        me["road_removals"],
+        "no duplicate loss after another step"
+    );
     let road = |pos: (u16, u16)| after.get(&pos).is_some_and(|tile| tile.kind == Kind::Road);
     for x in sx.saturating_sub(1)..sx + 4 {
         for y in sy.saturating_sub(1)..sy + 3 {
@@ -5572,6 +5593,110 @@ async fn a_step_takes_up_roads_laid_side_by_side_and_leaves_every_road_joined() 
         after.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(p, _)| *p).collect();
     assert!(left.iter().all(|pos| seen.contains(pos)), "a road was cut off");
     assert!(left.iter().any(|pos| !highway.contains(pos)), "some of the slab stays, as streets");
+}
+
+// W97: a rebuild, replacement and rollback leave an honest, owner-scoped road record.
+#[tokio::test]
+async fn road_losses_survive_rebuilding_and_rollback_but_never_change_owners() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    let other = server.guest().await;
+    let builder = server.player_id(&guest.token).await;
+    let next_builder = server.player_id(&other.token).await;
+    let pos = (42, 41);
+    server.built_by(COMMONS, builder, &[(42, 41)]);
+    server.built_by(COMMONS, builder, &[(42, 41)]);
+    assert!(
+        server.me(&guest.token, COMMONS).await["road_removals"].as_array().unwrap().is_empty(),
+        "same tile isn't a loss"
+    );
+    let rolled_back: rusqlite::Result<()> = server.state.db.in_transaction(|tx| {
+        tx.write_changes(COMMONS, &[Change::Remove(pos)], now())?;
+        Err(rusqlite::Error::InvalidQuery)
+    });
+    assert!(rolled_back.is_err());
+    assert!(server.me(&guest.token, COMMONS).await["road_removals"].as_array().unwrap().is_empty());
+    assert_eq!(server.tiles(COMMONS).get(&pos).unwrap().player, Some(builder as u64));
+    server.write(COMMONS, &[Change::Remove(pos)]);
+    server.built_by(COMMONS, builder, &[(42, 41)]);
+    let me = server.me(&guest.token, COMMONS).await;
+    assert_eq!(me["road_removals"].as_array().unwrap().len(), 1);
+    assert_eq!(me["road_removals"][0]["reason"], "bulldoze");
+    server.built_by(COMMONS, next_builder, &[(42, 41)]);
+    let me = server.me(&guest.token, COMMONS).await;
+    assert_eq!(me["road_removals"].as_array().unwrap().len(), 2);
+    assert_eq!(me["road_removals"][0]["reason"], "replaced");
+    assert_eq!(server.tiles(COMMONS).get(&pos).unwrap().player, Some(next_builder as u64));
+    assert!(server.me(&other.token, COMMONS).await["road_removals"].as_array().unwrap().is_empty());
+    server.state.db.remove_from_world(COMMONS, next_builder, false, false).unwrap();
+    assert_eq!(
+        server.state.db.road_removals(COMMONS, next_builder).unwrap()[0].reason,
+        "player_removed"
+    );
+    assert_eq!(server.me(&guest.token, COMMONS).await["road_removals"], me["road_removals"]);
+}
+
+// W97: the record is durable and bounded on read, and expired guests can't donate roads or history.
+#[test]
+fn road_history_survives_reopening_and_guest_expiry_never_reassigns_roads() {
+    let path =
+        std::env::temp_dir().join(format!("agentshangout-road-history-{}.db", auth::new_id()));
+    let path_str = path.to_str().unwrap();
+    let builder;
+    {
+        let state = AppState::new(
+            Db::open(path_str).unwrap(),
+            Config {
+                public_url: "http://127.0.0.1".into(),
+                create_code: None,
+                allow_private_webhooks: false,
+                keeper_id: None,
+                god_ids: Vec::new(),
+            },
+        );
+        worlds::ensure_commons(&state).unwrap();
+        builder = state.db.create_guest("test-token-hash", "test-claim-hash", 1).unwrap().id;
+        let road = Change::Set(
+            (42, 41),
+            Tile { kind: Kind::Road, level: 0, player: Some(builder as u64) },
+        );
+        state
+            .db
+            .in_transaction::<(), rusqlite::Error>(|tx| {
+                for at in 100..155 {
+                    tx.write_changes(COMMONS, &[road], at)?;
+                    tx.write_changes_because(COMMONS, &[Change::Remove((42, 41))], at, "disaster")?;
+                }
+                tx.write_changes(COMMONS, &[road], 156)
+            })
+            .unwrap();
+    }
+    {
+        let db = Db::open(path_str).unwrap();
+        let losses = db.road_removals(COMMONS, builder).unwrap();
+        assert_eq!(losses.len(), 50);
+        assert_eq!(losses[0].removed_at, 154);
+        assert_eq!(losses[49].removed_at, 105);
+        assert!(losses.iter().all(|loss| loss.reason == "disaster"));
+        assert_eq!(db.prune_guests(2).unwrap(), 1);
+        assert!(
+            db.road_removals(COMMONS, builder).unwrap().is_empty(),
+            "the deleted guest's history goes too"
+        );
+        let next = db.create_guest("next-token-hash", "next-claim-hash", 3).unwrap();
+        assert!(next.id > builder);
+        assert!(db.road_removals(COMMONS, next.id).unwrap().is_empty());
+        assert_eq!(db.world_tiles(COMMONS).unwrap()[&(42, 41)].player, Some(builder as u64));
+        db.in_transaction::<(), rusqlite::Error>(|tx| {
+            tx.write_changes(COMMONS, &[Change::Remove((42, 41))], 200)
+        })
+        .unwrap();
+        assert!(
+            db.road_removals(COMMONS, next.id).unwrap().is_empty(),
+            "an abandoned road can come down without assigning its history to someone else"
+        );
+    }
+    std::fs::remove_file(path).unwrap();
 }
 
 // W87

@@ -1772,8 +1772,15 @@ async fn how_am_i_doing_is_limited_per_address_in_mcp_and_everything_it_says_is_
                 "world",
                 "tip",
                 "your_town",
+                "road_count_note",
+                "road_removals",
                 "goal",
             ];
+            assert!(result["structuredContent"]["road_count_note"]
+                .as_str()
+                .unwrap()
+                .contains("tiles you own now"));
+            assert_eq!(result["structuredContent"]["road_removals"], json!([]));
             for key in result["structuredContent"].as_object().unwrap().keys() {
                 assert!(allowed_keys.contains(&key.as_str()), "an unexpected field {key}");
             }
@@ -3215,9 +3222,17 @@ async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
+    let losses = server.state.db.road_removals(world, player_id).unwrap();
+    assert_eq!(losses.len(), 2);
+    assert!(losses.iter().all(|loss| loss.reason == "player_removed"));
+    assert_eq!(
+        losses.iter().map(|loss| (loss.x, loss.y)).collect::<Vec<_>>(),
+        vec![(22, 20), (20, 20)]
+    );
     let world_tables = [
         "worlds",
         "world_tiles",
+        "world_road_removals",
         "world_buildings",
         "players",
         "world_players",
@@ -3822,8 +3837,19 @@ async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_priva
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
-    let world_tables =
-        ["worlds", "world_tiles", "players", "world_players", "world_members", "crawler_sightings"];
+    let losses = server.state.db.road_removals(COMMONS, player_id).unwrap();
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].reason, "player_removed");
+    assert_eq!((i64::from(losses[0].x), i64::from(losses[0].y)), spot);
+    let world_tables = [
+        "worlds",
+        "world_tiles",
+        "world_road_removals",
+        "players",
+        "world_players",
+        "world_members",
+        "crawler_sightings",
+    ];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
             assert_eq!(rows, &before[table], "ending a player changed {table}");
@@ -4292,7 +4318,16 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let fresh = server.me(&ann.token, COMMONS).await;
     assert_eq!(
         sorted_keys(&fresh),
-        ["goal", "moves_left", "moves_per_day", "player", "tip", "your_town"]
+        [
+            "goal",
+            "moves_left",
+            "moves_per_day",
+            "player",
+            "road_count_note",
+            "road_removals",
+            "tip",
+            "your_town"
+        ]
     );
     assert_eq!(fresh["your_town"], json!({ "roads": 0, "places": 0 }));
     assert_eq!(fresh["goal"], world::GOALS[4]);
@@ -4346,7 +4381,16 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     );
     // The tool says the same, and a little more.
     let how = server.tool("how_am_i_doing", json!({ "player_token": ann.token })).await;
-    for key in ["player", "moves_left", "moves_per_day", "your_town", "goal", "tip"] {
+    for key in [
+        "player",
+        "moves_left",
+        "moves_per_day",
+        "your_town",
+        "goal",
+        "tip",
+        "road_count_note",
+        "road_removals",
+    ] {
         assert_eq!(how[key], mine[key], "{key}");
     }
     assert_eq!(
@@ -4375,7 +4419,18 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let start = server.me(&dee.key, COMMONS).await;
     assert_eq!(
         sorted_keys(&start),
-        ["full", "goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]
+        [
+            "full",
+            "goal",
+            "moves_left",
+            "moves_per_day",
+            "places",
+            "player",
+            "road_count_note",
+            "road_removals",
+            "tip",
+            "your_town"
+        ]
     );
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");

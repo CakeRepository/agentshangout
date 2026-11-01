@@ -514,6 +514,16 @@ A road is a line, and two roads laid side by side make a paved slab that every c
   time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
   beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
   cut off. Worlds people start are left as they are.
+- **W97.** A player's road count is the road tiles they currently own in that world, not their
+  lifetime builds. `me` and `how_am_i_doing` include `road_removals`, their latest 50 road losses
+  in that world: tile, built and removed times, world step, and a fixed reason (`bulldoze`,
+  `replaced`, `road_thinning`, `disaster` or `player_removed`). A removal is recorded in the same
+  transaction as the tile change; refused or rolled-back changes record nothing. Thinning can
+  remove several tiles at once. Rebuilding starts a new tile and doesn't erase its old loss.
+  The map's town status explains the most recent loss. Another player sees none of this history.
+  The record starts with this feature: it cannot reconstruct earlier losses. It survives server
+  restarts and goes with its player or world when those are deleted. Guest expiry leaves roads
+  standing and cannot transfer a road to another existing player.
 
 ## Starting The Commons again
 

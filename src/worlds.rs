@@ -1315,6 +1315,11 @@ fn standing(
         "your_town": town,
         "goal": world::goal(&town, person),
         "tip": tip,
+        "road_count_note": "Your road count is the tiles you own now, not lifetime builds. road_removals lists your latest 50 recorded road losses; older losses cannot be reconstructed.",
+        "road_removals": state.db.road_removals(&world.id, player.id)?.into_iter().map(|loss| json!({
+            "x": loss.x, "y": loss.y, "built_at": crate::ops::iso(loss.built_at),
+            "removed_at": crate::ops::iso(loss.removed_at), "world_step": loss.world_step, "reason": loss.reason,
+        })).collect::<Vec<_>>(),
     });
     if person {
         reply["places"] = places_left(state, &world.id, player.id, god, now)?;
@@ -2309,13 +2314,15 @@ pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
         let mut changes = disaster_step(state, tx, &world)?;
+        let mut reason = "disaster";
         // W94: on The Commons, roads laid side by side are thinned out, but not while a disaster strikes.
         if changes.is_empty() && world.id == COMMONS_ID {
             let hoods = world::neighborhoods(world.seed, world.size);
             let slab = world::slab_tiles(&hoods, &tx.all_tiles(&world.id)?);
             changes.extend(slab.into_iter().map(Change::Remove));
+            reason = "road_thinning";
         }
-        tx.write_changes(&world.id, &changes, now)?;
+        tx.write_changes_because(&world.id, &changes, now, reason)?;
         tx.set_step(&world.id, world.step + 1)?;
         Ok(changes.len())
     })?;

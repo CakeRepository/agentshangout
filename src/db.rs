@@ -801,7 +801,31 @@ CREATE INDEX IF NOT EXISTS world_more_places_by_player ON world_more_places (wor
 CREATE VIEW IF NOT EXISTS world_every_place AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_places
     UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
+-- W97: a road loss belongs to its former builder, and is recorded with the tile change.
+CREATE TABLE IF NOT EXISTS world_road_removals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    world_id    TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    player_id   INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    built_at    INTEGER NOT NULL,
+    removed_at  INTEGER NOT NULL,
+    world_step  INTEGER NOT NULL,
+    reason      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS world_road_removals_by_player
+    ON world_road_removals (world_id, player_id, id DESC);
 "#;
+
+#[derive(Debug, Serialize)]
+pub struct RoadRemoval {
+    pub x: u16,
+    pub y: u16,
+    pub built_at: i64,
+    pub removed_at: i64,
+    pub world_step: i64,
+    pub reason: String,
+}
 
 /// E30: how many outsides one player keeps waiting for each kind of place, after their places come
 /// down. Putting a place up takes the newest, so this is only what could pile up behind it.
@@ -8218,6 +8242,7 @@ fn q_write_changes(
     world_id: &str,
     changes: &[Change],
     now: i64,
+    reason: &str,
 ) -> rusqlite::Result<()> {
     let mut set = conn.prepare_cached(
         "INSERT INTO world_tiles (world_id, x, y, kind, level, player_id, built_at)
@@ -8269,6 +8294,20 @@ fn q_write_changes(
         Ok(())
     };
     for change in changes {
+        let (pos, kind, player, cause) = match change {
+            Change::Set(pos, tile) => (*pos, tile.kind.as_str(), tile.player, "replaced"),
+            Change::Remove(pos) => (*pos, "", None, reason),
+        };
+        conn.execute(
+            "INSERT INTO world_road_removals
+                (world_id, player_id, x, y, built_at, removed_at, world_step, reason)
+             SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?4, w.step, ?5
+             FROM world_tiles t JOIN worlds w ON w.id = t.world_id
+             WHERE t.world_id = ?1 AND t.x = ?2 AND t.y = ?3 AND t.kind = 'road'
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)
+               AND (?6 <> 'road' OR t.player_id IS NOT ?7)",
+            params![world_id, pos.0, pos.1, now, cause, kind, player.map(|id| id as i64)],
+        )?;
         match change {
             Change::Set((x, y), tile) if crate::world::NEWER_PLACES.contains(&tile.kind) => {
                 remove.execute(params![world_id, x, y])?;
@@ -8554,7 +8593,7 @@ fn insert_world_rows(conn: &Connection, new: &NewWorld) -> rusqlite::Result<()> 
         .iter()
         .map(|pos| Change::Set(*pos, Tile { kind: Kind::Road, level: 0, player: None }))
         .collect();
-    q_write_changes(conn, new.id, &changes, new.now)
+    q_write_changes(conn, new.id, &changes, new.now, "replaced")
 }
 
 /// A transaction on the worlds tables. Everything a move or a step reads and writes goes through
@@ -8610,7 +8649,17 @@ impl WorldTx<'_> {
         changes: &[Change],
         now: i64,
     ) -> rusqlite::Result<()> {
-        q_write_changes(&self.tx, world_id, changes, now)
+        q_write_changes(&self.tx, world_id, changes, now, "bulldoze")
+    }
+
+    pub fn write_changes_because(
+        &self,
+        world_id: &str,
+        changes: &[Change],
+        now: i64,
+        reason: &str,
+    ) -> rusqlite::Result<()> {
+        q_write_changes(&self.tx, world_id, changes, now, reason)
     }
 
     pub fn world_player(
@@ -9802,6 +9851,30 @@ impl Db {
         Ok(tiles)
     }
 
+    /// W97: only this builder's losses, newest first, with bounded response size.
+    pub fn road_removals(
+        &self,
+        world_id: &str,
+        player_id: i64,
+    ) -> rusqlite::Result<Vec<RoadRemoval>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare_cached(
+            "SELECT x, y, built_at, removed_at, world_step, reason FROM world_road_removals
+             WHERE world_id = ?1 AND player_id = ?2 ORDER BY id DESC LIMIT 50",
+        )?;
+        let rows = stmt.query_map(params![world_id, player_id], |row| {
+            Ok(RoadRemoval {
+                x: row.get(0)?,
+                y: row.get(1)?,
+                built_at: row.get(2)?,
+                removed_at: row.get(3)?,
+                world_step: row.get(4)?,
+                reason: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     // Players
 
     pub fn player(&self, id: i64) -> rusqlite::Result<Option<PlayerRow>> {
@@ -10011,6 +10084,15 @@ impl Db {
     ) -> rusqlite::Result<usize> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO world_road_removals
+                (world_id, player_id, x, y, built_at, removed_at, world_step, reason)
+             SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?3, w.step, 'player_removed'
+             FROM world_tiles t JOIN worlds w ON w.id = t.world_id
+             WHERE t.world_id = ?1 AND t.player_id = ?2 AND t.kind = 'road'
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)",
+            params![world_id, player_id, crate::now()],
+        )?;
         let down = tx.execute(
             "DELETE FROM world_tiles WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
