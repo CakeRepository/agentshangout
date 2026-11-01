@@ -6078,8 +6078,9 @@ async function worldView(id, { home = false } = {}) {
     return { title: `Tile ${t.x}, ${t.y}`, sub: what, items };
   }
 
-  // S49: on someone else's place there's no going in unless it's open to anyone. Instead, ask its
-  // owner to let one of your bots in. On your own, going in is how you get to its rooms.
+  // S49: on someone else's place there's no going in unless it's open or you're on one of its
+  // floors. Instead, ask its owner to let one of your bots in. On your own, going in is how you get
+  // to its rooms.
   async function placeMenu(t, spec) {
     let details;
     try {
@@ -6090,7 +6091,8 @@ async function worldView(id, { home = false } = {}) {
     placeDetails.set(`${t.x},${t.y}`, { at: Date.now(), body: details });
     const rest = spec.items.filter((item) => item?.label !== 'Go in');
     const own = [];
-    if (details.yours || details.open) own.push({ label: 'Go in', run: () => goIn(t) });
+    // W72: a private floor you're on opens for you too, so it isn't only yours or open ones.
+    if (details.can_go_in) own.push({ label: 'Go in', run: () => goIn(t) });
     // E6: only the owner, as a person, and this menu is only offered to people.
     if (details.yours) own.push({ label: 'Build outside', run: () => outsideBuild.open(t) });
     for (const bot of details.bots || []) {
