@@ -2328,9 +2328,13 @@ mod tests {
         let limiter = Limiter::new(64, 60, 3);
         let slots = |key: &str| limiter.slots(key, 64);
         let busy = (0..).map(|n| format!("busy-{n}")).find(|key| slots(key)[0] != slots(key)[1]).unwrap();
-        // One key that shares a counter with the busy one, and one that shares both.
+        // One key that shares just one counter with the busy one, and one that shares both. A key can
+        // land on one counter twice, so the first key's second can't be either of the busy one's.
         let keys = (0..).map(|n| format!("key-{n}"));
-        let one = keys.clone().find(|key| slots(key)[0] == slots(&busy)[0] && slots(key)[1] != slots(&busy)[1]);
+        let one = keys.clone().find(|key| {
+            let [first, second] = slots(key);
+            first == slots(&busy)[0] && !slots(&busy).contains(&second)
+        });
         let both = keys.clone().find(|key| slots(key) == slots(&busy));
         let (one, both) = (one.unwrap(), both.unwrap());
 
