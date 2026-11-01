@@ -952,6 +952,10 @@ pub struct RoutineRow {
     pub public_places: bool,
 }
 
+/// W71, W73: a place, its owner, its kind and the name of the room behind its door, if it has one:
+/// `(x, y, owner, kind, name)`.
+pub type PlaceOwnerRow = (i64, i64, String, String, Option<String>);
+
 /// S51: a request waiting on a place's owner: `(id, space_id, place, bot, asker, asked_at)`.
 pub type PlaceRequestRow = (String, String, String, String, String, i64);
 
@@ -7143,16 +7147,22 @@ impl Db {
     }
 
     /// W71: every place in a world with its owner's name, `(x, y, name)`.
-    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+    /// W73: with its kind, and the name of the space behind its door if its owner has been through
+    /// and it still stands as that space's door (S33): `(x, y, owner, kind, name)`.
+    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<PlaceOwnerRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
-            "SELECT b.x, b.y, pe.name FROM world_buildings b
+            "SELECT b.x, b.y, pe.name, b.kind,
+                    (SELECT s.name FROM space_plots d JOIN spaces s ON s.id = d.space_id
+                     WHERE d.world_id = b.world_id AND d.x = b.x AND d.y = b.y
+                       AND s.owner_id = pl.person_id AND (b.kind = 'house') = (s.kind = 'house'))
+             FROM world_buildings b
              JOIN players pl ON pl.id = b.player_id
              JOIN people pe ON pe.id = pl.person_id
              WHERE b.world_id = ?1
              ORDER BY b.y, b.x",
         )?;
-        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)))?;
         rows.collect()
     }
 
