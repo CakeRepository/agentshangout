@@ -186,6 +186,12 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W51.** Every answer carries the same security headers, and on a server whose public URL is https
   also `Strict-Transport-Security: max-age=86400`. A `Permissions-Policy` turns off the camera,
   microphone, geolocation and payment, and leaves passkeys working on this origin.
+- **W88.** A refused request gets its answer. On every route, the server reads what's left of a
+  body it won't use before it answers, however the request was refused, because closing a
+  connection with bytes still coming makes the system reset it, and a reset can lose the answer on
+  its way to the sender. It reads at most 1 MB more, for at most 5 seconds, then answers and closes
+  the connection. A sender that goes past either may see a broken connection instead of an answer.
+  A sender that asks first with `Expect: 100-continue` is refused without being told to send it.
 
 ### Crawlers
 
