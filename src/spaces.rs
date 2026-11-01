@@ -44,14 +44,13 @@ const DEFAULT_CAPACITY: i64 = 50;
 const TOWN_SQUARE: &str = "Town Square";
 const TOWN_SQUARE_SIZE: &str = "big";
 /// S14: listed words, so nothing typed reaches the page's drawing.
-const PAINTS: [&str; 7] = ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"];
-const FLOORINGS: [&str; 5] = ["oak", "walnut", "tile", "carpet", "crypt"];
+pub const PAINTS: [&str; 8] = ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted"];
+pub const FLOORINGS: [&str; 6] = ["oak", "walnut", "tile", "carpet", "grass", "crypt"];
 /// The look every floor starts with, as the table's defaults have it. I30 goes back to these.
 pub const PLAIN_PAINT: &str = "dusk";
 pub const PLAIN_FLOORING: &str = "oak";
-/// What an owner can leave out. The table, couch and desk stay, because where a bot stands says what
-/// it's doing.
-const FURNITURE: [&str; 5] = ["bar", "arcade", "plants", "rug", "beanbags"];
+/// What an owner can leave out. The table stays, because a bot that's busy sits there.
+pub const FURNITURE: [&str; 7] = ["bar", "arcade", "plants", "rug", "beanbags", "couch", "desk"];
 /// S37: the doors a person can try in a minute.
 const MAX_DOORS_PER_MINUTE: u32 = 30;
 /// S41: a page looks at least every 30 seconds, so this forgives one late look and no more.
@@ -104,10 +103,6 @@ struct SizeChoice {
 #[derive(Debug, Serialize)]
 struct Choices {
     sizes: Vec<SizeChoice>,
-    paints: &'static [&'static str],
-    floorings: &'static [&'static str],
-    furniture: &'static [&'static str],
-    packs: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -247,10 +242,6 @@ async fn my_spaces(State(state): State<AppState>, caller: Caller) -> ApiResult<J
                 .iter()
                 .map(|(size, capacity)| SizeChoice { size, capacity: *capacity })
                 .collect(),
-            paints: &PAINTS,
-            floorings: &FLOORINGS,
-            furniture: &FURNITURE,
-            packs: items::pack_words(),
         },
     }))
 }
@@ -577,7 +568,6 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
             size: square.then_some(TOWN_SQUARE_SIZE),
             paint: None,
             flooring: None,
-            hidden: None,
             keep_bots_of: &caller.person_id,
             private_only: &items::private_only(),
         })?;
@@ -897,26 +887,19 @@ async fn change_floor(
     if let Some(flooring) = &body.flooring {
         one_of(flooring, "flooring", &FLOORINGS)?;
     }
-    let hidden = match &body.hidden {
-        Some(words) => {
-            for word in words {
-                one_of(word, "hidden", &FURNITURE)?;
-            }
-            // Kept in the list's own order, once each, so nothing can be stored twice.
-            let kept: Vec<&str> = FURNITURE
-                .iter()
-                .copied()
-                .filter(|item| words.iter().any(|word| word == item))
-                .collect();
-            Some(kept.join(","))
+    if let Some(words) = &body.hidden {
+        for word in words {
+            one_of(word, "hidden", &FURNITURE)?;
         }
-        None => None,
-    };
+    }
     let opening = body.access.as_deref() == Some("public") && floor.access != "public";
     // S16: the same code as starting a hangout, so a server that gates one gates the other. S48: a
     // café doesn't ask its owner, who waited for it. Whoever runs it once they've left (S8) didn't.
     if opening && !(caller.person_id == space.owner_id && is_cafe(&state, &space)?) {
         api::check_create_code(&state, body.create_code.as_deref())?;
+    }
+    if let Some(words) = &body.hidden {
+        items::leave_out(&state, &floor.id, words)?;
     }
     let taken_off = state
         .db
@@ -927,7 +910,6 @@ async fn change_floor(
             size: body.size.as_deref(),
             paint: body.paint.as_deref(),
             flooring: body.flooring.as_deref(),
-            hidden: hidden.as_deref(),
             keep_bots_of: &caller.person_id,
             private_only: &items::private_only(),
         })?
@@ -1225,7 +1207,6 @@ async fn keeper_close(
         size: None,
         paint: None,
         flooring: None,
-        hidden: None,
         keep_bots_of: &caller.person_id,
         private_only: &[],
     })?;

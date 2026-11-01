@@ -1,4 +1,4 @@
-import { LOOK_COLOURS, Room, figurePicture, itemPicture } from './room.js';
+import { LOOK_COLOURS, Room, figurePicture, floorPicture, furniturePicture, itemPicture, roomPicture, wallPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
@@ -1173,16 +1173,10 @@ function friendInviter({ invite, here }) {
 // keeps them. What's worked out here only decides what to offer and what colour to draw something,
 // so a click on a red cell still goes to the server, and its refusal is what people read.
 
-// A catalog grouped by what an item does. An item that holds notes goes with those, mood or not.
-const ITEM_GROUPS = [
-  ['Furniture', (kind) => !kind.sign && !kind.holds_notes && !kind.mood],
-  ['Mood items', (kind) => !kind.sign && !kind.holds_notes && kind.mood],
-  ['Things that hold notes', (kind) => kind.holds_notes],
-  ['Signs', (kind) => kind.sign],
-];
 const NUDGES = [['←', 'left', -1, 0], ['↑', 'back', 0, -1], ['↓', 'forward', 0, 1], ['→', 'right', 1, 0]];
 const NUDGE_KEYS = { ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowRight: [1, 0] };
 const PIC_WIDTH = 72;
+const PIC_TALL = 64;
 
 const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
@@ -1297,11 +1291,18 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     for (const [word, button] of tiles) button.setAttribute('aria-pressed', String(word === hand?.kind && !hand.item));
   }
 
+  // What stays clear on this floor: the couch and the desk only while it shows them (I3).
+  function keptClear() {
+    const { fixed, fixed_furniture: furniture } = catalog;
+    const hidden = view().floor?.floor.hidden ?? [];
+    return [...fixed, ...furniture.filter((each) => !hidden.includes(each.furniture)).map((each) => each.cells)];
+  }
+
   // Green where the server would take it and red where it wouldn't, as far as this page can tell.
   function fits(spot) {
-    const { floor, fixed } = catalog;
+    const { floor } = catalog;
     return spot.x >= 0 && spot.y >= 0 && spot.x + spot.w <= floor.w && spot.y + spot.h <= floor.h
-      && !fixed.some((cells) => overlaps(spot, cells))
+      && !keptClear().some((cells) => overlaps(spot, cells))
       && !view().items.some((item) => item.id !== spot.item && overlaps(spot, item));
   }
 
@@ -1326,7 +1327,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
       facing: hand.facing,
       ok: fits(hand),
       lifted: hand.item,
-    }, catalog?.fixed);
+    }, catalog ? keptClear() : []);
     renderDock();
   }
 
@@ -1481,6 +1482,35 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     }
   }
 
+  // What came with the room has no id or owner, so it's a word, and only whoever runs the space can
+  // change it. It isn't placed, so it can be taken out and put back but not moved (I40).
+  function chooseFurniture(word, event) {
+    choose(null);
+    room.setChosen(word);
+    if (word === 'table') {
+      tell('Every room keeps its table, because a bot that\'s busy sits there.');
+      return;
+    }
+    if (!view().floor.runs_it) {
+      tell('This came with the room, so only whoever runs the space can change it.');
+      return;
+    }
+    const label = wordName(word);
+    menu.open({
+      title: label,
+      sub: 'Came with the room',
+      items: [{
+        label: 'Take it out',
+        danger: true,
+        run: () => restyle(async () => {
+          await showFurniture(word, false);
+          room.setChosen(null);
+          return `${label} taken out. It's in the catalog if you want it back.`;
+        }),
+      }],
+    }, event.clientX, event.clientY, press.touch ? 'press' : 'click');
+  }
+
   const under = (event) => {
     const itemId = room.itemAt(event.clientX, event.clientY);
     return view().items.find((item) => item.id === itemId);
@@ -1497,7 +1527,8 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
   stage.addEventListener('pointermove', (event) => {
     if (!hand) {
       const item = under(event);
-      stage.classList.toggle('over-item', Boolean(item && (building || item.holds_notes)));
+      const reachable = item ? building || item.holds_notes : building && room.furnitureAt(event.clientX, event.clientY);
+      stage.classList.toggle('over-item', Boolean(reachable));
       return;
     }
     const cell = room.cellAt(event.clientX, event.clientY);
@@ -1518,7 +1549,9 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
       return;
     }
     const item = under(event);
-    if (building) choose(item, event);
+    const furniture = building && !item ? room.furnitureAt(event.clientX, event.clientY) : null;
+    if (furniture) chooseFurniture(furniture, event);
+    else if (building) choose(item, event);
     else if (item?.holds_notes) openNotes(item);
   });
 
@@ -1538,55 +1571,155 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     }
   }
 
-  function tile(kind, { isPublic, full }) {
-    const why = !kind.unlocked ? friendsText(kind.friends_needed)
-      : kind.mood === 'flirty' && isPublic ? 'private floors only'
-        : full ? 'this floor is full'
-          : null;
-    const picture = itemPicture(kind.kind, kind.w, kind.h);
-    if (picture) {
-      // Whole steps, because anything else breaks up the pixels.
-      const zoom = clamp(Math.floor(PIC_WIDTH / picture.width), 1, 3);
-      picture.style.width = `${picture.width * zoom}px`;
-      picture.style.height = `${picture.height * zoom}px`;
-    }
-    const button = h('button', {
+  // Whole steps up, because anything else breaks up the pixels, and down to fit a tile.
+  function fitted(picture) {
+    if (!picture) return picture;
+    const room = Math.min(PIC_WIDTH / picture.width, PIC_TALL / picture.height);
+    const zoom = room < 1 ? room : clamp(Math.floor(room), 1, 3);
+    picture.style.width = `${Math.round(picture.width * zoom)}px`;
+    picture.style.height = `${Math.round(picture.height * zoom)}px`;
+    return picture;
+  }
+
+  // Everything in the catalog is one of these, whatever pressing it does (I45). `whole` is a picture
+  // of a whole room, which takes the width of the tile.
+  function catalogTile({ name, picture, whole, label, lines = [], why, stays, pressed = false, onclick }) {
+    return h('button', {
       type: 'button',
+      name,
       class: `wd-btn build-tile${why ? ' locked' : ''}`,
-      'aria-pressed': 'false',
-      disabled: Boolean(why),
+      'aria-pressed': String(pressed),
+      disabled: Boolean(why || stays),
+      onclick,
+    },
+    whole
+      ? h('span', { class: 'template-pic', 'aria-hidden': 'true' }, whole)
+      : h('span', { class: 'build-pic', 'aria-hidden': 'true' }, fitted(picture)),
+    h('span', { class: 'build-name' }, label),
+    lines.map((line) => h('small', {}, line)),
+    why ? h('small', { class: 'build-why' }, why) : null);
+  }
+
+  function tile(kind, { isPublic, full }) {
+    const button = catalogTile({
+      name: `item-${kind.kind}`,
+      picture: itemPicture(kind.kind, kind.w, kind.h),
+      label: kind.label,
+      lines: [`Beauty ${kind.beauty}`, kind.mood ? wordName(kind.mood) : 'No mood', ...(kind.holds_notes ? ['Holds notes'] : []), ...(kind.does ? ['Bots can use it'] : [])],
+      why: !kind.unlocked ? friendsText(kind.friends_needed)
+        : kind.mood === 'flirty' && isPublic ? 'private floors only'
+          : full ? 'this floor is full'
+            : null,
       onclick: () => {
         const { x, y } = firstSpot(kind.w, kind.h);
         hold({ kind: kind.kind, label: kind.label, x, y, w: kind.w, h: kind.h, facing: 0 });
       },
-    },
-    h('span', { class: 'build-pic', 'aria-hidden': 'true' }, picture),
-    h('span', { class: 'build-name' }, kind.label),
-    h('small', {}, `Beauty ${kind.beauty}`),
-    h('small', {}, kind.mood ? wordName(kind.mood) : 'No mood'),
-    kind.does ? h('small', {}, 'Bots can use it') : null,
-    why ? h('small', { class: 'build-why' }, why) : null);
+    });
     tiles.set(kind.kind, button);
     return button;
   }
 
+  const roomOf = ({ paint, flooring }, hidden, items) => roomPicture({ paint, flooring, hidden }, items.map(({ kind, x, y }) =>
+    ({ item: kind, x, y, w: kindOf(kind)?.w, h: kindOf(kind)?.h })));
+
+  function templateTile(template) {
+    const { paint, flooring, hidden } = view().floor.floor;
+    return catalogTile({
+      name: `template-${template.template}`,
+      whole: roomOf(template, template.hidden, template.items),
+      label: template.label,
+      pressed: template.paint === paint && template.flooring === flooring && template.hidden.join() === hidden.join(),
+      onclick: () => restyle(async () => {
+        const done = await api(`/api/floors/${encodeURIComponent(id)}/templates/${encodeURIComponent(template.template)}`, { method: 'POST' });
+        await reload();
+        return `${template.label} is set up.${done.skipped ? ` ${done.skipped} didn't fit around what's here.` : ''}`;
+      }),
+    });
+  }
+
+  // I28, I30: pressing it again takes it down, so a pack that's up is a tile that's pressed.
+  function packTile(pack, up) {
+    return catalogTile({
+      name: `pack-${pack.pack}`,
+      whole: roomOf(pack, view().floor.floor.hidden, pack.items),
+      label: `${wordName(pack.pack)} pack`,
+      lines: [up ? 'Up now. Press to take it down' : 'Press to put it up'],
+      pressed: up,
+      onclick: () => restyle(async () => {
+        const done = await api(`/api/floors/${encodeURIComponent(id)}/packs/${encodeURIComponent(pack.pack)}`, { method: up ? 'DELETE' : 'POST' });
+        await reload();
+        return up ? `Took down ${done.removed}.` : `Put up ${done.placed}${done.skipped ? `, and ${done.skipped} didn't fit` : ''}.`;
+      }),
+    });
+  }
+
+  function surfaceTile(field, word, picture, current) {
+    return catalogTile({
+      name: `${field}-${word}`,
+      picture,
+      label: wordName(word),
+      pressed: word === current,
+      onclick: () => restyle(async () => {
+        await saveLook({ [field]: word });
+        return `${wordName(word)} ${field === 'paint' ? 'walls' : 'floor'}.`;
+      }),
+    });
+  }
+
+  // S14: what came with the room goes out and comes back here, and the table stays.
+  function furnitureTile({ furniture, stays }) {
+    const shown = !view().floor.floor.hidden.includes(furniture);
+    return catalogTile({
+      name: `furniture-${furniture}`,
+      picture: furniturePicture(furniture),
+      label: wordName(furniture),
+      lines: [stays ? 'Every room has one' : shown ? 'In this room' : 'Left out'],
+      stays,
+      pressed: shown,
+      onclick: () => restyle(async () => {
+        await showFurniture(furniture, !shown);
+        return `${wordName(furniture)} ${shown ? 'taken out' : 'put back'}.`;
+      }),
+    });
+  }
+
+  const catalogGroup = ([title, members, whole]) => h('section', { class: 'build-group', 'aria-label': title },
+    h('h3', {}, title),
+    h('div', { class: `build-tiles${whole ? ' build-templates' : ''}` }, members));
+
   // I16: a sign is for whoever runs the space, and someone who walked in to see to one has nothing
-  // else to put here. I11: flirty items wait for a private floor.
+  // else to put here. I11: flirty items wait for a private floor. S7, I27, I41: someone who runs the
+  // space from another floor can change how it looks, but a template or a pack places items, which
+  // takes someone on the floor. All of it is drawn again after a change, so someone on a keyboard is
+  // put back where they were.
   function renderCatalog() {
     if (!catalog) return;
     const { floor, guest, items } = view();
+    const { paint, flooring, hidden } = floor.floor;
+    const { look } = catalog;
     const shape = { isPublic: floor.floor.access === 'public', full: items.length >= catalog.max_items };
-    const key = JSON.stringify([shape, floor.runs_it, Boolean(guest)]);
+    const up = look.packs.filter((pack) => items.some((item) => pack.items.some((part) => part.kind === item.kind)))
+      .map((pack) => pack.pack);
+    const key = JSON.stringify([shape, floor.runs_it, Boolean(guest), paint, flooring, hidden, up]);
     if (key === catalogKey) return;
     catalogKey = key;
+    const focused = catalogEl.contains(document.activeElement) ? document.activeElement.name : null;
     const offered = catalog.items.filter((kind) => (kind.sign ? floor.runs_it : !guest));
+    const styling = floor.runs_it ? look : { furniture: [], paints: [], floorings: [] };
     tiles = new Map();
-    catalogEl.replaceChildren(...ITEM_GROUPS.flatMap(([title, belongs]) => {
-      const kinds = offered.filter(belongs);
-      return kinds.length ? [h('section', { class: 'build-group', 'aria-label': title },
-        h('h3', {}, title),
-        h('div', { class: 'build-tiles' }, kinds.map((kind) => tile(kind, shape))))] : [];
-    }));
+    catalogEl.replaceChildren(...[
+      ...(floor.runs_it && !guest ? [
+        ['Templates', look.templates.map(templateTile), true],
+        ['Packs', look.packs.map((pack) => packTile(pack, up.includes(pack.pack))), true],
+      ] : []),
+      ['Walls', styling.paints.map((word) => surfaceTile('paint', word, wallPicture(word), paint))],
+      ['Floors', styling.floorings.map((word) => surfaceTile('flooring', word, floorPicture(word), flooring))],
+      ...catalog.categories.map(({ category, label }) => [label, [
+        ...styling.furniture.filter((each) => each.category === category).map(furnitureTile),
+        ...offered.filter((kind) => kind.category === category).map((kind) => tile(kind, shape)),
+      ]]),
+    ].filter(([, members]) => members.length).map(catalogGroup));
+    if (focused) catalogEl.querySelector(`[name="${focused}"]`)?.focus({ preventScroll: true });
   }
 
   function placedRow(item) {
@@ -1612,6 +1745,33 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     placedEl.replaceChildren(...(items.length
       ? items.map(placedRow)
       : [h('li', { class: 'muted' }, 'Nothing here yet. Pick something from the catalog.')]));
+  }
+
+  // Changes to a floor's look, which happen in the catalog and nowhere else (I45).
+
+  // Only the server's word counts, so a refusal puts the tiles back to what the floor has. `run` gives
+  // back what to say once it's done.
+  async function restyle(run) {
+    buildError.hidden = true;
+    try {
+      tell(await run());
+    } catch (error) {
+      buildError.textContent = error.message;
+      buildError.hidden = false;
+      tell(error.message);
+      catalogKey = null;
+      renderCatalog();
+    }
+  }
+
+  const saveLook = async (body) => {
+    await api(`/api/floors/${encodeURIComponent(id)}`, { method: 'PUT', body });
+    await reload();
+  };
+
+  function showFurniture(word, shown) {
+    const { hidden } = view().floor.floor;
+    return saveLook({ hidden: shown ? hidden.filter((each) => each !== word) : [...hidden, word] });
   }
 
   // On every refresh, so people furnishing together see each other's changes as they happen (I6).
@@ -1786,7 +1946,13 @@ const ROOM_STATS = [
   ['beauty', 'Beauty', false, 'Beauty'],
   ['mood', 'Mood', true, 'Mood'],
 ];
-const ROOM_KEY = 'Desk: controlling a computer · Table: wrote in the last 10 min · Wandering: online · Couch: quiet for a day';
+// A floor can leave the desk and the couch out (S14), and then the key says what bots do instead.
+const roomKey = (hidden = []) => [
+  hidden.includes('desk') ? null : 'Desk: controlling a computer',
+  'Table: wrote in the last 10 min',
+  'Wandering: online',
+  `${hidden.includes('couch') ? 'Napping' : 'Couch'}: quiet for a day`,
+].filter(Boolean).join(' · ');
 // Wide enough for a panel to stand beside the room. Narrower, a panel stands over it, as on the map.
 const BESIDE = '(min-width: 1000px)';
 
@@ -2138,7 +2304,7 @@ async function roomView(id) {
         dot.style.background = p.color;
         return h('span', {}, dot, `${p.name}'s crew`);
       }),
-      h('span', { class: 'legend-key' }, ROOM_KEY),
+      h('span', { class: 'legend-key' }, roomKey(snapshot.floor?.floor.hidden)),
     ];
     legendEl.replaceChildren(...parts());
     crewLegendEl.replaceChildren(...parts());
@@ -3196,21 +3362,6 @@ async function spaceView(id) {
         h('button', { type: 'submit' }, 'Save')));
   }
 
-  // A pack saves as soon as it's pressed, so it isn't part of the floor's form.
-  function packButton(label, method, floor, pack, error) {
-    return h('button', {
-      type: 'button',
-      class: 'ghost',
-      onclick: act(error, async () => {
-        const done = await api(`/api/floors/${encodeURIComponent(floor.id)}/packs/${encodeURIComponent(pack)}`, { method });
-        await reload();
-        frame.message.textContent = method === 'POST'
-          ? `Put up ${done.placed}${done.skipped ? `, and ${done.skipped} didn't fit` : ''}.`
-          : `Took down ${done.removed}.`;
-      }),
-    }, label);
-  }
-
   function floorCard({ floor, invite_url: inviteUrl, here, capacity }, index) {
     const error = formError();
     const url = `/api/floors/${encodeURIComponent(floor.id)}`;
@@ -3257,9 +3408,6 @@ async function spaceView(id) {
               name: values.name,
               access: values.access,
               size: values.size,
-              paint: values.paint,
-              flooring: values.flooring,
-              hidden: choices.furniture.filter((item) => !values[`show-${item}`]),
               create_code: values.create_code || undefined,
             },
           });
@@ -3269,25 +3417,11 @@ async function spaceView(id) {
         field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: floor.name })),
         h('div', { class: 'look-grid' },
           field('Who can come in', access),
-          field('Size', size),
-          field('Paint', h('select', { name: 'paint' }, optionsFor(choices.paints, floor.paint))),
-          field('Flooring', h('select', { name: 'flooring' }, optionsFor(choices.floorings, floor.flooring)))),
+          field('Size', size)),
         warning,
         codeField,
-        h('fieldset', { class: 'checks' },
-          h('legend', {}, 'Furniture'),
-          choices.furniture.map((item) => h('label', { class: 'toggle' },
-            h('input', { type: 'checkbox', name: `show-${item}`, checked: !floor.hidden.includes(item) }),
-            wordName(item)))),
         error,
         h('button', { type: 'submit' }, 'Save this floor')),
-      choices.packs.map((pack) => h('div', { class: 'row' },
-        h('div', { class: 'row-main' },
-          h('strong', {}, `${wordName(pack)} pack`),
-          h('small', { class: 'muted' }, 'Paint, flooring and decorations, all at once. What\'s on the floor stays.')),
-        h('div', { class: 'row-actions' },
-          packButton('Put up', 'POST', floor, pack, error),
-          packButton('Take down', 'DELETE', floor, pack, error)))),
       h('details', {},
         h('summary', {}, 'Invite link'),
         h('p', { class: 'muted' }, 'Anyone with this link can join this floor and bring their bots. It opens no other floor.'),

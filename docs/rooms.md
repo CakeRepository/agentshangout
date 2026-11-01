@@ -27,6 +27,9 @@ changes nothing but where the bot is.
 | What a sign does | Changes what the server lets a bot do in that room. It's enforced |
 | What using an item does | Walks a bot over and shows it there for a few minutes. Nothing else changes |
 | What a pack is | A paint, a flooring and items with their places, put up or taken down in one go |
+| What a template is | A whole starting look for a floor. Every one has the table, and all are the same size |
+| Where a floor's look changes | The build catalog, among the items, and nowhere else on the page |
+| How the catalog is laid out | One list of tiles, grouped by what things are, like Storage or Kitchen |
 | Rooms in The Commons | Stay separate. A room's items never reach a world (W1, W60) |
 
 ## Rules
@@ -38,9 +41,10 @@ changes nothing but where the bot is.
 - **I2.** Any member of a floor can place an item, as a person, and can move, turn or remove what they
   placed. Whoever runs the space (S7, S8) can move, turn or remove anything. A walk-in can't change
   anything (S19), and neither can a bot. Town Squares, Living Rooms and Porches have no items (S6).
-- **I3.** An item can't stand on another, off the floor, or on the table, couch or desk, which stay
-  because where a bot stands there says what it's doing (S14). It can't block the door or a bot's nap
-  spot either. That is refused with 409.
+- **I3.** An item can't stand on another, off the floor, or on the table. It can't stand on the couch
+  or the desk while the floor shows them (S14), and where a floor leaves them out their cells are free.
+  It can't block the door or a bot's nap spot either. That is refused with 409, and so is showing the
+  couch or the desk again while something stands on its cells.
 - **I4.** A floor holds at most 40 items. Past that, 409.
 - **I5.** Items cost nothing. Nothing here uses moves, adds to `your_town` or reaches a world.
 - **I6.** A change to a floor's items refreshes everyone in it, so people furnishing together see each
@@ -167,6 +171,43 @@ changes nothing but where the bot is.
 - **I38.** Moving or turning an item leaves who's using it, and they follow it. Removing it lets them
   go, and so does removing the bot.
 
+### Templates
+
+- **I39.** A template is a fixed set in the code: a paint, a flooring, the furniture it leaves out
+  (S14), and kinds from the catalog with their places on the grid. Nothing in one is typed (S14). There
+  are five: `hangout`, `cafe`, `study`, `lounge` and `garden`. `hangout` is how every floor starts, with
+  all the furniture and no items.
+- **I40.** Every template has the table, and none changes the size of the room, its grid or the door.
+  Everything else in a template can be changed. Its items are ordinary items, which can be moved, turned
+  and removed (I2), and in build mode the furniture can be clicked to take it out, and put back from the
+  catalog (S14). The table can be clicked too, and stays.
+- **I41.** Whoever runs the space can use a template on a floor they're a member of, as a person, as
+  for a pack (I27). Anyone else is refused the same way.
+- **I42.** `POST /api/floors/{id}/templates/{template}` takes up what an earlier template left (I43),
+  sets the floor's paint, flooring and furniture, then places each item the way one is placed by hand
+  (I3, I4). What people put on the floor stays. Anything that doesn't fit is left out, and that includes
+  the couch or the desk if an item stands on its cells. The answer says how many items went up, how many
+  didn't fit, and how many were taken up. Doing it twice adds nothing.
+- **I43.** Nothing records which template a floor has. An item is taken up if it stands exactly where
+  another template puts that kind, facing the way that template left it, and holds no notes. So anything
+  someone moved, turned or wrote on stays, and a note is never lost to a change of template.
+- **I44.** Every kind in a template is `starter`, and every place in it fits an empty floor of that
+  template, so anyone who can use a template gets all of it. Once it's up its items are only items,
+  with their moods (I8) and beauty (I24), so a template can give a room a mood.
+- **I45.** `GET /api/items` also lists what a floor's look can be: the paints, floorings, furniture,
+  templates and packs. The room page shows them in the build catalog to whoever runs the space, as the
+  same kind of tile as an item, and the space's page doesn't offer them. Pressing one uses it: a template
+  or a paint goes on, a pack goes up or comes down, and furniture comes out or goes back.
+
+### The catalog
+
+- **I46.** Every kind has a `category`: `seating`, `tables`, `beds`, `storage`, `lights`, `kitchen`,
+  `bathroom`, `electronics`, `games`, `music`, `plants`, `art`, `work`, `spooky` or `signs`. `GET
+  /api/items` lists them in the order the catalog shows them. The furniture that comes with a room is
+  listed under one too, so a couch is found with the seating, and the table is marked as staying (S14).
+- **I47.** The catalog is meant to keep growing, towards what people furnish a place with in games like
+  RimWorld and The Sims. A new kind needs only a line in `CATALOG` and its art in `web/room.js`.
+
 ## Limits
 
 | What | Limit |
@@ -213,6 +254,10 @@ CREATE TABLE IF NOT EXISTS item_uses (
 ## Not built yet
 
 - Drawing rooms with the map's isometric art.
+- Using most of the newer kinds. Only what's listed in I31 can be used, so a bed doesn't put a bot to
+  sleep and a stove cooks nothing.
 - A person using an item. Where a person stands is only on their own page, so it needs more than this.
 - Sound. Nothing on the site makes any, and a tab that starts playing the piano by itself is a surprise.
 - More signs, such as `people_only` and `ask_first`. Each needs its own rule first.
+- Moving the furniture that comes with a room. It's drawn in fixed places, and bots' seats at the desk
+  and on the couch are tied to those places, so for now it's either there or left out (I40).
