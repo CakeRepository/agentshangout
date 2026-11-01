@@ -5636,6 +5636,19 @@ async function worldView(id, { home = false } = {}) {
   // W71, W73: `[x, y, owner, name]` for each place.
   const placeRow = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y) || null;
   const ownerAt = (x, y) => placeRow(x, y)?.[2] || null;
+  // W83, W87: a tile is in the neighborhood whose point is nearest, the earlier one on a tie.
+  const hoodAt = (x, y) => {
+    let best = null;
+    let bestD = Infinity;
+    for (const row of latest?.neighborhoods || []) {
+      const d = (row[2] - x) ** 2 + (row[3] - y) ** 2;
+      if (d < bestD) {
+        best = row;
+        bestD = d;
+      }
+    }
+    return best;
+  };
   const nameAt = (x, y) => placeRow(x, y)?.[3] || null;
 
   function placeCardAt() {
@@ -5661,6 +5674,7 @@ async function worldView(id, { home = false } = {}) {
     const lines = [
       h('strong', { class: 'city-card-name' }, name || `A ${place.kind}`),
       h('span', { class: 'city-card-home' }, details?.yours ? `Your ${place.kind}` : owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
+      hoodAt(place.x, place.y) ? h('small', { class: 'city-card-hint' }, `In ${hoodAt(place.x, place.y)[0]}`) : null,
     ];
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
@@ -5700,6 +5714,8 @@ async function worldView(id, { home = false } = {}) {
       const name = nameAt(hover.x, hover.y);
       text = `${name || kind}${owner ? ` · ${owner}\u2019s ${kind}` : ''}`;
     } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
+    const hood = hover && hover.x !== null ? hoodAt(hover.x, hover.y) : null;
+    if (hood && !hover.player && !hover.person && !hover.visitor && !hover.crawler) text += ` · ${hood[0]}`;
     frame.where.textContent = text;
     showPlace(hoveredPlace);
     if (hoveredPlace && me && me.kind === 'person') loadPlace(hoveredPlace);
