@@ -5337,6 +5337,31 @@ async function worldView(id, { home = false } = {}) {
   // --- Moves -----------------------------------------------------------------------------------
 
   // Makes a move for you and says what came of it, in the server's words if it was refused.
+  // W73: a new place gets its name now. Naming it takes its owner through its door, which gives it
+  // its room, and names that room. Skipping leaves it called after them, like "Ann's Studio".
+  function nameDialog(body) {
+    const kindName = { house: 'House', cafe: 'Caf\u00e9', club: 'Club', studio: 'Studio' }[body.kind] || 'Place';
+    const error = formError();
+    const dialog = modal(`Name your ${kindName.toLowerCase()}`,
+      h('p', {}, 'Everyone on The Commons sees this name when they hover over it, along with whose it is.'),
+      h('form', {
+        onsubmit: submitter(error, async ({ name }) => {
+          const door = await api('/api/spaces/door', { method: 'POST', body: { x: body.x, y: body.y } });
+          if (door.space_id) {
+            await api(`/api/spaces/${door.space_id}`, { method: 'PUT', body: { name: name.trim() } });
+          }
+          dialog.close();
+          say(`It's called ${name.trim()}.`);
+          watch.soon();
+        }),
+      },
+      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
+      error,
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', onclick: () => dialog.close() }, 'Later'),
+        h('button', { type: 'submit', class: 'primary' }, 'Name it'))));
+  }
+
   async function send(body) {
     say(['road', 'place', 'bulldoze'].includes(body.action) ? 'Building…' : 'One moment…');
     try {
@@ -5352,6 +5377,7 @@ async function worldView(id, { home = false } = {}) {
         latest = { ...latest, tiles: latest.tiles.filter(([x, y]) => !taken.has(`${x},${y}`)).concat(made) };
         world.setView(latest);
       }
+      if (body.action === 'place' && done.changed) nameDialog(body);
       watch.soon();
     } catch (error) {
       say(plain(error.message));
@@ -5464,7 +5490,10 @@ async function worldView(id, { home = false } = {}) {
   const placeDetails = new Map();
   let hoveredPlace = null;
   let pointer = null;
-  const ownerAt = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y)?.[2] || null;
+  // W71, W73: `[x, y, owner, name]` for each place.
+  const placeRow = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y) || null;
+  const ownerAt = (x, y) => placeRow(x, y)?.[2] || null;
+  const nameAt = (x, y) => placeRow(x, y)?.[3] || null;
 
   function placeCardAt() {
     if (!pointer || placeCard.hidden) return;
@@ -5484,10 +5513,11 @@ async function worldView(id, { home = false } = {}) {
     }
     const key = `${place.x},${place.y}`;
     const owner = ownerAt(place.x, place.y);
+    const name = nameAt(place.x, place.y);
     const details = placeDetails.get(key)?.body;
     const lines = [
-      h('strong', { class: 'city-card-name' }, owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
-      details?.yours ? h('span', { class: 'city-card-home' }, 'Yours') : null,
+      h('strong', { class: 'city-card-name' }, name || `A ${place.kind}`),
+      h('span', { class: 'city-card-home' }, details?.yours ? `Your ${place.kind}` : owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
     ];
     for (const bot of details?.bots || []) {
       const allowed = bot.access !== 'needs_invite';
@@ -5524,7 +5554,8 @@ async function worldView(id, { home = false } = {}) {
     else if (hover?.crawler) text = `${hover.crawler.name}, a web crawler`;
     else if (hoveredPlace) {
       const owner = ownerAt(hover.x, hover.y);
-      text = `${hover.x}, ${hover.y} · ${owner ? `${owner}\u2019s ${kind}` : kind}`;
+      const name = nameAt(hover.x, hover.y);
+      text = `${name || kind}${owner ? ` · ${owner}\u2019s ${kind}` : ''}`;
     } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
     frame.where.textContent = text;
     showPlace(hoveredPlace);

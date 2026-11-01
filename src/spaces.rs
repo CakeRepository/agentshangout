@@ -409,6 +409,7 @@ async fn go_through_door(
                 kind => third_space_for_building(&state, &caller, kind)?,
             };
             state.db.set_plot(COMMONS_ID, body.x, body.y, &space.id)?;
+            state.worlds.mark_stale(COMMONS_ID);
             space
         }
         None => return Err(ApiError::not_found()),
@@ -416,7 +417,9 @@ async fn go_through_door(
     let turned_out = state.db.is_turned_out(&space.id, &caller.person_id)?;
     for floor in state.db.floors_of(&space.id)? {
         if state.in_room(&caller, &floor.id)? || (floor.access == "public" && !turned_out) {
-            return Ok(Json(json!({ "hangout_id": floor.id })));
+            // W73: its owner names it from here, so they're told which space it is.
+            let space_id = (space.owner_id == caller.person_id).then(|| space.id.clone());
+            return Ok(Json(json!({ "hangout_id": floor.id, "space_id": space_id })));
         }
     }
     Err(ApiError::not_found())
@@ -588,6 +591,8 @@ async fn change_space(
         .transpose()?;
     state.db.change_space(&space, name.as_deref(), about.as_deref())?;
     refresh_space(&state, &state.db.floors_of(&space.id)?);
+    // W73: its building on The Commons is called what the space is.
+    state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(state.db.space(&id)?.ok_or_else(ApiError::not_found)?))
 }
 

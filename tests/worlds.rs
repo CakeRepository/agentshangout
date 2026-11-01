@@ -3913,7 +3913,7 @@ async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
     // W71: the view names the owner in `owners`, and only there. Nothing says which account it is, and
     // `look` names nobody.
-    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold"])), "{view}");
+    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold", "Marigold's Studio"])), "{view}");
     let mut rest = view.clone();
     rest.as_object_mut().unwrap().remove("owners");
     for text in [rest.to_string(), look.to_string()] {

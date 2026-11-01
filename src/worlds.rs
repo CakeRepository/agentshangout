@@ -1514,9 +1514,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
-    /// W71: `[x, y, name]`, whose each place is.
+    /// W71, W73: `[x, y, owner, name]`, whose each place is and what it's called.
     #[serde(skip_serializing_if = "Option::is_none")]
-    owners: Option<Vec<(u16, u16, String)>>,
+    owners: Option<Vec<(u16, u16, String, String)>>,
     /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
     #[serde(skip_serializing_if = "Option::is_none")]
     bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
@@ -1569,6 +1569,16 @@ fn etag_of(body: &[u8]) -> String {
     format!("\"{hex}\"")
 }
 
+/// How a kind of place reads in a name, like "Ann's Studio".
+fn kind_title(kind: &str) -> &'static str {
+    match kind {
+        "house" => "House",
+        "cafe" => "Café",
+        "club" => "Club",
+        _ => "Studio",
+    }
+}
+
 /// W29, W31: builds a world's view: the land, everything built, the street, the sums, and in The
 /// Commons the frogs, visitors and people. Built from the database and the engine, never from a
 /// request.
@@ -1609,7 +1619,11 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         let rows = state.db.place_owners(&world.id)?;
         Some(
             rows.into_iter()
-                .filter_map(|(x, y, name)| Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, name)))
+                .filter_map(|(x, y, owner, kind, name)| {
+                    // W73: a place with no room yet is called after its owner and kind.
+                    let name = name.unwrap_or_else(|| format!("{owner}'s {}", kind_title(&kind)));
+                    Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, owner, name))
+                })
                 .collect(),
         )
     } else {

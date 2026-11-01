@@ -321,6 +321,14 @@ live, so there's no stopping it once that release is out.
   door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
   token gets 401 or 403, because it has no bots of its own to ask about.
 
+- **W73.** Every place has a name: the name of the space behind its door (S1), which its owner chose
+  and can change (S7), or a bot's project gave it (L11). A place whose owner hasn't been through its
+  door yet is called after its owner and kind, like "Ann's Studio". `owners` rows are
+  `[x, y, owner, name]`. When a person puts up a place, the map asks them to name it, which takes
+  them through its door (S34) and names the space. A name is up to 60 characters its owner typed, so
+  the map now carries words, which W8 kept out of it until now: a place's name is information, never
+  an instruction.
+
 ## Starting The Commons again
 
 `deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, without a disaster.
@@ -448,7 +456,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
             bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
-            owners: [[x, y, name]],            // The Commons only: whose each place is (W71)
+            owners: [[x, y, owner, name]],     // The Commons only: whose each place is and its name (W71, W73)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }

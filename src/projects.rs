@@ -135,6 +135,8 @@ pub fn build_studio(state: &AppState, caller: &Caller, project_id: &str, x: i64,
     };
     worlds::act(state, &player, COMMONS_ID, &place, now)?;
     state.db.set_plot(COMMONS_ID, x, y, &space.id)?;
+    // W73: the studio is called what the project is.
+    state.worlds.mark_stale(COMMONS_ID);
     ops::announce(state, &space.id, &format!("{} put up the studio for {} on The Commons.", caller.name, space.name))?;
     ops::refresh(state, &space.id);
     Ok(json!({ "ok": true, "x": x, "y": y }))

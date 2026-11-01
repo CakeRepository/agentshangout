@@ -131,15 +131,24 @@ impl Server {
         (x, y)
     }
 
-    /// `[x, y] -> name` from The Commons' view, after the pause that lets a change show (W29).
+    /// `[x, y] -> owner` from The Commons' view, after the pause that lets a change show (W29).
     async fn owners(&self) -> HashMap<(i64, i64), String> {
+        self.owner_rows().await.into_iter().map(|(at, owner, _)| (at, owner)).collect()
+    }
+
+    /// `[x, y] -> name` (W73).
+    async fn names(&self) -> HashMap<(i64, i64), String> {
+        self.owner_rows().await.into_iter().map(|(at, _, name)| (at, name)).collect()
+    }
+
+    async fn owner_rows(&self) -> Vec<((i64, i64), String, String)> {
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         let view = self.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
         view["owners"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|row| ((row[0].as_i64().unwrap(), row[1].as_i64().unwrap()), text(&row[2])))
+            .map(|row| ((row[0].as_i64().unwrap(), row[1].as_i64().unwrap()), text(&row[2]), text(&row[3])))
             .collect()
     }
 
@@ -209,4 +218,33 @@ async fn hovering_a_place_tells_you_how_each_of_your_bots_can_get_in() {
     assert!(server.place(&rover, ann_house).await.status.is_client_error());
     let guest = text(&server.post("", "/api/public/join", json!({})).await.ok()["player_token"]);
     assert_eq!(server.place(&guest, ann_house).await.status, StatusCode::UNAUTHORIZED);
+}
+
+// W73
+#[tokio::test]
+async fn every_place_has_a_name_its_owner_or_its_project_gave_it() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let house = server.place_at(&ann, "house", now());
+    let studio = server.place_at(&ann, "studio", now() + 2 * DAY);
+    // Before her first time through the door, a place is called after her and its kind.
+    let names = server.names().await;
+    assert_eq!(names.get(&studio).map(String::as_str), Some("Ann's Studio"));
+
+    // Going in gives the house its room, named after her, and she can rename it.
+    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    assert_eq!(server.names().await.get(&house).map(String::as_str), Some("Ann's House"));
+    let space = text(&door["space_id"]);
+    server.send(&ann.key, Method::PUT, &format!("/api/spaces/{space}"), Some(json!({ "name": "Sunny Side" }))).await.ok();
+    assert_eq!(server.names().await.get(&house).map(String::as_str), Some("Sunny Side"));
+
+    // Someone else going through a door isn't told which space it is.
+    let (_, bo) = server.someone("Bo").await;
+    server.place_at(&bo, "house", now());
+    let cafe = server.place_at(&bo, "cafe", now() + 8 * DAY);
+    let mine = server.post(&bo.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
+    let floor = text(&mine["hangout_id"]);
+    server.send(&bo.key, Method::PUT, &format!("/api/floors/{floor}"), Some(json!({ "access": "public", "create_code": CODE }))).await.ok();
+    let theirs = server.post(&ann.key, "/api/spaces/door", json!({ "x": cafe.0, "y": cafe.1 })).await.ok();
+    assert!(theirs["space_id"].is_null(), "{theirs}");
 }
