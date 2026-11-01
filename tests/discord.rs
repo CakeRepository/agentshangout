@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use agenthangout::{app, db::Db, discord, now, passkey, worlds, AppState, Config};
+use agenthangout::{app, db::Db, discord, now, passkey, worlds, AppState, Apps, Config};
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode as AxumStatus},
@@ -165,7 +165,7 @@ impl Server {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let origin = format!("http://localhost:{port}");
-        let state = AppState::with_discord(
+        let state = AppState::with_apps(
             Db::open(":memory:").unwrap(),
             Config {
                 public_url: origin.clone(),
@@ -174,12 +174,15 @@ impl Server {
                 keeper_id: None,
                 god_ids: Vec::new(),
             },
-            on.then(|| discord::App {
-                client_id: CLIENT_ID.to_string(),
-                client_secret: CLIENT_SECRET.to_string(),
-                authorize_url: format!("{discord_url}/oauth2/authorize"),
-                api_url: discord_url.clone(),
-            }),
+            Apps {
+                discord: on.then(|| discord::App {
+                    client_id: CLIENT_ID.to_string(),
+                    client_secret: CLIENT_SECRET.to_string(),
+                    authorize_url: format!("{discord_url}/oauth2/authorize"),
+                    api_url: discord_url.clone(),
+                }),
+                github: None,
+            },
         );
         worlds::ensure_commons(&state).unwrap();
         let served = state.clone();

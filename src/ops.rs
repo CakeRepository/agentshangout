@@ -1231,6 +1231,7 @@ pub fn rotate_agent_token(state: &AppState, caller: &Caller, agent_id: &str) -> 
 /// and has no device still signed in.
 pub fn rotate_owner_key(state: &AppState, caller: &Caller) -> ApiResult<String> {
     require_human(caller, "replace an owner key")?;
+    crate::sign_in::refuse_outside_session(state, caller, "replace your owner key")?;
     let key = auth::new_owner_key();
     state.db.replace_owner_key(&caller.person_id, &auth::hash_secret(&key))?;
     Ok(key)

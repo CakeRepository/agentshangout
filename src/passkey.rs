@@ -21,6 +21,7 @@ use crate::{
     error::{ApiError, ApiResult},
     notify,
     ops::{self, MAX_NAME_CHARS},
+    sign_in::{self, Site},
     AppState,
 };
 
@@ -74,6 +75,18 @@ pub enum Pending {
     Discord {
         person_id: String,
         agent_id: String,
+    },
+    /// A person linking a Discord or GitHub account to theirs. Only they can finish it (A49).
+    SignInLink {
+        site: Site,
+        person_id: String,
+        verifier: String,
+    },
+    /// Someone signing in through a site, from the browser whose cookie hashes to this (A50).
+    SignIn {
+        site: Site,
+        browser_hash: String,
+        verifier: String,
     },
 }
 
@@ -272,6 +285,9 @@ pub fn start_registration(
     now: i64,
 ) -> ApiResult<Started> {
     refuse_bots(caller)?;
+    if let Some(caller) = caller {
+        sign_in::refuse_outside_session(state, caller, "add a passkey")?;
+    }
     let webauthn = webauthn(state)?;
     let label = ops::clean_optional(label, "passkey label", MAX_LABEL_CHARS)?;
     let label = if label.is_empty() { DEFAULT_LABEL.to_string() } else { label };
@@ -336,7 +352,10 @@ pub fn finish_registration(
     // A registration belongs to whoever started it: a signed-in person's can't be finished by
     // anyone else, and a new account's can't be finished onto someone who is signed in.
     let (label, registration, owner) = match pending {
-        Pending::Login(_) | Pending::Discord { .. } => return Err(lapsed()),
+        Pending::Login(_)
+        | Pending::Discord { .. }
+        | Pending::SignInLink { .. }
+        | Pending::SignIn { .. } => return Err(lapsed()),
         Pending::Add { person_id, label, registration } => match caller {
             Some(caller) if caller.person_id == person_id => {
                 (label, registration, Owner::Existing(person_id))
@@ -544,6 +563,7 @@ pub fn list(state: &AppState, caller: &Caller) -> ApiResult<Vec<PasskeyInfo>> {
 /// lost phone loses its session as well as its passkey: only the one that asked stays.
 pub fn remove(state: &AppState, caller: &Caller, id: &str) -> ApiResult<()> {
     ops::require_human(caller, "remove a passkey")?;
+    sign_in::refuse_outside_session(state, caller, "remove a passkey")?;
     if state.db.remove_passkey(&caller.person_id, id, &caller.secret_hash)? {
         Ok(())
     } else {
