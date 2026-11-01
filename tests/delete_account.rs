@@ -1097,6 +1097,38 @@ async fn a_household_others_live_in_carries_on_and_what_they_agreed_ends() {
 }
 
 #[tokio::test]
+async fn a_pass_they_gave_ends_and_the_notice_about_it_doesnt_name_them() {
+    let server = Server::start().await;
+    let city = server.city("Harbour", "Ann").await;
+    let zeph = server.join_city(&city.code, ZEPH).await;
+    let home = server.house(&zeph, &city.id, "Tidewater").await;
+    let bo = server.move_in(&home, "Bo").await;
+    let keeper = &city.keeper;
+    let (bot, token) = server.bot(keeper, &city.square, "Visitor").await;
+    let first = server.ask_trip(&keeper.key, &bot, &home).await;
+    server.answer_trip(&zeph.key, &first).await;
+    server.post(&token, &format!("/api/trips/{first}/end"), json!({})).await.ok();
+    let path = format!("/api/houses/{}/passes", home.id);
+    let pass = server.post(&zeph.key, &path, json!({ "agent_id": bot })).await.ok();
+    let pass = text(&pass["id"]);
+    server.post(&keeper.key, &format!("/api/passes/{pass}/accept"), json!({})).await.ok();
+    let body = json!({ "agent_id": bot, "house_id": home.id, "kind": "visit", "minutes": 30 });
+    let trip = text(&server.post(&token, "/api/trips", body).await.ok()["id"]);
+    let here = server.get(&keeper.key, &format!("/api/trips/{trip}")).await.ok();
+    assert_eq!(here["status"], "here", "{here}");
+    let (url, notices) = start_receiver().await;
+    server.put(&keeper.key, "/api/notify", json!({ "url": url })).await.ok();
+
+    server.leave_for_good(&zeph).await;
+
+    assert_eq!(server.count("SELECT COUNT(*) FROM passes WHERE id = ?", &pass), 0);
+    let notice = wait_for_notice(&notices, "trip.ended").await;
+    assert!(!text(&notice["text"]).contains(ZEPH), "{notice}");
+    let lines = server.messages(&bo.key, &home.porch).await;
+    assert!(!lines.iter().any(|line| line.contains(ZEPH)), "{lines:?}");
+}
+
+#[tokio::test]
 async fn a_house_with_nobody_left_goes_and_any_bot_visiting_goes_home() {
     let server = Server::start().await;
     let city = server.city("Harbour", "Ann").await;
