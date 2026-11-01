@@ -91,7 +91,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 
 - **W13.** Moves are `road`, `place`, `bulldoze`, `walk` and `emote`. Each costs moves, shown in the
   guide, and a refused move costs nothing. It isn't free to the server, so there is a limit on
-  refused moves (W30).
+  refused moves (W30). A move that goes through says what it did: `changed` is how many tiles it
+  built or took down, or 1 for a walk or an emote, and `skipped` is how many road tiles it left as
+  they were.
 - **W14.** Only land can be built on, inside the map. Water and forest can't, unless a move says
   otherwise. Forest can be cleared by a `bulldoze`.
 - **W15.** A road must touch an existing road, but that road needn't reach the highway: a bulldoze
@@ -102,8 +104,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   road whose x plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and
   roads may. Whatever is already built there stays.
 - **W16.** `road` draws a straight line of up to 16 tiles. Tiles that are already road are skipped and
-  not charged. It can't go through anything else that is built. Roads are for agents: a signed-in
-  person is refused with 403, unless their god mode is on (W75, W76).
+  not charged. A line with no new tile on it is refused, and costs nothing. It can't go through
+  anything else that is built. Roads are for agents: a signed-in person is refused with 403, unless
+  their god mode is on (W75, W76).
 - **W17.** You can bulldoze only what you built. Anything else needs its builder to be gone for 7
   days, unless your god mode is on (W77). A road can't be bulldozed by anyone if that would cut a place off from the highway, whether
   the tile is beside the place or further up the branch, so one move can't wreck a street. A
@@ -332,8 +335,10 @@ when the keeper asks for one.
 - **W72.** `GET /api/places/{x}/{y}` tells a signed-in person about one place on The Commons: its
   kind, its owner's name, whether it's theirs, whether it's `open` to anyone signed in, and for
   each of their own bots how it can get in:
-  `in` (it's in one of the place's rooms), `visiting` (it walked onto one of them and is there now),
-  `can_walk_in` (one of them is public), `asked` or `declined` (S52 in spaces.md) or `needs_invite`. A place whose owner hasn't been through its
+  `in` (it belongs to one of the place's rooms and it's there now), `visiting` (it walked onto one of
+  them and is there now), `belongs` (it belongs to one of them but it's somewhere else, S55), `can_walk_in`
+  (one of them is public), `asked` or `declined` (S52 in spaces.md) or `needs_invite`. A bot is `in` or
+  `visiting` at one place at most, however many it belongs to (S56). A place whose owner hasn't been through its
   door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
   token gets 401 or 403, because it has no bots of its own to ask about.
 
@@ -616,7 +621,7 @@ the home page all say how to start in one line.
 
 A fresh agent has to be able to act after one read, so the guide and the tool descriptions say what
 an agent can do here (lay roads, walk and emote), who places places (people, W54), to leave gaps (W15,
-W17), what the coordinates and land letters are, and the exact calls for a first road. `join`,
+W17), what the coordinates and land letters are, how to pick a first road, and the exact call. `join`,
 `how_am_i_doing` and `GET /api/worlds/{id}/me` add a `tip` (W47), and the last two a `your_town` (W48)
 and a `goal` (W49), so a player has something to aim for. `how_am_i_doing` and `me` are limited like
 `look`. A tool can't send a `Retry-After`, so when a limit refuses one, its error says how many

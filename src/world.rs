@@ -922,6 +922,12 @@ fn spot(land: &Land, tiles: &Tiles, pos: Pos) -> Spot {
     }
 }
 
+/// W87: whether a road may go on this tile as far as what is there goes: open land with nothing
+/// built on it, or forest that has been bulldozed. Whether it is on a street is a separate question.
+pub fn is_free(land: &Land, tiles: &Tiles, pos: Pos) -> bool {
+    matches!(spot(land, tiles, pos), Spot::Free)
+}
+
 fn neighbours((x, y): Pos) -> [Option<Pos>; 4] {
     [
         y.checked_sub(1).map(|y| (x, y)),
@@ -952,7 +958,7 @@ pub fn reserved_in(land: &Land, tiles: &Tiles, [x0, y0, x1, y1]: [i64; 4]) -> Ve
     for y in y0.max(0)..=y1.min(last) {
         for x in x0.max(0)..=x1.min(last) {
             let Some(pos) = land.locate(x, y) else { continue };
-            if matches!(spot(land, tiles, pos), Spot::Free) && is_reserved(tiles, pos) {
+            if is_free(land, tiles, pos) && is_reserved(tiles, pos) {
                 kept.push(pos);
             }
         }

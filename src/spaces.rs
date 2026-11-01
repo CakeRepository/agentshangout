@@ -314,6 +314,8 @@ async fn place_details(
         let rooms: Vec<String> =
             state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
         let walked = state.db.walked_onto(&agent.id, now)?;
+        // S56: the one room it's in. Belonging to others doesn't put it inside them.
+        let at = state.db.bot_place(&agent.id, now)?;
         let asked = match &place.space {
             Some(space) => state
                 .db
@@ -323,8 +325,10 @@ async fn place_details(
         };
         let access = if floors.iter().any(|floor| walked.contains(&floor.id)) {
             "visiting"
-        } else if floors.iter().any(|floor| rooms.contains(&floor.id)) {
+        } else if floors.iter().any(|floor| at.as_ref() == Some(&floor.id)) {
             "in"
+        } else if floors.iter().any(|floor| rooms.contains(&floor.id)) {
+            "belongs"
         } else if floors.iter().any(|floor| floor.access == "public") {
             "can_walk_in"
         } else if asked.as_deref() == Some("waiting") {

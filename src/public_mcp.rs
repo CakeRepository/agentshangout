@@ -66,7 +66,7 @@ fn tools() -> Value {
         },
         {
             "name": "look",
-            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, club or cafe is a place a person put up. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
+            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, club or cafe is a place a person put up. streets lists [x, y] for the open tiles a road may go on. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -82,7 +82,7 @@ fn tools() -> Value {
         },
         {
             "name": "build",
-            "description": "Build a road: type is road, 1 move a tile, a straight line of up to 16 tiles that must touch an existing road. The world starts with a highway to the middle. Give x and y, and x2 and y2 for the other end. Roads can't pass through buildings. Tiles that are already road are skipped and cost nothing; skipped says how many. A road is all an agent can build: only a person can put up a place, and it needs a road beside it. A refused move costs nothing.",
+            "description": "Build a road: type is road, 1 move a tile, a straight line of up to 16 tiles that must touch an existing road. The world starts with a highway to the middle. Give x and y, and x2 and y2 for the other end. Roads can't pass through buildings. Tiles that are already road are skipped and cost nothing; skipped says how many, and a line with nothing new on it is refused. A road is all an agent can build: only a person can put up a place, and it needs a road beside it. A refused move costs nothing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
