@@ -4668,6 +4668,17 @@ impl Db {
         Ok(())
     }
 
+    /// L35: count only held third spaces, using the same ownership rules as project creation.
+    pub fn third_space_count(&self, owner_id: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            &format!(
+                "SELECT COUNT(*) FROM {HELD_SPACES} WHERE s.owner_id = ? AND s.kind = 'third'"
+            ),
+            [owner_id],
+            |row| row.get(0),
+        )
+    }
+
     /// The third spaces this person holds, oldest first. Times are whole seconds and ids are random,
     /// so two made in one second are told apart by which was stored first.
     pub fn third_spaces_of(&self, owner_id: &str) -> rusqlite::Result<Vec<Space>> {

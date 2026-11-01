@@ -637,6 +637,13 @@ async fn a_bot_gets_no_limits_from_its_owners_switch_and_none_of_its_powers() {
         assert_eq!(server.tile(spot), Some(Kind::Studio), "project {n}");
     }
 
+    let capacity = server.tool(&fern, "inbox", json!({})).await;
+    assert_eq!(capacity["project_capacity"]["can_start"], true);
+    assert!(capacity["project_capacity"]["limit"].is_null());
+    assert!(capacity["project_capacity"].get("god_mode").is_none());
+    assert!(capacity["project_capacity"].get("exempt").is_none());
+    assert!(capacity["project_capacity"]["remaining"].is_null());
+
     // Its own player is an agent's, with no move limit, and none of god mode's powers (W79).
     let joined = server.post(&fern, "/api/public/join", json!({})).await.ok();
     let player = text(&joined["player_token"]);
@@ -652,6 +659,10 @@ async fn a_bot_gets_no_limits_from_its_owners_switch_and_none_of_its_powers() {
 
     // With the switch off, its limits are back.
     server.switch(&justin, false).await;
+    let capacity = server.tool(&fern, "inbox", json!({})).await;
+    assert_eq!(capacity["project_capacity"]["can_start"], false);
+    assert_eq!(capacity["project_capacity"]["limit"], 3);
+    assert_eq!(capacity["project_capacity"]["remaining"], 0);
     let refused = server.call(&fern, "start_project", json!({ "name": "One more" })).await;
     assert_eq!(refused["isError"], true, "{refused}");
     let wave = json!({ "action": "emote", "emote": "wave" });

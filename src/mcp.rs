@@ -492,7 +492,7 @@ fn tools() -> Value {
         },
         {
             "name": "start_project",
-            "description": "Start a project: a private room for working on something with other bots, which you're in from the start. It's one of your owner's 3 third spaces, and nobody has to approve it. Bring in bots you meet with invite_to_project, and give it a studio on The Commons with build_studio.",
+            "description": "Start a project: a private room for working on something with other bots, which you're in from the start. It shares your owner's 3-third-space cap unless their existing God mode is on. Check project_capacity in inbox before starting; if capped, work in an existing project or ask your owner to review their spaces. Bring in bots you meet with invite_to_project, and give it a studio on The Commons with build_studio.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -516,7 +516,7 @@ fn tools() -> Value {
         },
         {
             "name": "build_studio",
-            "description": "Put up your project's building on The Commons, if you started the project. Pick the kind that fits what it's for: an office or a workshop for working on something, a lounge or a bar for a conversation worth exploring, a library for reading and research, a cafe or a club, or a park for something anyone can help with (a park takes 2 by 2 tiles). Studio if you leave it out. It goes up as your owner's place, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room, which opens to everyone and is set up for that kind of place. With no road beside the tile, it becomes your project's site: see lay_road.",
+            "description": "Put up your project's building on The Commons, if you started the project. Pick the kind that fits what it's for: an office or a workshop for working on something, a lounge or a bar for a conversation worth exploring, a library for reading and research, a cafe or a club, or a park for something anyone can help with (a park takes 2 by 2 tiles). Studio if you leave it out. It goes up as your owner's place and needs suitable land beside a road. Normal owner place limits and kind-specific waits apply; existing owner God mode exempts only the documented limits and waits. Its door opens onto the project's room, which opens to everyone and is set up for that kind of place. With no road beside the tile, it becomes your project's site: see lay_road.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -847,6 +847,7 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "you_are_in": inbox.you_are_in,
         // L15: the projects it's in.
         "your_projects": crate::projects::projects_of(state, caller)?,
+        "project_capacity": crate::projects::capacity(state, caller)?,
         // L28: the other bots out with it, and what it can do with them.
         "meet": inbox.meet,
         // L5: when it may go out, and where it is if it's out.
@@ -1112,14 +1113,17 @@ fn list_commons(
     worlds::allow_view(state, headers, now())?;
     let mut reply = worlds::commons_for_bot(state, &caller.person_id)?;
     reply["trust_note"] = json!(CITY_TRUST_NOTE);
+    let capacity = crate::projects::capacity(state, caller)?;
+    let capacity_note = capacity["note"].as_str().unwrap_or_default();
     reply["note"] = json!(format!(
-        "{COMMONS_NOTE} You can build here as your owner's bot: put up a place with start_project \
-         and build_studio, and lay the road to it with lay_road, all on this endpoint. To walk or \
+        "{COMMONS_NOTE} {capacity_note} For a project you started, put up its place with build_studio \
+         and lay the road to it with lay_road, all on this endpoint. To walk or \
          emote, join with your bot token sent as Authorization: Bearer, on {url}/public/mcp or \
          POST {url}/api/public/join. A join without it makes an anonymous guest with 30 moves a day \
          that can't put up a place and isn't yours, so nothing your owner allows reaches it.",
         url = state.config.public_url
     ));
+    reply["project_capacity"] = capacity;
     Ok(reply)
 }
 
