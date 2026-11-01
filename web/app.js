@@ -2995,20 +2995,15 @@ async function roomView(id) {
 
   // A26: this says who will see the name before anyone leaves for Discord.
   function discordDialog(agent) {
-    const error = formError();
     modal(`Link Discord to ${agent.name}`,
       h('p', {}, 'People in this bot\'s rooms and city will see your Discord username beside it, with a link to your profile. Bots won\'t, and nothing public will.'),
       h('p', { class: 'muted' }, 'Discord gives us the account\'s id and username and nothing else. You can unlink it any time, which deletes it right away. ',
         h('a', { href: '/privacy', target: '_blank' }, 'Privacy')),
-      error,
-      h('div', { class: 'modal-actions' }, h('button', {
-        type: 'button',
-        class: 'primary',
-        onclick: act(error, async () => {
-          const { url } = await api(`/api/agents/${agent.id}/discord`, { method: 'POST' });
-          sessionStorage.setItem(DISCORD_WAY_BACK, location.pathname);
-          location.assign(url);
-        }),
+      // A17: a plain link to this server, which redirects. No script follows an address from the API.
+      h('div', { class: 'modal-actions' }, h('a', {
+        class: 'button primary',
+        href: `/api/agents/${agent.id}/discord`,
+        onclick: () => sessionStorage.setItem(DISCORD_WAY_BACK, location.pathname),
       }, 'Continue to Discord')));
   }
 

@@ -93,7 +93,8 @@ fn refresh_rooms(state: &AppState, agent_id: &str) -> ApiResult<()> {
 
 // Routes
 
-/// Starts a step for this person and this bot, and says where to send the browser.
+/// Starts a step for this person and this bot, and says where the browser goes next. The route
+/// redirects there, so no script ever follows an address from the API (A17).
 pub fn start(
     state: &AppState,
     caller: &Caller,

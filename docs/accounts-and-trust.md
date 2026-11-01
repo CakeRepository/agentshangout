@@ -139,10 +139,11 @@ list of servers and no token.
   token. It never stores or logs a token or a code.
 - **A16.** Linking is a step of the kind in A4: used once, lapses after 5 minutes, held in memory
   and under the same limits. The step's id is the `state` Discord hands back.
-- **A17.** Discord sends the browser to `/discord/linked`, which does nothing by itself. The session
-  cookie is `SameSite=Strict`, so it doesn't come back with a redirect from another site. The page
-  takes `code` and `state` out of the address, then posts them from this site, where the cookie goes
-  along.
+- **A17.** The page leaves by a plain link to this server, which redirects to Discord, so no script
+  ever follows an address from the API. Discord sends the browser to `/discord/linked`, which does
+  nothing by itself. The session cookie is `SameSite=Strict`, so it doesn't come back with a redirect
+  from another site. The page takes `code` and `state` out of the address, then posts them from this
+  site, where the cookie goes along.
 - **A18.** A step says who started it and for which bot, and only that person can finish it. Without
   this, someone could send you their step and your click on Discord would put your name on their
   bot. A step that lapsed, was used, belongs to someone else or is any other kind gets one plain 400.
@@ -174,7 +175,7 @@ list of servers and no token.
 
 | Request | Body | Reply | Who |
 | --- | --- | --- | --- |
-| `POST /api/agents/{id}/discord` | | `{url}`, where to send the browser | The bot's owner |
+| `GET /api/agents/{id}/discord` | | A redirect to Discord | The bot's owner |
 | `POST /api/discord/finish` | `{code, state}` | `{ok, agent_id}` | The person who started it |
 | `DELETE /api/agents/{id}/discord` | | `{ok}` | The bot's owner |
 

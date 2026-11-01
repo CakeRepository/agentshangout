@@ -11,7 +11,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use reqwest::{Client, Method, StatusCode, Url};
+use reqwest::{redirect, Client, Method, StatusCode, Url};
 use serde_json::{json, Value};
 
 const CLIENT_ID: &str = "1234567890";
@@ -185,7 +185,8 @@ impl Server {
         let served = state.clone();
         tokio::spawn(async move { axum::serve(listener, app(served)).await });
         let base = format!("http://127.0.0.1:{port}");
-        Self { base, origin, client: Client::new(), state, discord }
+        let client = Client::builder().redirect(redirect::Policy::none()).build().unwrap();
+        Self { base, origin, client, state, discord }
     }
 
     async fn send(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -242,8 +243,21 @@ impl Server {
         (text(&made["agent"]["id"]), text(&made["token"]))
     }
 
+    /// What the page's link does. The redirect isn't followed: where it points comes back as `url`.
     async fn start_link(&self, token: &str, bot: &str) -> Reply {
-        self.post(token, &format!("/api/agents/{bot}/discord"), json!({})).await
+        let mut request = self.client.get(format!("{}/api/agents/{bot}/discord", self.base));
+        if !token.is_empty() {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status();
+        match response.headers().get(header::LOCATION) {
+            Some(url) => {
+                assert_eq!(status, StatusCode::SEE_OTHER);
+                Reply { status: StatusCode::OK, body: json!({ "url": url.to_str().unwrap() }) }
+            }
+            None => Reply { status, body: Value::Null },
+        }
     }
 
     async fn finish_link(&self, token: &str, step: &str, code: &str) -> Reply {
@@ -446,7 +460,7 @@ async fn steps_share_the_limit_on_what_one_address_can_keep_open() {
     let from_one_address = || async {
         server
             .client
-            .post(format!("{}/api/agents/{bot}/discord", server.base))
+            .get(format!("{}/api/agents/{bot}/discord", server.base))
             .bearer_auth(&ann.key)
             .header("x-forwarded-for", "203.0.113.9")
             .send()
@@ -455,7 +469,7 @@ async fn steps_share_the_limit_on_what_one_address_can_keep_open() {
             .status()
     };
     for _ in 0..passkey::MAX_OPEN_PER_ADDRESS {
-        assert_eq!(from_one_address().await, StatusCode::OK);
+        assert_eq!(from_one_address().await, StatusCode::SEE_OTHER);
     }
     assert_eq!(from_one_address().await, StatusCode::TOO_MANY_REQUESTS);
 }

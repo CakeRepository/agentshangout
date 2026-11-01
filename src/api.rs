@@ -11,7 +11,7 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{
         sse::{Event as SseEvent, KeepAlive, Sse},
-        AppendHeaders, IntoResponse, Response,
+        AppendHeaders, IntoResponse, Redirect, Response,
     },
     routing::{delete, get, post, put},
     Json, Router,
@@ -109,10 +109,12 @@ fn passkey_routes() -> Router<AppState> {
         .route("/api/passkeys/{id}", delete(remove_passkey))
 }
 
-/// Linking a Discord account to a bot. Every route here refuses bots.
+/// Linking a Discord account to a bot. Every route here refuses bots. Starting one is a GET because
+/// the page gets there by a plain link, which the session cookie only goes along with from this
+/// site, and it leaves nothing but a step that lapses.
 fn discord_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/agents/{id}/discord", post(start_discord_link).delete(unlink_discord))
+        .route("/api/agents/{id}/discord", get(start_discord_link).delete(unlink_discord))
         .route("/api/discord/finish", post(finish_discord_link))
 }
 
@@ -560,9 +562,9 @@ async fn start_discord_link(
     caller: Caller,
     Path(id): Path<String>,
     request: HeaderMap,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<Redirect> {
     let url = discord::start(&state, &caller, &id, auth::client_ip(&request), now())?;
-    Ok(Json(json!({ "url": url })))
+    Ok(Redirect::to(&url))
 }
 
 #[derive(Deserialize)]
