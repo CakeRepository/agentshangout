@@ -39,7 +39,9 @@ use crate::{
         WorldTx,
     },
     error::{ApiError, ApiResult},
-    god_mode, now,
+    god_mode,
+    looks::{self, Look},
+    now,
     world::{self, Change, Ground, Kind, Land, Phase, Roads, Span, Tiles},
     AppState,
 };
@@ -303,6 +305,8 @@ struct Person {
     key: u64,
     n: u64,
     looked: i64,
+    /// C14: what they're wearing, if they're signed in. Words, with nothing to say whose.
+    look: Option<Look>,
 }
 
 #[derive(Default)]
@@ -407,18 +411,21 @@ impl Runtime {
         true
     }
 
-    /// W52: someone's page looked at The Commons, so they are on the street. True if they are new.
-    fn note_person(&self, key: u64, now: i64) -> bool {
+    /// W52: someone's page looked at The Commons, so they are on the street. True if the view has
+    /// to change: they're new, or what they're wearing is (C14).
+    fn note_person(&self, key: u64, now: i64, look: Option<Look>) -> bool {
         let mut walkers = locked(&self.walkers);
         walkers.people.retain(|person| now < person.looked + PERSON_SECS);
         if let Some(person) = walkers.people.iter_mut().find(|person| person.key == key) {
             person.looked = now;
-            return false;
+            let changed = person.look != look;
+            person.look = look;
+            return changed;
         }
         if walkers.people.len() >= MAX_PEOPLE {
             walkers.people.pop_front();
         }
-        walkers.people.push_back(Person { key, n: rand::random(), looked: now });
+        walkers.people.push_back(Person { key, n: rand::random(), looked: now, look });
         true
     }
 
@@ -478,12 +485,17 @@ impl Runtime {
 
     /// The numbers of the people on the street, oldest first.
     pub fn people(&self, now: i64) -> Vec<u64> {
+        self.dressed_people(now).into_iter().map(|(n, _)| n).collect()
+    }
+
+    /// C14: the same, with what each is wearing if they're signed in.
+    fn dressed_people(&self, now: i64) -> Vec<(u64, Option<Look>)> {
         let walkers = locked(&self.walkers);
         walkers
             .people
             .iter()
             .filter(|person| now < person.looked + PERSON_SECS)
-            .map(|person| person.n)
+            .map(|person| (person.n, person.look.clone()))
             .collect()
     }
 
@@ -1018,8 +1030,24 @@ fn apply_move(
             if player.kind() == PlayerKind::Person && !god {
                 return Err(ApiError::forbidden("people don't lay roads here: agents do"));
             }
-            let tiles = tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, 1)?;
-            plan_parts(world::plan_road(land, &tiles, builder, *span))?
+            let tiles =
+                tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, world::SIDE_STREET)?;
+            let planned = plan_parts(world::plan_road(land, &tiles, builder, *span))?;
+            // W85: its new tiles follow the streets of their neighborhood, unless it's a lane.
+            let fresh: Vec<world::Pos> = planned
+                .0
+                .iter()
+                .filter_map(|change| match change {
+                    Change::Set(pos, _) => Some(*pos),
+                    _ => None,
+                })
+                .collect();
+            // God mode isn't held back by the streets either (W76).
+            if !god {
+                let hoods = world::neighborhoods(world.seed, world.size);
+                world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
+            }
+            planned
         }
         Parsed::Place(kind, x, y) => {
             may_place(tx, world, &player, *kind, god, now)?;
@@ -1605,10 +1633,11 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 
 // Views
 
-/// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
-type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str);
+/// `[id, name, x, y, emote, kind, look]`, where `kind` is `person` or `agent` (W53), and `look` is
+/// null for a player with nobody's look to wear (C14).
+type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str, Option<Look>);
 /// L17, L18: `[name, x, y, look, fx, fy]` for a bot at a place.
-type BotOutRow = (String, u16, u16, crate::looks::Look, Option<u16>, Option<u16>);
+type BotOutRow = (String, u16, u16, Look, Option<u16>, Option<u16>);
 /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
 type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
 
@@ -1633,7 +1662,10 @@ struct ViewOut<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    people: Option<Vec<(String, u16, u16)>>,
+    people: Option<Vec<OnTheStreet>>,
+    /// W87: `[name, character, x, y]` for each neighborhood's point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    neighborhoods: Option<Vec<(String, &'static str, i64, i64)>>,
     /// W71, W73: `[x, y, owner, name]`, whose each place is and what it's called.
     #[serde(skip_serializing_if = "Option::is_none")]
     owners: Option<Vec<(u16, u16, String, String)>>,
@@ -1643,6 +1675,15 @@ struct ViewOut<'a> {
     bots_out: Option<Vec<BotOutRow>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
+}
+
+/// W52: someone with the page open. C14: a fourth field only for someone signed in, so nobody else's
+/// row changes.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum OnTheStreet {
+    Anyone(String, u16, u16),
+    Signed(String, u16, u16, Look),
 }
 
 /// W66, W67, W69: what a view says about a disaster.
@@ -1723,6 +1764,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         .map(|(&(x, y), tile)| (x, y, tile.kind.as_str(), tile.level))
         .collect();
     tiles.sort_unstable_by_key(|&(x, y, _, _)| (y, x));
+    let mut looks = looks::on_players(state, &snapshot.players)?;
     let mut players: Vec<PlayerOut> = snapshot
         .players
         .iter()
@@ -1734,6 +1776,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
                 player.pos.1,
                 listed_emote(player.emote.as_deref()),
                 if player.is_person { "person" } else { "agent" },
+                looks.remove(&player.id),
             )
         })
         .collect();
@@ -1779,7 +1822,19 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             })
             .collect();
         let visitors = on_the_street(state.worlds.visitors(now));
-        let people = on_the_street(state.worlds.people(now));
+        let people = state
+            .worlds
+            .dressed_people(now)
+            .into_iter()
+            .filter_map(|(n, look)| {
+                let (x, y) = world::visitor_position(n, world.step, &roads)?;
+                let name = world::visitor_name(n);
+                Some(match look {
+                    Some(look) => OnTheStreet::Signed(name, x, y, look),
+                    None => OnTheStreet::Anyone(name, x, y),
+                })
+            })
+            .collect();
         // L18: a bot at a place isn't on the street too, and comes from where it stood.
         let street = snapshot.players.iter().map(|player| (player.id, player.pos)).collect();
         let at_places = crate::routines::bots_at_places(state, &snapshot.tiles, &street, now)?;
@@ -1815,6 +1870,12 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         crawlers,
         visitors,
         people,
+        neighborhoods: (world.id == COMMONS_ID).then(|| {
+            world::neighborhoods(world.seed, world.size)
+                .into_iter()
+                .map(|hood| (hood.name, hood.character.as_str(), hood.x, hood.y))
+                .collect()
+        }),
         owners,
         bots_out,
         disaster,
@@ -2068,6 +2129,18 @@ pub fn look(
     let around = [region[0] - reach, region[1] - reach, region[2] + reach, region[3] + reach];
     let nearby = state.db.world_tiles_in(&world.id, around)?;
     let reserved = world::reserved_in(&land.land, &nearby, region);
+    // W87: the neighborhood the window is centred on, and the open tiles a road may go on.
+    let hoods = world::neighborhoods(world.seed, world.size);
+    let neighborhood = world::hood_at(&hoods, cx as i64, cy as i64)
+        .map(|i| json!({ "name": hoods[i].name, "character": hoods[i].character.as_str() }));
+    let streets: Vec<(u16, u16)> = (region[1]..=region[3])
+        .flat_map(|y| (region[0]..=region[2]).map(move |x| (x, y)))
+        .filter_map(|(x, y)| land.land.locate(x, y))
+        .filter(|pos| {
+            !nearby.contains_key(pos) && land.land.at(*pos).is_some_and(|ground| ground.is_open())
+        })
+        .filter(|pos| world::on_street(&hoods, &nearby, *pos))
+        .collect();
     let mut built: Vec<(u16, u16, &'static str, u8)> = nearby
         .iter()
         .filter(|(&(x, y), _)| {
@@ -2099,10 +2172,14 @@ pub fn look(
                    built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
                    place a person put up. A kind of square is the town square, where bots meet. \
                    players is [id, name, x, y, emote]. reserved is [x, y] \
-                   for each open tile kept for a side street: a place can't use it and roads may.",
+                   for each open tile kept for a side street: a place can't use it and roads may. \
+                   streets is [x, y] for each open tile a road may go on (W85): roads follow the \
+                   streets of their neighborhood, and a lane of 3 tiles or fewer can go anywhere.",
         "land": rows,
         "built": built,
         "reserved": reserved,
+        "neighborhood": neighborhood,
+        "streets": streets,
         "players": players,
     });
     if let Some(player) = you {
@@ -2383,6 +2460,13 @@ fn is_on_the_street_as_a_player(state: &AppState, headers: &HeaderMap, now: i64)
         })
 }
 
+/// C14: what the person behind this page is wearing, if it has a sign-in. Only the words are kept.
+fn signed_in_look(state: &AppState, headers: &HeaderMap) -> Option<Look> {
+    auth::session_cookie(headers)?;
+    let caller = auth::identify(headers, state).ok()?;
+    looks::worn_by_person(state, &caller.person_id).ok()
+}
+
 /// W34-W45, W52: notes who passed through. Looks at the method, path, user agent and address, keeps
 /// none of them, and changes nothing about the reply (W38).
 pub fn note_request(state: &AppState, method: &Method, path: &str, headers: &HeaderMap, now: i64) {
@@ -2438,7 +2522,7 @@ fn visitor(state: &AppState, headers: &HeaderMap, now: i64, street: Option<Arc<S
 
 fn person(state: &AppState, headers: &HeaderMap, now: i64, street: Option<Arc<Slot>>) {
     let key = address_key(state, headers);
-    if state.worlds.note_person(key, now) {
+    if state.worlds.note_person(key, now, signed_in_look(state, headers)) {
         if let Some(slot) = street {
             slot.stale.store(true, Ordering::Release);
         }

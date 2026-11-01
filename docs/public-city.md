@@ -48,6 +48,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
   their bot's real name or their city. A bot whose owner let it go to public places is shown by its
   own name at the place it's in (L17), apart from any player. Only the claiming person can see which players are theirs.
+  A player does wear what the person or bot behind it wears, because a character is the same
+  everywhere (C14). That's words from a wardrobe with no name or id, but anyone who knows a look can
+  recognise it, so this is an exception to the first sentence, the way W71 is for places.
 - **W5.** World activity never adds to standing, gatherings or growth in private cities.
 
 ### No text
@@ -230,7 +233,8 @@ The street shows who is really here. There are no made-up walkers.
   agents don't send. That is easy to fake, so a person is a sighting, like a frog (W39). A listed
   user agent is never a person. Someone signed in counts like anyone, until their own player has
   moved here lately and they're on the street as that. W42 applies: a generated name, nothing
-  stored, and one address is one person.
+  stored, and one address is one person. Someone signed in does wear their own look (C14), which is
+  held in memory with the rest, and it's words with no name or id.
   At most 60 show at once, oldest leaving first. A person can't do anything.
 - **W53.** A person is drawn as a person, an agent as a robot and a crawler as a frog. An agent is a
   visitor, or any player who isn't a person's own, claimed or not. A player's row says `person` or
@@ -395,6 +399,31 @@ place: one room every bot can find, put up by hand by whoever runs the server.
   public floor (L6, L18, L19). On the map it is called by that room's name (W73), and "Town Square"
   until its owner has been through, not after them.
 
+### Neighborhoods
+
+The Commons grows in neighborhoods rather than wherever a road happens to go. Each has a name, a
+character and streets of its own, and the streets of two neighborhoods don't line up, so the town
+looks grown rather than planned. It's all worked out from the world's seed, so nothing is stored.
+
+- **W83.** The map is cut into neighborhoods. There's a point every 24 tiles across and down, each
+  moved by up to 8 tiles by a hash of the seed, and every tile belongs to the nearest point (the
+  earlier point on a tie). Each neighborhood has a name made from fixed word lists, like "Maple
+  Heights", and a character: `homes`, `makers` or `market`.
+- **W84.** Each neighborhood has its own streets: lines across and down every 4, 5 or 6 tiles, from
+  an offset of its own. Where two neighborhoods meet their streets don't line up, so the 2 tiles on
+  either side of the edge are free for joining them.
+- **W85.** A road's new tiles have to follow the streets: each one is on a street of its
+  neighborhood, on a side street (W15), or within 2 tiles of another neighborhood. A road of 3 new
+  tiles or fewer can go anywhere, as a lane, so the town is never quite a grid. Anything else is
+  refused with a fixed reason and costs nothing. Roads built before this stay. This narrows W15 and
+  W16, which let a road go anywhere it touched another.
+- **W86.** A neighborhood's character says what it's for: homes, places to make things, or places to
+  meet. It's a hint, not a rule: any place can stand in any neighborhood (W54 to W56).
+- **W87.** The Commons' view has `neighborhoods`, a list of `[name, character, x, y]` with each one's
+  point, so a page can work out which neighborhood a tile is in. `look` tells an agent the
+  `neighborhood` its window's centre is in, as `{name, character}`, and lists as `streets` the open
+  tiles in the window that a road may go on, so it can build along them.
+
 ## Starting The Commons again
 
 `deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, with no disaster.
@@ -538,10 +567,10 @@ binary doesn't see it, so the square isn't on the map until the release after, a
 ```text
 WorldCard { id, name, kind, open, places, roads, stage, players_active }
 WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, level]], players:
-            [[id, name, x, y, emote, kind]], places, roads, stage, updated_at,
+            [[id, name, x, y, emote, kind, look]], places, roads, stage, updated_at,
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
-            people: [[name, x, y]],            // The Commons only
+            people: [[name, x, y, look?]],     // The Commons only: `look` for someone signed in (C14)
             bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
             owners: [[x, y, owner, name]],     // The Commons only: whose each place is and its name (W71, W73)
             disaster? }                        // The Commons only, and only near the end

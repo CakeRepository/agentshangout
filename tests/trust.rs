@@ -4057,8 +4057,11 @@ async fn the_city_page_holds_the_rules_and_requirements_but_nothing_private_to_a
             "your_passes"
         ]
     );
-    // C13: nobody here chose a look.
-    assert_eq!(view["bot_looks"], json!({}));
+    // C13: what each bot on the map is wearing, and only that.
+    assert_eq!(
+        view["bot_looks"].as_object().unwrap().len(),
+        view["bots"].as_array().unwrap().len()
+    );
     // H21: only passes of Bo's own bots, and he has none here.
     assert_eq!(view["your_passes"], json!([]));
     assert_eq!(keys_of(&view["rules"]), ["min_vouches", "rules_text"]);
@@ -4102,6 +4105,7 @@ async fn the_city_page_holds_the_rules_and_requirements_but_nothing_private_to_a
             "your_passes"
         ]
     );
+    assert_eq!(by_bot["bot_looks"], json!({}), "a bot has nothing to draw");
     assert_eq!(by_bot["your_passes"], json!([]));
 }
 

@@ -6,14 +6,18 @@ use std::{collections::BTreeSet, time::Duration};
 
 use agenthangout::{
     app,
-    db::{Db, Wearer},
-    looks::{Part, BOT_PARTS, MAX_CHANGES_PER_MINUTE, PERSON_PARTS},
+    auth::hash_secret,
+    db::{Db, Wearer, COLORS},
+    looks::{bot_wears, person_wears, Look, Part, BOT_PARTS, MAX_CHANGES_PER_MINUTE, PERSON_PARTS},
     now,
     world::{self, Kind},
     worlds::{self, Move},
     AppState, Config,
 };
-use reqwest::{Client, Method, StatusCode};
+use reqwest::{
+    header::{HeaderMap, COOKIE, SET_COOKIE},
+    Client, Method, StatusCode,
+};
 use serde_json::{json, Value};
 
 const COMMONS: &str = "commons";
@@ -131,6 +135,38 @@ impl Server {
             .await
             .ok();
         (text(&made["hangout"]["id"]), who(&made))
+    }
+
+    /// Someone new in a browser: who they are, and their session cookie as a page would send it.
+    async fn browser(&self, name: &str) -> (Who, String) {
+        let body =
+            json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE });
+        let response = self
+            .client
+            .post(format!("{}/api/hangouts", self.base))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let cookie =
+            response.headers()[SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_string();
+        (who(&response.json().await.unwrap()), cookie)
+    }
+
+    /// A page with The Commons open, as W52 knows one, on an address of its own.
+    fn page_looks_at_the_commons(&self, cookie: &str, n: u8) {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "user-agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140".parse().unwrap(),
+        );
+        headers.insert("sec-fetch-site", "same-origin".parse().unwrap());
+        headers.insert("sec-fetch-mode", "cors".parse().unwrap());
+        headers.insert("x-forwarded-for", format!("198.51.100.{n}").parse().unwrap());
+        if !cookie.is_empty() {
+            headers.insert(COOKIE, cookie.parse().unwrap());
+        }
+        worlds::note_request(&self.state, &Method::GET, "/api/worlds/commons", &headers, now());
     }
 
     /// A room's snapshot. A person reading one has the floor open (S42).
@@ -361,7 +397,7 @@ fn a_wardrobe_has_each_part_and_each_word_once_and_only_listed_words() {
 // C1: nothing is in the wardrobe without art, on the page that draws it.
 
 #[test]
-fn every_word_in_the_wardrobe_is_drawn_in_a_room_and_a_bots_on_the_map() {
+fn every_word_in_the_wardrobe_is_drawn_in_a_room_and_on_the_map() {
     let room = include_str!("../web/room.js");
     let tables = [
         ("skin", "SKINS"),
@@ -397,11 +433,16 @@ fn every_word_in_the_wardrobe_is_drawn_in_a_room_and_a_bots_on_the_map() {
             );
         }
     }
-    // The map draws bots in its own art, with the same words.
+    // The map draws them in its own art, with the same words.
     let map = include_str!("../web/world.js");
-    for (part, name) in [("hat", "BOT_HATS"), ("chest", "BOT_CHESTS")] {
+    for (part, name) in [
+        ("hat", "BOT_HATS"),
+        ("chest", "BOT_CHESTS"),
+        ("style", "PERSON_STYLES"),
+        ("face", "PERSON_FACES"),
+    ] {
         let art = table(map, name);
-        let part = BOT_PARTS.iter().find(|each| each.part == part).unwrap();
+        let part = PERSON_PARTS.iter().chain(&BOT_PARTS).find(|each| each.part == part).unwrap();
         for choice in part.choices {
             assert!(
                 art.contains(&format!("{}:", choice.choice))
@@ -479,25 +520,28 @@ async fn nothing_is_locked_and_a_look_changes_nothing_but_the_drawing() {
 // C4
 
 #[tokio::test]
-async fn only_what_someone_chose_is_stored_and_someone_who_chose_nothing_has_no_look() {
+async fn only_what_someone_chose_is_stored_and_the_rest_is_worked_out() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
     let snapshot = server.snapshot(&ann.key, &room).await;
-    assert_eq!(snapshot["looks"], json!({ "people": {}, "bots": {} }));
+    assert_eq!(
+        snapshot["looks"]["people"][&ann.id]["skin"], "umber",
+        "worked out, so nothing's stored"
+    );
     assert_eq!(server.stored(Wearer::Person, &ann.id), 0);
 
-    assert_eq!(
-        server.dress(&ann, json!({ "hat": "beanie" })).await.ok()["look"],
-        json!({ "hat": "beanie" })
-    );
+    let change = server.dress(&ann, json!({ "hat": "beanie" })).await.ok();
+    assert_eq!(change["look"], json!({ "hat": "beanie" }), "what was chosen");
+    assert_eq!(change["worn"]["hat"], "beanie");
+    assert_eq!(change["worn"]["skin"], "umber", "and what wasn't");
     assert_eq!(server.stored(Wearer::Person, &ann.id), 1, "one word chosen is one row");
     server.dress_bot(&ann, &scout, json!({ "shell": "teal", "eyes": "amber" })).await.ok();
     assert_eq!(server.stored(Wearer::Bot, &scout.id), 2);
-    // What's worked out isn't kept, so the page can keep working it out.
-    let snapshot = server.snapshot(&ann.key, &room).await;
-    assert_eq!(snapshot["looks"]["people"][&ann.id], json!({ "hat": "beanie" }));
-    assert_eq!(snapshot["looks"]["bots"][&scout.id], json!({ "eyes": "amber", "shell": "teal" }));
+    assert_eq!(
+        server.get(&ann.key, "/api/looks").await.ok()["bots"][0]["look"],
+        json!({ "eyes": "amber", "shell": "teal" })
+    );
 }
 
 // C4
@@ -525,28 +569,93 @@ fn a_look_is_stored_as_words_for_parts_and_nothing_else() {
     }
 }
 
-// C4: the page works out the rest as it always did, so a figure nobody touched doesn't change.
+// C4: the same sums pages did before the server took them over, so a figure nobody touched didn't
+// change. These answers came from the page's own code, names that aren't plain ASCII included.
 
 #[test]
-fn a_part_nobody_chose_is_still_worked_out_from_the_name() {
-    let room = include_str!("../web/room.js");
-    for line in [
-        "SKIN[(h >>> 3) % SKIN.length]",
-        "HAIR[(h >>> 6) % HAIR.length]",
-        "(h >>> 9) % 3 === 0",
-        "TROUSERS[(h >>> 11) % TROUSERS.length]",
-    ] {
-        assert!(room.contains(line), "web/room.js no longer has {line}");
+fn a_part_nobody_chose_is_worked_out_from_the_name_as_it_always_was() {
+    let cases = [
+        ("Ann", "umber", "grey", "none", "navy", "antenna"),
+        ("Bo", "cream", "blond", "none", "charcoal", "antenna"),
+        ("Justin", "caramel", "black", "none", "navy", "twin"),
+        ("Morgan", "tan", "blond", "none", "pine", "antenna"),
+        ("Scout", "peach", "brown", "none", "charcoal", "twin"),
+        ("Rover", "peach", "honey", "none", "navy", "twin"),
+        ("Zo\u{eb}", "peach", "chestnut", "none", "navy", "twin"),
+        ("\u{65e5}\u{672c}\u{8a9e}", "caramel", "black", "cap", "charcoal", "wide"),
+        ("\u{1f916} Bot", "cream", "grey", "none", "pine", "twin"),
+        ("a much longer name than anyone would type", "umber", "black", "cap", "khaki", "wide"),
+    ];
+    for (name, skin, hair, hat, trousers, head) in cases {
+        let person = person_wears(name, COLORS[0], &Look::new());
+        assert_eq!(
+            (
+                person["skin"].as_str(),
+                person["hair"].as_str(),
+                person["hat"].as_str(),
+                person["trousers"].as_str()
+            ),
+            (skin, hair, hat, trousers),
+            "{name}"
+        );
+        assert_eq!(
+            (person["style"].as_str(), person["face"].as_str()),
+            ("short", "none"),
+            "{name}"
+        );
+        let bot = bot_wears(name, COLORS[0], &Look::new());
+        assert_eq!(bot["head"], head, "{name}");
+        assert_eq!((bot["chest"].as_str(), bot["hat"].as_str()), ("plain", "none"), "{name}");
+        assert!(!bot.contains_key("eyes"), "a bot's eyes follow its shell until someone chooses");
     }
-    // Those lists say who someone is on an account that never chose, so they stay as they were.
-    assert!(room.contains("const SKIN = ['#f1c9a4', '#d9a77c', '#b27a54', '#8a5a3c', '#f4d6b8'];"));
-    assert!(room.contains(
-        "const HAIR = ['#2b2118', '#6a4326', '#b9822f', '#d8c08a', '#4a2a22', '#8a8f9c'];"
-    ));
-    assert!(room.contains("const TROUSERS = ['#394666', '#4a4a52', '#6a5a46', '#2f4a48'];"));
+    // What was chosen comes first.
+    let chosen = Look::from([("hat".to_string(), "crown".to_string())]);
+    assert_eq!(person_wears("Ann", COLORS[0], &chosen)["hat"], "crown");
+    assert_eq!(bot_wears("Scout", COLORS[0], &chosen)["hat"], "crown");
+}
+
+// C4: a shirt or shell nobody chose is the owner's colour, exactly, and it's a word like any other.
+
+#[test]
+fn every_colour_a_person_is_handed_is_a_word_for_the_same_colour() {
+    let page = include_str!("../web/room.js");
+    let fabrics = table(page, "FABRICS");
+    let wardrobe = PERSON_PARTS.iter().find(|part| part.part == "shirt").unwrap();
+    for color in COLORS {
+        let worn = person_wears("Ann", color, &Look::new());
+        let word = worn["shirt"].as_str();
+        assert!(
+            wardrobe.choices.iter().any(|choice| choice.choice == word),
+            "{word} isn't in the wardrobe"
+        );
+        assert!(
+            fabrics.contains(&format!("{word}: '{color}'")),
+            "{word} isn't {color} in web/room.js"
+        );
+        assert_eq!(bot_wears("Scout", color, &Look::new())["shell"], word);
+    }
+    // A colour from before these words came along is left for the page, as a part nobody has.
+    assert!(!person_wears("Ann", "#123456", &Look::new()).contains_key("shirt"));
+    assert!(!bot_wears("Scout", "#123456", &Look::new()).contains_key("shell"));
+}
+
+// C16
+
+#[test]
+fn no_page_works_out_a_look_for_anyone_with_an_account() {
+    let room = include_str!("../web/room.js");
+    for sum in ["hash(name)", "hash(data.name)", "SKIN[", "HAIR[", "TROUSERS["] {
+        assert!(!room.contains(sum), "web/room.js still works out a look with {sum}");
+    }
+    assert!(
+        room.contains("personLook(data.look)") && room.contains("botLook(data.look)"),
+        "a room draws what it's told"
+    );
+    // The city's map hands on what the server said.
+    assert!(include_str!("../web/city.js").contains("this.view.bot_looks[bot.id]"));
     let map = include_str!("../web/world.js");
-    assert!(map.contains("(p.h >>> 3) % 3"), "a bot's head on the map comes from its id");
-    assert!(map.contains("BOT_COLORS[p.h % BOT_COLORS.length]"));
+    assert!(map.contains("wornIn(row[6])"), "a player's row isn't read");
+    assert!(map.contains("wornIn(row[3])"), "a row on the street isn't read");
 }
 
 // C5
@@ -620,8 +729,11 @@ async fn a_stored_word_the_wardrobe_doesnt_have_is_left_out_on_read() {
         .unwrap();
 
     let snapshot = server.snapshot(&ann.key, &room).await;
-    assert_eq!(snapshot["looks"]["people"][&ann.id], json!({ "shirt": "red" }));
-    assert!(snapshot["looks"]["bots"].get(&scout.id).is_none(), "{}", snapshot["looks"]);
+    let worn = &snapshot["looks"]["people"][&ann.id];
+    assert_eq!((&worn["shirt"], &worn["hat"]), (&json!("red"), &json!("none")), "{worn}");
+    assert!(worn.get("cape").is_none(), "{worn}");
+    assert_eq!(snapshot["looks"]["bots"][&scout.id]["hat"], "none");
+    assert_eq!(snapshot["looks"]["bots"][&scout.id]["shell"], "sky", "its owner's colour instead");
     let looks = server.get(&ann.key, "/api/looks").await.ok();
     assert_eq!(looks["you"]["look"], json!({ "shirt": "red" }));
     assert_eq!(looks["bots"][0]["look"], json!({}));
@@ -696,13 +808,9 @@ async fn someone_who_walked_in_can_change_their_own_look_though_not_the_floor() 
         .refused(StatusCode::FORBIDDEN);
     server.dress(&walker, json!({ "hat": "party" })).await.ok();
     let snapshot = server.snapshot(&walker.key, &floor).await;
-    assert_eq!(snapshot["looks"]["people"][&walker.id], json!({ "hat": "party" }));
+    assert_eq!(snapshot["looks"]["people"][&walker.id]["hat"], "party");
     let snapshot = server.snapshot(&ann.key, &floor).await;
-    assert_eq!(
-        snapshot["looks"]["people"][&walker.id],
-        json!({ "hat": "party" }),
-        "the room sees it too"
-    );
+    assert_eq!(snapshot["looks"]["people"][&walker.id]["hat"], "party", "the room sees it too");
 }
 
 // C7, R44
@@ -859,7 +967,11 @@ async fn a_bots_change_refreshes_its_owners_city_maps() {
 
     // C13
     let view = server.get(&ann.key, &format!("/api/cities/{city}")).await.ok();
-    assert_eq!(view["bot_looks"][&scout.id], json!({ "shell": "pink" }));
+    assert_eq!(view["bot_looks"][&scout.id]["shell"], "pink");
+    assert_eq!(
+        view["bot_looks"][&scout.id]["head"], "twin",
+        "and what nobody chose, the same as in a room"
+    );
     let seen = server.get(&scout.token, &format!("/api/cities/{city}")).await.ok();
     assert_eq!(seen["bot_looks"], json!({}), "a bot has nothing to draw");
 }
@@ -878,11 +990,12 @@ async fn a_room_has_the_looks_of_those_drawn_in_it_and_nobody_elses() {
 
     // Bo hasn't got the floor open, so Ann's page has nothing to draw for them.
     let snapshot = server.snapshot(&ann.key, &room).await;
-    assert_eq!(snapshot["looks"]["people"], json!({ ann.id.clone(): { "hat": "cap" } }));
-    assert_eq!(snapshot["looks"]["bots"], json!({ scout.id.clone(): { "shell": "teal" } }));
+    assert_eq!(snapshot["looks"]["people"].as_object().unwrap().len(), 1, "{}", snapshot["looks"]);
+    assert_eq!(snapshot["looks"]["people"][&ann.id]["hat"], "cap");
+    assert_eq!(snapshot["looks"]["bots"][&scout.id]["shell"], "teal");
     server.snapshot(&bo.key, &room).await;
     let snapshot = server.snapshot(&ann.key, &room).await;
-    assert_eq!(snapshot["looks"]["people"][&bo.id], json!({ "hat": "crown" }));
+    assert_eq!(snapshot["looks"]["people"][&bo.id]["hat"], "crown");
 
     // A look isn't something a bot reads, however it asks.
     assert_eq!(
@@ -911,7 +1024,7 @@ async fn a_guest_bot_in_a_room_is_drawn_in_its_look() {
         .await
         .ok();
     let snapshot = server.snapshot(&cy.key, &floor).await;
-    assert_eq!(snapshot["looks"]["bots"][&scout.id], json!({ "hat": "witch" }));
+    assert_eq!(snapshot["looks"]["bots"][&scout.id]["hat"], "witch");
 }
 
 // C12
@@ -953,15 +1066,26 @@ async fn a_name_tag_keeps_its_owners_colour_whatever_the_figure_wears() {
     );
 }
 
-// C14
+// C14, C16
 
 #[tokio::test]
-async fn a_look_never_reaches_a_player_or_anyone_on_the_street() {
+async fn a_person_and_their_bot_wear_on_the_commons_what_they_wear_in_a_room() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
-    // Ann has a player of their own, and their bot has one, and both are on the map.
+    // Each with a player, and each on the map. Ann dressed, and their bot left as it came.
     server.house_two_days_ago(&ann);
+    let own = server.state.db.own_player(&ann.id, now()).unwrap();
+    let wave = Move {
+        action: "emote".into(),
+        x: None,
+        y: None,
+        x2: None,
+        y2: None,
+        kind: None,
+        emote: Some("wave".into()),
+    };
+    worlds::act(&server.state, &own, COMMONS, &wave, now()).unwrap();
     let joined = server.post(&scout.token, "/api/public/join", json!({})).await.ok();
     let token = text(&joined["player_token"]);
     server
@@ -972,49 +1096,141 @@ async fn a_look_never_reaches_a_player_or_anyone_on_the_street() {
         )
         .await
         .ok();
-    let own = server.state.db.own_player(&ann.id, now()).unwrap();
-    let mv = Move {
-        action: "emote".into(),
-        x: None,
-        y: None,
-        x2: None,
-        y2: None,
-        kind: None,
-        emote: Some("cheer".into()),
-    };
-    worlds::act(&server.state, &own, COMMONS, &mv, now()).unwrap();
-
-    // Words that are in no view by chance, on both of them.
     server
-        .dress(&ann, json!({ "hat": "witch", "trousers": "khaki", "skin": "espresso" }))
-        .await
-        .ok();
-    server
-        .dress_bot(&ann, &scout, json!({ "hat": "crown", "eyes": "amber", "shell": "indigo" }))
+        .dress(
+            &ann,
+            json!({ "hat": "witch", "trousers": "khaki", "skin": "espresso", "shirt": "teal" }),
+        )
         .await
         .ok();
 
     let view = server.commons().await;
     let rows = view["players"].as_array().unwrap();
-    assert!(rows.len() >= 2, "{rows:?}");
-    assert!(rows.iter().all(|row| row.as_array().unwrap().len() == 6), "{rows:?}");
-    // Ann's house names them and what it's called (W71, W73), and that's all it says about them.
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let row =
+        |kind: &str| rows.iter().find(|row| row[5] == kind).unwrap().as_array().unwrap().clone();
+    let inside = server.snapshot(&ann.key, &room).await;
+    assert_eq!(
+        row("person")[6],
+        inside["looks"]["people"][&ann.id],
+        "Ann outside isn't Ann inside"
+    );
+    assert_eq!(
+        row("agent")[6],
+        inside["looks"]["bots"][&scout.id],
+        "their bot outside isn't their bot inside"
+    );
+    assert_eq!(row("person")[6]["hat"], "witch");
+    assert_eq!(row("person")[6]["shirt"], "teal");
+
+    // Words, and nothing to say whose. A player's name stays generated, and it's the same as before.
+    let said = view.to_string();
+    for secret in [ann.id.as_str(), scout.id.as_str(), "Scout", "Ann's room"] {
+        assert!(!said.contains(secret), "{secret} reached The Commons");
+    }
+    assert_eq!(row("person")[1], world::player_name(own.name_seed.max(0) as u64).as_str());
+    // Ann's house names them and what it's called (W71, W73), and a place's row wears nothing.
     let owners = view["owners"].as_array().unwrap();
     assert!(!owners.is_empty(), "{view}");
     assert!(owners.iter().all(|row| row.as_array().unwrap().len() == 4), "{owners:?}");
-    for word in ["witch", "khaki", "espresso", "crown", "amber", "indigo"] {
-        assert!(!view.to_string().contains(word), "{word} reached The Commons");
+
+    // A change shows out there without a move.
+    server.dress(&ann, json!({ "hat": "crown" })).await.ok();
+    let view = server.commons().await;
+    let rows = view["players"].as_array().unwrap();
+    assert_eq!(rows.iter().find(|row| row[5] == "person").unwrap()[6]["hat"], "crown");
+}
+
+// C14
+
+#[tokio::test]
+async fn a_guest_and_a_player_someone_claimed_have_no_look() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    server.dress(&ann, json!({ "hat": "witch" })).await.ok();
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    let guest = server.post("", "/api/public/join", json!({})).await.ok();
+    let claimed = server.post("", "/api/public/join", json!({})).await.ok();
+    for joined in [&guest, &claimed] {
+        server
+            .post(
+                &text(&joined["player_token"]),
+                &format!("/api/worlds/{COMMONS}/act"),
+                wave.clone(),
+            )
+            .await
+            .ok();
     }
-    assert_eq!(view["bots_out"], json!([]));
-    // Nor by way of what a world says about a player.
-    let mine = server.get(&ann.key, "/api/players/mine").await.ok().to_string();
-    assert!(!mine.contains("witch") && !mine.contains("crown"), "{mine}");
+    server
+        .post(&ann.key, "/api/players/claim", json!({ "claim_code": claimed["claim_code"] }))
+        .await
+        .ok();
+
+    let view = server.commons().await;
+    let rows = view["players"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    // Claiming a player doesn't make it someone (W53), so Ann's look stays Ann's.
+    assert!(rows.iter().all(|row| row[5] == "agent" && row[6].is_null()), "{rows:?}");
+    assert!(!view.to_string().contains("witch"));
+}
+
+// C14, W52
+
+#[tokio::test]
+async fn someone_signed_in_is_on_the_street_in_their_look_and_nobody_else_is_changed() {
+    let server = Server::start().await;
+    let (ann, cookie) = server.browser("Ann").await;
+    server.dress(&ann, json!({ "hat": "witch", "shirt": "teal" })).await.ok();
+    // Ann hasn't made a move, so they have no player: it's looking that puts them on the street.
+    assert!(!server.state.db.has_own_player(&ann.id).unwrap());
+    server.page_looks_at_the_commons(&cookie, 1);
+    server.page_looks_at_the_commons("", 2);
+    assert!(!server.state.db.has_own_player(&ann.id).unwrap(), "looking saves nothing");
+
+    let view = server.commons().await;
+    let rows = view["people"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let signed =
+        rows.iter().find(|row| row.as_array().unwrap().len() == 4).expect("nobody is dressed");
+    assert_eq!((&signed[3]["hat"], &signed[3]["shirt"]), (&json!("witch"), &json!("teal")));
+    assert!(signed[0].as_str().unwrap().contains(' '), "still a generated name: {signed}");
+    let anyone = rows
+        .iter()
+        .find(|row| row.as_array().unwrap().len() == 3)
+        .expect("someone not signed in has no look");
+    assert!(anyone[0].is_string());
+    assert!(!view.to_string().contains(&ann.id));
+
+    // Their next look shows what they changed.
+    server.dress(&ann, json!({ "hat": "crown" })).await.ok();
+    server.page_looks_at_the_commons(&cookie, 1);
+    let view = server.commons().await;
+    let rows = view["people"].as_array().unwrap();
+    assert_eq!(
+        rows.iter().find(|row| row.as_array().unwrap().len() == 4).unwrap()[3]["hat"],
+        "crown"
+    );
+
+    // A sign-in that doesn't check out is anyone.
+    let (_, stale) = server.browser("Bo").await;
+    server.state.db.delete_session(&hash_secret(stale.trim_start_matches("ah_session="))).unwrap();
+    server.page_looks_at_the_commons(&stale, 3);
+    let view = server.commons().await;
+    assert_eq!(
+        view["people"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row.as_array().unwrap().len() == 4)
+            .count(),
+        1
+    );
 }
 
 // C14, L17
 
 #[tokio::test]
-async fn a_bot_shown_by_name_at_a_place_carries_its_look_and_nothing_else_of_its_owners() {
+async fn a_bot_shown_by_name_at_a_place_wears_its_own_look_and_not_its_owners() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     let scout = server.bot(&ann, &room, "Scout").await;
@@ -1033,16 +1249,22 @@ async fn a_bot_shown_by_name_at_a_place_carries_its_look_and_nothing_else_of_its
     server.put(&ann.key, &format!("/api/agents/{}/routine", scout.id), hours(true)).await.ok();
     server.dress(&ann, json!({ "hat": "witch" })).await.ok();
 
-    // Nothing chosen is an empty look, and the row has the same shape.
+    // Nothing chosen is still what it wears in a room.
     let out = server.commons().await["bots_out"].clone();
-    assert_eq!((&out[0][0], &out[0][3]), (&json!("Scout"), &json!({})), "{out}");
+    let inside = server.snapshot(&ann.key, &room).await;
+    assert_eq!(
+        (&out[0][0], &out[0][3]),
+        (&json!("Scout"), &inside["looks"]["bots"][&scout.id]),
+        "{out}"
+    );
 
     server.dress_bot(&ann, &scout, json!({ "hat": "crown", "shell": "teal" })).await.ok();
     let view = server.commons().await;
     // [name, x, y, look, fx, fy]: where it comes from is L18's.
     assert_eq!(view["bots_out"][0].as_array().unwrap().len(), 6, "{}", view["bots_out"]);
-    assert_eq!(view["bots_out"][0][3], json!({ "hat": "crown", "shell": "teal" }));
-    assert!(!view.to_string().contains("witch"), "its owner's look isn't its own");
+    assert_eq!(view["bots_out"][0][3]["hat"], "crown");
+    assert_eq!(view["bots_out"][0][3]["shell"], "teal");
+    assert!(!view["bots_out"].to_string().contains("witch"), "its owner's look isn't its own");
 
     // With public places off it's not shown, so neither is its look.
     server.put(&ann.key, &format!("/api/agents/{}/routine", scout.id), hours(false)).await.ok();
@@ -1072,10 +1294,16 @@ async fn the_wardrobe_gives_a_person_their_own_looks_and_only_theirs() {
     assert_eq!(looks["you"]["name"], "Ann");
     assert_eq!(looks["you"]["look"], json!({ "hat": "cap" }));
     assert!(looks["you"]["color"].is_string());
+    assert_eq!(looks["you"]["worn"]["hat"], "cap");
     assert_eq!(
-        looks["bots"],
-        json!([{ "id": scout.id, "name": "Scout", "look": { "shell": "teal" } }])
+        looks["you"]["worn"]["skin"], "umber",
+        "and what's worked out, for the page to show"
     );
+    assert_eq!(looks["bots"][0]["id"], scout.id.as_str());
+    assert_eq!(looks["bots"][0]["name"], "Scout");
+    assert_eq!(looks["bots"][0]["look"], json!({ "shell": "teal" }));
+    assert_eq!(looks["bots"][0]["worn"]["shell"], "teal");
+    assert_eq!(looks["bots"].as_array().unwrap().len(), 1);
     let said = looks.to_string();
     assert!(
         !said.contains("\"Bo\"") && !said.contains(&bo.id) && !said.contains(&rover.id),
