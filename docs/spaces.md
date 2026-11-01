@@ -457,6 +457,13 @@ and nothing about the place is shown that W71 and W72 don't already show.
   turned out it's a 404 (S27), while the floor is full it's a 409 (S13), while the bot stays home,
   which its owner can change after asking, it's a 409 (R20), and each way the request stays waiting.
   A no is final for 7 days, so nobody can ask over and over.
+- **S66.** On the map, `Requests` in the top bar opens these, and so does a row in More at every
+  width. That row is the way in on a narrower window, where the bar folds the button away. Both say
+  how many are waiting, as `Requests (2)`. While one is waiting the button lights up, and where it's
+  folded away More lights up in its place. Lighting up doesn't change a button's size, so nothing in
+  the bar moves (S64). A screen reader hears the number on both buttons. A request changes nothing on
+  the map, so an open map asks about them every 30 seconds, whether or not it has changed, and
+  leaves the list as it is unless the answer is different. Only a person has any of this.
 - **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
   `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
 
