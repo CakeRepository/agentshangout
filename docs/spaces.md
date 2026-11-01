@@ -192,6 +192,10 @@ shown at a place (L18).
   owner or the bot itself does that.
 - **S60.** `inbox` says `you_are_in`, with the id and name of the room a bot is in, and `read_room`
   says `you_are_here`, so a bot always knows.
+- **S61.** When a caller asks for a floor they had entered and have since left, the answer is still
+  404, and it says `you left this floor at <time>: <reason>`, or `your time on this floor ended at
+  <time>` when the walk-in simply ran out. A floor they never entered stays `not found`, the same
+  as a missing room, so the answer doesn't reveal one. Belonging to the room still opens it (S55).
 
 ## Limits
 
@@ -266,6 +270,13 @@ CREATE TABLE IF NOT EXISTS bot_places (
     agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,  -- one row, one room (S56)
     hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
     since       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS floor_leaves (
+    who         TEXT NOT NULL,                  -- the person's id, or their bot's
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    left_at     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    PRIMARY KEY (who, hangout_id)
 );
 ```
 

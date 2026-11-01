@@ -428,3 +428,68 @@ async fn out_a_bot_is_woken_by_mentions_up_to_its_cap() {
     let look = doorbell.look(&seen).await.unwrap();
     assert!(look.wake.is_empty(), "{:?}", look.wake);
 }
+
+// L21
+#[tokio::test]
+async fn a_walk_in_isnt_ended_by_reading_and_leaving_early_says_why() {
+    let server = Server::start().await;
+    let town = server.town().await;
+
+    // Fern belongs to the café, so coming back has nothing to end and says how to leave.
+    let back = server.tool(&town.fern, "come_back", json!({})).await;
+    assert_eq!(back["was_out"], false, "{back}");
+    assert_eq!(back["you_are_in"]["id"], town.cafe.as_str(), "{back}");
+    let reason = text(&back["reason"]);
+    assert!(reason.contains("belong"), "{reason}");
+    assert!(reason.contains("go_to_room"), "{reason}");
+
+    start_early_in(DAY, 30).await;
+    server.always_out(&town, 5).await;
+    let before = server.tool(&town.rover, "inbox", json!({})).await;
+    let home = text(&before["you_are_in"]["id"]);
+    let home_name = text(&before["you_are_in"]["name"]);
+
+    // A stay that simply runs out says when, and a room it never entered stays not found.
+    server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
+    assert!(server
+        .state
+        .db
+        .set_visit_times(&town.cafe, &town.rover_id, now() - 120, now() - 1)
+        .unwrap());
+    let message =
+        server.refused(&town.rover, "read_room", json!({ "hangout_id": town.cafe })).await;
+    assert!(message.contains("your time on this floor ended at"), "{message}");
+    assert_eq!(
+        server.refused(&town.rover, "read_room", json!({ "hangout_id": "no-such-room" })).await,
+        "not found"
+    );
+
+    server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
+    let out = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(out["you_are_in"]["id"], town.cafe.as_str(), "{out}");
+    assert_eq!(out["routine"]["out_at"], town.cafe.as_str(), "{out}");
+    assert!(out["last_left"].is_null(), "{out}");
+
+    // Reading home, listing rooms and inbox don't send it back.
+    server.tool(&town.rover, "read_room", json!({ "hangout_id": home })).await;
+    server.tool(&town.rover, "list_hangouts", json!({})).await;
+    server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str());
+
+    let said =
+        server.tool(&town.rover, "say", json!({ "hangout_id": home, "text": "back home" })).await;
+    assert_eq!(said["left_floor"]["hangout_id"], town.cafe.as_str(), "{said}");
+    assert!(text(&said["left_floor"]["reason"]).contains("you went to"), "{said}");
+    assert!(text(&said["left_floor"]["reason"]).contains(&home_name), "{said}");
+    assert!(text(&said["left_floor"]["at"]).ends_with('Z'), "{said}");
+
+    let inbox = server.tool(&town.rover, "inbox", json!({})).await;
+    assert!(inbox["routine"]["out_at"].is_null(), "{inbox}");
+    assert_eq!(inbox["you_are_in"]["id"], home.as_str(), "{inbox}");
+    assert_eq!(inbox["last_left"]["hangout_id"], town.cafe.as_str(), "{inbox}");
+    assert!(text(&inbox["last_left"]["reason"]).contains("you went to"), "{inbox}");
+    let message =
+        server.refused(&town.rover, "read_room", json!({ "hangout_id": town.cafe })).await;
+    assert!(message.contains("you left this floor at"), "{message}");
+    assert!(message.contains("you went to"), "{message}");
+}

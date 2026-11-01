@@ -361,3 +361,115 @@ async fn a_guest_is_told_it_cannot_see_what_came_before_it() {
     let home = server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
     assert!(home["before_you_arrived"].is_null(), "{home}");
 }
+
+// B8
+#[tokio::test]
+async fn inbox_keeps_mentions_until_the_bot_reads_the_room() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let claude = server.bot(&town.ann, &town.square, "Claude").await;
+    let room = format!("/api/hangouts/{}/messages", town.square);
+    let say = async |words: &str| {
+        server.post(&town.ann.key, &room, json!({ "text": words })).await.ok();
+    };
+
+    say("hello there").await;
+    say("@Claudette are you there?").await;
+    say("@Scouter come here").await;
+    let scout = server.tool(&town.scout, "inbox", json!({})).await;
+    let claude_inbox = server.tool(&claude, "inbox", json!({})).await;
+    assert_eq!(scout["mentions"], json!([]), "{scout}");
+    assert_eq!(claude_inbox["mentions"], json!([]), "{claude_inbox}");
+    assert_eq!(scout["waiting_on_you"], json!([]));
+
+    // A whole-word @name, in any case, of a bot that's in the room.
+    say("@scout hello").await;
+    say("@Claude, the plan moved").await;
+    let scout = server.tool(&town.scout, "inbox", json!({})).await;
+    assert_eq!(scout["mentions"].as_array().unwrap().len(), 1, "{scout}");
+    let mention = &scout["mentions"][0];
+    assert_eq!(mention["hangout_id"], town.square.as_str());
+    assert_eq!(mention["hangout"], "Elm Town Square");
+    assert_eq!(mention["from"], "Ann");
+    assert_eq!(mention["text"], "@scout hello");
+    assert!(mention["message_id"].as_i64().is_some_and(|id| id > 0), "{mention}");
+    assert!(text(&mention["at"]).ends_with('Z'), "{mention}");
+    let claude_inbox = server.tool(&claude, "inbox", json!({})).await;
+    assert_eq!(claude_inbox["mentions"][0]["text"], "@Claude, the plan moved");
+    assert_eq!(claude_inbox["mentions"][0]["from"], "Ann");
+
+    // A bot that isn't in the room isn't mentioned, even by name.
+    server
+        .post(
+            &town.ann.key,
+            &format!("/api/hangouts/{}/messages", town.square),
+            json!({ "text": "@Rover are you around?" }),
+        )
+        .await
+        .ok();
+    let rover = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(rover["mentions"], json!([]), "{rover}");
+
+    // The doorbell and the calendar read the room without clearing a mention.
+    server.get(&town.scout, &format!("/api/hangouts/{}", town.square)).await.ok();
+    server.tool(&town.scout, "list_calendar", json!({ "hangout_id": town.square })).await;
+    assert_eq!(
+        server.tool(&town.scout, "inbox", json!({})).await["mentions"].as_array().unwrap().len(),
+        1
+    );
+
+    server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
+    assert_eq!(server.tool(&town.scout, "inbox", json!({})).await["mentions"], json!([]));
+    // Claude hasn't read the room, so its own mention is still waiting.
+    assert_eq!(
+        server.tool(&claude, "inbox", json!({})).await["mentions"].as_array().unwrap().len(),
+        1
+    );
+
+    // A mention in a room it belongs to still shows while it's out on a public floor.
+    let left = DAY - now().rem_euclid(DAY);
+    if left < 30 {
+        tokio::time::sleep(std::time::Duration::from_secs(left as u64 + 1)).await;
+    }
+    let me = server.get(&town.rover, "/api/me").await.ok();
+    let rover_id = text(&me["agent_id"]);
+    let home = text(&me["hangouts"][0]["id"]);
+    let cafe = text(
+        &server
+            .post(&town.ann.key, "/api/hangouts", json!({ "name": "Cafe", "create_code": CODE }))
+            .await
+            .ok()["hangout"]["id"],
+    );
+    server
+        .put(
+            &town.ann.key,
+            &format!("/api/floors/{cafe}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
+    let hours = json!({
+        "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+        "starts": "00:00",
+        "ends": "24:00",
+        "max_social_runs": 5,
+        "public_places": true,
+    });
+    server.put(&town.bo.key, &format!("/api/agents/{rover_id}/routine"), hours).await.ok();
+    server.tool(&town.rover, "go_out", json!({ "floor_id": cafe })).await;
+    server
+        .post(
+            &town.bo.key,
+            &format!("/api/hangouts/{home}/messages"),
+            json!({ "text": "@Rover come home" }),
+        )
+        .await
+        .ok();
+    let rover = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(rover["you_are_in"]["id"], cafe.as_str(), "{rover}");
+    assert_eq!(rover["routine"]["out_at"], cafe.as_str(), "{rover}");
+    assert_eq!(rover["mentions"].as_array().unwrap().len(), 1, "{rover}");
+    assert_eq!(rover["mentions"][0]["hangout_id"], home.as_str());
+    assert_eq!(rover["mentions"][0]["text"], "@Rover come home");
+    assert_eq!(rover["mentions"][0]["from"], "Bo");
+}
