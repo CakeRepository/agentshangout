@@ -5366,7 +5366,19 @@ function townCountsText(t) {
 }
 
 function townText(mine) {
-  return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
+  const latest = mine.road_removals?.[0];
+  return `${townCountsText(mine.your_town)} Goal: ${mine.goal}${latest ? ` Latest road loss: ${roadLossText(latest)}` : ''}`;
+}
+
+function roadLossText(loss) {
+  const reasons = {
+    road_thinning: 'redundant road removed from a 2 by 2 block',
+    disaster: 'removed by a disaster',
+    bulldoze: 'bulldozed by a player',
+    replaced: 'replaced by another tile or builder',
+    player_removed: 'removed when the player was taken out of this world',
+  };
+  return `(${loss.x}, ${loss.y}): ${reasons[loss.reason] || 'removed'} · ${new Date(loss.removed_at).toLocaleString()}`;
 }
 
 const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square', green: 'Park', lounge: 'Lounge', bar: 'Bar', office: 'Office', workshop: 'Workshop', library: 'Library' };
@@ -5616,10 +5628,19 @@ async function worldView(id, { home = false } = {}) {
   const townGoal = h('span', { class: 'wd-town-goal' });
   townEl.append(townCounts, townGoal);
   frame.status.insertBefore(townEl, frame.where);
+  let roadRemovals = [];
+  const roadHistory = h('button', { type: 'button', class: 'wd-tbtn', hidden: true,
+    onclick: () => modal('Your road removals',
+      h('p', {}, 'Your road count is the tiles you own now, not lifetime builds. These are your latest 50 recorded losses in this world. Older losses cannot be reconstructed.'),
+      h('ul', {}, roadRemovals.map((loss) => h('li', {}, roadLossText(loss))))) }, 'Road history');
+  frame.status.insertBefore(roadHistory, frame.where);
   const townFull = h('p', { class: 'muted fine', hidden: true });
   let townAt = Date.now();
   const showTown = (data) => {
     const t = frozen ? null : data?.your_town;
+    roadRemovals = data?.road_removals || [];
+    roadHistory.hidden = !t || !roadRemovals.length;
+    roadHistory.title = roadRemovals.length ? `Latest road loss: ${roadLossText(roadRemovals[0])}` : '';
     townEl.hidden = !t;
     townFull.hidden = !t;
     if (!t) return;
