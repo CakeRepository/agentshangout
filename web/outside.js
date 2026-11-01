@@ -140,6 +140,8 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
   const undoButton = dockButton('Undo', () => undoLast());
   const nightButton = dockButton('See it at night', () => setNight(!night));
   const doneButton = dockButton('Done', () => finish());
+  const editorsButton = dockButton('Approved people', () => approvedPeople());
+  editorsButton.hidden = true;
   const nudges = h('span', { class: 'build-nudge', role: 'group', 'aria-label': 'Move it one cell' },
     NUDGES.map(([glyph, word, dx, dy]) => h('button', {
       type: 'button',
@@ -149,7 +151,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     }, glyph)));
   const dock = h('div', { class: 'wd-bar build-dock outside-dock', role: 'toolbar', 'aria-label': 'Build outside', hidden: true },
     sayHere,
-    h('span', { class: 'build-dock-buttons' }, nudges, turnButton, putButton, cancelButton, catalogButton, seeButton, undoButton, nightButton, doneButton));
+    h('span', { class: 'build-dock-buttons' }, nudges, turnButton, putButton, cancelButton, catalogButton, seeButton, undoButton, nightButton, editorsButton, doneButton));
   frame.root.append(dock);
 
   // The stage: one canvas over the map's well. The map keeps going underneath.
@@ -383,6 +385,35 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     const ok = await save(back, { remember: false });
     if (ok) tell('Undone.');
     else undo = [...undo, back];
+  }
+
+  async function approvedPeople() {
+    const url = `/api/places/${encodeURIComponent(tile.x)}/${encodeURIComponent(tile.y)}/editors`;
+    const holder = h('div', { class: 'stack' });
+    const dialog = modal('Approved people', holder);
+    holder.append(h('p', {}, 'You and your bots can edit your house. People you approve and their bots can edit it too. This does not let them read private conversations.'));
+    const rows = h('div', { class: 'stack' });
+    holder.append(rows);
+    async function load() {
+      try {
+        const [grants, known] = await Promise.all([api(url), api('/api/friends')]);
+        const approved = new Set(grants.editors.map((person) => person.id));
+        const people = new Map([...known.friends, ...grants.editors].map((person) => [person.id, person]));
+        rows.replaceChildren(...[...people.values()].map((person) => h('div', { class: 'row' },
+          h('span', {}, person.name),
+          h('button', { type: 'button', onclick: async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            try {
+              await api(`${url}/${encodeURIComponent(person.id)}`, { method: approved.has(person.id) ? 'DELETE' : 'PUT' });
+              await load();
+            } catch (error) { say(error.message); button.disabled = false; }
+          } }, approved.has(person.id) ? 'Remove approval' : 'Approve'))));
+        if (!people.size) rows.append(h('p', {}, 'People you share a room or city with will appear here.'));
+      } catch (error) { rows.replaceChildren(h('p', { class: 'error' }, error.message)); }
+    }
+    holder.append(h('button', { type: 'button', onclick: () => dialog.close() }, 'Done'));
+    await load();
   }
 
   function askStartOver() {
@@ -1421,11 +1452,21 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
       change(doc);
       return doc;
     };
+    // E13, E16: where it fits round what's in the yard, nearest where it stands now, or null.
     const resized = (doc, w, d) => {
       const now = bodyOf(kind, doc);
-      const x = clamp(Math.round(now.x + now.w / 2 - w / 2), 1, GRID - 1 - w);
-      const y = clamp(Math.round(now.y + now.d / 2 - d / 2), 1, GRID - 1 - d);
-      return { x, y, w, d, floors: now.floors };
+      const cx = now.x + now.w / 2 - w / 2;
+      const cy = now.y + now.d / 2 - d / 2;
+      let best = null;
+      for (let y = 1; y + d <= GRID - 1; y++) {
+        for (let x = 1; x + w <= GRID - 1; x++) {
+          if (!bodyFits(doc, { x, y, w, h: d })) continue;
+          const far = (x - cx) ** 2 + (y - cy) ** 2;
+          if (!best || far < best.far) best = { x, y, far };
+        }
+      }
+      if (!best) return null;
+      return { x: best.x, y: best.y, w, d, floors: now.floors };
     };
     const usualBody = bodyOf(kind, null);
     const members = SIZES.map(([word, label, w, d]) => {
@@ -1436,7 +1477,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
           if ((bodyOf(kind, doc).floors || 1) > 1) doc.body = { ...usual, floors: bodyOf(kind, doc).floors };
           else delete doc.body;
         } else {
-          doc.body = resized(doc, w, d);
+          doc.body = resized(doc, w, d) || doc.body;
         }
       };
       return catalogTile({
@@ -1446,7 +1487,13 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
         lines: [`${dims.w} by ${dims.d} cells`],
         // A size that is what the place has anyway is only the Standard one (a lounge is 12 wide already).
         pressed: body.w === dims.w && body.d === dims.d && (w === null || !(usualBody.w === w && usualBody.d === d)),
-        onclick: () => commit(edit(make), `${label}.`),
+        onclick: () => {
+          if (w !== null && !resized(baseDoc(), w, d)) {
+            tell(`There isn't room for a ${label.toLowerCase()} building here: move or take out something in the yard first.`);
+            return;
+          }
+          commit(edit(make), `${label}.`);
+        },
       });
     });
     for (const floors of [1, 2, 3]) {
@@ -1972,12 +2019,13 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     try {
       const got = await api(urlOf());
       if (!active || era !== session) return;
-      if (got.yours === false) {
+      if (got.can_edit === false || (got.can_edit === undefined && got.yours === false)) {
         close();
-        say('Only the owner can change the outside.');
+        say('Only the owner and approved people can edit this house.');
         return;
       }
       kind = got.kind || kind;
+      editorsButton.hidden = !(got.yours && kind === 'house');
       // E36: the answer says which tile it's stored on. Everything from here on goes under that one.
       if (isWhole(got.x) && isWhole(got.y) && (got.x !== tile.x || got.y !== tile.y)) {
         tile = { x: got.x, y: got.y };

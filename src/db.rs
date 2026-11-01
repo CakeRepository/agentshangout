@@ -801,7 +801,51 @@ CREATE INDEX IF NOT EXISTS world_more_places_by_player ON world_more_places (wor
 CREATE VIEW IF NOT EXISTS world_every_place AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_places
     UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
+-- W97: a road loss belongs to its former builder, and is recorded with the tile change.
+CREATE TABLE IF NOT EXISTS world_road_removals (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    world_id    TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    player_id   INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    built_at    INTEGER NOT NULL,
+    removed_at  INTEGER NOT NULL,
+    world_step  INTEGER NOT NULL,
+    reason      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS world_road_removals_by_player
+    ON world_road_removals (world_id, player_id, id DESC);
+-- L42, L43: immutable proposals; decisions use a compare-and-set before applying.
+CREATE TABLE IF NOT EXISTS project_changes (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(space_id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    action TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    decided_by TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_changes_pending ON project_changes(project_id, status, created_at);
+-- E37: house editing is a person's explicit grant, shared with that person's bots.
+CREATE TABLE IF NOT EXISTS house_editors (
+    player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (player_id, person_id)
+);
+
 "#;
+
+#[derive(Debug, Serialize)]
+pub struct RoadRemoval {
+    pub x: u16,
+    pub y: u16,
+    pub built_at: i64,
+    pub removed_at: i64,
+    pub world_step: i64,
+    pub reason: String,
+}
 
 /// E30: how many outsides one player keeps waiting for each kind of place, after their places come
 /// down. Putting a place up takes the newest, so this is only what could pile up behind it.
@@ -3511,6 +3555,40 @@ impl Db {
         Ok(())
     }
 
+    /// E29: opting out ends all public memberships and visits together, with a reason for the bot.
+    pub fn leave_public_rooms(&self, agent_id: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let rooms = strings(&tx,
+            "SELECT f.hangout_id FROM floors f WHERE f.access = 'public' AND (
+                EXISTS (SELECT 1 FROM room_agents r WHERE r.hangout_id = f.hangout_id AND r.agent_id = ?1)
+                OR EXISTS (SELECT 1 FROM floor_visits v WHERE v.hangout_id = f.hangout_id
+                           AND (v.who = ?1 OR v.agent_id = ?1)))", [agent_id])?;
+        for room in &rooms {
+            tx.execute(
+                "DELETE FROM room_agents WHERE hangout_id = ?1 AND agent_id = ?2",
+                params![room, agent_id],
+            )?;
+            tx.execute(
+                "DELETE FROM floor_visits WHERE hangout_id = ?1 AND (who = ?2 OR agent_id = ?2)",
+                params![room, agent_id],
+            )?;
+            tx.execute(
+                "DELETE FROM bot_places WHERE hangout_id = ?1 AND agent_id = ?2",
+                params![room, agent_id],
+            )?;
+            remember_leave(
+                &tx,
+                agent_id,
+                room,
+                now,
+                "public rooms require conversations; your owner turned them off or paused you",
+            )?;
+        }
+        tx.commit()?;
+        Ok(rooms)
+    }
+
     /// Replaces a bot's token. Its public player's token goes in the same step (W3): the new bot
     /// token gets a new one by joining again.
     pub fn set_agent_token(&self, agent_id: &str, token_hash: &str) -> rusqlite::Result<()> {
@@ -4008,6 +4086,111 @@ impl Db {
                 |row| Ok((space_from_row(row)?, row.get(6)?)),
             )
             .optional()
+    }
+
+    /// L42, L43: reserve a bounded pending proposal, under one database lock.
+    pub fn propose_project_change(
+        &self,
+        change: &serde_json::Value,
+        at: i64,
+    ) -> rusqlite::Result<bool> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM project_changes WHERE created_at <= ?", [at - 7 * 86_400])?;
+        Ok(conn.execute(
+            "INSERT INTO project_changes (id, project_id, agent_id, reason, action, arguments, created_at)
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+             WHERE (SELECT COUNT(*) FROM project_changes WHERE agent_id = ?3 AND status = 'pending' AND created_at > ?8) < 5
+               AND (SELECT COUNT(*) FROM project_changes WHERE project_id = ?2 AND status = 'pending' AND created_at > ?8) < 20",
+            params![change["id"].as_str(), change["project_id"].as_str(), change["agent_id"].as_str(),
+                    change["reason"].as_str(), change["action"].as_str(), change["arguments"].to_string(), at, at - 86_400],
+        )? == 1)
+    }
+
+    pub fn project_changes(
+        &self,
+        agent_id: &str,
+        at: i64,
+    ) -> rusqlite::Result<Vec<serde_json::Value>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT c.id, c.project_id, c.agent_id, a.name, c.reason, c.action, c.arguments,
+                    c.status, c.decided_by, c.created_at
+             FROM project_changes c JOIN agents a ON a.id = c.agent_id
+             WHERE c.created_at > ?2 AND (c.agent_id = ?1 OR EXISTS
+               (SELECT 1 FROM room_agents r WHERE r.hangout_id = c.project_id AND r.agent_id = ?1))
+             ORDER BY c.created_at, c.id",
+        )?;
+        let rows = stmt.query_map(params![agent_id, at - 7 * 86_400], |row| {
+            let status: String = row.get(7)?;
+            let created: i64 = row.get(9)?;
+            let arguments: String = row.get(6)?;
+            Ok(serde_json::json!({
+                "id": row.get::<_, String>(0)?, "project_id": row.get::<_, String>(1)?,
+                "agent_id": row.get::<_, String>(2)?, "proposed_by": row.get::<_, String>(3)?,
+                "reason": row.get::<_, String>(4)?, "action": row.get::<_, String>(5)?,
+                "arguments": serde_json::from_str::<serde_json::Value>(&arguments).unwrap_or_default(),
+                "status": if status == "pending" && created <= at - 86_400 { "expired" } else { &status },
+                "decided_by": row.get::<_, Option<String>>(8)?, "created_at": created,
+            }))
+        })?;
+        rows.collect()
+    }
+
+    pub fn decide_project_change(
+        &self,
+        id: &str,
+        by: &str,
+        status: &str,
+        at: i64,
+    ) -> rusqlite::Result<bool> {
+        Ok(self.conn().execute(
+            "UPDATE project_changes SET status = ?3, decided_by = ?2
+             WHERE id = ?1 AND status = 'pending' AND created_at > ?4",
+            params![id, by, status, at - 86_400],
+        )? == 1)
+    }
+
+    pub fn finish_project_change(&self, id: &str, status: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE project_changes SET status = ?2 WHERE id = ?1 AND status = 'applying'",
+            params![id, status],
+        )?;
+        Ok(())
+    }
+
+    pub fn house_editor(&self, player_id: i64, person_id: &str) -> rusqlite::Result<bool> {
+        self.conn().query_row(
+            "SELECT EXISTS(SELECT 1 FROM house_editors WHERE player_id = ? AND person_id = ?)",
+            params![player_id, person_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn house_editors(&self, player_id: i64) -> rusqlite::Result<Vec<Person>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT p.id, p.name, p.color FROM house_editors e JOIN people p ON p.id = e.person_id WHERE e.player_id = ? ORDER BY p.name, p.id")?;
+        let rows = stmt.query_map([player_id], person_from_row)?;
+        rows.collect()
+    }
+
+    pub fn set_house_editor(
+        &self,
+        player_id: i64,
+        person_id: &str,
+        approved: bool,
+    ) -> rusqlite::Result<()> {
+        if approved {
+            self.conn().execute(
+                "INSERT OR IGNORE INTO house_editors (player_id, person_id) VALUES (?, ?)",
+                params![player_id, person_id],
+            )?;
+        } else {
+            self.conn().execute(
+                "DELETE FROM house_editors WHERE player_id = ? AND person_id = ?",
+                params![player_id, person_id],
+            )?;
+        }
+        Ok(())
     }
 
     /// The projects whose first floor this bot is in, oldest first, with the bot that started each.
@@ -8219,6 +8402,7 @@ fn q_write_changes(
     world_id: &str,
     changes: &[Change],
     now: i64,
+    reason: &str,
 ) -> rusqlite::Result<()> {
     let mut set = conn.prepare_cached(
         "INSERT INTO world_tiles (world_id, x, y, kind, level, player_id, built_at)
@@ -8270,6 +8454,20 @@ fn q_write_changes(
         Ok(())
     };
     for change in changes {
+        let (pos, kind, player, cause) = match change {
+            Change::Set(pos, tile) => (*pos, tile.kind.as_str(), tile.player, "replaced"),
+            Change::Remove(pos) => (*pos, "", None, reason),
+        };
+        conn.execute(
+            "INSERT INTO world_road_removals
+                (world_id, player_id, x, y, built_at, removed_at, world_step, reason)
+             SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?4, w.step, ?5
+             FROM world_tiles t JOIN worlds w ON w.id = t.world_id
+             WHERE t.world_id = ?1 AND t.x = ?2 AND t.y = ?3 AND t.kind = 'road'
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)
+               AND (?6 <> 'road' OR t.player_id IS NOT ?7)",
+            params![world_id, pos.0, pos.1, now, cause, kind, player.map(|id| id as i64)],
+        )?;
         match change {
             Change::Set((x, y), tile) if crate::world::NEWER_PLACES.contains(&tile.kind) => {
                 remove.execute(params![world_id, x, y])?;
@@ -8555,7 +8753,7 @@ fn insert_world_rows(conn: &Connection, new: &NewWorld) -> rusqlite::Result<()> 
         .iter()
         .map(|pos| Change::Set(*pos, Tile { kind: Kind::Road, level: 0, player: None }))
         .collect();
-    q_write_changes(conn, new.id, &changes, new.now)
+    q_write_changes(conn, new.id, &changes, new.now, "replaced")
 }
 
 /// A transaction on the worlds tables. Everything a move or a step reads and writes goes through
@@ -8611,7 +8809,17 @@ impl WorldTx<'_> {
         changes: &[Change],
         now: i64,
     ) -> rusqlite::Result<()> {
-        q_write_changes(&self.tx, world_id, changes, now)
+        q_write_changes(&self.tx, world_id, changes, now, "bulldoze")
+    }
+
+    pub fn write_changes_because(
+        &self,
+        world_id: &str,
+        changes: &[Change],
+        now: i64,
+        reason: &str,
+    ) -> rusqlite::Result<()> {
+        q_write_changes(&self.tx, world_id, changes, now, reason)
     }
 
     pub fn world_player(
@@ -9803,6 +10011,30 @@ impl Db {
         Ok(tiles)
     }
 
+    /// W97: only this builder's losses, newest first, with bounded response size.
+    pub fn road_removals(
+        &self,
+        world_id: &str,
+        player_id: i64,
+    ) -> rusqlite::Result<Vec<RoadRemoval>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare_cached(
+            "SELECT x, y, built_at, removed_at, world_step, reason FROM world_road_removals
+             WHERE world_id = ?1 AND player_id = ?2 ORDER BY id DESC LIMIT 50",
+        )?;
+        let rows = stmt.query_map(params![world_id, player_id], |row| {
+            Ok(RoadRemoval {
+                x: row.get(0)?,
+                y: row.get(1)?,
+                built_at: row.get(2)?,
+                removed_at: row.get(3)?,
+                world_step: row.get(4)?,
+                reason: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     // Players
 
     pub fn player(&self, id: i64) -> rusqlite::Result<Option<PlayerRow>> {
@@ -10012,6 +10244,15 @@ impl Db {
     ) -> rusqlite::Result<usize> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO world_road_removals
+                (world_id, player_id, x, y, built_at, removed_at, world_step, reason)
+             SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?3, w.step, 'player_removed'
+             FROM world_tiles t JOIN worlds w ON w.id = t.world_id
+             WHERE t.world_id = ?1 AND t.player_id = ?2 AND t.kind = 'road'
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)",
+            params![world_id, player_id, crate::now()],
+        )?;
         let down = tx.execute(
             "DELETE FROM world_tiles WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],

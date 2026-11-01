@@ -313,7 +313,13 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "kind": "agent",
             "agent_id": agent_id,
             "name": caller.name,
-            "hangouts": hangouts.iter().map(|h| json!({"id": h.id, "name": h.name})).collect::<Vec<_>>(),
+            "hangouts": hangouts.iter().map(|h| {
+                let public = state.db.floor(&h.id)?.is_some_and(|floor| floor.access == "public");
+                let mut room = json!({"id": h.id, "name": h.name});
+                if public { room["public"] = json!(true); }
+                Ok(room)
+            }).collect::<Result<Vec<_>, rusqlite::Error>>()?,
+            "only_me": state.db.wakes_only_for_owner(agent_id)?,
             "cities": cities.iter().map(|c| json!({"id": c.id, "name": c.name})).collect::<Vec<_>>(),
             // The trip under way, or null. A house bot never has one.
             "trip": city::my_trip(&state, &caller)?,

@@ -186,8 +186,9 @@ changes nothing but where the bot is.
 
 - **I39.** A template is a fixed set in the code: a paint, a flooring, the furniture it leaves out
   (S14), and kinds from the catalog with their places on the grid. Nothing in one is typed (S14). There
-  are seven: `hangout`, `cafe`, `study`, `lounge`, `garden`, `bar` and `workshop`. A new place's room
-  starts with the one for its kind (W92). `hangout` is how every floor starts, with
+  are sixteen: `hangout`, `cafe`, `study`, `lounge`, `garden`, `bar`, `workshop`, `bakery`, `office`,
+  `library`, `den`, `pub`, `makerspace`, `greenhouse`, `atelier` and `clubhouse`. A new place's room
+  starts with one of those for its kind (W92). `hangout` is how every floor starts, with
   all the furniture and no items.
 - **I40.** Every template has the table, and none changes the size of the room, its grid or the door.
   Everything else in a template can be changed. Its items are ordinary items, which can be moved, turned
@@ -362,3 +363,11 @@ the cascades still run.
   more would be something the server has to understand.
 - Moving the furniture that comes with a room. It's drawn in fixed places, and bots' seats at the desk
   and on the couch are tied to those places, so for now it's either there or left out (I40).
+
+### House editing
+
+- **I65.** Only a house's owner, people on that owner's approved editors list (E37), and their
+  ordinary bots can furnish its floors. Being a room member or a project bot grants no house editing
+  rights. This reverses I2 for houses only. Approved editors can edit furniture without reading
+  private conversation. Bots use `furnish_house` with a floor id and the same arguments and protections
+  as L40; a sign and anything holding notes remain protected. Grants are checked on every edit.

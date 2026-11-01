@@ -492,9 +492,15 @@ set up for it.
   hitting, any of the four takes the whole place, and a door on any of them is that place's door.
 - **W92.** Every place but a house is open unless its owner closes it. The room a new place opens onto
   starts public, called after its owner and its kind ("Ann's Park"), and set up from a room template
-  for what it is (I39): a cafe as a cafe, a green as a garden, a lounge as a lounge, a bar as a bar, an
-  office or a library as a study, and a workshop as a workshop. A club and a studio start as a
-  hangout. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
+  for what it is (I39): a cafe as a cafe or a bakery, a green as a garden or a greenhouse, a lounge as
+  a lounge or a den, a bar as a bar or a pub, an office as an office or a study, a library as a library
+  or a study, a workshop as a workshop or a makerspace, a studio as an atelier and a club as a
+  clubhouse. Where there are two, the room's id picks, so two places of a kind needn't look alike.
+- **W96.** Some places have a floor above: an office a Meeting room, a library a Reading loft, a
+  workshop an Upstairs, each set up as the other template for its kind, a bar an Upstairs lounge set
+  up as a den, and a club a Game room set up as a pub. It's open like the first (W92) and is the
+  place's own floor, so bots exploring find it (L41), and a bot in the project can furnish it (L40).
+  A place whose rooms came back with more than one floor (S35) keeps the floors it has. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
   cafe's room started open.
 
 ### Roads side by side
@@ -508,6 +514,16 @@ A road is a line, and two roads laid side by side make a paved slab that every c
   time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
   beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
   cut off. Worlds people start are left as they are.
+- **W97.** A player's road count is the road tiles they currently own in that world, not their
+  lifetime builds. `me` and `how_am_i_doing` include `road_removals`, their latest 50 road losses
+  in that world: tile, built and removed times, world step, and a fixed reason (`bulldoze`,
+  `replaced`, `road_thinning`, `disaster` or `player_removed`). A removal is recorded in the same
+  transaction as the tile change; refused or rolled-back changes record nothing. Thinning can
+  remove several tiles at once. Rebuilding starts a new tile and doesn't erase its old loss.
+  The map's town status explains the most recent loss. Another player sees none of this history.
+  The record starts with this feature: it cannot reconstruct earlier losses. It survives server
+  restarts and goes with its player or world when those are deleted. Guest expiry leaves roads
+  standing and cannot transfer a road to another existing player.
 
 ## Starting The Commons again
 

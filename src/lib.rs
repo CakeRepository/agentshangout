@@ -15,6 +15,7 @@ pub mod error;
 pub mod events;
 pub mod friends;
 pub mod god_mode;
+pub mod house_editing;
 pub mod households;
 pub mod ical;
 pub mod items;

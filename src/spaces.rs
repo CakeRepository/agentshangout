@@ -569,6 +569,61 @@ pub fn place_title(kind: &str) -> &'static str {
     }
 }
 
+/// W96: the floors above the first that a new place of this kind gets, as a name and a template. The
+/// one above is the other template for its kind, so the two floors don't look alike.
+pub fn upper_floors(kind: &str, first: &str) -> Vec<(&'static str, &'static str)> {
+    let other = items::templates_for_place(kind).iter().copied().find(|word| *word != first);
+    match kind {
+        "office" => other.map(|template| ("Meeting room", template)).into_iter().collect(),
+        "library" => other.map(|template| ("Reading loft", template)).into_iter().collect(),
+        "workshop" => other.map(|template| ("Upstairs", template)).into_iter().collect(),
+        "bar" => vec![("Upstairs lounge", "den")],
+        "club" => vec![("Game room", "pub")],
+        _ => Vec::new(),
+    }
+}
+
+/// W96: a new place's floors above the first, open and set up, unless its space has more than its
+/// first floor already, as one that came back does (S35).
+pub fn build_upper_floors(
+    state: &AppState,
+    caller: &Caller,
+    space_id: &str,
+    kind: &str,
+) -> ApiResult<()> {
+    let floors = state.db.floors_of(space_id)?;
+    let [first] = floors.as_slice() else {
+        return Ok(());
+    };
+    let started = items::template_for_place(kind, &first.id).map_or("hangout", |one| one.template);
+    for (name, template) in upper_floors(kind, started) {
+        let new = NewFloor {
+            id: &auth::new_id(),
+            space_id,
+            name,
+            invite_code: &auth::new_invite_code(),
+            created_by: &caller.person_id,
+            now: now(),
+        };
+        let Some(floor) = state.db.add_floor(&new, MAX_FLOORS)? else {
+            break;
+        };
+        state.db.change_floor(&FloorChange {
+            id: &floor.id,
+            name: None,
+            access: Some("public"),
+            size: None,
+            paint: None,
+            flooring: None,
+            keep_bots_of: &caller.person_id,
+            private_only: &items::private_only(),
+        })?;
+        items::dress_floor(state, caller, &floor.id, template)?;
+    }
+    refresh_space(state, &state.db.floors_of(space_id)?);
+    Ok(())
+}
+
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
 /// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
 /// Someone with the god mode switch, on or off, isn't held to that limit (W79). S47: a new one behind a café starts
@@ -616,6 +671,7 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
     }
     if !square {
         items::dress_for_place(state, caller, &id, place)?;
+        build_upper_floors(state, caller, &id, place)?;
     }
     state.db.space(&id)?.ok_or_else(ApiError::not_found)
 }
@@ -996,6 +1052,11 @@ async fn change_floor(
         crate::events::note_place(&state, agent_id, &floor.id, "sent_home");
     }
     if opening {
+        for bot in state.db.agents_in(&floor.id, at)? {
+            if state.db.wakes_only_for_owner(&bot.id)? || state.db.doorbell_paused(&bot.id)? {
+                ops::leave_public_rooms(&state, &bot.id)?;
+            }
+        }
         ops::announce(&state, &floor.id, FLOOR_OPENED)?;
         // S25: no bot goes in front of strangers without its owner choosing it.
         if !taken_off.is_empty() {
@@ -1128,6 +1189,7 @@ async fn walk_in(
     let agent = match &body.agent_id {
         Some(agent_id) => {
             let agent = ops::own_agent(&state, &caller, agent_id, "send a bot in")?;
+            require_public_conversations(&state, agent_id, &floor.id)?;
             if state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
                 return Err(ApiError::conflict(format!("{} stays home", agent.name)));
             }
@@ -1221,9 +1283,20 @@ pub fn refresh_bot_place(state: &AppState, agent_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
+/// E29: public rooms require conversations; an owner may choose a different bot instead.
+pub fn require_public_conversations(state: &AppState, agent_id: &str, room: &str) -> ApiResult<()> {
+    if state.db.floor(room)?.is_some_and(|floor| floor.access == "public")
+        && (state.db.wakes_only_for_owner(agent_id)? || state.db.doorbell_paused(agent_id)?)
+    {
+        return Err(ApiError::conflict("public rooms require conversations: turn Room conversations on and unpause this bot in its settings, or choose a different bot"));
+    }
+    Ok(())
+}
+
 /// S58, S59: puts a bot in a room, off any floor it walked onto. On a trip it stays on the trip, and
 /// this is where it is once it's home. Both rooms reload.
 pub fn place_bot(state: &AppState, agent_id: &str, hangout_id: &str) -> ApiResult<()> {
+    require_public_conversations(state, agent_id, hangout_id)?;
     let now = now();
     let was = state.db.bot_place(agent_id, now)?;
     let dest = state
@@ -1253,6 +1326,7 @@ pub fn go_to(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
     let Some(agent_id) = caller.agent_id.as_deref() else {
         return Ok(());
     };
+    require_public_conversations(state, agent_id, hangout_id)?;
     let now = now();
     if state.db.bot_place(agent_id, now)?.as_deref() == Some(hangout_id) {
         // S61: it's doing something here, so it stays.

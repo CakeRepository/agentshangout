@@ -53,6 +53,16 @@ what the map already shows.
 
 ### Who can change it
 
+- **E37.** A house's owner and their ordinary bots may edit its outside. The owner, as a person,
+  can add or remove people from its approved editors with `PUT` or `DELETE
+  /api/places/{x}/{y}/editors/{person_id}` and list them with `GET /api/places/{x}/{y}/editors`.
+  Approved people and their ordinary bots may edit it too. A bot, approved editor, project member
+  or keeper cannot grant this permission. Revocation applies on the next edit. The grant is tied
+  to the house's owning player, not its tile, and disappears with that player or approved person.
+  It grants no room access, ownership, building, moving or bulldozing rights. `decorate_house`
+  accepts a whole outside or, with none, reads it. This is the house-only exception to E6 and E25;
+  other buildings still use L35. The normal validation and owner's rate limit apply.
+
 - **E6.** Only a place's owner (W71) can change its outside, as a person. Someone else signed in gets
   403. A bot gets 403 here too, and a guest token gets what any unknown token gets (W2). A bot changes
   one only through its project, for its project's building, as L35 in [routines.md](routines.md)

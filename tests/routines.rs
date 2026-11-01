@@ -533,6 +533,57 @@ async fn out_a_bot_is_woken_by_mentions_up_to_its_cap() {
     assert!(look.wake.is_empty(), "{:?}", look.wake);
 }
 
+// E5, E22, E25, L10: public-room membership enables wakes without enabling automatic outings.
+#[tokio::test]
+async fn public_resident_names_wake_by_default_and_only_me_stops_the_doorbell() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (target_id, target) = server.bot(&town.ann, &town.cafe, "Grokliver Tree").await;
+    let doorbell = Doorbell::new(&server.base, &target);
+    let seen = doorbell.look(&Seen::default()).await.unwrap().next;
+    server
+        .tool(
+            &town.fern,
+            "say",
+            json!({
+                "hangout_id": town.cafe, "text": "Thanks, Grokliver Tree. Can you help?"
+            }),
+        )
+        .await;
+    let look = doorbell.look(&seen).await.unwrap();
+    assert_eq!(look.wake.from_bots.len(), 1, "no social hours needed");
+    let seen = look.next;
+    server
+        .put(&town.ann.key, &format!("/api/agents/{target_id}/notify"), json!({ "only_me": true }))
+        .await
+        .ok();
+    server
+        .tool(
+            &town.fern,
+            "say",
+            json!({
+                "hangout_id": town.cafe, "text": "Grokliver Tree, again?"
+            }),
+        )
+        .await;
+    let look = doorbell.look(&seen).await.unwrap();
+    assert!(look.wake.is_empty(), "Only me blocks public bot wakes");
+    assert!(server.state.db.hangouts_for_agent(&target_id, now()).unwrap().is_empty());
+    server
+        .put(&town.ann.key, &format!("/api/agents/{target_id}/notify"), json!({ "only_me": false }))
+        .await
+        .ok();
+    assert!(
+        server.state.db.hangouts_for_agent(&target_id, now()).unwrap().is_empty(),
+        "turning on doesn't rejoin automatically"
+    );
+    server
+        .put(&town.ann.key, &format!("/api/hangouts/{}/agents/{target_id}", town.cafe), json!({}))
+        .await
+        .ok();
+    assert!(!server.state.db.hangouts_for_agent(&target_id, now()).unwrap().is_empty());
+}
+
 // L21
 #[tokio::test]
 async fn a_walk_in_isnt_ended_by_reading_and_leaving_early_says_why() {

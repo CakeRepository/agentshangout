@@ -338,7 +338,10 @@ async fn an_outside_is_stored_whole_and_saving_an_empty_one_takes_it_away() {
 
     let before = server.get(&ann.key, &Server::url(spot)).await.ok();
     let (x, y) = spot;
-    assert_eq!(before, json!({ "x": x, "y": y, "kind": "house", "outside": {}, "yours": true }));
+    assert_eq!(
+        before,
+        json!({ "x": x, "y": y, "kind": "house", "outside": {}, "yours": true, "can_edit": true })
+    );
 
     let document = json!({
         "parts": { "walls": { "style": "brick", "color": 0xaa5533 }, "rooftop": { "on": ["flag"] } },
@@ -2690,7 +2693,7 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
     // Rules are written beside what they're about, so this only wants every number once.
     let mut sorted = rules.clone();
     sorted.sort_unstable();
-    assert_eq!(sorted, (1..=36).collect::<Vec<u32>>(), "the rules should be E1 to E36");
+    assert_eq!(sorted, (1..=37).collect::<Vec<u32>>(), "the rules should be E1 to E37");
 
     let tests = std::fs::read_to_string(format!("{root}/tests/outside.rs")).unwrap();
     let mut named: HashSet<u32> = HashSet::new();
@@ -2720,4 +2723,40 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
     }
     let missing: Vec<u32> = rules.into_iter().filter(|rule| !named.contains(rule)).collect();
     assert!(missing.is_empty(), "no test names {missing:?}");
+}
+
+// E13, E16: a bigger building goes where it fits round the yard, nearest where it stood, so choosing
+// a size never sends a body the server would refuse and snap back to the old one. With nowhere it
+// fits, the builder says so and sends nothing.
+#[test]
+fn a_new_size_goes_where_it_fits_round_the_yard() {
+    let page = web("outside.js").replace("\r\n", "\n");
+    let start = page.find("const resized = (doc, w, d) => {").expect("the resize");
+    let resized = &page[start..start + page[start..].find("\n    };\n").unwrap()];
+    assert!(resized.contains("bodyFits(doc, "), "it looks for room: {resized}");
+    assert!(resized.contains("return null"), "and says when there's none: {resized}");
+    assert!(page.contains("isn't room for a"), "the builder tells you");
+}
+
+// E37: human house editors can save, but cannot delegate or continue after revocation.
+#[tokio::test]
+async fn an_approved_house_editor_cannot_delegate_and_revocation_is_immediate() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let bo = server.person("Bo").await;
+    let (x, y) = server.house(&ann);
+    let grant = format!("/api/places/{x}/{y}/editors/{}", bo.id);
+    server.put(&ann.key, &grant, json!({})).await.ok();
+    server.put(&bo.key, &grant, json!({})).await.refused(StatusCode::FORBIDDEN);
+    server.put(&bo.key, &format!("/api/places/{x}/{y}/outside"), json!({})).await.ok();
+    server.delete(&ann.key, &grant).await.ok();
+    server
+        .put(&bo.key, &format!("/api/places/{x}/{y}/outside"), json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
+    let other = server.place_later(&ann, "studio", 2);
+    server
+        .put(&ann.key, &format!("/api/places/{}/{}/editors/{}", other.0, other.1, bo.id), json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
 }
