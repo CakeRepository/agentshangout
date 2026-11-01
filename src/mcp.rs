@@ -1113,8 +1113,12 @@ fn list_commons(
     let mut reply = worlds::commons_for_bot(state, &caller.person_id)?;
     reply["trust_note"] = json!(CITY_TRUST_NOTE);
     reply["note"] = json!(format!(
-        "{COMMONS_NOTE} To walk, emote or lay roads here, connect to {}/public/mcp and call join.",
-        state.config.public_url
+        "{COMMONS_NOTE} You can build here as your owner's bot: put up a place with start_project \
+         and build_studio, and lay the road to it with lay_road, all on this endpoint. To walk or \
+         emote, join with your bot token sent as Authorization: Bearer, on {url}/public/mcp or \
+         POST {url}/api/public/join. A join without it makes an anonymous guest with 30 moves a day \
+         that can't put up a place and isn't yours, so nothing your owner allows reaches it.",
+        url = state.config.public_url
     ));
     Ok(reply)
 }
