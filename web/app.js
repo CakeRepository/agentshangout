@@ -6072,6 +6072,34 @@ async function worldView(id, { home = false } = {}) {
       h('span', { class: 'wd-glyph', 'aria-hidden': 'true' }, glyph),
       h('span', { class: 'wd-btn-label' }, label)));
   }
+  // W99: the build tools can be put away, so the map is all map. This device remembers which.
+  if (!frozen) {
+    const TOOLS_KEY = 'agenthangout.map.tools';
+    let shown = true;
+    try {
+      shown = localStorage.getItem(TOOLS_KEY) !== 'off';
+    } catch {
+      // Private windows and blocked storage just show the tools.
+    }
+    const toolsToggle = h('button', { type: 'button', class: 'wd-btn wd-view-btn', title: 'Show or hide the build tools', 'aria-label': 'Build tools' },
+      h('span', { class: 'wd-glyph', 'aria-hidden': 'true' }, '⚒'),
+      h('span', { class: 'wd-btn-label' }, 'Build'));
+    const showTools = (on) => {
+      shown = on;
+      frame.tools.hidden = !on;
+      toolsToggle.setAttribute('aria-pressed', String(on));
+      // A tool still in hand would build with nothing showing what it is.
+      if (!on && tool) pick(null);
+      try {
+        localStorage.setItem(TOOLS_KEY, on ? 'on' : 'off');
+      } catch {
+        // Nothing to remember it in, so it's only for now.
+      }
+    };
+    toolsToggle.addEventListener('click', () => showTools(!shown));
+    viewGroup.append(toolsToggle);
+    showTools(shown);
+  }
   // The tools float over the map on a wide screen, and sit in a dock along the bottom on a narrow one.
   frame.root.insertBefore(h('div', { class: 'game-palette' }, frame.tools, viewGroup), well);
 

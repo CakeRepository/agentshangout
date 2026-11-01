@@ -1296,3 +1296,17 @@ async fn a_parks_room_is_out_of_doors_and_a_cafes_has_walls() {
             || page.contains("if (look.outdoors) {\r\n    paintOutdoors(")
     );
 }
+
+// W99: the map's build tools can be put away and brought back, and the page remembers which.
+#[test]
+fn the_build_tools_can_be_put_away() {
+    let app = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = app.find("// W99: the build tools can be put away").expect("the toggle");
+    let toggle = &app[start..start + 1600];
+    assert!(toggle.contains("frame.tools.hidden = !on;"), "{toggle}");
+    assert!(toggle.contains("localStorage.setItem(TOOLS_KEY"), "it's remembered");
+    assert!(toggle.contains("if (!on && tool) pick(null);"), "a tool in hand is dropped");
+    assert!(toggle.contains("viewGroup.append(toolsToggle);"));
+    assert!(include_str!("../web/style.css")
+        .contains(".game-palette .wd-tools[hidden] { display: none; }"));
+}
