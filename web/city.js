@@ -159,17 +159,19 @@ const el = (tag, className, text) => {
 };
 
 // `stats` is a list of [key, label, amber], `live` adds the lamp that says the map is the city as it is
-// now, and `heading` is the tag the title is made with, for a page that has no heading of its own. Returns the pieces to fill in: `title` text, `actions`
-// at the right of the title bar, the LCD `outputs` by key, `tools` (a toolbar, when asked for), the
-// `host` the map is drawn in, and the status bar's `message` and `where`. The message isn't a live
-// region until a page makes it one, so hovering doesn't talk over a screen reader.
+// now, and `heading` is the tag the title is made with, for a page that has no heading of its own.
+// Returns the pieces to fill in: `back` at the far left of the title bar for the way back, `title`
+// text, `actions` at the right of the title bar, the LCD `outputs` by key, `tools` (a toolbar, when
+// asked for), the `host` the map is drawn in, and the status bar's `message` and `where`. The message
+// isn't a live region until a page makes it one, so hovering doesn't talk over a screen reader.
 export function windowFrame({ label, stats, tools = false, heading = 'span', live = false }) {
   const root = el('section', 'wd');
   root.setAttribute('aria-label', label);
+  const back = el('span', 'wd-title-actions wd-title-back');
   const title = el(heading, 'wd-title-text');
   const actions = el('span', 'wd-title-actions');
   const header = el('header', 'wd-title');
-  header.append(title, actions);
+  header.append(back, title, actions);
   root.append(header);
 
   const outputs = {};
@@ -211,7 +213,7 @@ export function windowFrame({ label, stats, tools = false, heading = 'span', liv
   where.setAttribute('aria-hidden', 'true');
   status.append(message, where);
   root.append(well, status);
-  return { root, title, actions, outputs, tools: toolbar, host, status, message, where };
+  return { root, back, title, actions, outputs, tools: toolbar, host, status, message, where };
 }
 
 // The map
