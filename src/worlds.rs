@@ -429,6 +429,15 @@ impl Runtime {
         true
     }
 
+    /// W52: someone is on the street as their own player now, so the person they were seen as goes
+    /// at once. True if there was one.
+    fn forget_person(&self, key: u64) -> bool {
+        let mut walkers = locked(&self.walkers);
+        let before = walkers.people.len();
+        walkers.people.retain(|person| person.key != key);
+        walkers.people.len() != before
+    }
+
     /// W36, W39: a listed agent was seen. A crawler's frog is shown for a while from now (`frog`).
     /// Returns whether a frog appeared that wasn't on the street, and how many sightings are
     /// due to be written to the database now, if it has been long enough since the last.
@@ -1164,7 +1173,15 @@ pub fn act_from(
     now: i64,
 ) -> ApiResult<Acted> {
     let god = god_mode_of(state, player)?;
-    act_as(state, player, god, address_of(state, headers), world_id, mv, now)
+    let acted = act_as(state, player, god, address_of(state, headers), world_id, mv, now)?;
+    // W52: a person whose own player just moved is on the street as that, and never twice.
+    if player.kind() == PlayerKind::Person
+        && world_id == COMMONS_ID
+        && state.worlds.forget_person(address_key(state, headers))
+    {
+        state.worlds.mark_stale(COMMONS_ID);
+    }
+    Ok(acted)
 }
 
 /// W76, W79: whether this is a person's own player, with their god mode on.
@@ -2427,6 +2444,11 @@ fn agent_of(headers: &HeaderMap) -> Option<world::AgentKind> {
     world::agent_kind(&String::from_utf8_lossy(head))
 }
 
+/// S53: a room's own route, `/api/hangouts/{id}`, which a page loads when it opens the room.
+fn is_a_room(path: &str) -> bool {
+    path.strip_prefix("/api/hangouts/").is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
 /// W52: a browser says this about a page's own fetch, and curl and bots don't. It is easy to fake,
 /// so a person on the street is a sighting, as a frog is (W39).
 fn is_a_page_watching(headers: &HeaderMap) -> bool {
@@ -2456,11 +2478,35 @@ fn signed_in_look(state: &AppState, headers: &HeaderMap) -> Option<Look> {
 /// W34-W45, W52: notes who passed through. Looks at the method, path, user agent and address, keeps
 /// none of them, and changes nothing about the reply (W38).
 pub fn note_request(state: &AppState, method: &Method, path: &str, headers: &HeaderMap, now: i64) {
+    // S53: a page opening a room takes the person it was seen as off the street.
+    if *method == Method::GET
+        && is_a_room(path)
+        && is_a_page_watching(headers)
+        && agent_of(headers).is_none()
+    {
+        if state.worlds.forget_person(address_key(state, headers)) {
+            state.worlds.mark_stale(COMMONS_ID);
+        }
+        return;
+    }
     let Some(place) = place_of(method, path) else {
         return;
     };
     let agent = agent_of(headers);
     let street = state.worlds.clone_commons_slot();
+    if agent.is_none() && is_a_page_watching(headers) {
+        // S53: a person is in one place at a time.
+        if matches!(place, Place::Commons) {
+            // Opening The Commons takes them out of every room, and those rooms reload.
+            if let Ok(caller) = auth::identify(headers, state) {
+                if !caller.is_agent() {
+                    for left in state.presence.forget_everywhere(&caller.person_id) {
+                        crate::ops::refresh(state, &left);
+                    }
+                }
+            }
+        }
+    }
     match (place, agent) {
         (Place::Commons, None)
             if is_a_page_watching(headers)

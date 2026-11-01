@@ -5452,3 +5452,29 @@ async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_an
     // A lane of 3 tiles goes anywhere, as long as it touches a road.
     server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
 }
+
+// W52
+#[tokio::test]
+async fn a_person_who_moves_is_on_the_street_once_as_their_own_player() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    fn as_her_page<'a>(request: Req<'a>, cookie: &str) -> Req<'a> {
+        request
+            .cookie(cookie)
+            .ip("198.51.100.7")
+            .ua("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140")
+            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-mode", "cors")
+    }
+    let page = |request| as_her_page(request, &ann.cookie);
+    // Looking before she has moved, she's a person on the street.
+    page(server.get(COMMONS_VIEW)).send().await.ok();
+    assert_eq!(server.state.worlds.people(now()).len(), 1);
+
+    // Once her own player moves, she's on the street as that, and the person she was is gone at once.
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    page(server.post(&format!("/api/worlds/{COMMONS}/act"), wave)).send().await.ok();
+    assert!(server.state.worlds.people(now()).is_empty(), "she shows twice");
+    page(server.get(COMMONS_VIEW)).send().await.ok();
+    assert!(server.state.worlds.people(now()).is_empty(), "looking again doesn't bring her back");
+}

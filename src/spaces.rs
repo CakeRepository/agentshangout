@@ -65,6 +65,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/spaces/public", get(public_floors))
         .route("/api/spaces/door", post(go_through_door))
         .route("/api/places/{x}/{y}", get(place_details))
+        .route("/api/hangouts/{id}/away", post(away))
         .route("/api/places/{x}/{y}/requests", post(ask_to_let_in))
         .route("/api/place-requests", get(place_requests))
         .route("/api/place-requests/{id}/answer", post(answer_place_request))
@@ -511,6 +512,21 @@ async fn answer_place_request(
         ops::refresh(&state, &floor.id);
     }
     Ok(Json(json!({ "ok": true, "status": status })))
+}
+
+/// S54: the page closed this room, so its person is out of it at once, and it reloads.
+async fn away(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    ops::require_human(&caller, "leave a room's presence: only people are present")?;
+    ops::require_room(&state, &caller, &id)?;
+    if state.presence.has_seen(&id, &caller.person_id, now()) {
+        state.presence.forget(&id, &caller.person_id);
+        ops::refresh(&state, &id);
+    }
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// S48: whether this space's building is a café or the town square (W82), whose owner needs no code
@@ -1175,9 +1191,19 @@ impl Presence {
     /// Notes a look at a floor. S41: anything too old to count goes first, and if it's still full of
     /// people who really are here, the oldest of them goes, so a flood costs nothing but a few
     /// sightings.
-    pub fn saw(&self, floor_id: &str, person_id: &str, now: i64) {
+    /// S53: a person is on one floor at a time, so this takes them off any other. Returns the floors
+    /// they were on, which should reload so the people there see them go.
+    pub fn saw(&self, floor_id: &str, person_id: &str, now: i64) -> Vec<String> {
         let mut sightings = self.sightings();
         sightings.retain(|_, seen| now - *seen <= PRESENT_SECS);
+        let left: Vec<String> = sightings
+            .keys()
+            .filter(|(floor, person)| person == person_id && floor != floor_id)
+            .map(|(floor, _)| floor.clone())
+            .collect();
+        for floor in &left {
+            sightings.remove(&(floor.clone(), person_id.to_string()));
+        }
         let key = (floor_id.to_string(), person_id.to_string());
         if sightings.len() >= MAX_SIGHTINGS && !sightings.contains_key(&key) {
             let oldest =
@@ -1187,6 +1213,19 @@ impl Presence {
             }
         }
         sightings.insert(key, now);
+        left
+    }
+
+    /// S53: off every floor, because they opened The Commons. Returns the floors they were on.
+    pub fn forget_everywhere(&self, person_id: &str) -> Vec<String> {
+        let mut sightings = self.sightings();
+        let left: Vec<String> = sightings
+            .keys()
+            .filter(|(_, person)| person == person_id)
+            .map(|(floor, _)| floor.clone())
+            .collect();
+        sightings.retain(|(_, person), _| person != person_id);
+        left
     }
 
     /// Whether this person has looked at this floor lately enough to count.
@@ -1214,7 +1253,10 @@ pub fn present(
     let Some(place) = floor.as_ref().filter(|_| !caller.is_agent()) else {
         return Vec::new();
     };
-    state.presence.saw(&place.floor.id, &caller.person_id, now);
+    // S53: the rooms they were in reload, so the people there see them go.
+    for left in state.presence.saw(&place.floor.id, &caller.person_id, now) {
+        ops::refresh(state, &left);
+    }
     people
         .iter()
         .filter(|person| state.presence.has_seen(&place.floor.id, &person.id, now))

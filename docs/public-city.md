@@ -232,7 +232,8 @@ The street shows who is really here. There are no made-up walkers.
   about its own fetch, `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: cors`, which curl and most
   agents don't send. That is easy to fake, so a person is a sighting, like a frog (W39). A listed
   user agent is never a person. Someone signed in counts like anyone, until their own player has
-  moved here lately and they're on the street as that. W42 applies: a generated name, nothing
+  moved here lately and they're on the street as that. Their own player moving takes the person they
+  were seen as off the street at once, so nobody shows twice. W42 applies: a generated name, nothing
   stored, and one address is one person. Someone signed in does wear their own look (C14), which is
   held in memory with the rest, and it's words with no name or id.
   At most 60 show at once, oldest leaving first. A person can't do anything.

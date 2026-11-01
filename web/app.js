@@ -3086,7 +3086,18 @@ async function roomView(id) {
   document.addEventListener('keydown', onKey, true);
 
   document.documentElement.classList.add('in-game');
+  // S54: leaving the room, or closing the page, takes this person out of it at once.
+  const goAway = () => {
+    try {
+      navigator.sendBeacon(`/api/hangouts/${encodeURIComponent(id)}/away`);
+    } catch {
+      // Without it, the look runs out in 45 seconds anyway.
+    }
+  };
+  addEventListener('pagehide', goAway);
   leaveRoom = () => {
+    removeEventListener('pagehide', goAway);
+    goAway();
     stream.close();
     stopClock();
     clearInterval(pollTimer);
