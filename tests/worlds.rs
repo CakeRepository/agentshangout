@@ -2175,6 +2175,7 @@ async fn a_crawler_fetching_a_page_is_shown_as_a_frog_on_a_road() {
 #[tokio::test]
 async fn every_listed_page_shows_a_crawler_and_nothing_else_does() {
     let server = Server::start().await;
+    let day = worlds::today(now());
     let places = [
         (Method::GET, "/", true),
         (Method::GET, "/worlds", true),
@@ -2209,7 +2210,9 @@ async fn every_listed_page_shows_a_crawler_and_nothing_else_does() {
     server.get("/").send().await;
     assert!(server.state.worlds.frogs(now()).is_empty());
     assert!(server.state.worlds.visitors(now()).is_empty());
-    assert!(server.state.db.sightings_on(worlds::today(now())).unwrap().is_empty());
+    for day in day..=worlds::today(now()) {
+        assert!(server.state.db.sightings_on(day).unwrap().is_empty());
+    }
 }
 
 // W36
@@ -2648,6 +2651,7 @@ async fn frogs_and_visitors_are_in_memory_only() {
     assert_eq!(server.state.worlds.frogs(now()).len(), 1);
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     // A new process, on the same database, starts with an empty street: only the daily count was kept.
+    let day = worlds::today(now());
     let db_file = std::env::temp_dir().join(format!("agenthangout-street-{}-{}.db", std::process::id(), now()));
     let path = db_file.to_str().unwrap().to_string();
     {
@@ -2659,7 +2663,11 @@ async fn frogs_and_visitors_are_in_memory_only() {
     let second = Server::boot(Db::open(&path).unwrap(), None, None).await;
     assert!(second.state.worlds.frogs(now()).is_empty());
     assert!(second.state.worlds.visitors(now()).is_empty());
-    assert_eq!(second.state.db.sightings_on(worlds::today(now())).unwrap().len(), 1);
+    let mut rows = Vec::new();
+    for day in day..=worlds::today(now()) {
+        rows.extend(second.state.db.sightings_on(day).unwrap());
+    }
+    assert_eq!(rows.len(), 1);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{path}{suffix}"));
     }
