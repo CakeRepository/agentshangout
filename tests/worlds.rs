@@ -5815,3 +5815,73 @@ async fn a_person_who_moves_is_on_the_street_once_as_their_own_player() {
     page(server.get(COMMONS_VIEW)).send().await.ok();
     assert!(server.state.worlds.people(now()).is_empty(), "looking again doesn't bring her back");
 }
+
+// W94: an active strike with no affected tiles must not fall through to road cleanup.
+#[tokio::test]
+async fn an_empty_disaster_strike_does_not_run_road_cleanup() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    let builder = server
+        .state
+        .db
+        .player_by_token(&agenthangout::auth::hash_secret(&guest.token))
+        .unwrap()
+        .unwrap()
+        .id as u64;
+    // A slab of road, 4 across and 3 down, joined to the highway along one side.
+    let highway: Vec<(u16, u16)> = server
+        .tiles(COMMONS)
+        .into_iter()
+        .filter(|(_, tile)| tile.kind == Kind::Road && tile.player.is_none())
+        .map(|(pos, _)| pos)
+        .collect();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let tiles = server.tiles(COMMONS);
+    let (sx, sy) = highway
+        .iter()
+        .find_map(|&(hx, hy)| {
+            let at = (hx, hy.checked_add(1)?);
+            let slab: Vec<(u16, u16)> =
+                (0..4).flat_map(|dx| (0..3).map(move |dy| (at.0 + dx, at.1 + dy))).collect();
+            let joined = (0..4).all(|dx| highway.contains(&(hx + dx, hy)));
+            let open = slab
+                .iter()
+                .all(|pos| !tiles.contains_key(pos) && land.at(*pos).is_some_and(|g| g.is_open()));
+            (joined && open).then_some(at)
+        })
+        .expect("room for a slab beside the highway");
+    let slab: Vec<Change> = (0..4)
+        .flat_map(|dx| (0..3).map(move |dy| (sx + dx, sy + dy)))
+        .map(|pos| {
+            Change::Set(pos, world::Tile { kind: Kind::Road, level: 0, player: Some(builder) })
+        })
+        .collect();
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &slab, now()))
+        .unwrap();
+
+    let before = server.tiles(COMMONS);
+    let asked = (0..100)
+        .find(|step| {
+            let hits = world::strike(
+                world::COMMONS_SEED,
+                world::disaster_for(world::COMMONS_SEED, *step),
+                0,
+                world::COMMONS_SIZE,
+            );
+            world::strike_changes(&before, &highway, &hits, false).is_empty()
+        })
+        .expect("an empty first strike");
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| {
+            tx.start_disaster(COMMONS, asked)?;
+            tx.set_step(COMMONS, asked + world::OMEN_STEPS)
+        })
+        .unwrap();
+    assert_eq!(worlds::step_world(&server.state, COMMONS, now()).unwrap(), 0);
+    assert_eq!(server.tiles(COMMONS), before);
+}
