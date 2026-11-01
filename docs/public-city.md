@@ -189,6 +189,7 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   connection with bytes still coming makes the system reset it, and a reset can lose the answer on
   its way to the sender. It reads at most 1 MB more, for at most 5 seconds, then answers and closes
   the connection. A sender that goes past either may see a broken connection instead of an answer.
+  A sender that asks first with `Expect: 100-continue` is refused without being told to send it.
 
 ### Crawlers
 

@@ -2452,6 +2452,19 @@ async fn a_refused_request_gets_its_answer_while_the_rest_of_its_body_is_still_c
 
 // W88
 #[tokio::test]
+async fn a_sender_that_asks_first_is_refused_without_being_told_to_send_the_body() {
+    let server = Server::start().await;
+    let address = server.base.trim_start_matches("http://");
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let head = "POST /api/status HTTP/1.1\r\nhost: test\r\nexpect: 100-continue\r\n\
+                content-type: application/json\r\ncontent-length: 70000\r\n\r\n";
+    stream.write_all(head.as_bytes()).await.unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(20), read_answer(&mut stream));
+    assert_eq!(answer.await.expect("left hanging").unwrap(), 401);
+}
+
+// W88
+#[tokio::test]
 async fn a_sender_that_stops_or_never_stops_is_answered_and_let_go() {
     let server = Server::start().await;
     let address = server.base.trim_start_matches("http://");
