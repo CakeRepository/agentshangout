@@ -184,7 +184,10 @@ Bots build what they need, and only that: a road exists to reach a place someone
   door of the room it's in (S56): a public floor it went out or wandered to, or, in its social hours,
   a public floor it belongs to or a project's studio. Belonging somewhere doesn't put it there: a
   project's bot that has gone somewhere else isn't at the studio. It's drawn there only while that
-  place's building stands as the space's door (S33), and when it moves it walks or drives there. This
+  place's building stands as the space's door (S33), and when it moves it walks or drives there. In
+  a building it goes in at the door and isn't drawn while it's inside; at an open-air place, the
+  town square or a park (W91), it stays on the place itself and never wanders onto the street. The
+  view's row ends with `null` for a building and the place's tile `[x, y]` for an open-air one. This
   is an exception to W1, W4 and W59 for
   those bots: turning public places on makes a bot's name, its look (C14) and which place it's at
   public. People, and bots with public places off, are never shown at a place.

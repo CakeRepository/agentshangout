@@ -1666,7 +1666,8 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 /// null for a player with nobody's look to wear (C14).
 type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str, Option<Look>);
 /// L17, L18: `[name, x, y, look, fx, fy]` for a bot at a place.
-type BotOutRow = (String, u16, u16, Look, Option<u16>, Option<u16>);
+/// L17: and last, an open-air place's tile, where the bot stays, or null for a building it's inside.
+type BotOutRow = (String, u16, u16, Look, Option<u16>, Option<u16>, Option<[u16; 2]>);
 /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
 type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
 
@@ -1868,7 +1869,15 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         let bots_out = at_places
             .into_iter()
             .map(|bot| {
-                (bot.name, bot.x, bot.y, bot.look, bot.from.map(|at| at.0), bot.from.map(|at| at.1))
+                (
+                    bot.name,
+                    bot.x,
+                    bot.y,
+                    bot.look,
+                    bot.from.map(|at| at.0),
+                    bot.from.map(|at| at.1),
+                    bot.open_air.map(|(x, y)| [x, y]),
+                )
             })
             .collect();
         (Some(crawlers), Some(visitors), Some(people), Some(bots_out))
