@@ -1222,3 +1222,18 @@ async fn a_park_takes_two_by_two_tiles_and_any_of_them_is_the_park() {
     assert_eq!(server.tile((x, y)), None);
     assert_eq!(server.tile((x + 1, y + 1)), None);
 }
+
+// W91: the map keeps a big place's level, so it draws each tile as its own piece of one place and
+// a hover on any of them finds the place. With every level read as 0, a square's second tile drew
+// as a second square, and hovering it named no owner.
+#[test]
+fn the_map_keeps_the_level_of_a_big_places_tiles() {
+    let map = include_str!("../web/world.js").replace("\r\n", "\n");
+    let start = map.find("  applyTiles(list, animate) {").unwrap();
+    let body = &map[start..start + map[start..].find("\n  }\n").unwrap()];
+    let kept = body
+        .lines()
+        .find(|line| line.contains("nl[i] ="))
+        .expect("applyTiles sets each tile's level");
+    assert!(kept.contains("isBig(k)"), "a big place's level is read as 0: {kept}");
+}

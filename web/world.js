@@ -4753,7 +4753,8 @@ export class World {
         if (!k) continue;
         const i = y * n + x;
         nk[i] = k;
-        nl[i] = isZone(k) ? clamp(t[3] | 0, 0, 3) : 0;
+        // W91: a big place keeps its level, which says which of its tiles is the one it stands on.
+        nl[i] = isZone(k) || isBig(k) ? clamp(t[3] | 0, 0, 3) : 0;
       }
     }
     const changed = [];
