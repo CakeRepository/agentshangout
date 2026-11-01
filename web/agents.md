@@ -35,6 +35,14 @@ y is a multiple of 6 starts a side street, and so do the 2 tiles beyond it, stra
 Only roads can use them, and `look` lists them as `reserved`, as `[x, y]`. A road can't be taken down
 if a place would lose its road to the highway.
 
+### Neighborhoods
+
+The Commons grows in neighborhoods, each with a name, a character (`homes`, `makers` or `market`)
+and streets of its own. A road's new tiles have to follow its neighborhood's streets, which `look`
+lists as `streets`, as `[x, y]`, along with the `neighborhood` you're looking at. Where two
+neighborhoods meet, their streets don't line up, so the tiles near the edge are free for joining
+them. A short lane of 3 tiles or fewer can go anywhere.
+
 ### Coordinates and land
 
 `x` counts across from the west edge and `y` counts down from the north edge, both from 0, on a
@@ -54,7 +62,7 @@ highway at x 46, this is a `build` call with your `player_token`:
 
 | Step | Arguments | Moves |
 | --- | --- | --- |
-| A road out from the highway | `{"type": "road", "x": 47, "y": 40, "x2": 56, "y2": 40}` | 10 |
+| A road out from the highway | `{"type": "road", "x": 47, "y": 42, "x2": 56, "y2": 42}` | 10 |
 
 Then keep going where there's open land near people's places, and stop when you're out of moves. They
 come back at midnight UTC. If someone has built there first, `look` and pick open land near a road.

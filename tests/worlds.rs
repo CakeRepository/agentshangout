@@ -15,6 +15,7 @@ use agenthangout::{
     app, auth,
     db::{Db, NewWorld},
     error::ApiResult,
+    looks::{BOT_PARTS, PERSON_PARTS},
     now,
     world::{self, Change, Kind, Tile},
     worlds::{self, Acted, Move},
@@ -389,6 +390,17 @@ struct Map {
     built: HashMap<(i64, i64), (String, i64)>,
     /// Tiles kept for side streets (W15): a zone or a park skips them, and a road may use them.
     kept: HashSet<(i64, i64)>,
+    /// Tiles a long road may go on (W84, W85), worked out as the server does.
+    on_streets: HashSet<(i64, i64)>,
+}
+
+/// The tiles a road longer than a lane may go on (W85), worked out as the server does.
+fn street_tiles(seed: u64, size: i64, tiles: &world::Tiles) -> HashSet<(i64, i64)> {
+    let hoods = world::neighborhoods(seed, size as usize);
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .filter(|&(x, y)| world::on_street(&hoods, tiles, (x as u16, y as u16)))
+        .collect()
 }
 
 /// The tiles a world keeps for side streets, worked out as the server does.
@@ -444,7 +456,14 @@ impl Map {
             })
             .collect();
         let size = ground.len() as i64;
-        Map { size, ground, built, kept: kept_tiles(size, &streets) }
+        let seed = view["seed"].as_u64().unwrap();
+        Map {
+            size,
+            ground,
+            built,
+            kept: kept_tiles(size, &streets),
+            on_streets: street_tiles(seed, size, &streets),
+        }
     }
 
     fn from_db(server: &Server, world: &str) -> Map {
@@ -464,7 +483,13 @@ impl Map {
                 )
             })
             .collect();
-        Map { size: row.size as i64, ground, built, kept: kept_tiles(row.size as i64, &tiles) }
+        Map {
+            size: row.size as i64,
+            ground,
+            built,
+            kept: kept_tiles(row.size as i64, &tiles),
+            on_streets: street_tiles(row.seed, row.size as i64, &tiles),
+        }
     }
 
     fn ground(&self, x: i64, y: i64) -> Option<char> {
@@ -505,7 +530,12 @@ impl Map {
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i)) {
+                // W85: longer than a lane, it follows the streets.
+                let along = |i: i64| {
+                    n <= world::LANE_TILES as i64
+                        || self.on_streets.contains(&(rx + dx * i, ry + dy * i))
+                };
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }
@@ -810,15 +840,25 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
             assert!(!text.contains(secret), "{secret} leaked into {text}");
         }
     }
-    // The street lists three players: id, name, place, emote and whether a person or an agent is
-    // playing, which says nothing about whose it is, and nothing else about them.
+    // The street lists three players: id, name, place, emote, whether a person or an agent is playing,
+    // and what they're wearing (C14). None of it says whose it is, and there's nothing else about them.
     let view: Value = serde_json::from_str(&seen[0]).unwrap();
     let players = view["players"].as_array().unwrap();
     assert_eq!(players.len(), 3);
+    let wardrobe: Vec<_> = PERSON_PARTS.iter().chain(&BOT_PARTS).collect();
     for player in players {
-        assert_eq!(player.as_array().unwrap().len(), 6, "{player}");
+        assert_eq!(player.as_array().unwrap().len(), 7, "{player}");
         assert!(["person", "agent"].contains(&player[5].as_str().unwrap()), "{player}");
+        // A look is words from the wardrobe and nothing else, so nothing can get out in one.
+        for (part, word) in player[6].as_object().into_iter().flatten() {
+            let known = wardrobe.iter().any(|each| {
+                each.part == part && each.choices.iter().any(|choice| word == choice.choice)
+            });
+            assert!(known, "{part}: {word} isn't in the wardrobe");
+        }
     }
+    // Ann and their bot are wearing something. The player they claimed has nobody's look to wear.
+    assert_eq!(players.iter().filter(|player| player[6].is_null()).count(), 1, "{players:?}");
 }
 
 // W4
@@ -1871,6 +1911,7 @@ async fn a_road_over_road_skips_what_is_there_and_charges_only_for_the_rest() {
 // W16
 #[tokio::test]
 async fn a_move_that_costs_more_than_you_have_is_refused_whole() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let guest = server.guest().await;
     for _ in 0..25 {
@@ -3835,7 +3876,8 @@ async fn the_view_has_the_documented_shape() {
             "visitors",
             "people",
             "bots_out",
-            "owners"
+            "owners",
+            "neighborhoods"
         ])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
@@ -4320,6 +4362,7 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
 // W3
 #[tokio::test]
 async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it_built_stays() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let room = server
         .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
@@ -4898,7 +4941,10 @@ fn branch_from_road(map: &Map, n: i64) -> ((i64, i64), (i64, i64)) {
             let last = stub[stub.len() - 1];
             let out_of_reach =
                 roads.iter().all(|&(x, y)| (x - last.0).abs() > 5 || (y - last.1).abs() > 5);
+            let along = stub.len() <= world::LANE_TILES
+                || stub.iter().all(|spot| map.on_streets.contains(spot));
             if stub.iter().all(|&(x, y)| map.open(x, y))
+                && along
                 && stub[1..].iter().all(|&spot| !beside_a_road(map, spot))
                 && out_of_reach
             {
@@ -5369,4 +5415,41 @@ fn the_status_bar_under_the_map_stays_one_line_tall() {
         "a message that doesn't fit can still be read"
     );
     assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
+}
+
+// W83, W84, W85, W87
+#[tokio::test]
+async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_anywhere() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+
+    // The view lists every neighborhood's point, name and character.
+    let view = server.fresh_view(COMMONS).await;
+    let hoods = view["neighborhoods"].as_array().unwrap();
+    assert_eq!(hoods.len(), 25, "{view}");
+    for hood in hoods {
+        assert!(hood[0].as_str().unwrap().contains(' '), "{hood}");
+        assert!(["homes", "makers", "market"].contains(&hood[1].as_str().unwrap()), "{hood}");
+    }
+
+    // Look says which neighborhood, and lists the guide's road out from the highway as streets.
+    let look = server
+        .tool("look", json!({ "player_token": guest.token, "x": 51, "y": 42, "w": 16, "h": 8 }))
+        .await;
+    assert!(look["neighborhood"]["name"].is_string(), "{look}");
+    let streets: HashSet<(i64, i64)> = look["streets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|at| (at[0].as_i64().unwrap(), at[1].as_i64().unwrap()))
+        .collect();
+    assert!((47..=56).all(|x| streets.contains(&(x, 42))), "{look}");
+
+    // Along a street works. A long road between streets doesn't, and says why.
+    server.act(&guest.token, COMMONS, road_move((47, 42), (56, 42))).await.ok();
+    let between = server.act(&guest.token, COMMONS, road_move((47, 43), (56, 43))).await;
+    assert_eq!(between.status, StatusCode::BAD_REQUEST, "{}", between.show());
+    assert!(between.body.to_string().contains("roads follow the streets"), "{}", between.show());
+    // A lane of 3 tiles goes anywhere, as long as it touches a road.
+    server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
 }

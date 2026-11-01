@@ -15,7 +15,7 @@ use crate::{
     auth::Caller,
     db::{NewVisit, PublicFloor, RoutineRow, WalkedIn, Wearer},
     error::{ApiError, ApiResult},
-    looks::{looks_of, Look},
+    looks::{worn, Look},
     now,
     ops::{self, DAY_SECS},
     spaces::{capacity, MAX_BOTS_WALKED_IN, WALK_IN_SECS},
@@ -303,7 +303,7 @@ pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
 
 /// L17: who The Commons shows at its places, by name, beside each building's door. A bot that
 /// walked onto a public floor is there while its walk-in lasts. A project's bot is at the studio in
-/// its social hours, unless it's out somewhere. C14: a look goes with the name, and nowhere else.
+/// its social hours, unless it's out somewhere. C14: what it's wearing goes with the name.
 pub fn bots_at_places(
     state: &AppState,
     tiles: &std::collections::BTreeMap<(u16, u16), crate::world::Tile>,
@@ -313,7 +313,7 @@ pub fn bots_at_places(
     let out: std::collections::HashSet<String> =
         rows.iter().filter(|row| row.5).map(|row| row.0.clone()).collect();
     let ids: Vec<String> = rows.iter().map(|row| row.0.clone()).collect();
-    let mut looks = looks_of(state, Wearer::Bot, &ids)?;
+    let mut looks = worn(state, Wearer::Bot, &ids)?;
     let mut shown = std::collections::HashSet::new();
     let mut list = Vec::new();
     for (agent_id, name, owner_id, x, y, walked) in rows {

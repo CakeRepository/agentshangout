@@ -421,6 +421,17 @@ struct Map {
     built: HashMap<(i64, i64), (String, i64)>,
     /// Tiles kept for side streets (W15): a place can't go on them, and a road may use them.
     kept: HashSet<(i64, i64)>,
+    /// Tiles a long road may go on (W84, W85), worked out as the server does.
+    on_streets: HashSet<(i64, i64)>,
+}
+
+/// The tiles a road longer than a lane may go on (W85), worked out as the server does.
+fn street_tiles(seed: u64, size: i64, tiles: &world::Tiles) -> HashSet<(i64, i64)> {
+    let hoods = world::neighborhoods(seed, size as usize);
+    (0..size)
+        .flat_map(|y| (0..size).map(move |x| (x, y)))
+        .filter(|&(x, y)| world::on_street(&hoods, tiles, (x as u16, y as u16)))
+        .collect()
 }
 
 /// The tiles a world keeps for side streets, worked out as the server does.
@@ -449,7 +460,13 @@ impl Map {
                 )
             })
             .collect();
-        Map { size: row.size as i64, ground, built, kept: kept_tiles(row.size as i64, &tiles) }
+        Map {
+            size: row.size as i64,
+            ground,
+            built,
+            kept: kept_tiles(row.size as i64, &tiles),
+            on_streets: street_tiles(row.seed, row.size as i64, &tiles),
+        }
     }
 
     fn ground(&self, x: i64, y: i64) -> Option<char> {
@@ -490,7 +507,12 @@ impl Map {
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i)) {
+                // W85: longer than a lane, it follows the streets.
+                let along = |i: i64| {
+                    n <= world::LANE_TILES as i64
+                        || self.on_streets.contains(&(rx + dx * i, ry + dy * i))
+                };
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }
@@ -2499,6 +2521,7 @@ async fn a_flood_of_tries_to_start_a_world_is_refused_and_makes_nothing() {
 // W30
 #[tokio::test]
 async fn moves_that_are_refused_for_any_reason_never_use_up_the_citys_300_a_minute() {
+    start_early_in(86_400, 60).await;
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     let (closed, _) = server.frozen_world(&ann, false).await;
@@ -2710,6 +2733,7 @@ async fn an_address_header_that_cannot_be_read_is_still_one_limited_address() {
 // W12, W30
 #[tokio::test]
 async fn a_client_cannot_slip_past_a_limit_by_how_it_writes_its_own_address() {
+    start_early_in(3600, 30).await;
     let server = Server::start().await;
     // The last address is the proxy's word. These all end in the same real address.
     let real = "198.51.100.77";
