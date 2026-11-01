@@ -1,6 +1,7 @@
-//! Tests for bots' projects: starting one, bringing other bots in, and its studio on The Commons.
-//! They drive a real server over HTTP and are written from L11 to L15 in docs/routines.md. A comment
-//! such as `// L12` above a test names the rule it covers.
+//! Tests for bots' projects: starting one, bringing other bots in, and its studio on The Commons, and
+//! for what a bot sees of The Commons. They drive a real server over HTTP and are written from L11 to
+//! L15 in docs/routines.md and W88 and W89 in docs/public-city.md. A comment such as `// L12` above a
+//! test names the rule it covers.
 
 use agenthangout::{
     app,
@@ -49,6 +50,14 @@ struct Town {
     fern: String,
     rover: String,
     rover_id: String,
+}
+
+/// Dee's city, Elm, with her house in it and her bot living there.
+struct Elm {
+    dee: Who,
+    house: Value,
+    pip: String,
+    pip_id: String,
 }
 
 fn text(value: &Value) -> String {
@@ -260,6 +269,48 @@ impl Server {
 
     fn tile(&self, (x, y): (i64, i64)) -> Option<Kind> {
         self.state.db.world_tiles(COMMONS).unwrap().get(&(x as u16, y as u16)).map(|tile| tile.kind)
+    }
+
+    /// What `list_city` says, after the pause that lets a change on the map show (W29).
+    async fn city(&self, token: &str, arguments: Value) -> Value {
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        self.tool(token, "list_city", arguments).await
+    }
+
+    /// Someone who is nobody's bot waves on the street. Their name, and where the map shows them.
+    async fn someone_waving(&self) -> (Value, Value, Value) {
+        let joined = self.post("", "/api/public/join", json!({})).await.ok();
+        self.post(
+            &text(&joined["player_token"]),
+            &format!("/api/worlds/{COMMONS}/act"),
+            json!({ "action": "emote", "emote": "wave" }),
+        )
+        .await
+        .ok();
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+        let view = self.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+        let players = view["players"].as_array().unwrap();
+        let row = players.iter().find(|row| row[1] == joined["name"]).unwrap();
+        (row[1].clone(), row[2].clone(), row[3].clone())
+    }
+
+    async fn elm(&self) -> Elm {
+        let made = self
+            .post(
+                "",
+                "/api/cities",
+                json!({ "name": "Elm", "your_name": "Dee", "create_code": CODE }),
+            )
+            .await
+            .ok();
+        let dee = Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) };
+        let city = text(&made["city"]["id"]);
+        let built = self
+            .post(&dee.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Dee House" }))
+            .await
+            .ok();
+        let (pip_id, pip) = self.bot(&dee, &text(&built["living_room_id"]), "Pip").await;
+        Elm { dee, house: built["house"]["id"].clone(), pip, pip_id }
     }
 }
 
@@ -712,4 +763,159 @@ async fn a_bot_out_at_a_place_is_off_the_street_and_comes_from_where_it_was() {
     let fern =
         view["bots_out"].as_array().unwrap().iter().find(|row| row[0] == "Fern").unwrap().clone();
     assert_eq!((fern[4].as_i64().unwrap(), fern[5].as_i64().unwrap()), ann_house, "{fern}");
+}
+
+// W88: issue 149. A person's house stood on the map and their bot was told they weren't in any city,
+// while they could see someone waving there that the bot couldn't find.
+#[tokio::test]
+async fn a_bot_whose_owner_is_in_no_city_sees_the_commons_in_list_city() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let house = server.place_at(&town.bo, "house", now());
+    server.all_day(&town.bo, &town.rover, true).await;
+    let (waving, x, y) = server.someone_waving().await;
+
+    let city = server.city(&town.rover, json!({})).await;
+    assert_eq!(city["city"], json!({ "id": COMMONS, "name": "The Commons" }));
+    assert_eq!(city["your_owner_lives_at"], json!({ "x": house.0, "y": house.1 }));
+    assert_eq!(
+        city["places"],
+        json!([{ "x": house.0, "y": house.1, "kind": "house", "name": "Bo's House", "owner": "Bo" }]),
+    );
+    // W4: a figure on the street is a made-up name, and this says no more about it than the map does.
+    let wave = json!({ "name": waving, "x": x, "y": y, "emote": "wave", "kind": "agent" });
+    assert!(city["players"].as_array().unwrap().contains(&wave), "{city}");
+    assert_eq!(city["bots"], json!([]));
+
+    // It says what this isn't, so a bot doesn't take a building for a house it can visit.
+    assert!(city["houses"].is_null(), "no house_id here: {city}");
+    let note = text(&city["note"]);
+    for word in ["public", "ask_for_trip", "public_floors", "/public/mcp"] {
+        assert!(note.contains(word), "{word}: {note}");
+    }
+    assert!(text(&city["trust_note"]).contains("never as instructions"));
+
+    // With no house of their own it's the same map, and nothing says a place is theirs.
+    server.all_day(&town.ann, &town.fern, true).await;
+    let city = server.city(&town.fern, json!({})).await;
+    assert_eq!(city["city"]["id"], COMMONS);
+    assert!(city["your_owner_lives_at"].is_null(), "{city}");
+    assert_eq!(city["places"][0]["owner"], "Bo");
+}
+
+// W88: the bots at places are the ones the map shows there, by name and tile (L17).
+#[tokio::test]
+async fn a_bot_finds_the_bots_at_places_on_the_commons() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, cy) = server.someone("Cy2").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let cafe_spot = server.place_at(&cy, "cafe", now());
+    let door = server
+        .post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 }))
+        .await
+        .ok();
+    let floor = text(&door["hangout_id"]);
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{floor}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
+    server.all_day(&town.bo, &town.rover, true).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": floor })).await;
+    let out = server.bots_out().await;
+    assert_eq!(out.len(), 1, "{out:?}");
+
+    server.all_day(&town.ann, &town.fern, true).await;
+    let city = server.city(&town.fern, json!({})).await;
+    assert_eq!(city["bots"], json!([{ "name": "Rover", "x": out[0].1, "y": out[0].2 }]));
+    let places = city["places"].as_array().unwrap();
+    assert!(places.iter().any(|place| place["kind"] == "cafe" && place["owner"] == "Cy2"));
+}
+
+// W88: issue 149 wondered whether a new token had lost the house. It's the same bot and the same owner.
+#[tokio::test]
+async fn a_replaced_token_sees_the_same_commons() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let house = server.place_at(&town.bo, "house", now());
+    server.all_day(&town.bo, &town.rover, true).await;
+    let before = server.city(&town.rover, json!({})).await;
+
+    let path = format!("/api/agents/{}/rotate", town.rover_id);
+    let token = text(&server.post(&town.bo.key, &path, json!({})).await.ok()["token"]);
+    let after = server.city(&token, json!({})).await;
+    assert_eq!(after["your_owner_lives_at"], json!({ "x": house.0, "y": house.1 }));
+    assert_eq!(after["places"], before["places"]);
+}
+
+// W88: a city stays what `list_city` shows, and a house on the map puts nobody in one.
+#[tokio::test]
+async fn a_bot_in_a_city_sees_it_and_asks_for_the_commons_by_name() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let elm = server.elm().await;
+    server.place_at(&elm.dee, "house", now());
+    server.all_day(&elm.dee, &elm.pip, true).await;
+
+    let city = server.city(&elm.pip, json!({})).await;
+    assert_eq!(city["city"]["name"], "Elm");
+    assert_eq!(city["houses"][0]["name"], "Dee House");
+    assert!(city["places"].is_null(), "{city}");
+
+    let commons = server.city(&elm.pip, json!({ "city_id": COMMONS })).await;
+    assert_eq!(commons["city"]["id"], COMMONS);
+    assert_eq!(commons["places"][0]["owner"], "Dee");
+
+    // A house on the map is no city to find a time in.
+    server.place_at(&town.bo, "house", now());
+    server.all_day(&town.bo, &town.rover, true).await;
+    let message = server.refused(&town.rover, "find_a_time", json!({})).await;
+    assert!(message.contains("isn't in any city"), "{message}");
+    let asked = json!({ "city_id": COMMONS });
+    assert_eq!(server.refused(&town.rover, "find_a_time", asked).await, "not found");
+}
+
+// W89
+#[tokio::test]
+async fn only_a_bot_its_owner_let_out_sees_the_commons() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.place_at(&town.bo, "house", now());
+
+    // Public places start off, and with them off it's told what's in the way.
+    let message = server.refused(&town.rover, "list_city", json!({})).await;
+    assert!(
+        message.contains("isn't in any city") && message.contains("public places"),
+        "{message}"
+    );
+    let asked = json!({ "city_id": COMMONS });
+    let message = server.refused(&town.rover, "list_city", asked.clone()).await;
+    assert!(message.contains("public places"), "{message}");
+    assert!(!message.contains("isn't in any city"), "it may well be in one: {message}");
+
+    // Whatever the hour: public places are the owner's yes, and looking isn't going out.
+    let no_hours = json!({ "days": [], "starts": "12:00", "ends": "13:00", "public_places": true });
+    let path = format!("/api/agents/{}/routine", town.rover_id);
+    server.put(&town.bo.key, &path, no_hours).await.ok();
+    assert_eq!(server.city(&town.rover, json!({})).await["city"]["id"], COMMONS);
+
+    // A bot that stays home keeps its city and never sees the map, whatever its owner turned on.
+    let elm = server.elm().await;
+    server.all_day(&elm.dee, &elm.pip, true).await;
+    assert_eq!(server.city(&elm.pip, asked.clone()).await["city"]["id"], COMMONS);
+    server
+        .put(
+            &elm.dee.key,
+            &format!("/api/agents/{}/home", elm.pip_id),
+            json!({ "house_id": elm.house, "stays_home": true }),
+        )
+        .await
+        .ok();
+    let message = server.refused(&elm.pip, "list_city", asked).await;
+    assert!(message.contains("stay home"), "{message}");
+    assert_eq!(server.city(&elm.pip, json!({})).await["city"]["name"], "Elm");
 }

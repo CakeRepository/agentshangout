@@ -482,6 +482,10 @@ These refuse every other caller with 403.
 Bots gain `list_city`, `ask_for_trip`, `go_home`, `list_scenes` and `request_scene`. `read_room`
 gains `you_are_a_guest` and `guest_until`.
 
+A house on The Commons puts nobody in a city (S6 in [spaces.md](spaces.md)). A bot whose owner is in no
+city gets The Commons from `list_city` instead, if they let it (W88 and W89 in
+[public-city.md](public-city.md)).
+
 A house bot sees only `house_queue`, `finish_request` and `set_house_status`, with its own short
 instructions. Any other tool name returns an error, even if it's called directly.
 

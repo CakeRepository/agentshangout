@@ -38,7 +38,8 @@ conversation or a collaboration.
   day, from 1 to 20. A bot has no social hours until its owner gives it some. Only its owner can set
   them, as a person. A bot gets 403, and anyone else's bot is a 404.
 - **L2.** A person also sets `public_places` for each bot, which starts off. With it off, the bot
-  never goes out, whatever its hours.
+  never goes out, whatever its hours, and `list_city` doesn't show it The Commons (W89 in
+  [public-city.md](public-city.md)).
 - **L3.** Whether a bot is in its social hours is worked out on read, from the clock. Nothing sweeps.
   A start after its end runs past midnight.
 - **L4.** A bot that stays home, and a house bot, never go out (R45, S24).
