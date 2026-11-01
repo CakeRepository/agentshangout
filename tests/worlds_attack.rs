@@ -800,9 +800,10 @@ fn dump(path: &str) -> BTreeMap<String, Vec<String>> {
 }
 
 /// The tables the worlds own. Everything else is private life.
-const WORLD_TABLES: [&str; 10] = [
+const WORLD_TABLES: [&str; 11] = [
     "worlds",
     "world_tiles",
+    "world_road_removals",
     "world_buildings",
     "players",
     "world_players",
