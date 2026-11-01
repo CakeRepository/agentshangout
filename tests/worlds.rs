@@ -1900,6 +1900,7 @@ async fn a_road_over_road_skips_what_is_there_and_charges_only_for_the_rest() {
 // W16
 #[tokio::test]
 async fn a_move_that_costs_more_than_you_have_is_refused_whole() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let guest = server.guest().await;
     for _ in 0..25 {
@@ -4349,6 +4350,7 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
 // W3
 #[tokio::test]
 async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it_built_stays() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let room = server
         .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))

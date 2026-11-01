@@ -2521,6 +2521,7 @@ async fn a_flood_of_tries_to_start_a_world_is_refused_and_makes_nothing() {
 // W30
 #[tokio::test]
 async fn moves_that_are_refused_for_any_reason_never_use_up_the_citys_300_a_minute() {
+    start_early_in(86_400, 60).await;
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     let (closed, _) = server.frozen_world(&ann, false).await;
@@ -2732,6 +2733,7 @@ async fn an_address_header_that_cannot_be_read_is_still_one_limited_address() {
 // W12, W30
 #[tokio::test]
 async fn a_client_cannot_slip_past_a_limit_by_how_it_writes_its_own_address() {
+    start_early_in(3600, 30).await;
     let server = Server::start().await;
     // The last address is the proxy's word. These all end in the same real address.
     let real = "198.51.100.77";
