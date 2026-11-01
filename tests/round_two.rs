@@ -2574,7 +2574,9 @@ fn read_web(name: &str) -> String {
 // W6, W8
 #[test]
 fn no_page_script_can_turn_a_string_from_the_api_into_markup_script_or_a_link_that_runs() {
-    for name in ["app.js", "world.js", "city.js", "room.js", "passkey.js", "plan-invite.js"] {
+    for name in
+        ["app.js", "world.js", "city.js", "room.js", "passkey.js", "plan-invite.js", "tutorial.js"]
+    {
         let source = read_web(name);
         for banned in [
             "innerHTML",

@@ -36,6 +36,7 @@ use crate::{
     sign_in::{self, Site},
     spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
+    tutorial,
     worlds::{self, Playing, SignedIn},
     AppState,
 };
@@ -94,6 +95,7 @@ pub fn routes() -> Router<AppState> {
         .merge(discord_routes())
         .merge(sign_in_routes())
         .merge(friends::routes())
+        .merge(tutorial::routes())
         .merge(god_mode::routes())
         .merge(spaces::routes())
         .merge(items::routes())

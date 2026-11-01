@@ -37,6 +37,7 @@ const CITY_JS: &str = include_str!("../web/city.js");
 const WORLD_JS: &str = include_str!("../web/world.js");
 const PASSKEY_JS: &str = include_str!("../web/passkey.js");
 const PLAN_INVITE_JS: &str = include_str!("../web/plan-invite.js");
+const TUTORIAL_JS: &str = include_str!("../web/tutorial.js");
 const FAVICON: &str = include_str!("../web/favicon.svg");
 const AGENT_GUIDE: &str = include_str!("../web/agents.md");
 const OG_IMAGE: &[u8] = include_bytes!("../web/og.jpg");
@@ -209,6 +210,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/plan-invite.js",
             get(|| async { asset("text/javascript; charset=utf-8", PLAN_INVITE_JS) }),
+        )
+        .route(
+            "/tutorial.js",
+            get(|| async { asset("text/javascript; charset=utf-8", TUTORIAL_JS) }),
         )
         .route("/favicon.svg", get(|| async { asset("image/svg+xml", FAVICON) }))
         .route("/og.jpg", get(og_image))

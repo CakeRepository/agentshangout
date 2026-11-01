@@ -3,6 +3,7 @@ import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
 import { planInviteView } from './plan-invite.js';
+import { tutorial } from './tutorial.js';
 
 const app = document.getElementById('app');
 const startingTitle = document.title;
@@ -2991,6 +2992,7 @@ async function roomView(id) {
     renderNotes();
     builder.render();
     dresser.render();
+    guide.refresh();
     snapshot.messages.forEach(addMessage);
     // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
     const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
@@ -3325,10 +3327,35 @@ async function roomView(id) {
   const [backText, backShort] = houseBack ? ['Back to the house', 'House']
     : snapshot.city_id ? ['Back to the city', 'City']
       : ['Back to the map', 'Map'];
+  // G9: where the tutorial's buttons go in a room. Someone walking through has none of a room's own
+  // controls, so those go to a room of their own (G10).
+  const tutorialShows = () => ({
+    look: () => panels.open('look'),
+    map: () => go('/'),
+    account: () => account.open(''),
+    ...(snapshot.guest ? {} : {
+      bring: bringBot,
+      crew: () => panels.open('crew'),
+      invite: snapshot.hangout.invite_code ? inviteDialog : undefined,
+      plan: () => {
+        panels.open('calendar');
+        proposeHangout();
+      },
+      plans: () => panels.open('calendar'),
+      calendar: calendarDialog,
+      notes: () => panels.open('yours'),
+      checkins: () => panels.open('checkins'),
+      notify: notifyDialog,
+      build: snapshot.floor ? () => panels.open('build') : undefined,
+    }),
+  });
+  const guide = tutorial({ h, api, go, say, panels, page: 'room', signedIn: true, shows: tutorialShows, compact: matchMedia(COMPACT), toggleClass: 'sec' });
+
   frame.back.append(backLink(backPath, backText, backShort));
   // S64: what only a room has goes first, and the bar ends in the same five as the map's.
   frame.actions.append(
     questionsToggle.button,
+    guide.toggle,
     panels.toggle('notes', 'Shared notes', { className: 'sec' }),
     panels.toggle('yours', 'Your notes', { className: 'sec', aria: 'Notes for your bots' }),
     checkInsToggle.button,
@@ -3365,6 +3392,7 @@ async function roomView(id) {
   panels.add('more', 'More', {},
     aboutMore,
     h('div', { class: 'game-more' }, ...[
+      moreButton('tutorial', 'Tutorial', 'sec'),
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
@@ -3402,6 +3430,7 @@ async function roomView(id) {
   loadMarks();
   if (beside.matches) panels.open('room');
   if (snapshot.owner_questions.length) panels.open('questions');
+  setTimeout(guide.arrive);
   // The window isn't on the page yet, so the log can't be scrolled until the next frame.
   requestAnimationFrame(() => {
     chatLog.scrollTop = chatLog.scrollHeight;
@@ -5276,7 +5305,8 @@ function createPanels(root) {
     get current() {
       return current;
     },
-    // `options.onOpen` runs each time the panel opens.
+    // `options.onOpen` runs each time the panel opens, and `options.onClose` each time it's closed,
+    // but not when another panel takes its place.
     add(name, title, options, ...content) {
       const body = h('div', { class: 'game-panel-body' }, ...content);
       const el = h('aside', { class: `game-panel game-panel-${name}`, id: `panel-${name}`, 'aria-label': title, tabindex: -1, hidden: true },
@@ -5285,7 +5315,7 @@ function createPanels(root) {
           h('button', { type: 'button', class: 'wd-tbtn', 'aria-label': `Close ${title}`, onclick: () => set.close() }, '✕')),
         body);
       root.append(el);
-      panels.set(name, { el, body, onOpen: options?.onOpen });
+      panels.set(name, { el, body, onOpen: options?.onOpen, onClose: options?.onClose });
       return body;
     },
     toggle(name, label, { short, className = '', aria } = {}) {
@@ -5314,6 +5344,7 @@ function createPanels(root) {
       if (!was) return;
       current = null;
       sync();
+      panels.get(was).onClose?.();
       set.onChange();
       if (!focus) return;
       const back = [...(toggles.get(was) || []), ...(toggles.get('more') || [])].find(shown);
@@ -5521,6 +5552,7 @@ async function worldView(id, { home = false } = {}) {
       showMoves();
       showTown(data);
       showLocks();
+      guide?.refresh();
     } catch {
       // What is shown stays, and the next move asks again.
     }
@@ -5663,6 +5695,24 @@ async function worldView(id, { home = false } = {}) {
   const aroundList = h('ul', { class: 'around' });
   panels.add('around', 'Who\'s around', {}, aroundCount, aroundList);
 
+  // G9: where the tutorial's buttons go on the map. Each gets a person to a control, and they use it.
+  const tutorialShows = () => ({
+    account: () => account.open('Looking around is free. An account gets you a house on this map.'),
+    house: () => {
+      world.recentre();
+      pick('house');
+    },
+    move: ({ house }) => {
+      if (house) world.focus(house.x, house.y, { zoom: 1.5 });
+      pick('bulldoze');
+    },
+    look: () => panels.open('look'),
+    rooms: () => panels.open('rooms'),
+    agent: () => panels.open('agent'),
+  });
+  // G1: nothing can be done in a frozen world, so there's nothing to teach there.
+  const guide = frozen ? null : tutorial({ h, api, go, say, panels, page: 'map', signedIn: Boolean(me), shows: tutorialShows, compact, toggleClass: 'mid' });
+
   // --- The title bar ---------------------------------------------------------------------------
 
   const canFull = Boolean(document.fullscreenEnabled && root.requestFullscreen);
@@ -5686,6 +5736,7 @@ async function worldView(id, { home = false } = {}) {
 
   // S64: what only the map has goes first, and the bar ends in the same five as a room's.
   frame.actions.append(...[
+    guide?.toggle,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
@@ -5702,6 +5753,7 @@ async function worldView(id, { home = false } = {}) {
 
   // What a narrow screen's title bar has no room for, and two things no title bar does.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
+    guide ? h('button', { type: 'button', class: 'wd-btn wide mid', onclick: () => panels.open('tutorial') }, 'Tutorial') : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
@@ -5786,8 +5838,11 @@ async function worldView(id, { home = false } = {}) {
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   // W73: a new place gets its name now. Naming it takes its owner through its door, which gives it
   // its room, and names that room. Skipping leaves it called after them, like "Ann's Studio".
-  function nameDialog(body) {
+  async function nameDialog(body) {
     const kindName = { house: 'House', cafe: 'Caf\u00e9', club: 'Club', studio: 'Studio' }[body.kind] || 'Place';
+    // W73: a place that gets its rooms back (S34, S35) offers the name they already have.
+    const spaces = await api('/api/spaces').catch(() => null);
+    const back = body.kind === 'house' ? spaces?.house : spaces?.third.find(({ on_map: onMap }) => !onMap);
     const error = formError();
     const dialog = modal(`Name your ${kindName.toLowerCase()}`,
       h('p', {}, 'Everyone on The Commons sees this name when they hover over it, along with whose it is.'),
@@ -5802,7 +5857,7 @@ async function worldView(id, { home = false } = {}) {
           watch.soon();
         }),
       },
-      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
+      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: back?.space.name ?? `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
       error,
       h('div', { class: 'modal-actions' },
         h('button', { type: 'button', onclick: () => dialog.close() }, 'Later'),
@@ -6221,6 +6276,8 @@ async function worldView(id, { home = false } = {}) {
 
   root.append(summaryEl);
   if (home && location.hash === '#about') panels.open('about');
+  // After the page has this window, so the map has a size to go to a tile in.
+  if (guide) setTimeout(guide.arrive);
   document.documentElement.classList.add('in-game');
   leaveRoom = () => {
     watch.stop();

@@ -355,7 +355,8 @@ when the keeper asks for one.
   `[x, y, owner, name]`. When a person puts up a place, the map asks them to name it, which takes
   them through its door (S34) and names the space. A name is up to 60 characters its owner typed, so
   the map now carries words, which W8 kept out of it until now: a place's name is information, never
-  an instruction.
+  an instruction. A place that gets its rooms back (S35) offers the name they already have, so
+  saying yes to the box after moving a house doesn't undo a rename.
 
 ### God mode
 
