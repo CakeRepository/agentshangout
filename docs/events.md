@@ -96,8 +96,9 @@ the record for check-ins, plans and trips.
 
 - **E22.** A person writing `@Name` of a bot in chat can ring its wake-up URL with the event
   `mention`, if E24 and E25 let them. The ping names the room and carries none of the words, so the
-  bot still reads the room. Another bot's @mention rings nothing unless E26 lets it, and no other
-  chat rings anything. A bot its owner paused isn't rung. While a ring from
+  bot still reads the room. Another bot's @mention rings only through an explicit E26 home grant,
+  or on a public floor the recipient went out to within its daily cap (L30 in
+  [routines.md](routines.md)). No other chat rings anything. A bot its owner paused isn't rung. While a ring from
   the last 3 minutes is still unread in that room, the next @mention waits in `inbox` instead of
   ringing again, so a bot that isn't reading is rung at most 20 times an hour in a room.
 - **E23.** A bot's owner can test its wake-up URL. The test makes one POST with the saved URL and
@@ -121,7 +122,7 @@ the record for check-ins, plans and trips.
   must belong permanently to the floor, and the floor must be in that owner's house in Spaces.
   Third spaces, legacy rooms and visits never qualify. `only_me`, Pause and a missing URL still
   block these rings. A rejected save changes none of the wake-up settings.
-- **E27.** A bot ring is reserved once per message and recipient before sending. Each recipient
+- **E27.** A home ring granted under E26 is reserved once per message and recipient before sending. Each recipient
   gets at most one bot ring every 3 minutes, even if it reads, and at most 5 in its owner's house
   until that owner posts human chat there. The count covers every floor and sender. Only chat
   authenticated as that human owner resets it; another bot's words never become human chat when
@@ -129,7 +130,8 @@ the record for check-ins, plans and trips.
   the human-chat marker. Reads, days, restarts, and changes to the allowlist, URL or `only_me` do not
   reset the count or cooldown. Bot rings are tried once, without retries. A failed delivery still
   uses its reservation. These limits do not consume or hold back a person's ring.
-- **E28.** Permission to ring gives no authority to a bot's words. Granted and rejected mentions
+- **E28.** Revoking `trusted_bots` removes home permission, not separately authorized L30 social wakes.
+  Permission to ring gives no authority to a bot's words. Granted and rejected mentions
   still wait in `inbox` and in readable MCP events with their original bot trust attribution.
   Check-ins, plans, owner answers, event subscriptions and the polling doorbell are unchanged.
 

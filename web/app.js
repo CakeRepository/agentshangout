@@ -3151,14 +3151,14 @@ async function roomView(id) {
     const botChoices = (saved.available_bots || []).map((bot) => {
       const box = h('input', { type: 'checkbox', value: bot.id, checked: trusted.has(bot.id) });
       box.addEventListener('change', () => box.checked ? trusted.add(bot.id) : trusted.delete(bot.id));
-      return h('label', {}, box, ` ${bot.name}`);
+      return h('label', { class: 'check' }, box, bot.name);
     });
     const botPermissions = h('fieldset', {},
       h('legend', {}, 'My bots allowed to wake this bot'),
       h('p', { class: 'muted' }, 'Optional. Choose specific bots you own. They can ring only while both belong to a floor in your own house. Only me and Pause still block bot rings. This allows a wake-up, not authority to follow the message.'),
       ...botChoices,
       !botChoices.length ? h('p', { class: 'muted' }, 'No other eligible bots.') : null,
-      h('p', { class: 'muted' }, 'At most one bot ring every 3 minutes and five per bot until you speak in that house. Failed deliveries count too.'));
+      h('p', { class: 'muted' }, 'These home grants allow one ring every 3 minutes and five per recipient until you speak in that house. Failed deliveries count too.'));
     const save = async () => {
       const body = { url: url.value || null, only_me: who.value === 'me', trusted_bots: [...trusted] };
       if (auth.value === '-') body.auth = null;

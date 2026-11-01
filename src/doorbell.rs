@@ -54,6 +54,8 @@ pub struct Wake {
     pub from_bots: Vec<Mention>,
     /// Hangouts where this is the last run bots can start until a person posts.
     pub last_bot_run: Vec<String>,
+    /// L28: the public floor where other bots are out with this one, once a half hour.
+    pub meet: Option<String>,
 }
 
 impl Wake {
@@ -63,6 +65,7 @@ impl Wake {
             && self.from_owner.is_empty()
             && self.from_others.is_empty()
             && self.from_bots.is_empty()
+            && self.meet.is_none()
     }
 
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
@@ -95,6 +98,12 @@ impl Wake {
             lines.push(format!(
                 "Another bot mentioned you in message {} of hangout {}. Read it with read_room.",
                 mention.message_id, mention.hangout_id
+            ));
+        }
+        if let Some(hangout_id) = &self.meet {
+            lines.push(format!(
+                "Other bots are out with you in hangout {hangout_id}. Read meet in inbox for who's \
+                 there and what you can do together."
             ));
         }
         for hangout_id in &self.last_bot_run {
@@ -164,6 +173,15 @@ struct Inbox {
     /// Missing on a server older than this doorbell, which must keep working.
     #[serde(default)]
     owner_answers: Vec<Identified>,
+    /// L28: missing on a server older than this doorbell, which never asks a bot to meet.
+    #[serde(default)]
+    meet: Option<MeetCall>,
+}
+
+#[derive(Deserialize)]
+struct MeetCall {
+    id: String,
+    hangout_id: String,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +280,14 @@ impl Doorbell {
             ),
             None => (false, None),
         };
+        // L28: asked to meet the bots out with it, once a half hour, under the cap.
+        if let Some(meet) = inbox.meet {
+            if !seen.items.contains(&meet.id) && social_open {
+                wake.meet = Some(meet.hangout_id);
+                social_runs += 1;
+            }
+            items.insert(meet.id);
+        }
         for room in me.hangouts {
             let path = format!("/api/hangouts/{}", room.id);
             let Some(&after) = seen.rooms.get(&room.id) else {
@@ -359,6 +385,7 @@ mod tests {
             from_others: vec![Mention { hangout_id: "room".into(), message_id: 8 }],
             from_bots: vec![Mention { hangout_id: "room".into(), message_id: 9 }],
             last_bot_run: Vec::new(),
+            meet: None,
         };
         let prompt = wake.prompt();
         assert!(prompt.contains("Your owner answered your question q1"));

@@ -756,6 +756,20 @@ CREATE TABLE IF NOT EXISTS bot_thinking (
     PRIMARY KEY (agent_id, hangout_id)
 );
 CREATE INDEX IF NOT EXISTS bot_thinking_by_room ON bot_thinking (hangout_id);
+CREATE TABLE IF NOT EXISTS project_sites (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+-- L29: a bot rung to meet the bots out with it, once a half hour. Counted in E24's daily cap.
+CREATE TABLE IF NOT EXISTS meet_calls (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    slot        INTEGER NOT NULL,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, slot)
+);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -5167,14 +5181,62 @@ impl Db {
         let today = now - now.rem_euclid(DAY_SECS);
         let conn = self.conn();
         conn.execute("DELETE FROM wake_rings WHERE rung_at < ?", [today - DAY_SECS])?;
+        // L29: a call to meet comes out of the same cap.
         let rung = conn.execute(
             "INSERT OR IGNORE INTO wake_rings (message_id, agent_id, capped, rung_at)
              SELECT ?1, ?2, ?3, ?4
              WHERE ?5 IS NULL OR (SELECT COUNT(*) FROM wake_rings
-                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6) < ?5",
+                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6)
+                               + (SELECT COUNT(*) FROM meet_calls
+                                  WHERE agent_id = ?2 AND rung_at >= ?6) < ?5",
             params![message_id, agent_id, cap.is_some(), now, cap, today],
         )?;
         Ok(rung > 0)
+    }
+
+    /// L29: records a call to meet for this half hour and returns whether it's new and fits in the
+    /// day's cap, which E24's capped rings share.
+    pub fn note_meet_call(
+        &self,
+        agent_id: &str,
+        slot: i64,
+        hangout_id: &str,
+        now: i64,
+        cap: i64,
+    ) -> rusqlite::Result<bool> {
+        const DAY_SECS: i64 = 24 * 60 * 60;
+        let today = now - now.rem_euclid(DAY_SECS);
+        let conn = self.conn();
+        conn.execute("DELETE FROM meet_calls WHERE rung_at < ?", [today - DAY_SECS])?;
+        let rung = conn.execute(
+            "INSERT OR IGNORE INTO meet_calls (agent_id, slot, hangout_id, rung_at)
+             SELECT ?1, ?2, ?3, ?4
+             WHERE (SELECT COUNT(*) FROM wake_rings
+                    WHERE agent_id = ?1 AND capped = 1 AND rung_at >= ?5)
+                 + (SELECT COUNT(*) FROM meet_calls WHERE agent_id = ?1 AND rung_at >= ?5) < ?6",
+            params![agent_id, slot, hangout_id, now, today, cap],
+        )?;
+        Ok(rung > 0)
+    }
+
+    /// L31: whether a bot is working on a reply in any room right now (I58).
+    pub fn bot_is_thinking(&self, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM bot_thinking WHERE agent_id = ? AND until_at > ? LIMIT 1",
+            params![agent_id, now],
+        )
+    }
+
+    /// L27: every bot whose owner turned public places on, with its owner.
+    pub fn bots_going_out(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.owner_id FROM bot_routines r JOIN agents a ON a.id = r.agent_id
+             WHERE r.public_places = 1 ORDER BY a.id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// E25: whether only this bot's owner can wake it with an @mention.
@@ -9290,6 +9352,35 @@ impl Db {
 
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: only W71 says whose a place is, by name.
+    /// L22: a project's site, where its studio will go once a road reaches it. One a project.
+    pub fn set_project_site(
+        &self,
+        space_id: &str,
+        x: i64,
+        y: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO project_sites (space_id, x, y, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (space_id) DO UPDATE SET x = excluded.x, y = excluded.y, created_at = excluded.created_at",
+            params![space_id, x, y, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn project_site(&self, space_id: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row("SELECT x, y FROM project_sites WHERE space_id = ?", [space_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()
+    }
+
+    pub fn clear_project_site(&self, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM project_sites WHERE space_id = ?", [space_id])?;
+        Ok(())
+    }
+
     /// L18: the player a bot plays The Commons with, if it has one.
     pub fn player_of_agent(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
         self.conn()

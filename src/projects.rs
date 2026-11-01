@@ -136,6 +136,27 @@ pub fn build_studio(
         return Err(ApiError::conflict("this project already has its studio"));
     }
     let now = now();
+    // L22: with no road beside the tile yet, it becomes the project's site, with the way to it.
+    let (tiles, land, hoods) = map_of(state)?;
+    let pos = land.land.locate(x, y).ok_or_else(|| ApiError::bad_request("that is off the map"))?;
+    let beside_road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| {
+        let at = (u16::try_from(i32::from(pos.0) + dx), u16::try_from(i32::from(pos.1) + dy));
+        matches!(at, (Ok(ax), Ok(ay)) if tiles.get(&(ax, ay)).is_some_and(|tile| tile.kind == crate::world::Kind::Road))
+    });
+    if !beside_road {
+        if tiles.contains_key(&pos) || !land.land.at(pos).is_some_and(|ground| ground.is_open()) {
+            return Err(ApiError::bad_request("a studio needs open land"));
+        }
+        let path = crate::world::route_to(&land.land, &hoods, &tiles, pos).ok_or_else(|| {
+            ApiError::conflict(
+                "no road can reach that tile along the streets: pick somewhere nearer one",
+            )
+        })?;
+        state.db.set_project_site(&space.id, x, y, now)?;
+        return Ok(
+            json!({ "status": "site", "x": x, "y": y, "route": runs_json(&hoods, &tiles, &path) }),
+        );
+    }
     let player = state.db.own_player(&space.owner_id, now)?;
     if player.removed {
         return Err(ApiError::forbidden("your owner has been removed from The Commons"));
@@ -151,6 +172,8 @@ pub fn build_studio(
     };
     worlds::act(state, &player, COMMONS_ID, &place, now)?;
     state.db.set_plot(COMMONS_ID, x, y, &space.id)?;
+    // L24: the studio is up, so the site has done its job.
+    state.db.clear_project_site(&space.id)?;
     // W73: the studio is called what the project is.
     state.worlds.mark_stale(COMMONS_ID);
     ops::announce(
@@ -162,6 +185,83 @@ pub fn build_studio(
     Ok(json!({ "ok": true, "x": x, "y": y }))
 }
 
+/// The Commons as a route needs it: everything built, the land and the neighborhoods.
+fn map_of(
+    state: &AppState,
+) -> ApiResult<(crate::world::Tiles, std::sync::Arc<worlds::WorldLand>, Vec<crate::world::Hood>)> {
+    let world = state.db.world(COMMONS_ID)?.ok_or_else(ApiError::not_found)?;
+    let land = state.worlds.land_for(world.seed, world.size);
+    Ok((
+        state.db.world_tiles(COMMONS_ID)?,
+        land,
+        crate::world::neighborhoods(world.seed, world.size),
+    ))
+}
+
+/// L22: a route as the runs to lay, `[x, y, x2, y2]` each, first to last.
+fn runs_json(
+    hoods: &[crate::world::Hood],
+    tiles: &crate::world::Tiles,
+    path: &[crate::world::Pos],
+) -> Vec<[u16; 4]> {
+    crate::world::route_runs(hoods, tiles, path)
+        .into_iter()
+        .map(|(first, last)| [first.0, first.1, last.0, last.1])
+        .collect()
+}
+
+/// L23: the bot that started a project lays the first run of the road to its site, as its owner's.
+pub fn lay_road(state: &AppState, caller: &Caller, project_id: &str) -> ApiResult<Value> {
+    let agent_id = bot_of(caller)?;
+    let (space, starter) = project_with(state, agent_id, project_id)?;
+    if starter.as_deref() != Some(agent_id) {
+        return Err(ApiError::forbidden("only the bot that started a project lays its road"));
+    }
+    let (x, y) = state.db.project_site(&space.id)?.ok_or_else(|| {
+        ApiError::conflict("this project has no site: pick one with build_studio")
+    })?;
+    let (tiles, land, hoods) = map_of(state)?;
+    let site = land.land.locate(x, y).ok_or_else(ApiError::not_found)?;
+    let path = crate::world::route_to(&land.land, &hoods, &tiles, site).ok_or_else(|| {
+        ApiError::conflict("no road can reach the site any more: pick another with build_studio")
+    })?;
+    let Some(&(first, last)) = crate::world::route_runs(&hoods, &tiles, &path).first() else {
+        return Err(ApiError::conflict(
+            "the road reaches the site: call build_studio to put the studio up",
+        ));
+    };
+    let now = now();
+    // L23: the bot lays it itself, as its own player, so the map shows it out there building. One is
+    // made for it if it hasn't joined, and a player it has keeps its token.
+    let player = match state.db.player_of_agent(agent_id)? {
+        Some(id) => state.db.player(id)?.ok_or_else(ApiError::not_found)?,
+        None => {
+            let token_hash = crate::auth::hash_secret(&crate::auth::new_guest_token());
+            match state.db.join_as_bot(agent_id, &space.owner_id, &token_hash, COMMONS_ID, now)? {
+                crate::db::BotJoined::Done(player) => player,
+                _ => return Err(ApiError::forbidden("you were removed from The Commons")),
+            }
+        }
+    };
+    let road = Move {
+        action: "road".to_string(),
+        x: Some(i64::from(first.0)),
+        y: Some(i64::from(first.1)),
+        x2: Some(i64::from(last.0)),
+        y2: Some(i64::from(last.1)),
+        kind: None,
+        emote: None,
+    };
+    worlds::act(state, &player, COMMONS_ID, &road, now)?;
+    let (tiles, _, _) = map_of(state)?;
+    let left = crate::world::route_to(&land.land, &hoods, &tiles, site).unwrap_or_default();
+    Ok(json!({
+        "laid": [first.0, first.1, last.0, last.1],
+        "reached": left.is_empty(),
+        "route": runs_json(&hoods, &tiles, &left),
+    }))
+}
+
 /// L15: a project as a bot in it reads it.
 #[derive(Serialize)]
 pub struct ProjectView {
@@ -170,6 +270,9 @@ pub struct ProjectView {
     pub started_by_you: bool,
     pub bots: Vec<String>,
     pub studio: Option<[i64; 2]>,
+    /// L25: where its studio will go once a road reaches it, and the runs of road still to lay.
+    pub site: Option<[i64; 2]>,
+    pub route: Vec<[u16; 4]>,
 }
 
 pub fn projects_of(state: &AppState, caller: &Caller) -> ApiResult<Vec<ProjectView>> {
@@ -185,7 +288,21 @@ pub fn projects_of(state: &AppState, caller: &Caller) -> ApiResult<Vec<ProjectVi
             let mut bots: Vec<String> =
                 state.db.agents_in(&space.id, now)?.into_iter().map(|agent| agent.name).collect();
             bots.sort();
+            let site = state.db.project_site(&space.id)?;
+            let route = match site {
+                Some((x, y)) => {
+                    let (tiles, land, hoods) = map_of(state)?;
+                    land.land
+                        .locate(x, y)
+                        .and_then(|pos| crate::world::route_to(&land.land, &hoods, &tiles, pos))
+                        .map(|path| runs_json(&hoods, &tiles, &path))
+                        .unwrap_or_default()
+                }
+                None => Vec::new(),
+            };
             Ok(ProjectView {
+                site: site.map(|(x, y)| [x, y]),
+                route,
                 studio: studio_of(state, &space)?.map(|(x, y)| [x, y]),
                 started_by_you: starter.as_deref() == Some(agent_id),
                 id: space.id,

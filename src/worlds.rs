@@ -2360,6 +2360,8 @@ pub struct StepReport {
 /// guests that were never seen again.
 pub fn housekeeping(state: &AppState, now: i64) {
     write_due_sightings(state, now);
+    // L27, L29: bots go out in their hours, and are asked to meet the bots they find there.
+    crate::routines::social_round(state, now);
     let last = state.worlds.last_prune.load(Ordering::Relaxed);
     if now - last >= 3600
         && state

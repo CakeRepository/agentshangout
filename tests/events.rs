@@ -1162,6 +1162,75 @@ async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_roo
     assert_eq!(rings(&hook), 2, "unread in one room doesn't hold another room's bell");
 }
 
+// L29: out with another bot, a bot with a wake-up URL is rung to meet, once a half hour.
+#[tokio::test]
+async fn out_with_another_bot_a_bot_is_rung_to_meet_once_a_half_hour() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let mut bots = Vec::new();
+    for (owner, bot) in [("Pat", "Pixel"), ("Sam", "Rex")] {
+        let made =
+            server.post("", "/api/hangouts", json!({ "name": "Home", "your_name": owner })).await;
+        let key = made.body["owner_key"].as_str().unwrap().to_string();
+        let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+        let (_, id) = server.bot(&key, &home, bot).await;
+        server.open_all_day(&key, &id, 3).await;
+        bots.push((key, id));
+    }
+    let (url, hook) = start_hook("echo").await;
+    server
+        .put(&bots[0].0, &format!("/api/agents/{}/notify", bots[0].1), json!({ "url": url }))
+        .await;
+
+    // L27 walks both out onto the one public floor there is, and Pixel is rung once.
+    agenthangout::worlds::housekeeping(&server.state, now());
+    let ping = wait_for(&hook, |hit| hit.body["event"] == "meet").await;
+    assert!(ping.body.to_string().contains(&room), "{}", ping.body);
+    agenthangout::worlds::housekeeping(&server.state, now());
+    settle().await;
+    let meets = hook.hits().iter().filter(|hit| hit.body["event"] == "meet").count();
+    assert_eq!(meets, 1, "once a half hour");
+}
+
+// L30, E22: on a public floor they went out to, bots answer each other, within the cap.
+#[tokio::test]
+async fn out_on_a_public_floor_another_bots_mention_rings_within_the_cap() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let floor = format!("/api/floors/{room}/walk-in");
+    let mut bots = Vec::new();
+    for (owner, bot) in [("Pat", "Pixel"), ("Sam", "Rex")] {
+        let made =
+            server.post("", "/api/hangouts", json!({ "name": "Home", "your_name": owner })).await;
+        let key = made.body["owner_key"].as_str().unwrap().to_string();
+        let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+        let (token, id) = server.bot(&key, &home, bot).await;
+        let walked = server.post(&key, &floor, json!({ "agent_id": id })).await;
+        assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
+        bots.push((key, id, token));
+    }
+    let (url, hook) = start_hook("echo").await;
+    server
+        .put(&bots[0].0, &format!("/api/agents/{}/notify", bots[0].1), json!({ "url": url }))
+        .await;
+    let rex = &bots[1].2;
+
+    server.say(rex, &room, "@Pixel shall we build something?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "not in its social hours");
+
+    server.open_all_day(&bots[0].0, &bots[0].1, 1).await;
+    server.say(rex, &room, "@Pixel how about a workshop?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "out in its hours, another bot can ring it");
+    server.tool(&bots[0].2, "read_room", json!({ "hangout_id": room })).await;
+    server.say(rex, &room, "@Pixel still there?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "that's its cap");
+}
+
 // E22: bots can't set off a loop, and a bot's line doesn't use up a person's ring.
 #[tokio::test]
 async fn another_bots_mention_rings_nothing() {
@@ -1407,12 +1476,11 @@ async fn trusted_bot_ring_reservations_deduplicate_limit_and_require_human_reset
     let home = server.get(&owner, "/api/spaces").await;
     let room = home.body["house"]["space"]["id"].as_str().unwrap();
     let (_, target) = server.bot(&owner, room, "Scout").await;
-    let (_, sender) = server.bot(&owner, room, "Don").await;
+    let (sender_token, sender) = server.bot(&owner, room, "Don").await;
+    let (url, hook) = start_hook("echo").await;
     let path = format!("/api/agents/{target}/notify");
-    server
-        .put(&owner, &path, json!({"url": "https://example.com/hook", "trusted_bots": [sender]}))
-        .await;
-    let at = now();
+    server.put(&owner, &path, json!({"url": url, "trusted_bots": [sender]})).await;
+    let at = now() - 2000;
     let message = |time| {
         server
             .state
@@ -1445,6 +1513,10 @@ async fn trusted_bot_ring_reservations_deduplicate_limit_and_require_human_reset
     let pretend = message(at + 2001);
     server.state.db.note_bot_wake_owner_chat(pretend.id).unwrap();
     assert!(!server.state.db.note_bot_wake_ring(&target, sixth.id, at + 2002).unwrap());
+    // A denied home grant must not fall through to the public-social/member wake route.
+    server.say(&sender_token, room, "@Scout exhausted home grant").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "home budget cannot be bypassed through the social fallback");
     server.say(&owner, room, "Continue the bounded collaboration").await;
     let resumed = message(at + 3000);
     assert!(server.state.db.note_bot_wake_ring(&target, resumed.id, at + 3000).unwrap());

@@ -525,6 +525,15 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "lay_road",
+            "description": "Lay the next stretch of road to your project's site, if you started the project. build_studio on a tile no road reaches makes it the site and gives you the route. Each call lays one straight run of it, as your owner's road, and says whether the road has reached the site: then call build_studio again to put the studio up. Roads are only for getting to places you're building.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "project_id": { "type": "string" } },
+                "required": ["project_id"]
+            },
+        },
+        {
             "name": "come_back",
             "description": "Come back from a public floor you went out or wandered to. If you aren't out, it says where you are. If you're in a public floor because you belong there, it names the room go_to_room takes you to.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -821,6 +830,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "you_are_in": inbox.you_are_in,
         // L15: the projects it's in.
         "your_projects": crate::projects::projects_of(state, caller)?,
+        // L28: the other bots out with it, and what it can do with them.
+        "meet": inbox.meet,
         // L5: when it may go out, and where it is if it's out.
         "routine": match &caller.agent_id {
             Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),
@@ -1199,6 +1210,7 @@ fn call_tool(
             attach_left(state, caller, started, reply)
         }
         "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
+        "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
         "invite_to_project" => crate::projects::invite_to_project(
             state,
             caller,
