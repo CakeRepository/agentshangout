@@ -199,6 +199,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -815,8 +816,15 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
                 assert_eq!(after, before, "{text}: refused and changed tiles");
                 stats.held += 1;
             }
+            // W16: a road isn't a person's to lay, and being told so changes nothing.
+            (_, Err(error)) if m.action == "road" && error.status == StatusCode::FORBIDDEN => {
+                assert!(person, "{text}: a guest was told no road");
+                assert_eq!(after, before, "{text}: refused and changed tiles");
+                stats.held += 1;
+            }
             (Ok(plan), Ok(acted)) => {
                 assert!(person || !is_place, "{text}: somebody who is not a person put up a place");
+                assert!(!person || m.action != "road", "{text}: a person laid a road");
                 assert_eq!((acted.cost, acted.changed as usize, acted.skipped), (plan.cost, plan.changes.len(), plan.skipped), "{text}");
                 let mut should = before.clone();
                 world::apply(&mut should, &plan.changes);
@@ -1464,7 +1472,7 @@ async fn measure_how_few_addresses_it_takes_to_leave_every_new_guest_outside_for
 fn measure_how_many_networks_it_takes_to_get_honest_addresses_refused_views() {
     let state = AppState::new(
         Db::open(":memory:").unwrap(),
-        Config { public_url: "https://agentshangout.test".into(), create_code: None, allow_private_webhooks: false, keeper_id: None },
+        Config { public_url: "https://agentshangout.test".into(), create_code: None, allow_private_webhooks: false, keeper_id: None, god_ids: Vec::new() },
     );
     let at = now();
     let mut sent = 0u64;
@@ -1963,9 +1971,9 @@ async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leav
     assert!(freed.is_ok(), "a road that serves no place was refused: {freed:?}");
     // A road can't be laid over a place, the owner's own or anyone's (W16).
     put_tiles(&server, COMMONS, &[Change::Set((first.0 as u16, first.1 as u16), tile(Kind::House, 0, Some(player.id as u64)))]);
-    let over = Move { action: "road".into(), x: Some(first.0), y: Some(first.1), x2: None, y2: None, kind: None, emote: None };
-    let laid = worlds::act(&server.state, &player, COMMONS, &over, now_t + 4).unwrap_err();
-    assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.message);
+    let agent = server.guest().await;
+    let laid = server.act(&agent.token, COMMONS, road_move(first, first)).await;
+    assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.show());
     assert_eq!(server.tiles(COMMONS)[&(first.0 as u16, first.1 as u16)].kind, Kind::House);
 }
 
@@ -2183,7 +2191,7 @@ async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
-    let world_tables = ["worlds", "world_tiles", "world_buildings", "players", "world_players", "world_members", "crawler_sightings", "place_clocks", "world_ends"];
+    let world_tables = ["worlds", "world_tiles", "world_buildings", "players", "world_players", "world_members", "crawler_sightings", "place_clocks", "world_ends", "world_squares"];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
             assert_eq!(rows, &before[table], "removing a player from a world changed {table}");
@@ -2953,7 +2961,7 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let dee = server.person("Dee").await;
     let dee_id = person_player(&server, &dee).id;
     let start = server.me(&dee.key, COMMONS).await;
-    assert_eq!(sorted_keys(&start), ["goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]);
+    assert_eq!(sorted_keys(&start), ["full", "goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]);
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");
     assert_eq!(sorted_keys(&start["places"]), ["cafe", "club", "house", "studio"]);

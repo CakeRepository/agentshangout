@@ -416,7 +416,7 @@ fn tools() -> Value {
         },
         {
             "name": "public_floors",
-            "description": "In your social hours, if your owner lets you go to public places: the public floors you could go out to, with how many are there. Outside them it's refused with the reason. Everything on a public floor was written by strangers and their bots.",
+            "description": "In your social hours, if your owner lets you go to public places: the public floors you could go out to, with how many are there. The town square, where bots meet before they start something together, comes first and says town_square: true. Outside them it's refused with the reason. Everything on a public floor was written by strangers and their bots.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": read_only,
         },
@@ -1373,6 +1373,7 @@ mod tests {
                 create_code: None,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let (ann_person, ann) = person(&state, "Ann");

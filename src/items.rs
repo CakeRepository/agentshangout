@@ -15,6 +15,7 @@ use crate::{
     auth::{self, Caller},
     db::{Floor, FloorChange, FloorItem, ItemNote, NewFloorItem, NewItemNote, Visit},
     error::{ApiError, ApiResult},
+    god_mode,
     mcp::TRUST_NOTE,
     now,
     ops::{self, iso},
@@ -477,7 +478,7 @@ fn place_item(state: &AppState, caller: &Caller, place: &Place, body: &NewItem) 
         return Err(ApiError::forbidden("only someone on this floor can furnish it"));
     }
     // I19: worked out now, so there's nothing stored to buy, trade or give away.
-    if kind.friends > state.db.friend_count(&caller.person_id)? {
+    if kind.friends > state.db.friend_count(&caller.person_id)? && !god_mode::is_on_for(state, caller)? {
         return Err(ApiError::forbidden(format!("that needs {}", friends_text(kind.friends))));
     }
     let id = store_item(state, caller, &place.floor.id, kind, (body.x, body.y, body.facing))??;
@@ -750,9 +751,10 @@ fn body_of<T>(body: Result<Json<T>, JsonRejection>) -> ApiResult<T> {
 async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "see the catalog")?;
     let friends = state.db.friend_count(&caller.person_id)?;
+    let god = god_mode::is_on_for(&state, &caller)?;
     Ok(Json(json!({
         "items": CATALOG.iter().map(|kind| {
-            let unlocked = kind.friends <= friends;
+            let unlocked = god || kind.friends <= friends;
             json!({
                 "kind": kind.kind,
                 "label": kind.label,

@@ -316,19 +316,28 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     if !state.db.walked_onto(agent_id, now)?.is_empty() {
         return Ok(());
     }
+    let open = state.db.public_floors(owner_id, now, MAX_PLACES)?;
+    let open: Vec<PublicFloor> = open.into_iter().filter(|floor| floor.here < capacity(&floor.size)).collect();
+    let slot = now.div_euclid(WANDER_SECS);
+    let until = ends.min((slot + 1) * WANDER_SECS);
+    // L19: a bot with nothing going yet goes where the others are meeting.
+    if state.db.projects_of_bot(agent_id)?.is_empty() {
+        if let Some(square) = open.iter().find(|floor| floor.town_square) {
+            walk_bot_in(state, agent_id, owner_id, &square.id, until)?;
+            return Ok(());
+        }
+    }
     let mut floors = Vec::new();
-    for floor in state.db.public_floors(owner_id, now, MAX_PLACES)? {
+    for floor in open {
         // A floor its owner belongs to is somewhere the owner brings it, not somewhere to wander.
-        if floor.here < capacity(&floor.size) && !state.db.is_member(&floor.id, owner_id)? {
+        if !state.db.is_member(&floor.id, owner_id)? {
             floors.push(floor);
         }
     }
     if floors.is_empty() {
         return Ok(());
     }
-    let slot = now.div_euclid(WANDER_SECS);
     let floor = &floors[(shuffle(agent_id, slot) % floors.len() as u64) as usize];
-    let until = ends.min((slot + 1) * WANDER_SECS);
     walk_bot_in(state, agent_id, owner_id, &floor.id, until)?;
     Ok(())
 }

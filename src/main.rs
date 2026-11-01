@@ -25,6 +25,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .map(|id| id.trim().to_string())
         .filter(|id| !id.is_empty());
+    // The people who have the God mode switch: their ids, as /api/me shows them, with commas between.
+    let god_ids = env::var("AGENTHANGOUT_GODS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
 
     let loopback = bind.starts_with("127.") || bind.starts_with("localhost");
     if !loopback && !public_url.starts_with("https://") {
@@ -46,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             create_code,
             allow_private_webhooks: false,
             keeper_id,
+            god_ids,
         },
     );
     // W28: The Commons is there before anyone asks.

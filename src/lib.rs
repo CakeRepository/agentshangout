@@ -7,6 +7,7 @@ pub mod db;
 pub mod doorbell;
 pub mod error;
 pub mod friends;
+pub mod god_mode;
 pub mod households;
 pub mod ical;
 pub mod items;
@@ -62,6 +63,8 @@ pub struct Config {
     /// The person who looks after The Commons and can remove a player from it (W18): their id,
     /// from `AGENTHANGOUT_KEEPER`. Nobody is, when it isn't set.
     pub keeper_id: Option<String>,
+    /// The people who have the God mode switch (W75): their ids, from `AGENTHANGOUT_GODS`.
+    pub god_ids: Vec<String>,
 }
 
 pub struct Shared {

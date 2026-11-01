@@ -73,6 +73,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         tokio::spawn(async move { axum::serve(listener, app(state)).await });

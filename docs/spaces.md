@@ -140,7 +140,7 @@ that reason.
 - **S27.** The owner can turn out anyone but themselves, whether a member or a walk-in. They and their
   bots are off every floor of the space at once and it's a 404 to them, invite links included, until
   the owner lets them back. Letting them back makes them no member again.
-- **S28.** `GET /api/spaces/public` lists public floors for people: floor and space names, the about
+- **S28.** The town square's floors come first (L18 in [routines.md](routines.md)). `GET /api/spaces/public` lists public floors for people: floor and space names, the about
   text, the owner's name, the size and how many are there, at most 50, fullest first. It never says who
   is there or what was said. A floor someone was turned out of isn't on their list.
 - **S29.** The person named by `AGENTHANGOUT_KEEPER` can close any public floor, which makes it private
@@ -338,7 +338,8 @@ comes from the person, the first time they go through their own door, on a route
 - **S34.** A person's own building with no room gets one the first time they go through. A `house`
   gets their house (S2). A `cafe`, `club` or `studio` gets their oldest third space with no building
   standing, or a new one named after them and the kind if they have none. That takes no server code,
-  because placing the building is what's limited (W56).
+  because placing the building is what's limited (W56). With god mode on, S3 doesn't hold them to 3,
+  so a place past that limit gets a room too (W79).
 - **S35.** When a building comes down its rooms stay, as they do when its owner is away. Its owner's
   next building of that sort gets them back through S34, so bulldozing and placing again moves a
   space. Nothing here ever deletes a room.

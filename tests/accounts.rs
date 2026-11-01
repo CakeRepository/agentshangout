@@ -107,6 +107,7 @@ impl Server {
                 create_code: create_code.map(str::to_string),
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();

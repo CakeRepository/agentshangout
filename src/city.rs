@@ -1635,6 +1635,7 @@ mod tests {
                 create_code: None,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let (ann_person, ann) = person(&state, "Ann");

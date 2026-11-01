@@ -685,6 +685,7 @@ mod tests {
                 create_code: None,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         )
     }
@@ -2083,6 +2084,7 @@ mod tests {
                     create_code: None,
                     allow_private_webhooks: true,
                     keeper_id: None,
+                    god_ids: Vec::new(),
                 },
             );
             let served = state.clone();

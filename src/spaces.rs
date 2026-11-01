@@ -18,7 +18,7 @@ use crate::{
     auth::{self, Caller},
     db::{Floor, FloorChange, NewFloor, NewVisit, Person, PublicFloor, Space, WalkedIn},
     error::{ApiError, ApiResult},
-    items, now,
+    god_mode, items, now,
     ops::{self, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
     worlds::COMMONS_ID,
     AppState,
@@ -40,6 +40,9 @@ const FLOOR_OPENED: &str =
 /// S13: a size and how many fit.
 const SIZES: [(&str, i64); 3] = [("small", 8), ("medium", 50), ("big", 150)];
 const DEFAULT_CAPACITY: i64 = 50;
+/// W82: the room behind the town square, which has space for everyone who wants to meet.
+const TOWN_SQUARE: &str = "Town Square";
+const TOWN_SQUARE_SIZE: &str = "big";
 /// S14: listed words, so nothing typed reaches the page's drawing.
 const PAINTS: [&str; 7] = ["dusk", "sage", "plum", "clay", "butter", "ink", "haunted"];
 const FLOORINGS: [&str; 5] = ["oak", "walnut", "tile", "carpet", "crypt"];
@@ -458,18 +461,21 @@ async fn answer_place_request(
     Ok(Json(json!({ "ok": true, "status": status })))
 }
 
-/// S48: whether this space's building is a café, whose owner needs no code to open its floors.
+/// S48: whether this space's building is a café or the town square (W82), whose owner needs no code
+/// to open its floors.
 fn is_cafe(state: &AppState, space: &Space) -> ApiResult<bool> {
-    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe"))
+    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe" || kind == "square"))
 }
 
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
 /// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
-/// S47: a new one behind a café starts open. A room that came back stays as its owner left it, so
-/// placing a café never opens a room someone already has.
+/// With god mode on it doesn't, so that limit goes too (W79). S47: a new one behind a café starts
+/// open. A room that came back stays as its owner left it, so placing a café never opens a room
+/// someone already has. W82: the town square has a room of its own, and no other place takes it.
 fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> ApiResult<Space> {
+    let square = kind == "square";
     for space in state.db.third_spaces_of(&caller.person_id)? {
-        if !stands_on_map(state, &space)? {
+        if (space.name == TOWN_SQUARE) == square && !stands_on_map(state, &space)? {
             return Ok(space);
         }
     }
@@ -479,24 +485,19 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
         _ => "Studio",
     };
     let name: String = caller.name.chars().take(MAX_NAME_CHARS - NAMED_AFTER_CHARS).collect();
+    let name = if square { TOWN_SQUARE.to_string() } else { format!("{name}'s {kind}") };
+    let most = if square || god_mode::is_on_for(state, caller)? { i64::MAX } else { MAX_THIRD_SPACES };
     let id = auth::new_id();
     state
         .db
-        .start_third_space(
-            &id,
-            &format!("{name}'s {kind}"),
-            &auth::new_invite_code(),
-            &caller.person_id,
-            now(),
-            MAX_THIRD_SPACES,
-        )?
+        .start_third_space(&id, &name, &auth::new_invite_code(), &caller.person_id, now(), most)?
         .ok_or_else(|| ApiError::conflict(format!("you have {MAX_THIRD_SPACES} third spaces")))?;
-    if kind == "Café" {
+    if square || kind == "Café" {
         state.db.change_floor(&FloorChange {
             id: &id,
             name: None,
             access: Some("public"),
-            size: None,
+            size: square.then_some(TOWN_SQUARE_SIZE),
             paint: None,
             flooring: None,
             hidden: None,

@@ -39,6 +39,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id: None,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -841,6 +842,7 @@ async fn a_real_server_refuses_unsafe_notification_urls() {
             create_code: None,
             allow_private_webhooks: false,
             keeper_id: None,
+            god_ids: Vec::new(),
         },
     );
     let served = state.clone();
