@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use crate::{
     auth::Caller,
     error::{ApiError, ApiResult},
-    now, ops,
+    now, ops, spaces,
     worlds::{self, COMMONS_ID},
     AppState,
 };
@@ -1213,7 +1213,7 @@ pub fn templates() -> Vec<Template> {
 // The checks (E2, E3, E10, E11, E13 to E19)
 
 /// E13: where a building stands when its outside doesn't say, the same numbers as `BODIES` in
-/// `web/outside-spec.js`. A town square has no body (E14).
+/// `web/outside-spec.js`, and the floors its kind starts with (E38). A town square has no body (E14).
 pub fn default_body(kind: &str) -> Option<Body> {
     let (x, y, w, d) = match kind {
         "house" | "cafe" | "studio" | "bar" | "office" | "library" => (3, 4, 10, 8),
@@ -1222,7 +1222,12 @@ pub fn default_body(kind: &str) -> Option<Body> {
         "workshop" => (2, 4, 12, 9),
         _ => return None,
     };
-    Some(Body { x, y, w, d, floors: 1 })
+    Some(Body { x, y, w, d, floors: spaces::default_floors(kind) })
+}
+
+/// E38: whether a kind of place is a building with floors. A town square and a park have none.
+pub fn has_floors(kind: &str) -> bool {
+    default_body(kind).is_some()
 }
 
 /// A rectangle of yard cells.
@@ -1455,6 +1460,68 @@ fn is_empty(outside: &Outside) -> bool {
         && outside.pets.is_empty()
 }
 
+/// E38: how many floors the building on a tile has, as its outside says: its body's, or its kind's.
+pub fn floors_at(state: &AppState, x: i64, y: i64) -> ApiResult<i64> {
+    let place = standing(state, x, y)?;
+    let outside = current(state, place.x, place.y)?;
+    Ok(outside.body.map_or_else(|| spaces::default_floors(&place.kind), |body| body.floors))
+}
+
+/// E38: sets how many floors a building has and keeps the rest of its outside. Its rooms are the
+/// caller's to match, so this doesn't look at them.
+pub fn set_floors(state: &AppState, x: i64, y: i64, floors: i64) -> ApiResult<()> {
+    let place = standing(state, x, y)?;
+    let mut outside = current(state, place.x, place.y)?;
+    let Some(body) = outside.body.or_else(|| default_body(&place.kind)) else {
+        return Ok(());
+    };
+    outside.body = Some(Body { floors: floors.clamp(1, MAX_FLOORS), ..body });
+    let text =
+        serde_json::to_string(&outside).map_err(|_| ApiError::bad_request("not an outside"))?;
+    state.db.save_outside(
+        COMMONS_ID,
+        place.player_id,
+        &place.kind,
+        (place.x, place.y),
+        &text,
+        now(),
+    )?;
+    state.worlds.mark_stale(COMMONS_ID);
+    Ok(())
+}
+
+/// E38, W96: stores a checked outside and holds the rooms of the building on its tile to its floors. A
+/// save with fewer floors than there are rooms is refused before anything changes, and more floors than
+/// rooms bring up the rooms they lack.
+fn store(state: &AppState, actor: &Caller, place: &Standing, outside: &Outside) -> ApiResult<()> {
+    let floors =
+        outside.body.map_or_else(|| spaces::default_floors(&place.kind), |body| body.floors);
+    let room =
+        if has_floors(&place.kind) { spaces::room_on(state, place.x, place.y)? } else { None };
+    if let Some(space) = &room {
+        spaces::check_floors(state, space, floors)?;
+    }
+    if is_empty(outside) {
+        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
+    } else {
+        let text =
+            serde_json::to_string(outside).map_err(|_| ApiError::bad_request("not an outside"))?;
+        state.db.save_outside(
+            COMMONS_ID,
+            place.player_id,
+            &place.kind,
+            (place.x, place.y),
+            &text,
+            now(),
+        )?;
+    }
+    state.worlds.mark_stale(COMMONS_ID);
+    if let Some(space) = &room {
+        spaces::raise_rooms(state, actor, space, &place.kind, floors)?;
+    }
+    Ok(())
+}
+
 // Routes
 
 pub fn routes() -> Router<AppState> {
@@ -1516,6 +1583,7 @@ async fn read(
         "y": place.y,
         "kind": place.kind,
         "outside": outside,
+        "floors": floors_at(&state, place.x, place.y)?,
         "yours": place.owner_id.as_deref() == Some(caller.person_id.as_str()),
         "can_edit": may_edit_house(&state, &caller, &place)? || place.owner_id.as_deref() == Some(caller.person_id.as_str()),
     })))
@@ -1549,21 +1617,7 @@ async fn change(
     let outside: Outside =
         serde_json::from_value(body).map_err(|error| refuse(format!("not an outside: {error}")))?;
     check(&place.kind, &outside)?;
-    if is_empty(&outside) {
-        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
-    } else {
-        let text =
-            serde_json::to_string(&outside).map_err(|_| ApiError::bad_request("not an outside"))?;
-        state.db.save_outside(
-            COMMONS_ID,
-            place.player_id,
-            &place.kind,
-            (place.x, place.y),
-            &text,
-            now(),
-        )?;
-    }
-    state.worlds.mark_stale(COMMONS_ID);
+    store(&state, &caller, &place, &outside)?;
     Ok(Json(json!({ "outside": outside })))
 }
 
@@ -1580,8 +1634,7 @@ async fn clear(
         return Err(ApiError::forbidden("only the owner of a place or the keeper can clear it"));
     }
     allow_change(&state, &caller)?;
-    state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
-    state.worlds.mark_stale(COMMONS_ID);
+    store(&state, &caller, &place, &Outside::default())?;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -1661,7 +1714,7 @@ pub fn decorate_house(
     let outside: Outside = serde_json::from_value(value.clone())
         .map_err(|error| refuse(format!("not an outside: {error}")))?;
     let owner = place.owner_id.as_deref().ok_or_else(ApiError::not_found)?;
-    save_for_project(state, owner, place.x, place.y, &outside)?;
+    save_for_project(state, caller, owner, place.x, place.y, &outside)?;
     Ok(json!({"ok":true,"outside":outside}))
 }
 
@@ -1794,6 +1847,7 @@ pub fn lay_over(kind: &str, outside: &mut Outside, look: &Value) -> ApiResult<()
 /// to its owner's 60 changes a minute (E8).
 pub fn save_for_project(
     state: &AppState,
+    actor: &Caller,
     owner_id: &str,
     x: i64,
     y: i64,
@@ -1807,20 +1861,5 @@ pub fn save_for_project(
         return Err(ApiError::too_many_requests("that's a lot of changes: try again in a minute"));
     }
     check(&place.kind, outside)?;
-    if is_empty(outside) {
-        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
-    } else {
-        let text =
-            serde_json::to_string(outside).map_err(|_| ApiError::bad_request("not an outside"))?;
-        state.db.save_outside(
-            COMMONS_ID,
-            place.player_id,
-            &place.kind,
-            (place.x, place.y),
-            &text,
-            now(),
-        )?;
-    }
-    state.worlds.mark_stale(COMMONS_ID);
-    Ok(())
+    store(state, actor, &place, outside)
 }

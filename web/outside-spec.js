@@ -130,13 +130,13 @@ const RECTS = {
 const BODIES = {
   house: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
   cafe: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
-  club: { x: 3, y: 3, w: 10, d: 10, floors: 1 },
+  club: { x: 3, y: 3, w: 10, d: 10, floors: 2 },
   studio: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
   lounge: { x: 2, y: 4, w: 12, d: 8, floors: 1 },
-  bar: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
-  office: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
-  workshop: { x: 2, y: 4, w: 12, d: 9, floors: 1 },
-  library: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
+  bar: { x: 3, y: 4, w: 10, d: 8, floors: 2 },
+  office: { x: 3, y: 4, w: 10, d: 8, floors: 2 },
+  workshop: { x: 2, y: 4, w: 12, d: 9, floors: 2 },
+  library: { x: 3, y: 4, w: 10, d: 8, floors: 2 },
 };
 // E36: how many tiles a place takes each way. Everything on a big one is drawn this much bigger.
 export const spanOf = (kind) => (kind === 'square' || kind === 'green' ? 2 : 1);

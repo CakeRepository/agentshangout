@@ -13,7 +13,7 @@ use std::{
 
 use agenthangout::{
     app, auth,
-    db::Db,
+    db::{Db, NewFloor},
     now,
     outside::{self, Outside},
     world::{self, Change, Kind, Tile},
@@ -318,6 +318,34 @@ impl Server {
     fn stamp(&self) -> (i64, i64) {
         self.state.db.outsides_stamp(COMMONS).unwrap()
     }
+
+    /// The door of a place, walked in through (S34). Its owner is told which space it is.
+    async fn go_in(&self, token: &str, at: (i64, i64)) -> Reply {
+        self.post(token, "/api/spaces/door", json!({ "x": at.0, "y": at.1 })).await
+    }
+
+    /// How many floors a place's building has, as its outside reads them (E38).
+    async fn floors_outside(&self, who: &Who, at: (i64, i64)) -> i64 {
+        self.get(&who.key, &Self::url(at)).await.ok()["floors"].as_i64().unwrap()
+    }
+
+    /// The names of a space's floors, lowest first (S4).
+    fn floor_names(&self, space: &str) -> Vec<String> {
+        self.state.db.floors_of(space).unwrap().into_iter().map(|floor| floor.name).collect()
+    }
+
+    /// A tool called the way a bot calls it, through `/mcp`.
+    async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
+        let call = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments },
+        });
+        let result = self.post(token, "/mcp", call).await.ok()["result"].clone();
+        assert!(result["isError"].is_null(), "{name} failed: {result}");
+        result["structuredContent"].clone()
+    }
 }
 
 fn walls(color: i64) -> Value {
@@ -327,6 +355,11 @@ fn walls(color: i64) -> Value {
 /// An outside of a house, built from one document the checks accept.
 fn parse(document: Value) -> Outside {
     serde_json::from_value(document).unwrap()
+}
+
+/// An outside that gives a house `floors` floors and nothing else.
+fn floors_body(floors: i64) -> Value {
+    json!({ "body": { "x": 3, "y": 4, "w": 10, "d": 8, "floors": floors } })
 }
 
 // E1, E25
@@ -340,7 +373,7 @@ async fn an_outside_is_stored_whole_and_saving_an_empty_one_takes_it_away() {
     let (x, y) = spot;
     assert_eq!(
         before,
-        json!({ "x": x, "y": y, "kind": "house", "outside": {}, "yours": true, "can_edit": true })
+        json!({ "x": x, "y": y, "kind": "house", "outside": {}, "floors": 1, "yours": true, "can_edit": true })
     );
 
     let document = json!({
@@ -827,6 +860,120 @@ async fn a_town_square_has_no_body_and_keeps_its_middle_clear() {
     server.save(&ann, spot, with("fountain")).await.refused(StatusCode::CONFLICT);
     server.save(&ann, spot, with("statue")).await.refused(StatusCode::CONFLICT);
     server.save(&ann, spot, with("none")).await.ok();
+}
+
+// E38
+#[tokio::test]
+async fn a_buildings_floors_and_its_rooms_are_the_same_number_both_ways() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.house(&ann);
+    let space = text(&server.go_in(&ann.key, spot).await.ok()["space_id"]);
+    assert_eq!(server.floor_names(&space).len(), 1);
+    assert_eq!(server.floors_outside(&ann, spot).await, 1);
+
+    // Three floors outside means three inside, and the ones that come up are called Upstairs.
+    server.save(&ann, spot, floors_body(3)).await.ok();
+    let names = server.floor_names(&space);
+    assert_eq!(names.len(), 3, "{names:?}");
+    assert_eq!(names[1..], ["Upstairs", "Upstairs"], "{names:?}");
+    assert_eq!(server.floors_outside(&ann, spot).await, 3);
+
+    // Fewer floors than there are rooms is refused, and nothing moves.
+    server.save(&ann, spot, floors_body(1)).await.refused(StatusCode::CONFLICT);
+    assert_eq!(server.floor_names(&space).len(), 3);
+    assert_eq!(server.floors_outside(&ann, spot).await, 3);
+
+    // Taking the top room out takes a floor off the building, and adding one puts it back.
+    let top = server.state.db.floors_of(&space).unwrap().last().unwrap().id.clone();
+    server.delete(&ann.key, &format!("/api/floors/{top}")).await.ok();
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
+    let attic = json!({ "name": "Attic" });
+    server.post(&ann.key, &format!("/api/spaces/{space}/floors"), attic).await.ok();
+    assert_eq!(server.floors_outside(&ann, spot).await, 3);
+
+    // A building has at most three floors, so a fourth room is refused.
+    let roof = json!({ "name": "Roof" });
+    server
+        .post(&ann.key, &format!("/api/spaces/{space}/floors"), roof)
+        .await
+        .refused(StatusCode::CONFLICT);
+    assert_eq!(server.floor_names(&space).len(), 3);
+}
+
+// E38
+#[tokio::test]
+async fn a_building_saved_with_more_floors_than_its_rooms_gets_them_when_its_owner_goes_in() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.house(&ann);
+    server.save(&ann, spot, floors_body(2)).await.ok();
+    let space = text(&server.go_in(&ann.key, spot).await.ok()["space_id"]);
+    assert_eq!(server.floor_names(&space).len(), 2);
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
+}
+
+// E38
+#[tokio::test]
+async fn a_room_with_more_floors_than_its_building_raises_the_building_when_its_owner_goes_in() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.house(&ann);
+    let space = text(&server.go_in(&ann.key, spot).await.ok()["space_id"]);
+    // A room can have more floors than its building, as one that came back can (S35).
+    let loft = NewFloor {
+        id: &auth::new_id(),
+        space_id: &space,
+        name: "Loft",
+        invite_code: &auth::new_invite_code(),
+        created_by: &ann.id,
+        now: now(),
+    };
+    server.state.db.add_floor(&loft, 5).unwrap();
+    assert_eq!(server.floor_names(&space).len(), 2);
+    assert_eq!(server.floors_outside(&ann, spot).await, 1);
+
+    server.go_in(&ann.key, spot).await.ok();
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
+}
+
+// E38, W96
+#[tokio::test]
+async fn a_workshop_has_the_floor_above_its_rooms_and_its_building_shows_it() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    server.house(&ann);
+    let spot = server.place_later(&ann, "workshop", 8);
+    let space = text(&server.go_in(&ann.key, spot).await.ok()["space_id"]);
+    assert_eq!(server.floor_names(&space).len(), 2);
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
+}
+
+// E7, E38
+#[tokio::test]
+async fn clearing_an_outside_takes_away_no_floor_its_rooms_need() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.house(&ann);
+    server.save(&ann, spot, floors_body(2)).await.ok();
+    server.go_in(&ann.key, spot).await.ok();
+    server.delete(&ann.key, &Server::url(spot)).await.refused(StatusCode::CONFLICT);
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
+}
+
+// L35, E38
+#[tokio::test]
+async fn a_bot_that_saves_more_floors_for_its_house_brings_up_their_rooms() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.house(&ann);
+    let entry = server.go_in(&ann.key, spot).await.ok();
+    let space = text(&entry["space_id"]);
+    let rover = server.bot(&ann, &text(&entry["hangout_id"]), "Rover").await;
+    let edit = json!({ "x": spot.0, "y": spot.1, "outside": floors_body(2) });
+    server.tool(&rover, "decorate_house", edit).await;
+    assert_eq!(server.floor_names(&space).len(), 2);
+    assert_eq!(server.floors_outside(&ann, spot).await, 2);
 }
 
 // E15
@@ -1637,12 +1784,13 @@ async fn deleting_a_worlds_row_takes_its_outsides_with_it() {
 // E13, E14, E16
 #[test]
 fn the_checks_use_the_default_body_for_a_building_with_none_and_never_overflow() {
-    for kind in ["house", "cafe", "club", "studio"] {
+    // E38: a club starts with the floor above its room has (W96), and the others with one floor.
+    for (kind, floors) in [("house", 1), ("cafe", 1), ("club", 2), ("studio", 1)] {
         let body = outside::default_body(kind).unwrap();
         assert!(body.x >= 1 && body.y >= 1);
         assert!(body.w >= outside::MIN_BODY && body.d >= outside::MIN_BODY);
         assert!(body.x + body.w < outside::GRID && body.y + body.d < outside::GRID);
-        assert_eq!(body.floors, 1);
+        assert_eq!(body.floors, floors, "{kind}");
     }
     assert!(outside::default_body("square").is_none());
 
@@ -2581,8 +2729,9 @@ fn every_when_is_answered_from_the_facts_alone() {
     }
 }
 
-// E28: a room and an outside don't touch. Nothing about a room reads an outside and nothing about an
-// outside reads a room, so this adds nothing to W1 and W60.
+// E28: a room and an outside don't touch, except for the floors that E38 keeps the same number.
+// Nothing else about a room reads an outside and nothing else about an outside reads a room, so this
+// adds nothing to W1 and W60.
 #[test]
 fn nothing_in_a_room_reads_an_outside_and_nothing_in_an_outside_reads_a_room() {
     let root = env!("CARGO_MANIFEST_DIR");
@@ -2593,14 +2742,23 @@ fn nothing_in_a_room_reads_an_outside_and_nothing_in_an_outside_reads_a_room() {
     for path in
         ["src/spaces.rs", "src/items.rs", "src/ops.rs", "src/city.rs", "web/room.js", "web/city.js"]
     {
-        let source = read(path);
+        // E38: a building's floors follow its rooms, so these are the only words a room's floors reach by.
+        let source = read(path)
+            .replace("outside::has_floors", "")
+            .replace("outside::floors_at", "")
+            .replace("outside::set_floors", "")
+            .replace("outside::MAX_FLOORS", "");
         for word in
             ["place_outsides", "outside::", "outside.js", "outside-spec", "/outside", "pets.js"]
         {
             assert!(!source.contains(word), "{path} has {word}");
         }
     }
-    let ours = read("src/outside.rs");
+    let ours = read("src/outside.rs")
+        .replace("spaces::default_floors", "")
+        .replace("spaces::room_on", "")
+        .replace("spaces::check_floors", "")
+        .replace("spaces::raise_rooms", "");
     for word in [
         "spaces::",
         "items::",
@@ -2693,7 +2851,7 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
     // Rules are written beside what they're about, so this only wants every number once.
     let mut sorted = rules.clone();
     sorted.sort_unstable();
-    assert_eq!(sorted, (1..=37).collect::<Vec<u32>>(), "the rules should be E1 to E37");
+    assert_eq!(sorted, (1..=38).collect::<Vec<u32>>(), "the rules should be E1 to E38");
 
     let tests = std::fs::read_to_string(format!("{root}/tests/outside.rs")).unwrap();
     let mut named: HashSet<u32> = HashSet::new();

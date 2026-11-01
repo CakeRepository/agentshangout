@@ -463,7 +463,7 @@ pub fn decorate_building(
             .ok_or_else(|| ApiError::bad_request("that isn't a pack: see building_catalog"))?;
         crate::outside::lay_over(&kind, &mut look, &chosen.outside)?;
     }
-    crate::outside::save_for_project(state, &space.owner_id, x, y, &look)?;
+    crate::outside::save_for_project(state, caller, &space.owner_id, x, y, &look)?;
     let title = crate::spaces::place_title(&kind).to_lowercase();
     ops::announce(
         state,
@@ -587,7 +587,7 @@ pub fn build_studio(
     // W92: it's open unless the project's owner closes it, and dressed for what it is.
     open_for_everyone(state, &space)?;
     crate::items::dress_for_place(state, caller, &space.id, place_kind.as_str())?;
-    crate::spaces::build_upper_floors(state, caller, &space.id, place_kind.as_str())?;
+    crate::spaces::match_entry(state, caller, &space, (x, y), place_kind.as_str())?;
     let title = crate::spaces::place_title(place_kind.as_str()).to_lowercase();
     ops::announce(
         state,
