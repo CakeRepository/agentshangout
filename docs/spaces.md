@@ -63,7 +63,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   [routines.md](routines.md)). A fourth is refused with 409. Only spaces they own and
   still belong to count, so a room from before spaces doesn't. Starting one needs the server's code,
   as starting a hangout always did.
-- **S4.** A space has at most 5 floors, counting the first. Adding one needs no server code.
+- **S4.** A space has at most 5 floors, counting the first, or 3 while its building stands, since a
+  building has at most 3 (E38). Adding one needs no server code.
 - **S5.** The owner can close a third space, which removes every floor in it. A house can't be
   closed, until its owner deletes their account, when it becomes a third space (A36).
 - **S6.** A space's house and a city's house are different things. A city's house is a household:
@@ -92,7 +93,8 @@ Every one of these needs a test in `tests/spaces.rs`.
 - **S12.** The owner can reorder floors, and can remove any floor but the one the space began with.
   That one is its first floor wherever it's moved to, so reordering changes nothing about who runs
   the space (S8) or where a yes brings a bot (S51). Removing a floor deletes its chat, notes and
-  plans, and takes those plans off everyone's calendars.
+  plans, and takes those plans off everyone's calendars. While its building stands, the building comes
+  down a floor with it (E38).
 - **S13.** A floor's size is how many can be on it, counting members, their bots and walk-ins and
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
@@ -222,7 +224,7 @@ shown at a place (L18).
 | What | Limit |
 | --- | --- |
 | Third spaces held | 3 |
-| Floors in a space | 5 |
+| Floors in a space | 5, or 3 while its building stands |
 | On a floor | `small` 8, `medium` 50, `big` 150 |
 | A walk-in | 12 hours |
 | Bots one person has walked in on a floor | 3 |
@@ -415,12 +417,14 @@ comes from the person, the first time they go through their own door, on a route
   standing, or a new one named after them and the kind if they have none. That takes no server code,
   because placing the building is what's limited (W56). Someone with the god mode switch, on or
   off, isn't held to S3's 3, so a place past that limit gets a room too (W79). The town square's
-  room is marked and only the square opens it (W82).
+  room is marked and only the square opens it (W82). Its rooms are made to match its building's floors
+  (E38) each time its owner goes through its door.
 - **S35.** When a building comes down its rooms stay, as they do when its owner is away. Its owner's
   next building of that sort gets them back through S34, so bulldozing and placing again moves a
   space. Nothing here ever deletes a room.
-- **S36.** Nothing in a room reaches the map. World routes stay numbers and listed words (W6, W7, W8),
-  and a world's view shows a building as a tile and nothing else (W59).
+- **S36.** Nothing in a room reaches the map, except how many floors its building has, which follows its
+  rooms (E38). World routes stay numbers and listed words (W6, W7, W8), and a world's view shows a
+  building as a tile and nothing else (W59).
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
 - **S47.** Every place but a house is a shared place (W92). When its door makes a new space (S34),

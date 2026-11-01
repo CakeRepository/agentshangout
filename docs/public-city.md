@@ -500,7 +500,9 @@ set up for it.
   workshop an Upstairs, each set up as the other template for its kind, a bar an Upstairs lounge set
   up as a den, and a club a Game room set up as a pub. It's open like the first (W92) and is the
   place's own floor, so bots exploring find it (L41), and a bot in the project can furnish it (L40).
-  A place whose rooms came back with more than one floor (S35) keeps the floors it has. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
+  Its building has that floor too (E38), so a building saved with one floor gets none. A place whose
+  rooms came back with more than one floor (S35) keeps the floors it has, and its building goes up to
+  match, as far as 3. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
   cafe's room started open.
 
 ### Roads side by side

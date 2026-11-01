@@ -20,6 +20,7 @@ use crate::{
     error::{ApiError, ApiResult},
     god_mode, items, now,
     ops::{self, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
+    outside,
     worlds::COMMONS_ID,
     AppState,
 };
@@ -583,44 +584,116 @@ pub fn upper_floors(kind: &str, first: &str) -> Vec<(&'static str, &'static str)
     }
 }
 
-/// W96: a new place's floors above the first, open and set up, unless its space has more than its
-/// first floor already, as one that came back does (S35).
-pub fn build_upper_floors(
+/// W96, E13: the floors a building of this kind has when its outside doesn't say: its room's first floor,
+/// and the floor above for the kinds that have one.
+pub fn default_floors(kind: &str) -> i64 {
+    1 + upper_floors(kind, "").len() as i64
+}
+
+/// E38: the room that's the way into the building on a tile of The Commons, if there is one.
+pub fn room_on(state: &AppState, x: i64, y: i64) -> ApiResult<Option<Space>> {
+    let Some(building) = state.db.building_at(COMMONS_ID, x, y)? else {
+        return Ok(None);
+    };
+    match state.db.space_on_plot(COMMONS_ID, x, y)? {
+        Some(space) if is_door_to(state, &building, &space)? => Ok(Some(space)),
+        _ => Ok(None),
+    }
+}
+
+/// E38: the tile and kind of the building that's the way into a space, if one stands.
+fn building_plot(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64, String)>> {
+    let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
+        return Ok(None);
+    };
+    Ok(building_of(state, space)?.map(|(kind, _)| (x, y, kind)))
+}
+
+/// E38: refuses a building with fewer floors than its space has rooms.
+pub fn check_floors(state: &AppState, space: &Space, floors: i64) -> ApiResult<()> {
+    let rooms = state.db.floors_of(&space.id)?.len() as i64;
+    if rooms > floors {
+        return Err(ApiError::conflict(format!(
+            "its space has {rooms} floors inside, so it can't have {floors}: take floors out of the space first"
+        )));
+    }
+    Ok(())
+}
+
+/// E38: makes a building's floors and its room's floors the same number, as far as 3. A room with fewer
+/// floors than its building gets the rest (W96), and one with more takes its building up to it.
+pub fn match_entry(
     state: &AppState,
-    caller: &Caller,
-    space_id: &str,
+    actor: &Caller,
+    space: &Space,
+    (x, y): (i64, i64),
     kind: &str,
 ) -> ApiResult<()> {
-    let floors = state.db.floors_of(space_id)?;
-    let [first] = floors.as_slice() else {
+    if !outside::has_floors(kind) {
+        return Ok(());
+    }
+    let floors = outside::floors_at(state, x, y)?;
+    let rooms = state.db.floors_of(&space.id)?.len() as i64;
+    if rooms < floors {
+        raise_rooms(state, actor, space, kind, floors)?;
+    } else if rooms > floors {
+        outside::set_floors(state, x, y, rooms)?;
+    }
+    Ok(())
+}
+
+/// E38, W96: brings up the rooms a building lacks, above the first, until its space has `floors` of them.
+/// The first one a kind with a floor above gets is that floor (W96), and the rest are called Upstairs.
+/// Each is open like the first floor, and set up from one of its kind's templates.
+pub fn raise_rooms(
+    state: &AppState,
+    actor: &Caller,
+    space: &Space,
+    kind: &str,
+    floors: i64,
+) -> ApiResult<()> {
+    let have = state.db.floors_of(&space.id)?;
+    let Some(first) = have.first() else {
         return Ok(());
     };
     let started = items::template_for_place(kind, &first.id).map_or("hangout", |one| one.template);
-    for (name, template) in upper_floors(kind, started) {
+    let named = upper_floors(kind, started);
+    let templates = items::templates_for_place(kind);
+    let other =
+        templates.iter().copied().find(|word| *word != started).or(templates.first().copied());
+    for index in 0..(floors as usize).saturating_sub(have.len()) {
+        let (name, template) = match named.get(index) {
+            Some(&(name, template)) => (name, Some(template)),
+            None => ("Upstairs", other),
+        };
         let new = NewFloor {
             id: &auth::new_id(),
-            space_id,
+            space_id: &space.id,
             name,
             invite_code: &auth::new_invite_code(),
-            created_by: &caller.person_id,
+            created_by: &actor.person_id,
             now: now(),
         };
         let Some(floor) = state.db.add_floor(&new, MAX_FLOORS)? else {
             break;
         };
-        state.db.change_floor(&FloorChange {
-            id: &floor.id,
-            name: None,
-            access: Some("public"),
-            size: None,
-            paint: None,
-            flooring: None,
-            keep_bots_of: &caller.person_id,
-            private_only: &items::private_only(),
-        })?;
-        items::dress_floor(state, caller, &floor.id, template)?;
+        if first.access == "public" {
+            state.db.change_floor(&FloorChange {
+                id: &floor.id,
+                name: None,
+                access: Some("public"),
+                size: None,
+                paint: None,
+                flooring: None,
+                keep_bots_of: &actor.person_id,
+                private_only: &items::private_only(),
+            })?;
+        }
+        if let Some(template) = template {
+            items::dress_floor(state, actor, &floor.id, template)?;
+        }
     }
-    refresh_space(state, &state.db.floors_of(space_id)?);
+    refresh_space(state, &state.db.floors_of(&space.id)?);
     Ok(())
 }
 
@@ -671,7 +744,6 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
     }
     if !square {
         items::dress_for_place(state, caller, &id, place)?;
-        build_upper_floors(state, caller, &id, place)?;
     }
     state.db.space(&id)?.ok_or_else(ApiError::not_found)
 }
@@ -723,6 +795,10 @@ async fn go_through_door(
         }
         None => return Err(ApiError::not_found()),
     };
+    // E38: the owner's door brings the rooms and the building to the same number of floors.
+    if space.owner_id == caller.person_id {
+        match_entry(&state, &caller, &space, (body.x, body.y), &building.0)?;
+    }
     let turned_out = state.db.is_turned_out(&space.id, &caller.person_id)?;
     for floor in state.db.floors_of(&space.id)? {
         if state.in_room(&caller, &floor.id)? || (floor.access == "public" && !turned_out) {
@@ -942,6 +1018,20 @@ async fn add_floor(
 ) -> ApiResult<Json<Floor>> {
     let space = run_space(&state, &caller, &id, "add a floor")?;
     let name = ops::clean(&body.name, "name", MAX_NAME_CHARS)?;
+    // E38: a building that stands has as many floors as its rooms, and it has at most 3 of them.
+    let rooms = state.db.floors_of(&space.id)?.len() as i64;
+    let building = match building_plot(&state, &space)? {
+        Some((x, y, kind)) if outside::has_floors(&kind) => {
+            Some((x, y, outside::floors_at(&state, x, y)?))
+        }
+        _ => None,
+    };
+    if building.is_some() && rooms >= outside::MAX_FLOORS {
+        return Err(ApiError::conflict(format!(
+            "a building has at most {} floors",
+            outside::MAX_FLOORS
+        )));
+    }
     let floor = state
         .db
         .add_floor(
@@ -956,6 +1046,11 @@ async fn add_floor(
             MAX_FLOORS,
         )?
         .ok_or_else(|| ApiError::conflict(format!("a space can have {MAX_FLOORS} floors")))?;
+    if let Some((x, y, floors)) = building {
+        if rooms + 1 > floors {
+            outside::set_floors(&state, x, y, rooms + 1)?;
+        }
+    }
     refresh_space(&state, &state.db.floors_of(&space.id)?);
     Ok(Json(floor))
 }
@@ -1102,6 +1197,13 @@ async fn remove_floor(
         return Err(ApiError::conflict("a space can't lose the floor it began with"));
     }
     state.db.remove_rooms(&[floor.id.as_str()])?;
+    // E38: the building comes down a floor with its room.
+    if let Some((x, y, kind)) = building_plot(&state, &space)? {
+        let rooms = state.db.floors_of(&space.id)?.len() as i64;
+        if outside::has_floors(&kind) && outside::floors_at(&state, x, y)? != rooms {
+            outside::set_floors(&state, x, y, rooms)?;
+        }
+    }
     ops::refresh(&state, &floor.id);
     refresh_space(&state, &state.db.floors_of(&space.id)?);
     Ok(Json(json!({ "ok": true })))

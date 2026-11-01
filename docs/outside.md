@@ -121,7 +121,9 @@ what the map already shows.
 - **E13.** A tile's yard is a grid of 16 by 16 cells. `body` says where a building stands on it, as `x`,
   `y`, `w` and `d` in cells, and how many `floors` it has. `w` and `d` are at least 5, `x` and `y` at
   least 1, and it stops at least 1 cell from the far edges, so there's always room for a fence. `floors`
-  is 1, 2 or 3. Anything else is refused with 400.
+  is 1, 2 or 3. Anything else is refused with 400. With no `body`, a building has the floors its kind
+  starts with: 2 for an office, a library, a workshop, a bar or a club, which have a floor above (W96),
+  and 1 otherwise.
 - **E14.** A town square and a park have no `body`, so giving one one is refused with 400. Their
   centrepiece stands on the 4 by 4 cells in the middle, unless its `style` is `none`, and a park with no
   centrepiece chosen has none, as a square has a fountain.
@@ -129,6 +131,16 @@ what the map already shows.
   has the same 16 by 16 cells, spread over the four tiles, so everything on one is drawn twice the size,
   which suits a place that big. Any of the four tiles reaches it, and the answer says which tile it's
   stored on. With no outside they look as they did.
+- **E38.** While a building stands, its `floors` and the floors of its space are one number, and
+  every save of its outside holds to that: an owner's, an approved editor's or a bot's (L35), and a
+  clear, which saves the default. A room that comes up to match is named "Upstairs", open or private
+  like the first floor, and set up from a template for its kind. A workshop's floor above is named as
+  W96 says. A save with fewer floors than the space has rooms is refused with 409 and changes nothing,
+  so the floors come out of the space first (S12). Adding a room (S4) raises the building by one, and at
+  3 floors the add is refused with 409. Taking a room out takes a floor off the building. When its owner
+  goes through its door (S34), the rooms and the building are made to match, as far as 3. No room is
+  taken out by any of this, and a room with more than 3 floors (S35) keeps them while its building stays
+  at 3.
 
 ### The yard
 
@@ -201,8 +213,9 @@ dressed for fall inside and out.
   once for each pair of numbers in E26 and kept for up to 10 seconds, so asking again costs a copy. A page reads it when
   `outsides` changes, at most once every 30 seconds, so a change reaches other people's maps within about
   a minute and the owner sees theirs at once.
-- **E28.** The room behind a place and its outside don't touch. Nothing in a room reads an outside and
-  nothing in an outside reads a room, so this adds nothing to W1 and W60.
+- **E28.** The room behind a place and its outside don't touch, except for the floors, which E38 keeps
+  the same number. Nothing else in a room reads an outside and nothing else in an outside reads a room,
+  so this adds nothing to W1 and W60.
 - **E29.** The map draws an outside with everything else on the tile, in the tile's own picture. Pets are
   drawn over the map like everyone on the street, and a person zoomed far out doesn't see them.
 
@@ -257,7 +270,7 @@ CREATE TABLE IF NOT EXISTS place_outsides (
 | Request | Body | Reply | Who |
 | --- | --- | --- | --- |
 | `GET /api/outside` | | `Catalog` | Someone signed in, as a person (E9) |
-| `GET /api/places/{x}/{y}/outside` | | `{x, y, kind, outside, yours}` | Someone signed in, as a person |
+| `GET /api/places/{x}/{y}/outside` | | `{x, y, kind, outside, yours, floors}` | Someone signed in, as a person |
 | `PUT /api/places/{x}/{y}/outside` | `Outside` | `{outside}` | The place's owner (E6) |
 | `DELETE /api/places/{x}/{y}/outside` | | `{ok}` | The place's owner or the keeper (E7) |
 | `GET /api/worlds/{id}/outsides` | | `{outsides: [[x, y, outside]]}` | Anyone, limited like a view (E27) |
