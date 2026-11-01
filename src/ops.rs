@@ -8,8 +8,9 @@ use crate::{
     auth::{self, Caller},
     city,
     db::{
-        Agent, CheckIn, Event, FeedEvent, Hangout, Message, NewCheckIn, NewEvent, NewMessage,
-        NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip, Visit,
+        Agent, CheckIn, Event, FeedEvent, FloorLeave, Hangout, Mention, Message, NewCheckIn,
+        NewEvent, NewMessage, NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip,
+        Visit, Whiteboard,
     },
     error::{ApiError, ApiResult},
     ical, items, looks, notify, now, spaces, AppState, HubEvent,
@@ -22,6 +23,9 @@ const MAX_TITLE_CHARS: usize = 120;
 const MAX_LOCATION_CHARS: usize = 200;
 const MAX_NOTE_CHARS: usize = 500;
 const MAX_STATUS_CHARS: usize = 120;
+const MAX_WHITEBOARD_CHARS: usize = 2000;
+/// E22: how long an unread @mention holds a bot's wake-up URL quiet: 20 rings an hour at most.
+const MENTION_RING_SECS: i64 = 3 * 60;
 const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
 /// Reports expire instead of being cleared, so an agent that crashes doesn't stay at the desk.
@@ -178,12 +182,32 @@ fn publish_message(state: &AppState, message: &Message) {
 }
 
 /// The room, if the caller is in it. Anyone else gets the same answer as for a hangout that
-/// doesn't exist. A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
+/// doesn't exist, unless they were on this floor and left: then the answer says when and why
+/// (S62). A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
 pub fn require_room(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Hangout> {
     if !state.in_room(caller, hangout_id)? {
-        return Err(ApiError::not_found());
+        return Err(why_absent(state, caller, hangout_id)?);
     }
     state.db.hangout(hangout_id)?.ok_or_else(ApiError::not_found)
+}
+
+/// S62: a floor this caller walked onto and has since left. A floor they never entered stays
+/// "not found", so the answer doesn't reveal a room.
+fn why_absent(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<ApiError> {
+    let who = caller.agent_id.as_deref().unwrap_or(caller.person_id.as_str());
+    if let Some((at, reason)) = state.db.floor_leave(who, hangout_id)? {
+        return Ok(ApiError::new(
+            axum::http::StatusCode::NOT_FOUND,
+            format!("you left this floor at {}: {reason}", iso(at)),
+        ));
+    }
+    if let Some(until) = state.db.visit_ended(who, hangout_id, now())? {
+        return Ok(ApiError::new(
+            axum::http::StatusCode::NOT_FOUND,
+            format!("your time on this floor ended at {}", iso(until)),
+        ));
+    }
+    Ok(ApiError::not_found())
 }
 
 /// The room, if the caller belongs to it rather than visiting. Guests can watch, talk, share notes,
@@ -255,8 +279,74 @@ pub fn post_message(
         body: &body,
         now: now(),
     })?;
+    note_mentions(state, &message)?;
     publish_message(state, &message);
+    crate::events::note_message(state, &message);
     Ok(message)
+}
+
+/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22: a
+/// person's also rings a bot that belongs here.
+fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
+    if message.kind != "chat" {
+        return Ok(());
+    }
+    let members = state.db.agents_in(&message.hangout_id, message.created_at)?;
+    let visitors = state.db.visitors_in(&message.hangout_id, message.created_at)?;
+    let bots = members.iter().map(|bot| (bot, true));
+    let mut seen = std::collections::HashSet::new();
+    for (bot, belongs) in bots.chain(visitors.iter().map(|bot| (bot, false))) {
+        if message.agent_id.as_deref() == Some(bot.id.as_str()) || !seen.insert(bot.id.clone()) {
+            continue;
+        }
+        if crate::doorbell::mentions(&message.body, &bot.name) {
+            // Asked before adding this one, which would otherwise be what it's waiting to read.
+            let rings =
+                message.agent_id.is_none() && belongs && rings_for_mention(state, message, bot)?;
+            state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
+            if rings {
+                let notice = notify::Notice {
+                    event: "mention",
+                    hangout_id: message.hangout_id.clone(),
+                    text: "Someone mentioned you. Call inbox. To reply in a room, call say."
+                        .to_string(),
+                };
+                notify::send(state, std::slice::from_ref(&bot.id), &notice);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// E22: a paused bot stays asleep, and one that hasn't read the last ring doesn't need another.
+fn rings_for_mention(state: &AppState, message: &Message, bot: &Agent) -> ApiResult<bool> {
+    let since = message.created_at - MENTION_RING_SECS;
+    Ok(!state.db.doorbell_paused(&bot.id)?
+        && !state.db.person_mention_unread(&bot.id, &message.hangout_id, since)?)
+}
+
+/// I49: the room's one slate. What's written replaces what was there, and an empty text wipes it.
+/// It pings nobody and adds no line to the chat (I53), so nothing here can start a bot.
+pub fn set_whiteboard(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: &str,
+    text: &str,
+) -> ApiResult<()> {
+    no_guests(state, caller, hangout_id, "write on the whiteboard")?;
+    items::no_quiet(state, caller, hangout_id)?;
+    let text = clean_optional(Some(text), "whiteboard", MAX_WHITEBOARD_CHARS)?;
+    note_agent_write(state, caller)?;
+    // S57: it's on the wall, so a bot has to be there.
+    spaces::go_to(state, caller, hangout_id)?;
+    if text.is_empty() {
+        state.db.wipe_whiteboard(hangout_id)?;
+    } else {
+        let bot = caller.agent_id.as_deref();
+        state.db.write_whiteboard(hangout_id, &text, &caller.person_id, bot, now())?;
+    }
+    refresh(state, hangout_id);
+    Ok(())
 }
 
 pub fn set_status(state: &AppState, caller: &Caller, status: Option<&str>) -> ApiResult<()> {
@@ -393,7 +483,26 @@ pub fn propose_event(
     )?;
     settle(state, &id)?;
     refresh(state, hangout_id);
-    state.db.event(&id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(&id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "proposed",
+        caller.agent_id.as_deref(),
+        Some("yes"),
+        Some(&caller.person_id),
+    );
+    if event.status == "confirmed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "confirmed",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    }
+    Ok(event)
 }
 
 pub fn rsvp(
@@ -432,11 +541,40 @@ pub fn rsvp(
         }
     }
     note_agent_write(state, caller)?;
+    let before = event.status.clone();
     let via_agent = caller.is_agent().then_some(caller.name.as_str());
     state.db.upsert_rsvp(event_id, &caller.person_id, response, via_agent, &note, now())?;
     settle(state, event_id)?;
     refresh(state, &event.hangout_id);
-    state.db.event(event_id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(event_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "answered",
+        caller.agent_id.as_deref(),
+        Some(response),
+        Some(&caller.person_id),
+    );
+    if before == "proposed" && event.status == "confirmed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "confirmed",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    } else if before == "confirmed" && event.status == "proposed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "reopened",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    }
+    Ok(event)
 }
 
 /// Moves an event on or off the calendar to match its yes count.
@@ -486,7 +624,16 @@ pub fn cancel_event(state: &AppState, caller: &Caller, event_id: &str) -> ApiRes
         &format!("{} cancelled \"{}\".", caller.name, event.title),
     )?;
     refresh(state, &event.hangout_id);
-    state.db.event(event_id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(event_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "cancelled",
+        caller.agent_id.as_deref(),
+        None,
+        Some(&caller.person_id),
+    );
+    Ok(event)
 }
 
 // Check-ins: asking the room before acting. The server records the answer; it can't stop a bot
@@ -567,7 +714,9 @@ pub fn create_check_in(
         None => notify_others(state, hangout_id, &caller.person_id, "check_in.waiting", &text)?,
     }
     refresh(state, hangout_id);
-    state.db.check_in(&id, now)?.ok_or_else(ApiError::not_found)
+    let check_in = state.db.check_in(&id, now)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_check_in(state, &check_in, caller.agent_id.as_deref());
+    Ok(check_in)
 }
 
 pub fn answer_check_in(
@@ -611,7 +760,9 @@ pub fn answer_check_in(
     announce_in_house_only(state, &check_in.hangout_id, &text)?;
     notify_side(state, &check_in.hangout_id, &check_in.asked_by, "check_in.answered", &text)?;
     refresh(state, &check_in.hangout_id);
-    state.db.check_in(check_in_id, now)?.ok_or_else(ApiError::not_found)
+    let check_in = state.db.check_in(check_in_id, now)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_check_in(state, &check_in, caller.agent_id.as_deref());
+    Ok(check_in)
 }
 
 // Questions for a bot's owner. These are between a bot and the person who owns it, so nothing about
@@ -707,7 +858,9 @@ pub fn answer_owner_question(
     };
     notify::send(state, std::slice::from_ref(&question.agent_id), &notice);
     refresh_for_owner(state, &question.hangout_id)?;
-    state.db.owner_question(question_id)?.ok_or_else(ApiError::not_found)
+    let answered = state.db.owner_question(question_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_owner_answer(state, &answered);
+    Ok(answered)
 }
 
 /// Everything waiting on this caller's side, across its rooms. It's the one call a bot needs when
@@ -735,6 +888,10 @@ pub struct Inbox {
     pub plans_soon: Vec<crate::closeness::PlanSoon>,
     /// S60: the room this bot is in, by id and name. People only ever have nothing here.
     pub you_are_in: Option<serde_json::Value>,
+    /// B8: @mentions of this bot it hasn't read yet. Empty for a person.
+    pub mentions: Vec<Mention>,
+    /// S62, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
+    pub last_left: Option<FloorLeave>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -792,6 +949,12 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         let place = state.db.bot_place(agent_id, now)?;
         let room = place.map(|id| state.db.hangout(&id)).transpose()?.flatten();
         inbox.you_are_in = room.map(|room| serde_json::json!({ "id": room.id, "name": room.name }));
+        // B8: tags in rooms it belongs to or is visiting, until it reads that room.
+        inbox.mentions = state.db.unread_mentions(agent_id)?;
+        // L21: why it isn't on the floor it went out to, while it isn't out.
+        if state.db.bot_visits(agent_id, now)?.is_empty() {
+            inbox.last_left = state.db.latest_floor_leave(agent_id, now - DAY_SECS)?;
+        }
     }
     Ok(inbox)
 }
@@ -844,17 +1007,74 @@ pub fn set_doorbell_paused(
     Ok(())
 }
 
+/// What to do with a bot's saved wake-up key. Leaving it out keeps the key already saved.
+pub enum NotifyAuth<'a> {
+    Keep,
+    Clear,
+    Set(&'a str),
+}
+
 pub fn set_agent_notify(
     state: &AppState,
     caller: &Caller,
     agent_id: &str,
-    url: Option<&str>,
+    url: NotifyAuth<'_>,
+    auth: NotifyAuth<'_>,
 ) -> ApiResult<()> {
     own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
-    let url = url.map(str::trim).filter(|url| !url.is_empty());
-    let url = url.map(|url| notify::clean_url(state, url)).transpose()?;
+    // Leaving the URL out keeps the one already saved. An empty one removes the ping and the key.
+    let url = match url {
+        NotifyAuth::Keep => state.db.notify_url(agent_id)?,
+        NotifyAuth::Clear => None,
+        NotifyAuth::Set(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(notify::clean_url(state, text)?)
+            }
+        }
+    };
+    if url.is_none() {
+        state.db.set_notify_url(agent_id, None)?;
+        state.db.set_notify_auth(agent_id, None)?;
+        return Ok(());
+    }
     state.db.set_notify_url(agent_id, url.as_deref())?;
+    match auth {
+        NotifyAuth::Keep => {}
+        NotifyAuth::Clear => state.db.set_notify_auth(agent_id, None)?,
+        NotifyAuth::Set(secret) => {
+            notify::auth_header(secret)?;
+            state.db.set_notify_auth(agent_id, Some(secret.trim()))?;
+        }
+    }
     Ok(())
+}
+
+/// E23: one try with what's saved, so an owner can see a refused key.
+pub async fn test_agent_notify(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+) -> ApiResult<serde_json::Value> {
+    own_agent(state, caller, agent_id, "test a bot's wake-up URL")?;
+    let url = state.db.notify_url(agent_id)?;
+    let url = url.ok_or_else(|| ApiError::bad_request("save a URL first"))?;
+    let auth = state.db.notify_auth(agent_id)?;
+    Ok(notify::test_wake_up(state, &url, auth.as_deref()).await)
+}
+
+/// The URL, and whether a key is saved. The key itself stays on the server.
+pub fn agent_notify(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+) -> ApiResult<serde_json::Value> {
+    own_agent(state, caller, agent_id, "see a bot's wake-up URL")?;
+    let url = state.db.notify_url(agent_id)?;
+    let auth = state.db.notify_auth(agent_id)?.is_some();
+    Ok(serde_json::json!({ "url": url, "auth": auth }))
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {
@@ -888,6 +1108,8 @@ pub struct Snapshot {
     pub agents: Vec<Agent>,
     pub messages: Vec<Message>,
     pub notes: Vec<Message>,
+    /// What's on the wall (I48), or null if it's blank or a guest arrived after it was written.
+    pub whiteboard: Option<Whiteboard>,
     pub events: Vec<Event>,
     /// Friends who answered a plan through its link, who aren't in `people` (F19).
     pub invitees: Vec<crate::db::Invitee>,
@@ -972,6 +1194,11 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
             day_ago,
         ),
     };
+    // I52: reads leave out the second of arrival (R14), so this does too.
+    let whiteboard = state
+        .db
+        .whiteboard(hangout_id)?
+        .filter(|board| guest.as_ref().is_none_or(|visit| board.updated_at > visit.since));
     let invitees = match &guest {
         Some(_) => Vec::new(),
         None => state.db.invitees_in(hangout_id, now)?,
@@ -1008,6 +1235,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         agents,
         messages,
         notes,
+        whiteboard,
         events,
         invitees,
         plan_items,
@@ -1076,6 +1304,12 @@ pub fn join(state: &AppState, person: &Person, hangout: &Hangout) -> ApiResult<(
     Ok(())
 }
 
+/// What a room is told when someone leaves it. For anyone who left before `floors_left`, this line
+/// is the only record that they did (S27), so nothing else writes it.
+pub(crate) fn left_line(name: &str) -> String {
+    format!("{name} left the hangout.")
+}
+
 pub fn leave(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<()> {
     require_human(caller, "leave a hangout")?;
     no_guests(state, caller, hangout_id, "leave a hangout")?;
@@ -1088,7 +1322,7 @@ pub fn leave(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
         return Ok(());
     }
     state.db.remove_member(hangout_id, &caller.person_id)?;
-    announce(state, hangout_id, &format!("{} left the hangout.", caller.name))?;
+    announce(state, hangout_id, &left_line(&caller.name))?;
     refresh(state, hangout_id);
     Ok(())
 }
@@ -1183,13 +1417,18 @@ pub fn bring_agent(
             )));
         }
     }
+    let was = state.db.bot_place(agent_id, now())?;
     // S59: a bot that already belongs here is only being called over, so the room hears nothing.
     if !state.db.agents_in(hangout_id, now())?.iter().any(|bot| bot.id == agent_id) {
         spaces::check_fits(state, hangout_id)?;
         state.db.add_agent_to_room(hangout_id, agent_id)?;
         announce(state, hangout_id, &format!("{} brought in {}.", caller.name, agent.name))?;
     }
-    spaces::place_bot(state, agent_id, hangout_id)
+    spaces::place_bot(state, agent_id, hangout_id)?;
+    if was.as_deref() != Some(hangout_id) {
+        crate::events::note_place(state, agent_id, hangout_id, "moved");
+    }
+    Ok(())
 }
 
 pub fn remove_agent(
@@ -1200,6 +1439,7 @@ pub fn remove_agent(
 ) -> ApiResult<()> {
     let agent = own_agent(state, caller, agent_id, "remove a bot")?;
     no_guests(state, caller, hangout_id, "remove a bot")?;
+    let was_here = state.db.agents_in(hangout_id, now())?.iter().any(|bot| bot.id == agent_id);
     state.db.remove_agent_from_room(hangout_id, agent_id)?;
     // L17: a bot taken out of a project leaves its studio on The Commons.
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
@@ -1208,6 +1448,9 @@ pub fn remove_agent(
     state.db.end_bot_player_token(agent_id)?;
     announce(state, hangout_id, &format!("{} sent {} home.", caller.name, agent.name))?;
     refresh(state, hangout_id);
+    if was_here {
+        crate::events::note_place(state, agent_id, hangout_id, "removed");
+    }
     spaces::refresh_bot_place(state, agent_id)
 }
 

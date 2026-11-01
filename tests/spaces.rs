@@ -383,6 +383,17 @@ impl Server {
         serde_json::from_str(&text(&reply["result"]["content"][0]["text"])).unwrap()
     }
 
+    /// A tool the server refused, as the text the bot is shown.
+    async fn tool_error(&self, token: &str, name: &str, arguments: Value) -> String {
+        let call = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments },
+        });
+        let result = self.post(token, "/mcp", call).await.ok()["result"].clone();
+        assert_eq!(result["isError"], true, "{name} should have been refused: {result}");
+        text(&result["content"][0]["text"])
+    }
+
     fn lines(snapshot: &Value) -> Vec<String> {
         snapshot["messages"].as_array().unwrap().iter().map(|line| text(&line["body"])).collect()
     }
@@ -910,11 +921,11 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
         listed.clone().find(|each| each["furniture"] == word).unwrap()["stays"].clone()
     };
     assert_eq!((stays("couch"), stays("table")), (json!(false), json!(true)));
-    assert_eq!(look["packs"][0]["pack"], "halloween");
+    assert_eq!(look["packs"][0]["pack"], "fall");
 
     // Every word in the rule can be chosen, and the page has a look for every one of them.
     let page = include_str!("../web/room.js");
-    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted"] {
+    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted", "harvest"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"],
             paint
@@ -924,7 +935,7 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
             "the room page can't paint {paint}"
         );
     }
-    for flooring in ["oak", "walnut", "tile", "carpet", "grass", "crypt"] {
+    for flooring in ["oak", "walnut", "tile", "carpet", "grass", "crypt", "leaves"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"],
             flooring
@@ -1392,6 +1403,42 @@ async fn going_private_ends_every_walk_in_and_reopening_doesnt_bring_them_back()
         .contains("said while it was private"));
 }
 
+// S62
+
+#[tokio::test]
+async fn a_floor_a_bot_left_says_when_and_why() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let (home, stranger) = server.someone("Stranger").await;
+    let (scout, token) = server.bot(&stranger, &home, "Scout").await;
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({ "agent_id": scout }))
+        .await
+        .ok();
+    server.snapshot(&token, &room).await.ok();
+    server
+        .post(&stranger.key, &format!("/api/floors/{room}/walk-out"), json!({ "agent_id": scout }))
+        .await
+        .ok();
+
+    let message = server.tool_error(&token, "read_room", json!({ "hangout_id": room })).await;
+    assert!(message.contains("you left this floor at"), "{message}");
+    assert!(message.contains("your owner brought you back"), "{message}");
+    let rest = server.snapshot(&token, &room).await;
+    assert_eq!(rest.status, StatusCode::NOT_FOUND);
+    assert!(text(&rest.body["error"]).contains("you left this floor at"), "{}", rest.body);
+    assert!(text(&rest.body["error"]).contains("your owner brought you back"), "{}", rest.body);
+
+    // The room it still belongs to opens, and a room it never entered stays not found.
+    server.snapshot(&token, &home).await.ok();
+    assert_eq!(
+        server.tool_error(&token, "read_room", json!({ "hangout_id": "no-such-room" })).await,
+        "not found"
+    );
+    assert_eq!(server.get(&token, "/api/hangouts/no-such-room").await.body["error"], "not found");
+}
+
 // S26
 
 #[tokio::test]
@@ -1800,6 +1847,21 @@ async fn saying_something_in_a_room_takes_a_bot_there_and_out_of_the_last_one() 
     assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
 }
 
+// S57, I54
+#[tokio::test]
+async fn writing_on_a_whiteboard_takes_a_bot_there_and_out_of_the_last_one() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    for room in [list[0], list[1], list[2], list[0]] {
+        let args = json!({ "hangout_id": room, "text": "On it" });
+        let wrote = server.tool(&token, "set_whiteboard", args).await;
+        assert!(wrote["isError"].is_null(), "{wrote}");
+        assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [room]);
+    }
+}
+
 // S57, S60
 #[tokio::test]
 async fn go_to_room_moves_a_bot_and_it_can_tell_where_it_is() {
@@ -1881,6 +1943,11 @@ async fn a_bot_on_a_trip_goes_home_before_it_goes_anywhere_else() {
     server.say(&town.token, &home, "Back in a bit").await.refused(StatusCode::CONFLICT);
     let lines = server.snapshot(&town.cy.key, &home).await.ok()["messages"].to_string();
     assert!(!lines.contains("Back in a bit"), "nothing was said: {lines}");
+    let board = format!("/api/hangouts/{home}/whiteboard");
+    let words = json!({ "text": "Back in a bit" });
+    server.put(&town.token, &board, words).await.refused(StatusCode::CONFLICT);
+    let wall = server.snapshot(&town.cy.key, &home).await.ok();
+    assert!(wall["whiteboard"].is_null(), "nothing was written: {wall}");
 
     // It can still ask its owner from home, which doesn't take it there (R46).
     let asked = format!("/api/hangouts/{home}/owner-questions");
@@ -2062,7 +2129,7 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 31] = [
+const KEPT_BY_THE_WIPE: [&str; 33] = [
     "people",
     "passkey_users",
     "passkeys",
@@ -2073,6 +2140,7 @@ const KEPT_BY_THE_WIPE: [&str; 31] = [
     "owner_notes",
     "bot_marks",
     "bots_without_moods",
+    "bots_without_a_house",
     "person_looks",
     "bot_looks",
     "agents",
@@ -2080,6 +2148,7 @@ const KEPT_BY_THE_WIPE: [&str; 31] = [
     "agent_doorbell",
     "discord_links",
     "notify_targets",
+    "notify_auth",
     "free_sharing",
     "free_windows",
     "house_plan_sharing",
@@ -2225,6 +2294,10 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         .post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
         .await
         .ok();
+    server
+        .put(&ann.key, &format!("/api/hangouts/{room}/whiteboard"), json!({ "text": "Soon" }))
+        .await
+        .ok();
 
     let connection = Connection::open(&path).unwrap();
     let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
@@ -2258,6 +2331,7 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         "floor_items",
         "item_notes",
         "bots_without_moods",
+        "whiteboards",
     ] {
         assert!(rows(table) > 0, "the test never made a row in {table}");
     }
@@ -3199,4 +3273,351 @@ async fn leaving_a_room_takes_you_out_of_it_at_once() {
     assert_eq!(server.post(&stranger.key, &away, json!({})).await.status, StatusCode::NOT_FOUND);
     server.post(&ann.key, &away, json!({})).await.ok();
     assert_eq!(server.present(&bo.key, &room).await, ids(&[&bo]), "she left and is still here");
+}
+
+/// What a page puts in its top bar, from `frame.actions.append(` to the end of that statement.
+fn top_bar<'a>(app: &'a str, view: &str) -> &'a str {
+    let view = app.split_once(&format!("async function {view}(")).unwrap().1;
+    let bar = view.split_once("frame.actions.append(").unwrap().1;
+    bar.split_once("));").unwrap().0
+}
+
+/// That each of `buttons` is in `bar`, in that order.
+fn in_order(bar: &str, buttons: &[&str]) {
+    let at: Vec<usize> = buttons
+        .iter()
+        .map(|button| bar.find(button).unwrap_or_else(|| panic!("{button} isn't in {bar}")))
+        .collect();
+    assert!(at.is_sorted(), "{buttons:?} are out of order in {bar}");
+}
+
+// S63
+#[test]
+fn the_way_back_is_in_the_top_bar_and_nothing_to_leave_by_is_drawn_over_a_room() {
+    // Someone in a house couldn't find the way out when it stood in the room's corner, where a panel
+    // could cover it (#159). Nothing here runs a browser, so this reads the page.
+    let frame = include_str!("../web/city.js");
+    assert!(
+        frame.contains("header.append(back, title, actions);"),
+        "the way back isn't first in the bar"
+    );
+    let app = include_str!("../web/app.js");
+    assert!(
+        app.contains("frame.back.append(backLink(backPath, backText, backShort));"),
+        "a room's way back isn't in the bar"
+    );
+    assert!(
+        app.contains(
+            "frame.back.replaceChildren(backLink(`/h/${back.id}`, 'Back to the room', 'Room'));"
+        ),
+        "the Customize page's way back isn't in the same place"
+    );
+    assert!(
+        app.contains("return link(path, `← ${short}`, {"),
+        "the way back says something else at some width"
+    );
+    let css = include_str!("../web/style.css");
+    assert!(
+        !app.contains("stage-exit") && !css.contains("stage-exit"),
+        "the way out is still drawn over the room"
+    );
+    assert!(
+        css.contains(".wd-title-back:empty { display: none; }"),
+        "the map, with nothing to go back to, keeps a gap for it"
+    );
+}
+
+// S64
+#[test]
+fn a_room_keeps_the_top_bar_of_the_map() {
+    let app = include_str!("../web/app.js");
+    let map = top_bar(app, "worldView");
+    let room = top_bar(app, "roomView");
+    // The same five end both bars, and the buttons are held to the right, so what only one of them
+    // has goes in front. Then a door moves none of the five.
+    in_order(
+        map,
+        &[
+            "panels.toggle('about'",
+            "panels.toggle('info'",
+            "panels.toggle('around'",
+            "account.toggle",
+            "dresser.toggle",
+            "panels.toggle('more'",
+        ],
+    );
+    in_order(
+        room,
+        &[
+            "questionsToggle.button",
+            "panels.toggle('notes'",
+            "checkInsToggle.button",
+            "builder.toggle",
+            "chatToggle.button",
+            "panels.toggle('crew'",
+            "account.toggle",
+            "dresser.toggle",
+            "panels.toggle('more'",
+        ],
+    );
+    for bar in [map, room] {
+        let more = bar.split_once("panels.toggle('more'").unwrap().1;
+        assert!(!more.contains(".toggle"), "More isn't last in {bar}");
+    }
+    let css = include_str!("../web/style.css");
+    assert!(!css.contains(".wd-title-actions .more {"), "More comes and goes with the width");
+    assert_eq!(
+        app.matches("const account = accountPanel(panels, me, parts);").count(),
+        2,
+        "your account isn't the same panel on the map and in a room"
+    );
+}
+
+// S65
+#[test]
+fn a_narrow_room_keeps_its_name_and_every_button() {
+    let css = include_str!("../web/style.css");
+    assert!(css.contains(".wd-room .wd-title { flex-wrap: wrap; }"), "the buttons can't wrap");
+    assert!(css.contains(".wd-room .wd-title-text { min-width: 64px; }"), "the name can vanish");
+    assert!(
+        css.contains(".wd-room .wd-title-actions { margin-left: auto; }"),
+        "buttons on a line of their own aren't where they were"
+    );
+}
+
+async fn turn_out(server: &Server, by: &Who, space: &str, person: &Who) {
+    let path = format!("/api/spaces/{space}/people/{}/turn-out", person.id);
+    server.post(&by.key, &path, json!({})).await.ok();
+}
+
+async fn new_account_on(server: &Server, link: &str) -> Reply {
+    server.post("", &format!("/api/invites/{link}/join"), json!({ "your_name": "Not Bo" })).await
+}
+
+// S27: leaving a floor doesn't unsee its link, and all the join check knows is the account.
+#[tokio::test]
+async fn a_floor_left_before_being_turned_out_lets_no_new_account_in_on_its_old_link() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    server.say(&ann.key, &attic, "only for the attic").await.ok();
+    let bo = server.join(&ann, &room, "Bo").await;
+    let seen = server.invite_code(&ann, &attic).await;
+    server.post(&bo.key, &format!("/api/invites/{seen}/join"), json!({})).await.ok();
+    server.post(&bo.key, &format!("/api/hangouts/{attic}/leave"), json!({})).await.ok();
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+    assert_ne!(server.invite_code(&ann, &attic).await, seen);
+}
+
+// S21, S27: a walk-in saw no link, unless they saw it before they were a walk-in.
+#[tokio::test]
+async fn someone_turned_out_as_a_walk_in_keeps_no_link_from_when_they_belonged() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let seen = server.invite_code(&bo, &room).await;
+    server.post(&bo.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    server.open(&ann, &room).await;
+    server.walk_in(&bo, &room).await.ok();
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S27, FR5: an invite from a friend shows the link, so whoever had one saw it.
+#[tokio::test]
+async fn someone_turned_out_keeps_no_link_an_invite_from_a_friend_showed_them() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (cys_room, cy) = server.someone("Cy").await;
+    let cys_code = server.invite_code(&cy, &cys_room).await;
+    server.post(&ann.key, &format!("/api/invites/{cys_code}/join"), json!({})).await.ok();
+    let invite = format!("/api/hangouts/{room}/invite-friend");
+    server.post(&ann.key, &invite, json!({ "person_id": cy.id })).await.ok();
+    let seen = server.invite_code(&ann, &room).await;
+    server.open(&ann, &room).await;
+    server.walk_in(&cy, &room).await.ok();
+
+    turn_out(&server, &ann, &room, &cy).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S8, S27: the link of the first floor would have run the space, and undone this.
+#[tokio::test]
+async fn nobody_turned_out_comes_back_to_run_the_space_and_let_themselves_in() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    let cy = server.join(&ann, &room, "Cy").await;
+    let upstairs = server.invite_code(&ann, &attic).await;
+    server.post(&bo.key, &format!("/api/invites/{upstairs}/join"), json!({})).await.ok();
+    let seen = server.invite_code(&bo, &room).await;
+    server.post(&bo.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    // Cy runs it now, and Bo is only upstairs.
+    turn_out(&server, &cy, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+    let view = server.get(&cy.key, &format!("/api/spaces/{room}")).await.ok();
+    assert_eq!(names(&view["turned_out"]), vec!["Bo".to_string()]);
+}
+
+// S27: only what they saw changes, so a floor they never reached keeps its link and its invites.
+#[tokio::test]
+async fn turning_someone_out_leaves_the_link_of_a_floor_they_never_saw_alone() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    let link = server.invite_code(&ann, &attic).await;
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    assert_eq!(server.invite_code(&ann, &attic).await, link);
+}
+
+// S12, S51: the first floor is the one the space began with, wherever it has been moved to.
+#[tokio::test]
+async fn a_yes_brings_a_bot_onto_the_floor_the_space_began_with_however_floors_are_ordered() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    server.say(&ann.key, &attic, "only for the attic").await.ok();
+    let (x, y) = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, (x, y)).await.ok()["hangout_id"], json!(room));
+    let (bos_room, bo) = server.someone("Bo").await;
+    let code = server.invite_code(&ann, &room).await;
+    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let (bot, _) = server.bot(&bo, &bos_room, "Rover").await;
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    // Bo runs it now, and moves the attic below the floor they're on.
+    let down = json!({ "direction": "down" });
+    server.post(&bo.key, &format!("/api/floors/{attic}/move"), down).await.ok();
+    let asked = json!({ "agent_id": bot });
+    let asked = server.post(&bo.key, &format!("/api/places/{x}/{y}/requests"), asked).await.ok();
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
+
+    server.snapshot(&bo.key, &attic).await.refused(StatusCode::NOT_FOUND);
+    let ground = server.snapshot(&bo.key, &room).await.ok();
+    assert!(names(&ground["agents"]).contains(&"Rover".to_string()), "{ground}");
+}
+
+// S8, S15, S19: opening a floor is a way onto it, and running a space gives nobody that.
+#[tokio::test]
+async fn someone_running_a_space_opens_only_a_floor_they_are_on() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    let opening = json!({ "access": "public", "create_code": CODE });
+    let path = format!("/api/floors/{attic}");
+    server.put(&bo.key, &path, opening).await.refused(StatusCode::FORBIDDEN);
+    server.walk_in(&bo, &attic).await.refused(StatusCode::NOT_FOUND);
+
+    // The rest of running it reaches this floor as it did, and the floor they're on opens.
+    server.put(&bo.key, &path, json!({ "name": "Loft" })).await.ok();
+    server.open(&bo, &room).await;
+}
+
+// R20, S49, S51: a bot can be told to stay home while its request waits.
+#[tokio::test]
+async fn a_yes_doesnt_bring_in_a_bot_told_to_stay_home_since_its_owner_asked() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (x, y) = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, (x, y)).await.ok()["hangout_id"], json!(room));
+    let town = server.neighbours().await;
+    let asked = json!({ "agent_id": town.bot });
+    let path = format!("/api/places/{x}/{y}/requests");
+    let asked = server.post(&town.cy.key, &path, asked).await.ok();
+    let home = server.state.db.bot_home(&town.bot).unwrap().unwrap();
+    let stays = json!({ "house_id": home.house_id, "stays_home": true });
+    server.put(&town.cy.key, &format!("/api/agents/{}/home", town.bot), stays).await.ok();
+
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    server
+        .post(&ann.key, &answer, json!({ "response": "yes" }))
+        .await
+        .refused(StatusCode::CONFLICT);
+
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    let waiting = server.get(&ann.key, "/api/place-requests").await.ok();
+    assert_eq!(waiting["requests"].as_array().unwrap().len(), 1, "it stays waiting: {waiting}");
+}
+
+// S66
+#[test]
+fn a_narrow_window_on_the_map_can_see_and_reach_requests_to_come_in() {
+    // A narrower window's bar folds the `sec` buttons away, and Requests had no row in More, so
+    // nobody in such a window could answer a request. Nothing here runs a browser, so this reads
+    // the page.
+    let app = include_str!("../web/app.js");
+    let map = app.split_once("async function worldView(").unwrap().1;
+    let more = map.split_once("panels.add('more'").unwrap().1.split_once("]));").unwrap().0;
+    for button in top_bar(app, "worldView").split("panels.toggle('").skip(1) {
+        let (name, rest) = button.split_once('\'').unwrap();
+        if rest.lines().next().unwrap().contains("'sec'") {
+            assert!(more.contains(&format!("'{name}'")), "{name} folds away with no row in More");
+        }
+    }
+    assert!(
+        more.contains("me?.kind === 'person' ? (requestsRow = "),
+        "the row is there for someone who can't have requests"
+    );
+
+    // The button and the row can't say different numbers, and a screen reader hears them.
+    let load = map.split_once("async function loadRequests(").unwrap().1;
+    let load = load.split_once("let requestsToggle").unwrap().0;
+    assert!(
+        load.contains(
+            "for (const button of [requestsToggle, requestsRow]) button.textContent = label;"
+        ),
+        "the button and the row don't both get the count"
+    );
+    assert!(
+        load.contains("requestsToggle.setAttribute('aria-label', label);"),
+        "a screen reader is told a different number from the one on the button"
+    );
+    assert!(
+        load.contains("moreToggle.setAttribute('aria-label', "),
+        "a screen reader can't tell that More lit up"
+    );
+
+    // A request changes nothing on the map, so asking about them can't wait for the map to change.
+    assert!(map.contains("onLook: loadRequests,"), "an open map doesn't ask about requests");
+    let look = app.split_once("function watchWorld(").unwrap().1;
+    let look = look.split_once("etag !== tag").unwrap().0;
+    assert!(look.contains("onLook?.();"), "an open map only asks once the map has changed");
+    assert!(
+        load.contains("if (key === requestsKey) return;"),
+        "asking again rebuilds a list someone may be using"
+    );
+
+    // The button lights up. Where it's folded away More does instead, and More stays the same
+    // width, so the buttons to its left don't move (S64).
+    assert!(
+        load.contains("requestsToggle.classList.toggle('wait', "),
+        "a waiting request doesn't light the button"
+    );
+    let css = include_str!("../web/style.css");
+    let width = |rule: &str| {
+        let before = css.split_once(rule).unwrap_or_else(|| panic!("{rule} is gone")).0;
+        before.rsplit_once("(max-width: ").unwrap().1.split_once(')').unwrap().0
+    };
+    assert_eq!(
+        width(".wd-map .wd-title-actions:has(.sec.wait) .more {"),
+        width(".wd-game:not(.wd-room) .wd-title-actions .sec {"),
+        "More lights up at a different width from the one that folds the button away"
+    );
 }

@@ -9,8 +9,10 @@ pub mod clock;
 pub mod closeness;
 pub mod db;
 pub mod discord;
+pub mod docs;
 pub mod doorbell;
 pub mod error;
+pub mod events;
 pub mod friends;
 pub mod god_mode;
 pub mod households;
@@ -29,6 +31,7 @@ pub mod routines;
 pub mod sign_in;
 pub mod spaces;
 pub mod trust;
+pub mod tutorial;
 pub mod web;
 pub mod world;
 pub mod worlds;
@@ -85,6 +88,8 @@ pub struct Shared {
     pub db: Db,
     pub config: Config,
     pub hub: broadcast::Sender<HubEvent>,
+    /// Tells a bot's open `events/stream`, or a waiting `events_since`, that its log grew.
+    pub bot_events: broadcast::Sender<events::Ping>,
     /// Passkeys, built from `config.public_url`. `None` when that address is an IP number, which
     /// a passkey can't belong to, so the passkey routes refuse.
     pub webauthn: Option<webauthn_rs::Webauthn>,
@@ -123,11 +128,13 @@ impl AppState {
 
     pub fn with_apps(db: Db, config: Config, apps: Apps) -> Self {
         let (hub, _) = broadcast::channel(256);
+        let (bot_events, _) = broadcast::channel(1024);
         let webauthn = passkey::webauthn_for(&config.public_url);
         Self(Arc::new(Shared {
             db,
             config,
             hub,
+            bot_events,
             webauthn,
             ceremonies: passkey::Ceremonies::default(),
             discord: apps.discord,
@@ -171,6 +178,8 @@ pub fn app(state: AppState) -> Router {
         .fallback(web::not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn_with_state(state.clone(), web::security_headers))
+        // Outside everything that can refuse a request, so it reads what they leave (W88).
+        .layer(middleware::from_fn(web::read_what_was_left))
         // Outermost, so it sees every request. It only watches (W38).
         .layer(middleware::from_fn_with_state(state.clone(), worlds::observe))
         .with_state(state)

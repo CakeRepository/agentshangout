@@ -110,11 +110,12 @@ const MUSIC: &str = "music";
 const PLANTS: &str = "plants";
 const ART: &str = "art";
 const WORK: &str = "work";
+const FALL: &str = "fall";
 const SPOOKY: &str = "spooky";
 const SIGNS: &str = "signs";
 
 /// I46: in the order the catalog shows them, with what each is called there.
-pub const CATEGORIES: [(&str, &str); 15] = [
+pub const CATEGORIES: [(&str, &str); 16] = [
     (SEATING, "Seating"),
     (TABLES, "Tables and desks"),
     (BEDS, "Beds"),
@@ -128,6 +129,7 @@ pub const CATEGORIES: [(&str, &str); 15] = [
     (PLANTS, "Plants and nature"),
     (ART, "Art and decor"),
     (WORK, "Work and study"),
+    (FALL, "Fall"),
     (SPOOKY, "Spooky"),
     (SIGNS, "Signs"),
 ];
@@ -215,7 +217,7 @@ const fn feels(mood: &'static str) -> Option<&'static str> {
 /// Everything a floor can hold. Nothing else can be placed, and nothing typed is part of any of it.
 /// A size is in grid cells. The room page draws a kind only once it has art for that word. Anything
 /// `STARTER` is at most 2 cells deep, so it fits the strip along the front of any floor.
-pub const CATALOG: [Kind; 88] = [
+pub const CATALOG: [Kind; 105] = [
     piece("stool", "Stool", SEATING, STARTER, 1, None, (1, 1)).used("sitting on the stool", 1),
     piece("dining_chair", "Dining chair", SEATING, STARTER, 1, None, (1, 1)),
     piece("bench", "Bench", SEATING, STARTER, 2, None, (4, 1)),
@@ -306,7 +308,25 @@ pub const CATALOG: [Kind; 88] = [
     piece("anvil", "Anvil", WORK, ONE_FRIEND, 3, feels("drive"), (2, 1)),
     piece("sewing_table", "Sewing table", WORK, ONE_FRIEND, 3, feels("inspired"), (3, 2)),
     piece("research_bench", "Research bench", WORK, THREE_FRIENDS, 5, feels("inspired"), (4, 2)),
-    // The Halloween pack. All starter, because a pack is for anyone who can put it up (I29).
+    // The Fall pack. All starter, because a pack is for anyone who can put it up (I29).
+    piece("maple_tree", "Red maple", FALL, STARTER, 5, feels("calm"), (3, 1)),
+    piece("birch_tree", "Golden birch", FALL, STARTER, 4, feels("calm"), (3, 1)),
+    piece("leaf_pile", "Leaf pile", FALL, STARTER, 2, feels("playful"), (2, 1)),
+    piece("rake", "Leaf rake", FALL, STARTER, 1, None, (1, 1)),
+    piece("mums", "Potted mums", FALL, STARTER, 3, feels("calm"), (1, 1)),
+    piece("corn_stalks", "Corn stalks", FALL, STARTER, 2, feels("calm"), (1, 1)),
+    piece("harvest_table", "Harvest table", FALL, STARTER, 6, feels("cozy"), (4, 2)),
+    piece("pumpkin_pie", "Pumpkin pie", FALL, STARTER, 2, feels("cozy"), (1, 1)),
+    piece("cornucopia", "Cornucopia", FALL, STARTER, 4, feels("cozy"), (3, 1)),
+    piece("apple_basket", "Apple basket", FALL, STARTER, 2, feels("cozy"), (1, 1)),
+    piece("cider_barrel", "Cider barrel", FALL, STARTER, 3, feels("cozy"), (2, 1)),
+    piece("gourds", "Pumpkins and gourds", FALL, STARTER, 3, feels("cozy"), (2, 1)),
+    piece("scarecrow", "Scarecrow", FALL, STARTER, 3, feels("playful"), (1, 1)),
+    piece("hay_bale", "Hay bale", FALL, STARTER, 2, feels("cozy"), (2, 1)),
+    piece("turkey", "Turkey", FALL, STARTER, 3, feels("playful"), (1, 1)),
+    piece("wreath", "Fall wreath", FALL, STARTER, 3, feels("calm"), (1, 1)),
+    piece("wheelbarrow", "Wheelbarrow", FALL, STARTER, 2, None, (2, 1)),
+    // The Halloween pack, which is over (I57). Its kinds stay, because floors have them on.
     piece("pumpkin", "Jack-o'-lantern", SPOOKY, STARTER, 3, feels("playful"), (1, 1)),
     piece("ghost", "Friendly ghost", SPOOKY, STARTER, 3, feels("playful"), (1, 1)),
     piece("skeleton", "Skeleton", SPOOKY, STARTER, 2, feels("playful"), (1, 1)),
@@ -327,12 +347,13 @@ pub struct PackItem {
     pub y: i64,
 }
 
-/// I26: a whole look, with nothing in it that anyone typed.
+/// I26: a whole look, with nothing in it that anyone typed. One that's `over` only comes down (I57).
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct Pack {
     pub pack: &'static str,
     pub paint: &'static str,
     pub flooring: &'static str,
+    pub over: bool,
     pub items: &'static [PackItem],
 }
 
@@ -340,31 +361,67 @@ const fn at(kind: &'static str, x: i64, y: i64) -> PackItem {
     PackItem { kind, x, y }
 }
 
-/// Everything that can be put up in one go. The places keep clear of the bar, the arcade and the way
-/// in from the door, so a floor that's showing all of those looks right too.
-pub const PACKS: [Pack; 1] = [Pack {
-    pack: "halloween",
-    paint: "haunted",
-    flooring: "crypt",
-    items: &[
-        // Either side of the door.
-        at("pumpkin", 17, 13),
-        at("pumpkin", 22, 13),
-        // A small graveyard along the back wall.
-        at("gravestone", 21, 0),
-        at("gravestone", 24, 0),
-        at("gravestone", 27, 0),
-        // Round the table, where the bots can see it.
-        at("skeleton", 29, 4),
-        at("pumpkin", 11, 6),
-        at("skeleton", 10, 9),
-        // The open side of the room.
-        at("cauldron", 31, 10),
-        at("pumpkin", 29, 11),
-        at("ghost", 32, 7),
-        at("ghost", 14, 11),
-    ],
-}];
+/// Everything that goes up in one go, and what's over only comes down (I57). The places keep clear of
+/// the bar, the arcade and the way in from the door, so a floor showing all of those looks right too.
+pub const PACKS: [Pack; 2] = [
+    Pack {
+        pack: "fall",
+        paint: "harvest",
+        flooring: "leaves",
+        over: false,
+        items: &[
+            // Either side of the door.
+            at("mums", 17, 13),
+            at("mums", 22, 13),
+            // The trees, in the gaps either side of the whiteboard.
+            at("maple_tree", 9, 0),
+            at("corn_stalks", 8, 0),
+            at("birch_tree", 28, 0),
+            // The harvest, along the back wall between them.
+            at("hay_bale", 13, 0),
+            at("gourds", 16, 0),
+            at("cornucopia", 19, 0),
+            at("apple_basket", 23, 0),
+            at("hay_bale", 25, 0),
+            // Round the table, where the bots can see it.
+            at("wreath", 11, 2),
+            at("scarecrow", 10, 7),
+            at("leaf_pile", 12, 10),
+            at("rake", 14, 10),
+            at("turkey", 16, 11),
+            // Somewhere for dinner, on the open side of the room.
+            at("pumpkin_pie", 29, 9),
+            at("harvest_table", 30, 8),
+            at("cider_barrel", 34, 9),
+            at("wheelbarrow", 24, 12),
+            at("leaf_pile", 33, 12),
+        ],
+    },
+    Pack {
+        pack: "halloween",
+        paint: "haunted",
+        flooring: "crypt",
+        over: true,
+        items: &[
+            // Either side of the door.
+            at("pumpkin", 17, 13),
+            at("pumpkin", 22, 13),
+            // A small graveyard along the back wall.
+            at("gravestone", 21, 0),
+            at("gravestone", 24, 0),
+            at("gravestone", 27, 0),
+            // Round the table, where the bots can see it.
+            at("skeleton", 29, 4),
+            at("pumpkin", 11, 6),
+            at("skeleton", 10, 9),
+            // The open side of the room.
+            at("cauldron", 31, 10),
+            at("pumpkin", 29, 11),
+            at("ghost", 32, 7),
+            at("ghost", 14, 11),
+        ],
+    },
+];
 
 pub fn pack_of(word: &str) -> Option<&'static Pack> {
     PACKS.iter().find(|entry| entry.pack == word)
@@ -747,8 +804,10 @@ fn place_of(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Plac
     let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
     let space = state.db.space(&floor.space_id)?.ok_or_else(ApiError::not_found)?;
     let runs = spaces::runs(state, caller, &space)?;
-    if !runs && !state.in_room(caller, &floor.id)? {
-        return Err(ApiError::not_found());
+    // S62: someone who left this floor is told when and why. Someone who never entered still
+    // gets the same answer as for a floor that isn't there.
+    if !runs {
+        ops::require_room(state, caller, &floor.id)?;
     }
     Ok(Place { floor, runs })
 }
@@ -1062,17 +1121,16 @@ fn may_remove_note(runs: bool, guest: bool, caller: &Caller, note: &ItemNote) ->
     runs || (!guest && note.person_id == caller.person_id)
 }
 
-/// I14: only its own owner's words, by who wrote them, and never a bot's, even a bot of its owner.
-fn from_your_owner(caller: &Caller, note: &ItemNote) -> bool {
-    caller.is_agent() && note.person_id == caller.person_id && note.via_agent.is_none()
+/// I14, I51: only its own owner's words, by who wrote them, and never a bot's, even a bot of its
+/// owner.
+pub(crate) fn from_your_owner(caller: &Caller, person_id: &str, via_agent: Option<&str>) -> bool {
+    caller.is_agent() && person_id == caller.person_id && via_agent.is_none()
 }
 
 /// I13, I14: an item's notes, for a page or a bot, with who wrote each and the room's trust note.
 pub fn read_notes(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<Value> {
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     let kind = holder_of(&item)?;
     let place = place_of(state, caller, &item.hangout_id)?;
     let guest = state.guest_visit(caller, &item.hangout_id)?;
@@ -1086,7 +1144,7 @@ pub fn read_notes(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult
             "text": note.body,
             "written_by": note.writer,
             "via_bot": note.via_agent,
-            "from_your_owner": from_your_owner(caller, note),
+            "from_your_owner": from_your_owner(caller, &note.person_id, note.via_agent.as_deref()),
             "can_remove": may_remove_note(place.runs, guest.is_some(), caller, note),
             "at": iso(note.created_at),
             "created_at": note.created_at,
@@ -1101,9 +1159,7 @@ pub fn add_note(
     text: &str,
 ) -> ApiResult<ItemNote> {
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     no_quiet(state, caller, &item.hangout_id)?;
     // S19: as a person or a bot. A bot that was sent in writes no more than the person who sent it.
     if state.guest_visit(caller, &item.hangout_id)?.is_some() {
@@ -1194,9 +1250,7 @@ pub fn use_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<V
         return Err(ApiError::forbidden("only bots use items"));
     };
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     let kind = kind_of(&item.kind)
         .filter(|kind| kind.does.is_some())
         .ok_or_else(|| ApiError::conflict("that can't be used"))?;
@@ -1347,6 +1401,9 @@ async fn put_up_pack(
     Path((id, word)): Path<(String, String)>,
 ) -> ApiResult<Json<Value>> {
     let (place, pack) = pack_for(&state, &caller, &id, &word)?;
+    if pack.over {
+        return Err(ApiError::conflict("that pack's season is over"));
+    }
     Ok(Json(put_up(&state, &caller, &place, pack)?))
 }
 

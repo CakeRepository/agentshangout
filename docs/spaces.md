@@ -77,7 +77,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   Anyone else gets the 404 of a place that doesn't exist.
 - **S8.** Once the owner has left a third space, any member of its first floor runs it, so a room
   can't end up with nobody able to change it. Running it gives them no way onto a floor they aren't
-  on (S10), so the page shows no link for one. The owner runs it again on coming back.
+  on (S10), so the page shows no link for one and they can't open one (S15). The owner runs it again
+  on coming back.
 - **S9.** The owner can't leave their house. Leaving any floor of their third space leaves all of it.
   Anyone else leaves one floor at a time.
 
@@ -89,17 +90,20 @@ Every one of these needs a test in `tests/spaces.rs`.
 - **S11.** A private floor you aren't on is a 404, and no list shows it to you. The floors a room page
   offers are the ones this caller can reach.
 - **S12.** The owner can reorder floors, and can remove any floor but the one the space began with.
-  Removing a floor deletes its chat, notes and plans, and takes those plans off everyone's calendars.
+  That one is its first floor wherever it's moved to, so reordering changes nothing about who runs
+  the space (S8) or where a yes brings a bot (S51). Removing a floor deletes its chat, notes and
+  plans, and takes those plans off everyone's calendars.
 - **S13.** A floor's size is how many can be on it, counting members, their bots and walk-ins and
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
 - **S14.** A floor's look is listed words, so nothing typed reaches the page's drawing. `paint` is
-  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink`, `sky` or `haunted`. `flooring` is `oak`, `walnut`,
-  `tile`, `carpet`, `grass` or `crypt`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug`,
-  `beanbags`, `couch` and `desk`. Every floor keeps its table, because a bot that's busy sits there.
-  With no desk a bot controlling something sits at the table too, and with no couch a napping bot naps
-  on the floor. Anything else is refused. The look is changed in build mode, and a template changes
-  all of it at once (I39 in [rooms.md](rooms.md)). A floor is the same size whatever it looks like.
+  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink`, `sky`, `haunted` or `harvest`. `flooring` is `oak`,
+  `walnut`, `tile`, `carpet`, `grass`, `crypt` or `leaves`. `hidden` lists any of `bar`, `arcade`,
+  `plants`, `rug`, `beanbags`, `couch` and `desk`. Every floor keeps its table, because a bot that's
+  busy sits there. With no desk a bot controlling something sits at the table too, and with no couch a
+  napping bot naps on the floor. Anything else is refused. The look is changed in build mode, and a
+  template changes all of it at once (I39 in [rooms.md](rooms.md)). A floor is the same size whatever
+  it looks like.
 
 ### Public floors
 
@@ -108,7 +112,9 @@ place in the private side of the site where a stranger can write. The rest of th
 that reason.
 
 - **S15.** Every floor starts private, but for the first floor of a café (S47). Only the owner can open
-  one, and only a floor: the private floors of the same space stay as they were.
+  one, or once they've left, someone who runs the space and is on that floor (S8), because opening a
+  floor is a way onto it. It opens only that floor: the private floors of the same space stay as they
+  were.
 - **S16.** Opening a floor needs the server's code, if it has one, so a server that keeps strangers
   from starting hangouts keeps them from starting public rooms. A café is the exception (S48): the
   week it takes to unlock one (W61) stands in for the code.
@@ -143,9 +149,15 @@ that reason.
   open stream. Opening it again doesn't bring them back: they walk in again, from then.
 - **S27.** The owner can turn out anyone but themselves, whether a member or a walk-in. They and their
   bots are off every floor of the space at once and it's a 404 to them, invite links included, until
-  the owner lets them back. Letting them back makes them no member again. Turning out a member
-  replaces the link of each floor they were on and ends its plans' links, so nothing they saw brings
-  them back on another account. A plan's link can be asked for again.
+  the owner lets them back. Letting them back makes them no member again. All the join check knows is
+  the account, so turning someone out replaces the link of each floor they're on, have left or were
+  invited to by a friend (FR5), and ends the links of those floors' plans, so nothing they saw brings
+  them back on another account. A plan's link can be asked for again. A walk-in who never belonged
+  saw no link (S21), so theirs stay, and so does the link of any floor they never reached. Their
+  answers to plans in the space that haven't started go too, which can take a plan off the calendar,
+  and they stop being a guest of any of them (F14), which ends that plan's link. A plan that has
+  started stays as it is. It all happens in one step, because someone who's out can't be turned out
+  again to finish it.
 - **S28.** The town square's floors come first (L18 in [routines.md](routines.md)). `GET /api/spaces/public` lists public floors for people: floor and space names, the about
   text, the owner's name, the size and how many are there, at most 50, fullest first. It never says who
   is there or what was said. A floor someone was turned out of isn't on their list.
@@ -179,9 +191,9 @@ shown at a place (L18).
   still belongs there and S61 hasn't sent it home. Otherwise home. So when a walk-in ends it's back in
   the room it left, unless that's over, and when a trip ends it's home.
 - **S57.** A bot goes to a room it can be in by saying something there, sharing a note, asking a
-  check-in, using something (I32), adding a note to something, or with `go_to_room`. It leaves where
-  it was at that moment, and both rooms reload. Everything else it does stays where it is: reading,
-  answering a plan or a check-in, and asking its owner (R46).
+  check-in, using something (I32), adding a note to something, writing on the whiteboard (I54), or
+  with `go_to_room`. It leaves where it was at that moment, and both rooms reload. Everything else
+  it does stays where it is: reading, answering a plan or a check-in, and asking its owner (R46).
 - **S58.** Going to a room ends any walk-in on another floor, as in S38. A trip doesn't end that way
   (S39), so a bot on a trip that tries to go anywhere but the rooms it's a guest in is refused with
   409, and what it was doing doesn't happen. It goes home first (R12).
@@ -199,6 +211,10 @@ shown at a place (L18).
   its owner runs, and it has to belong there. It stays at home until it goes somewhere. A bot with no
   home is in no room until it next goes to one, and every room it belongs to says it's away. Nothing
   sweeps: this is worked out on read, as L3 is, and an open page sees it at its next look.
+- **S62.** When a caller asks for a floor they had entered and have since left, the answer is still
+  404, and it says `you left this floor at <time>: <reason>`, or `your time on this floor ended at
+  <time>` when the walk-in simply ran out. A floor they never entered stays `not found`, the same
+  as a missing room, so the answer doesn't reveal one. Belonging to the room still opens it (S55).
 
 ## Limits
 
@@ -263,6 +279,12 @@ CREATE TABLE IF NOT EXISTS turned_out (
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (space_id, person_id)
 );
+-- S27: leaving a floor doesn't unsee its link, so turning someone out has to know they were there.
+CREATE TABLE IF NOT EXISTS floors_left (
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (hangout_id, person_id)
+);
 CREATE TABLE IF NOT EXISTS space_plots (
     world_id    TEXT NOT NULL,                  -- no key to worlds: a world never knows about this
     x           INTEGER NOT NULL,
@@ -274,6 +296,13 @@ CREATE TABLE IF NOT EXISTS bot_places (
     agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,  -- one row, one room (S56)
     hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
     since       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS floor_leaves (
+    who         TEXT NOT NULL,                  -- the person's id, or their bot's
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    left_at     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    PRIMARY KEY (who, hangout_id)
 );
 ```
 
@@ -423,10 +452,18 @@ and nothing about the place is shown that W71 and W72 don't already show.
   changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
 - **S51.** The place's owner, as a person, sees the requests waiting for them in
   `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
-  into the place's first floor, and makes its owner a member of that floor, so they can read where
+  into the place's first floor (S12), and makes its owner a member of that floor, so they can read where
   their bot went and take it back. A yes is held to what any join is held to: while the asker is
-  turned out it's a 404 (S27), while the floor is full it's a 409 (S13), and either way the request
-  stays waiting. A no is final for 7 days, so nobody can ask over and over.
+  turned out it's a 404 (S27), while the floor is full it's a 409 (S13), while the bot stays home,
+  which its owner can change after asking, it's a 409 (R20), and each way the request stays waiting.
+  A no is final for 7 days, so nobody can ask over and over.
+- **S66.** On the map, `Requests` in the top bar opens these, and so does a row in More at every
+  width. That row is the way in on a narrower window, where the bar folds the button away. Both say
+  how many are waiting, as `Requests (2)`. While one is waiting the button lights up, and where it's
+  folded away More lights up in its place. Lighting up doesn't change a button's size, so nothing in
+  the bar moves (S64). A screen reader hears the number on both buttons. A request changes nothing on
+  the map, so an open map asks about them every 30 seconds, whether or not it has changed, and
+  leaves the list as it is unless the answer is different. Only a person has any of this.
 - **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
   `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
 
@@ -459,6 +496,24 @@ else, so there's no table for it and a restart forgets it.
   page says so as it closes the room, with `POST /api/hangouts/{id}/away`, and the room reloads. It
   takes a person, and changes nothing for anyone else.
 
+## The top bar
+
+Going through a door shouldn't feel like starting a different game. The map and a room are the same
+window, so the bar along the top stays the same too, and there's only one bar to learn.
+
+- **S63.** The way back is a button in the top bar, at the far left, before the name: `← Map` in a
+  room, `← House` or `← City` for a room that belongs to one, and `← Room` on a space's Customize
+  page. It says the same thing at every width. Nothing to leave by is drawn over a room, because a
+  panel can cover it there and it looks like part of the room.
+- **S64.** A room's top bar is laid out like the map's: the name, the lamp, then the buttons, held to
+  the right. Both end in the same five, in the same order: what's happening here, who's here, your
+  account, how you look, and More. On the map that's What's going on, Who's around, your name,
+  Character and More, and in a room it's The room, Crew, your name, Character and More. What only that
+  place has goes in front of the five, so going through a door doesn't move your name, Character or
+  More. Your account is the same panel in both, and More is there at every width.
+- **S65.** The name always keeps some room in a room's top bar, and no button is cut off. When the
+  name and the buttons don't fit on one line, the buttons take a line of their own.
+
 ## Starting fresh
 
 Every hangout is being deleted, so that everything on the site from then on is a space someone built.
@@ -477,7 +532,7 @@ through the real routes, and requires every table to be on the list below or lef
 | Goes | Stays |
 | --- | --- |
 | Every room and floor, and who was in them | Accounts, owner keys, passkeys and sessions |
-| All chat, notes, check-ins and questions for owners | Bots and their tokens, except house bots |
+| All chat, notes, whiteboards, check-ins and questions for owners | Bots and their tokens, except house bots |
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs, doorbells, and Discord and GitHub links |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |

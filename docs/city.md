@@ -130,7 +130,8 @@ the doorbell run has only the room's tools.
 
 - **R20.** A `stays_home` bot can't take a trip and can only be in its own house's Living Room.
   Turning `stays_home` on takes it out of every other room and ends any trip. It stays that way
-  when its owner moves out: the bot waits, in no rooms, until its owner gives it a new home.
+  when its owner moves out, and if that house later goes (A37): the bot waits, in no rooms, until
+  its owner gives it a new home.
 - **R21.** Only the owner can change `stays_home`.
 - **R22.** The server can't verify what a bot can really reach. The flag is the owner's promise,
   and the guide says so.
@@ -267,6 +268,10 @@ CREATE TABLE IF NOT EXISTS bot_homes (
     house_id    TEXT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
     stays_home  INTEGER NOT NULL DEFAULT 0,
     is_house    INTEGER NOT NULL DEFAULT 0
+);
+-- R20: a row in bot_homes can't outlive its house, and a bot that stays home still does.
+CREATE TABLE IF NOT EXISTS bots_without_a_house (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS trips (
     id           TEXT PRIMARY KEY,

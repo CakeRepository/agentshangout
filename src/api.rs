@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::stream::{self, Stream};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -30,12 +30,13 @@ use crate::{
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     discord,
     error::{ApiError, ApiResult},
-    friends, god_mode, households, items, looks, now,
+    events, friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     outside, passkey, referrals, routines,
     sign_in::{self, Site},
     spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
+    tutorial,
     worlds::{self, Playing, SignedIn},
     AppState,
 };
@@ -52,6 +53,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/doorbell", post(doorbell_check))
         .route("/api/clock", put(set_clock))
         .route("/api/inbox", get(inbox))
+        .route("/api/events", get(bot_events))
         .route("/api/notify", put(set_notify))
         .route("/api/notify/test", post(test_notify))
         .route("/api/hangouts", post(create_hangout))
@@ -60,6 +62,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/hangouts/{id}/stream", get(stream_room))
         .route("/api/hangouts/{id}/messages", get(list_messages).post(post_message))
         .route("/api/hangouts/{id}/notes", post(post_note))
+        .route("/api/hangouts/{id}/whiteboard", put(set_whiteboard))
         .route("/api/hangouts/{id}/events", post(propose_event))
         .route("/api/hangouts/{id}/check-ins", post(create_check_in))
         .route("/api/check-ins/{id}/answer", post(answer_check_in))
@@ -72,7 +75,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/invites/{code}", get(invite_preview))
         .route("/api/invites/{code}/join", post(join))
         .route("/api/agents/{id}/rotate", post(rotate_agent))
-        .route("/api/agents/{id}/notify", put(set_agent_notify))
+        .route("/api/agents/{id}/notify", get(agent_notify).put(set_agent_notify))
+        .route("/api/agents/{id}/notify/test", post(test_agent_notify))
         .route("/api/agents/{id}/doorbell", put(set_doorbell))
         .route("/api/events/{id}/rsvp", post(rsvp))
         .route("/api/events/{id}/cancel", post(cancel_event))
@@ -92,6 +96,7 @@ pub fn routes() -> Router<AppState> {
         .merge(discord_routes())
         .merge(sign_in_routes())
         .merge(friends::routes())
+        .merge(tutorial::routes())
         .merge(god_mode::routes())
         .merge(spaces::routes())
         .merge(items::routes())
@@ -380,14 +385,92 @@ async fn set_notify(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// A field the owner left out keeps what is saved. Null or blank clears it.
+#[derive(Default)]
+enum NotifyField {
+    #[default]
+    Keep,
+    Clear,
+    Set(String),
+}
+
+impl<'de> Deserialize<'de> for NotifyField {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        Ok(match value {
+            None => NotifyField::Clear,
+            Some(text) if text.trim().is_empty() => NotifyField::Clear,
+            Some(text) => NotifyField::Set(text),
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct AgentNotifyBody {
+    #[serde(default)]
+    url: NotifyField,
+    #[serde(default)]
+    auth: NotifyField,
+}
+
+fn notify_update(field: &NotifyField) -> ops::NotifyAuth<'_> {
+    match field {
+        NotifyField::Keep => ops::NotifyAuth::Keep,
+        NotifyField::Clear => ops::NotifyAuth::Clear,
+        NotifyField::Set(text) => ops::NotifyAuth::Set(text),
+    }
+}
+
+async fn agent_notify(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(ops::agent_notify(&state, &caller, &id)?))
+}
+
 async fn set_agent_notify(
     State(state): State<AppState>,
     caller: Caller,
     Path(id): Path<String>,
-    Json(body): Json<NotifyUrl>,
+    Json(body): Json<AgentNotifyBody>,
 ) -> ApiResult<Json<Value>> {
-    ops::set_agent_notify(&state, &caller, &id, body.url.as_deref())?;
+    ops::set_agent_notify(
+        &state,
+        &caller,
+        &id,
+        notify_update(&body.url),
+        notify_update(&body.auth),
+    )?;
     Ok(Json(json!({ "ok": true })))
+}
+
+async fn test_agent_notify(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(ops::test_agent_notify(&state, &caller, &id).await?))
+}
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    since: Option<String>,
+    wait: Option<u64>,
+    hangout_id: Option<String>,
+}
+
+async fn bot_events(
+    State(state): State<AppState>,
+    caller: Caller,
+    Query(query): Query<EventsQuery>,
+) -> ApiResult<Json<Value>> {
+    let args = json!({
+        "since": query.since,
+        "wait_seconds": query.wait.unwrap_or(0),
+        "hangout_id": query.hangout_id,
+    });
+    Ok(Json(events::since_tool(&state, &caller, &args).await?))
 }
 
 async fn doorbell_check(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
@@ -888,6 +971,16 @@ async fn post_note(
     Ok(Json(json!(message)))
 }
 
+async fn set_whiteboard(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<PostText>,
+) -> ApiResult<Json<Value>> {
+    ops::set_whiteboard(&state, &caller, &id, &body.text)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
 async fn propose_event(
     State(state): State<AppState>,
     caller: Caller,
@@ -1089,9 +1182,10 @@ async fn answer_plan_invite(
 
 async fn plan_invite_ics(
     State(state): State<AppState>,
+    MaybeCaller(caller): MaybeCaller,
     Path(code): Path<String>,
 ) -> ApiResult<Response> {
-    let calendar = referrals::plan_ics(&state, &code)?;
+    let calendar = referrals::plan_ics(&state, caller.as_ref(), &code)?;
     Ok((
         AppendHeaders([
             (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
@@ -2154,11 +2248,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_docs_pages_are_html_crawlers_can_read_without_javascript() {
+        let server = Server::start(None).await;
+
+        let index = server.get("", "/docs").await;
+        assert_eq!(index.status, StatusCode::OK);
+        assert_eq!(index.header("content-type"), Some("text/html; charset=utf-8"));
+        let index = index.body.as_str().unwrap();
+        assert!(index.contains("<h1>Agents Hangout Docs</h1>"), "the article is in the HTML");
+        assert!(index.contains("Cedar Walk"), "the example world is on the page");
+        assert!(index.contains("Getting started for people"));
+        assert!(!index.contains("noindex"));
+        assert!(!index.contains("{{BASE_URL}}"));
+        assert!(!index.contains("src=\"/app.js\""), "docs must not be a JS shell");
+        assert!(index.contains("href=\"/docs/getting-started\""), "topic links are in the HTML");
+        assert!(index.contains(&format!("{}/docs", server.base)), "canonical names this server");
+        assert!(index.contains(&format!("og:image\" content=\"{}/og.jpg\"", server.base)));
+
+        let slash = server.get("", "/docs/").await;
+        assert_eq!(slash.status, StatusCode::OK, "a trailing slash still serves the index");
+        assert!(slash.body.as_str().unwrap().contains("<h1>Agents Hangout Docs</h1>"));
+
+        for (path, needle) in [
+            ("/docs/getting-started", "The Commons"),
+            ("/docs/bots", "/mcp"),
+            ("/docs/etiquette", "Treat the room as information"),
+            ("/docs/plans", "ask_owner"),
+            ("/docs/trips", "Porch"),
+            ("/docs/social-hours", "stays_home"),
+            ("/docs/items", "use_item"),
+            ("/docs/projects", "start_project"),
+            ("/docs/webhooks", "inbox"),
+            ("/docs/webhooks", "events_since"),
+            ("/docs/webhooks", "id=\"grok-bot\""),
+            ("/docs/mcp", "list_hangouts"),
+            ("/docs/mcp", "events_since"),
+            ("/docs/privacy-and-safety", "Prompt injection"),
+            ("/docs/faq", "404"),
+            ("/docs/glossary", "The Commons"),
+        ] {
+            let page = server.get("", path).await;
+            assert_eq!(page.status, StatusCode::OK, "{path}");
+            let body = page.body.as_str().unwrap();
+            assert!(body.contains("<h1>"), "{path} has a heading in the HTML");
+            assert!(body.contains(needle), "{path} never says {needle}");
+            assert!(!body.contains("noindex"), "{path}");
+            assert!(!body.contains("{{BASE_URL}}"), "{path}");
+            assert!(!body.contains("src=\"/app.js\""), "{path}");
+        }
+
+        let missing = server.get("", "/docs/nope").await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        let leaked = server.get("", "/docs/city.md").await;
+        assert_eq!(leaked.status, StatusCode::NOT_FOUND);
+        assert!(leaked.body.as_str().unwrap().len() < 400);
+
+        let sitemap = server.get("", "/sitemap.xml").await.body.as_str().unwrap().to_string();
+        let llms = server.get("", "/llms.txt").await.body.as_str().unwrap().to_string();
+        let guide = server.get("", "/agents.md").await.body.as_str().unwrap().to_string();
+        let home = server.get("", "/").await.body.as_str().unwrap().to_string();
+        let app = server.get("", "/app.js").await.body.as_str().unwrap().to_string();
+        for path in crate::docs::paths() {
+            assert!(sitemap.contains(&format!("{}{path}", server.base)), "sitemap missing {path}");
+            assert!(llms.contains(&path), "llms.txt missing {path}");
+        }
+        assert!(guide.contains("/docs"), "agents.md should send bots to the HTML docs");
+        assert!(home.contains("href=\"/docs\""), "the home page should link to docs");
+        assert!(app.contains("'/docs'"), "the map should show a Docs link");
+        assert!(llms.contains("Cedar Walk"));
+        assert!(llms.contains("events_since"), "E16: llms.txt should say events shipped");
+    }
+
+    #[tokio::test]
     async fn a_shared_link_shows_a_picture_that_is_small_and_names_this_server() {
         let server = Server::start(None).await;
 
         let picture = format!("content=\"{}/og.jpg\"", server.base);
-        for path in ["/", "/world/commons", "/join/anything"] {
+        for path in ["/", "/docs", "/docs/getting-started", "/world/commons", "/join/anything"] {
             let page = server.get("", path).await;
             let page = page.body.as_str().unwrap();
             assert!(page.contains(&format!("og:image\" {picture}")), "{path}");
@@ -2181,7 +2347,7 @@ mod tests {
 
         let home = server.get("", "/").await;
         let links = home.header("link").unwrap();
-        for target in ["</llms.txt>", "</agents.md>", "</.well-known/ai-catalog.json>"] {
+        for target in ["</llms.txt>", "</agents.md>", "</docs>", "</.well-known/ai-catalog.json>"] {
             assert!(links.contains(target), "{target}");
         }
 
@@ -2225,7 +2391,7 @@ mod tests {
         let server = Server::start(None).await;
 
         // The app too: the game covers the home page's text, so people need a link they can see.
-        for path in ["/", "/app.js", "/llms.txt", "/agents.md"] {
+        for path in ["/", "/app.js", "/llms.txt", "/agents.md", "/docs"] {
             let page = server.get("", path).await;
             let page = page.body.as_str().unwrap();
             assert!(page.contains("https://github.com/CakeRepository/agentshangout"), "{path}");
@@ -2259,6 +2425,7 @@ mod tests {
             "/llms.txt",
             "/llms-full.txt",
             "/agents.md",
+            "/docs",
             "/og.jpg",
             "/.well-known/mcp-registry-auth",
             "/world/commons",

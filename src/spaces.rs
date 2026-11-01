@@ -44,8 +44,9 @@ const DEFAULT_CAPACITY: i64 = 50;
 const TOWN_SQUARE: &str = "Town Square";
 const TOWN_SQUARE_SIZE: &str = "big";
 /// S14: listed words, so nothing typed reaches the page's drawing.
-pub const PAINTS: [&str; 8] = ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted"];
-pub const FLOORINGS: [&str; 6] = ["oak", "walnut", "tile", "carpet", "grass", "crypt"];
+pub const PAINTS: [&str; 9] =
+    ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted", "harvest"];
+pub const FLOORINGS: [&str; 7] = ["oak", "walnut", "tile", "carpet", "grass", "crypt", "leaves"];
 /// The look every floor starts with, as the table's defaults have it. I30 goes back to these.
 pub const PLAIN_PAINT: &str = "dusk";
 pub const PLAIN_FLOORING: &str = "oak";
@@ -432,10 +433,10 @@ async fn ask_to_let_in(
             "you have {MAX_OPEN_REQUESTS} requests waiting already"
         )));
     }
-    if let (Some(owner_id), Some(floor)) = (&place.owner_id, floors.first()) {
+    if let Some(owner_id) = &place.owner_id {
         let notice = crate::notify::Notice {
             event: "place.asked",
-            hangout_id: floor.id.clone(),
+            hangout_id: space.id.clone(),
             text: format!(
                 "{} asks to let their bot {} into {}.",
                 caller.name, agent.name, space.name
@@ -489,11 +490,15 @@ async fn answer_place_request(
         "no" => "no",
         _ => return Err(ApiError::bad_request("response must be yes or no")),
     };
-    let floor =
-        state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
-    // S13, S27: a yes is a way of joining, so it's no way round either of them. Refused, it still waits.
+    // S12: the floor it began with, because whoever runs a space chooses which floor is lowest.
+    let floor = state.db.floor(&space.id)?.ok_or_else(ApiError::not_found)?;
+    // S13, S27: a yes is a way of joining, so it's no way round either of them. R20: its owner may have
+    // told it to stay home since they asked. Refused, it still waits.
     if status == "yes" {
         check_can_join(&state, &asked_by, &floor.id)?;
+        if state.db.bot_home(&agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
+            return Err(ApiError::conflict("that bot stays home now"));
+        }
     }
     if !state.db.answer_place_request(&id, status, now)? {
         return Err(ApiError::conflict("that request was just answered"));
@@ -691,7 +696,7 @@ pub fn leave_own_space(state: &AppState, caller: &Caller, hangout_id: &str) -> A
     for floor in state.db.floors_of(&space.id)? {
         if state.db.is_member(&floor.id, &caller.person_id)? {
             state.db.remove_member(&floor.id, &caller.person_id)?;
-            ops::announce(state, &floor.id, &format!("{} left the hangout.", caller.name))?;
+            ops::announce(state, &floor.id, &ops::left_line(&caller.name))?;
             ops::refresh(state, &floor.id);
         }
     }
@@ -897,6 +902,28 @@ async fn change_floor(
         }
     }
     let opening = body.access.as_deref() == Some("public") && floor.access != "public";
+    // S8, S15: opening a floor is a way onto it, and running a space gives nobody that.
+    if opening
+        && caller.person_id != space.owner_id
+        && !state.db.is_member(&floor.id, &caller.person_id)?
+    {
+        return Err(ApiError::forbidden("only someone on this floor can open it"));
+    }
+    let closing = body.access.as_deref() == Some("private") && floor.access == "public";
+    let at = now();
+    // Read first: opening drops other owners' bots, and closing drops whoever walked in.
+    let removed: Vec<String> = if opening {
+        state
+            .db
+            .agents_in(&floor.id, at)?
+            .into_iter()
+            .filter(|agent| agent.owner_id != caller.person_id)
+            .map(|agent| agent.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let sent_home = if closing { state.db.visiting_bot_ids(&floor.id, at)? } else { Vec::new() };
     // S16: the same code as starting a hangout, so a server that gates one gates the other. S48: a
     // café doesn't ask its owner, who waited for it. Whoever runs it once they've left (S8) didn't.
     if opening && !(caller.person_id == space.owner_id && is_cafe(&state, &space)?) {
@@ -921,6 +948,12 @@ async fn change_floor(
         .ok_or_else(|| {
             ApiError::conflict("take the flirty items off this floor before opening it")
         })?;
+    for agent_id in &removed {
+        crate::events::note_place(&state, agent_id, &floor.id, "removed");
+    }
+    for agent_id in &sent_home {
+        crate::events::note_place(&state, agent_id, &floor.id, "sent_home");
+    }
     if opening {
         ops::announce(&state, &floor.id, FLOOR_OPENED)?;
         // S25: no bot goes in front of strangers without its owner choosing it.
@@ -993,18 +1026,13 @@ async fn turn_out(
     }
     let person = someone_in_space(&state, &space, &person_id)?;
     let floors = state.db.floors_of(&space.id)?;
-    // S27: a member saw these links, and all the join check knows is the account. A walk-in never
-    // saw one.
-    let mut saw = Vec::new();
-    for floor in &floors {
-        if state.db.is_member(&floor.id, &person.id)? {
-            saw.push(floor.id.clone());
+    let left = ops::left_line(&person.name);
+    let answered = state.db.turn_out(&space.id, &person.id, &left, now())?;
+    // They're out by now, so a plan that won't settle is no reason to say they aren't.
+    for plan in &answered {
+        if let Err(error) = ops::settle(&state, plan) {
+            tracing::error!(status = %error.status, "a plan didn't settle after a turn-out");
         }
-    }
-    state.db.turn_out(&space.id, &person.id, now())?;
-    for floor_id in &saw {
-        state.db.set_invite_code(floor_id, &auth::new_invite_code())?;
-        state.db.end_plan_links(floor_id)?;
     }
     for floor in &floors {
         state.presence.forget(&floor.id, &person.id);
@@ -1106,7 +1134,8 @@ async fn walk_in(
     }
     ops::refresh(&state, &floor.id);
     // L17: a bot with public places on shows at the place it walked into.
-    if agent.is_some() {
+    if let Some(agent) = &agent {
+        crate::events::note_place(&state, &agent.id, &floor.id, "moved");
         state.worlds.mark_stale(COMMONS_ID);
     }
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))
@@ -1126,10 +1155,19 @@ async fn walk_out(
         Some(agent_id) => ops::own_agent(&state, &caller, agent_id, "bring a bot back")?.id,
         None => caller.person_id.clone(),
     };
-    state.db.end_visit(&floor.id, &who)?;
+    let at = now();
+    let visiting = body.agent_id.is_some() && state.db.bot_visits(&who, at)?.contains(&floor.id);
+    let reason = match body.agent_id.is_some() {
+        true => "your owner brought you back",
+        false => "you left",
+    };
+    state.db.end_visit_as(&floor.id, &who, at, reason)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
     refresh_bot_place(&state, &who)?;
+    if visiting {
+        crate::events::note_place(&state, &who, &floor.id, "sent_home");
+    }
     state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
 }
@@ -1147,9 +1185,15 @@ pub fn refresh_bot_place(state: &AppState, agent_id: &str) -> ApiResult<()> {
 pub fn place_bot(state: &AppState, agent_id: &str, hangout_id: &str) -> ApiResult<()> {
     let now = now();
     let was = state.db.bot_place(agent_id, now)?;
-    for floor in state.db.walked_onto(agent_id, now)? {
+    let dest = state
+        .db
+        .hangout(hangout_id)?
+        .map(|room| room.name)
+        .unwrap_or_else(|| "another room".to_string());
+    let reason = format!("you went to {dest}");
+    for floor in state.db.bot_visits(agent_id, now)? {
         if floor != hangout_id {
-            state.db.end_visit(&floor, agent_id)?;
+            state.db.end_visit_as(&floor, agent_id, now, &reason)?;
             state.presence.forget(&floor, agent_id);
         }
     }
@@ -1206,6 +1250,7 @@ async fn keeper_close(
         .floor(&id)?
         .filter(|floor| floor.access == "public")
         .ok_or_else(ApiError::not_found)?;
+    let visitors = state.db.visiting_bot_ids(&floor.id, now())?;
     state.db.change_floor(&FloorChange {
         id: &floor.id,
         name: None,
@@ -1217,6 +1262,9 @@ async fn keeper_close(
         private_only: &[],
     })?;
     ops::announce(&state, &floor.id, "This floor was closed to the public.")?;
+    for agent_id in &visitors {
+        crate::events::note_place(&state, agent_id, &floor.id, "sent_home");
+    }
     refresh_space(&state, &state.db.floors_of(&floor.space_id)?);
     Ok(Json(state.db.floor(&id)?.ok_or_else(ApiError::not_found)?))
 }

@@ -646,6 +646,84 @@ CREATE TABLE IF NOT EXISTS place_outsides (
     changed_at  INTEGER NOT NULL,
     PRIMARY KEY (world_id, player_id, kind, x, y)
 );
+CREATE TABLE IF NOT EXISTS floor_leaves (
+    who         TEXT NOT NULL,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    left_at     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    PRIMARY KEY (who, hangout_id)
+);
+CREATE TABLE IF NOT EXISTS mentions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    read_at     INTEGER,
+    UNIQUE (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS mentions_unread ON mentions (agent_id, read_at);
+CREATE TABLE IF NOT EXISTS whiteboards (
+    hangout_id  TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS whiteboards_by_person ON whiteboards (person_id);
+CREATE INDEX IF NOT EXISTS whiteboards_by_bot ON whiteboards (agent_id);
+-- What a bot can catch up on. One row is one bot's copy of one thing that happened, so another
+-- bot's poll never reads it. Append-only: a deploy that goes back simply ignores the table.
+CREATE TABLE IF NOT EXISTS bot_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    hangout_id  TEXT,
+    ref_key     TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bot_events_by_bot ON bot_events (agent_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS bot_events_once ON bot_events (agent_id, ref_key);
+CREATE INDEX IF NOT EXISTS bot_events_by_age ON bot_events (created_at);
+-- A webhook subscription (MCP events). The secret is the client's, kept so a delivery can be
+-- signed. It expires, and a deploy that goes back ignores the table.
+CREATE TABLE IF NOT EXISTS event_subscriptions (
+    id                     TEXT PRIMARY KEY,
+    agent_id               TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    name                   TEXT NOT NULL,
+    arguments              TEXT NOT NULL,
+    url                    TEXT NOT NULL,
+    secret                 TEXT NOT NULL,
+    previous_secret        TEXT,
+    previous_secret_until  INTEGER,
+    refresh_before         INTEGER NOT NULL,
+    verified               INTEGER NOT NULL,
+    active                 INTEGER NOT NULL,
+    last_delivery_at       INTEGER,
+    last_error             TEXT,
+    failed_since           INTEGER,
+    failures               INTEGER NOT NULL DEFAULT 0,
+    created_at             INTEGER NOT NULL,
+    UNIQUE (agent_id, url, name, arguments)
+);
+CREATE INDEX IF NOT EXISTS event_subscriptions_by_bot ON event_subscriptions (agent_id, name);
+-- A bot wake-up URL's optional auth key. Kept apart from the URL so a reply can show the address
+-- and never the key. No foreign key: the id is a person's or a bot's, same as notify_targets.
+CREATE TABLE IF NOT EXISTS notify_auth (
+    owner_id  TEXT PRIMARY KEY,
+    secret    TEXT NOT NULL
+);
+-- R20: a row in bot_homes can't outlive its house, and a bot that stays home still does.
+CREATE TABLE IF NOT EXISTS bots_without_a_house (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE
+);
+-- S27: leaving a floor doesn't unsee its link, so turning someone out has to know they were there.
+CREATE TABLE IF NOT EXISTS floors_left (
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (hangout_id, person_id)
+);
 "#;
 
 /// E30: how many outsides one player keeps waiting for each kind of place, after their places come
@@ -880,6 +958,18 @@ pub struct NewItemNote<'a> {
     pub now: i64,
 }
 
+/// What a room's whiteboard says (I48). `person_id` is who wrote it last, and `agent_id` the bot that
+/// wrote it for them, so that a bot's words are never mistaken for its owner's (I51).
+#[derive(Clone, Debug, Serialize)]
+pub struct Whiteboard {
+    pub text: String,
+    pub person_id: String,
+    pub written_by: String,
+    pub agent_id: Option<String>,
+    pub via_bot: Option<String>,
+    pub updated_at: i64,
+}
+
 /// A public floor as the list shows it: nothing about who is there or what was said.
 #[derive(Clone, Debug, Serialize)]
 pub struct PublicFloor {
@@ -913,6 +1003,26 @@ pub enum WalkedIn {
     TooManyBots,
     /// A trip doesn't give way to a walk-in (S39).
     OnTrip,
+}
+
+/// A floor a bot left, and why. S62.
+#[derive(Clone, Debug, Serialize)]
+pub struct FloorLeave {
+    pub hangout_id: String,
+    pub name: String,
+    pub left_at: i64,
+    pub reason: String,
+}
+
+/// An @mention of a bot that it hasn't read yet. B8.
+#[derive(Clone, Debug, Serialize)]
+pub struct Mention {
+    pub hangout_id: String,
+    pub hangout: String,
+    pub message_id: i64,
+    pub from: String,
+    pub text: String,
+    pub at: i64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1824,7 +1934,8 @@ fn bot_places_sql(city: &str, from: &str) -> String {
         // `stays_home` comes from the bot's own row, because `bh` may leave out a home the owner
         // has moved out of, and the bot still stays home (R20).
         "SELECT a.id, a.name, a.owner_id, a.last_active_at, a.last_seen_at, bh.house_id,
-                (SELECT own.stays_home FROM bot_homes own WHERE own.agent_id = a.id),
+                COALESCE((SELECT own.stays_home FROM bot_homes own WHERE own.agent_id = a.id),
+                         (SELECT 1 FROM bots_without_a_house w WHERE w.agent_id = a.id)),
                 bh.is_house, {}, {}
          FROM agents a {from} ORDER BY a.created_at, a.id",
         away("house_id"),
@@ -1855,6 +1966,54 @@ fn guest_on_trip(
 
 /// FR6: ends the invites waiting for a place. Their rows stay, so a day's count (FR7) still sees
 /// them, and one that was turned down stays turned down.
+/// H12: a scene a key approved that hasn't run goes with the key. `passes` says which passes `p` are
+/// losing theirs, so every way a key can go shares this, whatever else it's doing.
+fn decline_scenes_on_keys(
+    conn: &Connection,
+    passes: &str,
+    args: impl rusqlite::Params,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!(
+            "UPDATE scene_requests SET status = 'declined'
+             WHERE status = 'approved' AND EXISTS (
+                SELECT 1 FROM passes p JOIN agents a ON a.id = p.agent_id
+                JOIN pass_keys k ON k.pass_id = p.id AND k.key = 'scenes'
+                WHERE p.house_id = scene_requests.house_id AND a.name = scene_requests.asked_by
+                  AND k.granted_by = scene_requests.answered_by AND {passes})"
+        ),
+        args,
+    )?;
+    Ok(())
+}
+
+/// S27: the floors of a space whose links this person has seen: the ones they're on, the ones they
+/// left, and the ones an invite from a friend showed them (FR5). `floors_left` is the record of who
+/// left. It can't be read back for anyone who left before it existed, so `left` is the line the room
+/// got then. A namesake can erase that line (A38) and only costs a floor a new link, so it's for
+/// them and no more than that. A walk-in sees no link (S21).
+fn floors_seen_by(
+    conn: &Connection,
+    space_id: &str,
+    person_id: &str,
+    left: &str,
+) -> rusqlite::Result<Vec<String>> {
+    strings(
+        conn,
+        "SELECT f.hangout_id FROM floors f
+         WHERE f.space_id = ?1 AND (
+            EXISTS (SELECT 1 FROM members m
+                    WHERE m.hangout_id = f.hangout_id AND m.person_id = ?2)
+            OR EXISTS (SELECT 1 FROM floors_left w
+                       WHERE w.hangout_id = f.hangout_id AND w.person_id = ?2)
+            OR EXISTS (SELECT 1 FROM messages l
+                       WHERE l.hangout_id = f.hangout_id AND l.kind = 'system' AND l.body = ?3)
+            OR EXISTS (SELECT 1 FROM friend_invites i
+                       WHERE i.kind = 'room' AND i.place_id = f.hangout_id AND i.to_person = ?2))",
+        params![space_id, person_id, left],
+    )
+}
+
 fn end_friend_invites(conn: &Connection, kind: &str, place_id: &str) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO friend_invite_ends (invite_id)
@@ -2145,6 +2304,21 @@ fn remove_house(conn: &Connection, id: &str, gone: &mut AccountGone) -> rusqlite
             Ok((row.get(0)?, row.get(1)?))
         })?;
     forget_place(conn, id)?;
+    // A33: a house bot goes with its house, whoever made it. Left to the cascade it would become an
+    // ordinary bot of someone who moved out long ago, with the token they kept.
+    let house_bots =
+        strings(conn, "SELECT agent_id FROM bot_homes WHERE house_id = ? AND is_house = 1", [id])?;
+    for bot in house_bots {
+        conn.execute("DELETE FROM notify_targets WHERE owner_id = ?", [&bot])?;
+        conn.execute("DELETE FROM notify_auth WHERE owner_id = ?", [&bot])?;
+        conn.execute("DELETE FROM agents WHERE id = ?", [&bot])?;
+    }
+    // R20, R21: only its owner lifts this, and the house going isn't them.
+    conn.execute(
+        "INSERT OR IGNORE INTO bots_without_a_house (agent_id)
+         SELECT agent_id FROM bot_homes WHERE house_id = ? AND stays_home = 1",
+        [id],
+    )?;
     conn.execute("DELETE FROM houses WHERE id = ?", [id])?;
     remove_room(conn, &living_room, gone)?;
     remove_room(conn, &porch, gone)
@@ -2292,6 +2466,7 @@ fn pass_on_house_bots(
                 params![next, bot],
             )?;
             conn.execute("DELETE FROM notify_targets WHERE owner_id = ?", [&bot])?;
+            conn.execute("DELETE FROM notify_auth WHERE owner_id = ?", [&bot])?;
             gone.house_bots.push(house);
         }
     }
@@ -2356,6 +2531,20 @@ fn remove_their_words(conn: &Connection, person_id: &str, who: &[String]) -> rus
                 params![room, name],
             )?;
         }
+    }
+    Ok(())
+}
+
+/// A38: a bot's event log is a copy, so deleting the message doesn't take their name out of it.
+fn scrub_bot_events(conn: &Connection, needles: &[String]) -> rusqlite::Result<()> {
+    for needle in needles {
+        if needle.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "DELETE FROM bot_events WHERE instr(data, ?1) > 0 OR instr(ref_key, ?1) > 0",
+            [needle],
+        )?;
     }
     Ok(())
 }
@@ -2458,6 +2647,42 @@ fn remake_index(conn: &Connection, name: &str, wanted: &str) -> rusqlite::Result
         conn.execute(&format!("DROP INDEX {name}"), [])?;
     }
     Ok(())
+}
+
+fn remember_leave(
+    conn: &Connection,
+    who: &str,
+    hangout_id: &str,
+    left_at: i64,
+    reason: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO floor_leaves (who, hangout_id, left_at, reason) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (who, hangout_id) DO UPDATE SET
+            left_at = excluded.left_at, reason = excluded.reason",
+        params![who, hangout_id, left_at, reason],
+    )?;
+    Ok(())
+}
+
+fn floor_leave_from_row(row: &Row) -> rusqlite::Result<FloorLeave> {
+    Ok(FloorLeave {
+        hangout_id: row.get(0)?,
+        name: row.get(1)?,
+        left_at: row.get(2)?,
+        reason: row.get(3)?,
+    })
+}
+
+fn mention_from_row(row: &Row) -> rusqlite::Result<Mention> {
+    Ok(Mention {
+        hangout_id: row.get(0)?,
+        hangout: row.get(1)?,
+        message_id: row.get(2)?,
+        from: row.get(3)?,
+        text: row.get(4)?,
+        at: row.get(5)?,
+    })
 }
 
 impl Db {
@@ -3003,6 +3228,13 @@ impl Db {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         tx.execute(
+            "INSERT OR IGNORE INTO floors_left (hangout_id, person_id)
+             SELECT m.hangout_id, m.person_id FROM members m
+             JOIN floors f ON f.hangout_id = m.hangout_id
+             WHERE m.hangout_id = ?1 AND m.person_id = ?2",
+            params![hangout_id, person_id],
+        )?;
+        tx.execute(
             "DELETE FROM room_agents WHERE hangout_id = ?1 AND agent_id IN
                 (SELECT id FROM agents WHERE owner_id = ?2)",
             params![hangout_id, person_id],
@@ -3225,6 +3457,15 @@ impl Db {
             params![agent_id, paused],
         )?;
         Ok(())
+    }
+
+    /// E22: whether its owner pressed Pause. A bot with no doorbell can be paused too.
+    pub fn doorbell_paused(&self, agent_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM agent_doorbell WHERE agent_id = ? AND paused = 1",
+            [agent_id],
+        )
     }
 
     // Messages
@@ -3612,13 +3853,17 @@ impl Db {
 
     /// H19: takes back the bot's keys at every house the person lives in.
     pub fn take_keys_at_homes_of(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
-            "DELETE FROM pass_keys WHERE pass_id IN (
-                SELECT p.id FROM passes p JOIN residents r ON r.house_id = p.house_id
-                WHERE p.agent_id = ?2 AND r.person_id = ?1)",
+        let passes = "SELECT p.id FROM passes p JOIN residents r ON r.house_id = p.house_id
+                      WHERE p.agent_id = ?2 AND r.person_id = ?1";
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let those = format!("p.id IN ({passes})");
+        decline_scenes_on_keys(&tx, &those, params![person_id, agent_id])?;
+        tx.execute(
+            &format!("DELETE FROM pass_keys WHERE pass_id IN ({passes})"),
             params![person_id, agent_id],
         )?;
-        Ok(())
+        tx.commit()
     }
 
     // Projects (L11 to L15)
@@ -4096,6 +4341,12 @@ impl Db {
             ),
             params![city_id, person_id, now, ended_by],
         )?;
+        decline_scenes_on_keys(
+            &tx,
+            "p.agent_id IN (SELECT id FROM agents WHERE owner_id = ?2)
+             AND p.house_id IN (SELECT id FROM houses WHERE city_id = ?1)",
+            params![city_id, person_id],
+        )?;
         tx.execute(&format!("DELETE FROM passes WHERE {theirs}"), params![city_id, person_id])?;
         tx.execute(
             "DELETE FROM room_agents WHERE hangout_id = (SELECT square_id FROM cities WHERE id = ?1)
@@ -4441,6 +4692,16 @@ impl Db {
                     stmt.query_map(params![change.id, change.keep_bots_of], |row| row.get(0))?;
                 taken_off = names.collect::<rusqlite::Result<Vec<String>>>()?;
             }
+            // S25, S62: the bots this takes off can be told why the room then says they've gone.
+            tx.execute(
+                "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+                 SELECT a.id, ?1, ?3, 'you were sent home when this floor opened to the public'
+                 FROM agents a JOIN room_agents r ON r.agent_id = a.id
+                 WHERE r.hangout_id = ?1 AND a.owner_id != ?2
+                 ON CONFLICT (who, hangout_id) DO UPDATE SET
+                    left_at = excluded.left_at, reason = excluded.reason",
+                params![change.id, change.keep_bots_of, crate::now()],
+            )?;
             tx.execute(
                 &format!(
                     "DELETE FROM room_agents WHERE hangout_id = ?1 AND agent_id IN ({others})"
@@ -4449,6 +4710,14 @@ impl Db {
             )?;
         }
         if change.access == Some("private") {
+            tx.execute(
+                "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+                 SELECT who, hangout_id, ?2, 'this floor went private'
+                 FROM floor_visits WHERE hangout_id = ?1
+                 ON CONFLICT (who, hangout_id) DO UPDATE SET
+                    left_at = excluded.left_at, reason = excluded.reason",
+                params![change.id, crate::now()],
+            )?;
             tx.execute("DELETE FROM floor_visits WHERE hangout_id = ?", [change.id])?;
         }
         tx.execute(
@@ -4726,6 +4995,168 @@ impl Db {
         Ok(())
     }
 
+    /// Ends a walk-in and remembers why, so a later read can say so (S62). `who` is the bot's id.
+    pub fn end_visit_as(
+        &self,
+        hangout_id: &str,
+        who: &str,
+        now: i64,
+        reason: &str,
+    ) -> rusqlite::Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let changed = tx.execute(
+            "DELETE FROM floor_visits WHERE hangout_id = ?1 AND (who = ?2 OR agent_id = ?2)",
+            params![hangout_id, who],
+        )?;
+        if changed > 0 {
+            remember_leave(&tx, who, hangout_id, now, reason)?;
+        }
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// The public floors this bot is still walked onto. `who` and `agent_id` both count.
+    pub fn bot_visits(&self, agent_id: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT hangout_id FROM floor_visits
+             WHERE (who = ?1 OR agent_id = ?1) AND until > ?2 ORDER BY since",
+        )?;
+        let rows = stmt.query_map(params![agent_id, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// When this caller's walk-in on a floor ran out, if the row is still there.
+    pub fn visit_ended(
+        &self,
+        who: &str,
+        hangout_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.conn()
+            .query_row(
+                "SELECT until FROM floor_visits
+                 WHERE hangout_id = ?1 AND (who = ?2 OR agent_id = ?2) AND until <= ?3
+                 ORDER BY until DESC LIMIT 1",
+                params![hangout_id, who, now],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// Why this caller left a floor, if it was recorded.
+    pub fn floor_leave(
+        &self,
+        who: &str,
+        hangout_id: &str,
+    ) -> rusqlite::Result<Option<(i64, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT left_at, reason FROM floor_leaves WHERE who = ? AND hangout_id = ?",
+                params![who, hangout_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// The latest floor this bot left, if it was within `since`.
+    pub fn latest_floor_leave(
+        &self,
+        who: &str,
+        since: i64,
+    ) -> rusqlite::Result<Option<FloorLeave>> {
+        self.conn()
+            .query_row(
+                "SELECT l.hangout_id, h.name, l.left_at, l.reason
+                 FROM floor_leaves l JOIN hangouts h ON h.id = l.hangout_id
+                 WHERE l.who = ? AND l.left_at >= ? ORDER BY l.left_at DESC LIMIT 1",
+                params![who, since],
+                floor_leave_from_row,
+            )
+            .optional()
+    }
+
+    /// A floor this bot left at or after `since`, the latest one.
+    pub fn floor_left_since(&self, who: &str, since: i64) -> rusqlite::Result<Option<FloorLeave>> {
+        self.latest_floor_leave(who, since)
+    }
+
+    /// The lowest floor of this person's house, if they have one. It doesn't build one.
+    pub fn owner_house_floor(&self, owner_id: &str) -> rusqlite::Result<Option<(String, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT f.hangout_id, h.name FROM spaces s
+                 JOIN floors f ON f.space_id = s.id
+                 JOIN hangouts h ON h.id = f.hangout_id
+                 WHERE s.owner_id = ? AND s.kind = 'house'
+                 ORDER BY f.level LIMIT 1",
+                [owner_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    pub fn add_mention(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        message_id: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT OR IGNORE INTO mentions (hangout_id, message_id, agent_id, created_at)
+             VALUES (?, ?, ?, ?)",
+            params![hangout_id, message_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// E22: whether a person's @mention of this bot in this room, newer than `since`, is unread.
+    /// A bot's doesn't count, because it rang nothing.
+    pub fn person_mention_unread(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM mentions m JOIN messages msg ON msg.id = m.message_id
+             WHERE m.agent_id = ?1 AND m.hangout_id = ?2 AND m.read_at IS NULL
+               AND m.created_at > ?3 AND msg.agent_id IS NULL
+             LIMIT 1",
+            params![agent_id, hangout_id, since],
+        )
+    }
+
+    pub fn unread_mentions(&self, agent_id: &str) -> rusqlite::Result<Vec<Mention>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT m.hangout_id, h.name, m.message_id, msg.speaker, msg.body, m.created_at
+             FROM mentions m
+             JOIN hangouts h ON h.id = m.hangout_id
+             JOIN messages msg ON msg.id = m.message_id
+             WHERE m.agent_id = ? AND m.read_at IS NULL
+             ORDER BY m.id",
+        )?;
+        let rows = stmt.query_map([agent_id], mention_from_row)?;
+        rows.collect()
+    }
+
+    pub fn mark_mentions_read(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE mentions SET read_at = ? WHERE agent_id = ? AND hangout_id = ? AND read_at IS NULL",
+            params![now, agent_id, hangout_id],
+        )?;
+        Ok(())
+    }
+
     /// Moves a walk-in's times, which is how a test makes one run out. False if there's none.
     pub fn set_visit_times(
         &self,
@@ -4741,11 +5172,76 @@ impl Db {
         Ok(changed > 0)
     }
 
-    /// Takes someone and their bots off every floor of a space, and keeps them off (S27).
-    pub fn turn_out(&self, space_id: &str, person_id: &str, now: i64) -> rusqlite::Result<()> {
+    /// S27: takes someone and their bots off every floor of a space and keeps them off, with every
+    /// link they saw. It's one step, because someone who's out can't be turned out again to finish
+    /// it. Their answers to plans here that haven't started go too, and with them being a guest of
+    /// one and its link. Gives back those plans, because each may need to come off the calendar.
+    pub fn turn_out(
+        &self,
+        space_id: &str,
+        person_id: &str,
+        left: &str,
+        now: i64,
+    ) -> rusqlite::Result<Vec<String>> {
         let floors = "SELECT hangout_id FROM floors WHERE space_id = ?1";
+        let plans =
+            format!("SELECT id FROM events WHERE hangout_id IN ({floors}) AND starts_at > ?3");
         let mut conn = self.conn();
         let tx = conn.transaction()?;
+        for floor in floors_seen_by(&tx, space_id, person_id, left)? {
+            tx.execute(
+                "UPDATE hangouts SET invite_code = lower(hex(randomblob(12))) WHERE id = ?",
+                [&floor],
+            )?;
+            end_friend_invites(&tx, "room", &floor)?;
+            tx.execute(
+                "DELETE FROM plan_invites WHERE event_id IN (
+                    SELECT id FROM events WHERE hangout_id = ?)",
+                [&floor],
+            )?;
+        }
+        let answered = strings(
+            &tx,
+            &format!("SELECT event_id FROM rsvps WHERE person_id = ?2 AND event_id IN ({plans})"),
+            params![space_id, person_id, now],
+        )?;
+        tx.execute(
+            &format!(
+                "DELETE FROM plan_invites WHERE event_id IN (
+                    SELECT event_id FROM plan_invitees
+                    WHERE person_id = ?2 AND event_id IN ({plans}))"
+            ),
+            params![space_id, person_id, now],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM plan_invitees WHERE person_id = ?2 AND event_id IN ({plans})"),
+            params![space_id, person_id, now],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM rsvps WHERE person_id = ?2 AND event_id IN ({plans})"),
+            params![space_id, person_id, now],
+        )?;
+        tx.execute(
+            &format!(
+                "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+                 SELECT r.agent_id, r.hangout_id, ?3, 'you were turned out of this place'
+                 FROM room_agents r JOIN agents a ON a.id = r.agent_id
+                 WHERE r.hangout_id IN ({floors}) AND a.owner_id = ?2
+                 ON CONFLICT (who, hangout_id) DO UPDATE SET
+                    left_at = excluded.left_at, reason = excluded.reason"
+            ),
+            params![space_id, person_id, now],
+        )?;
+        tx.execute(
+            &format!(
+                "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+                 SELECT who, hangout_id, ?3, 'you were turned out of this place'
+                 FROM floor_visits WHERE hangout_id IN ({floors}) AND person_id = ?2
+                 ON CONFLICT (who, hangout_id) DO UPDATE SET
+                    left_at = excluded.left_at, reason = excluded.reason"
+            ),
+            params![space_id, person_id, now],
+        )?;
         tx.execute(
             &format!(
                 "DELETE FROM room_agents WHERE hangout_id IN ({floors})
@@ -4765,7 +5261,8 @@ impl Db {
             "INSERT OR IGNORE INTO turned_out (space_id, person_id, created_at) VALUES (?, ?, ?)",
             params![space_id, person_id, now],
         )?;
-        tx.commit()
+        tx.commit()?;
+        Ok(answered)
     }
 
     pub fn let_back(&self, space_id: &str, person_id: &str) -> rusqlite::Result<()> {
@@ -5093,7 +5590,8 @@ impl Db {
     pub fn bot_home(&self, agent_id: &str) -> rusqlite::Result<Option<BotHome>> {
         self.conn()
             .query_row(
-                "SELECT agent_id, house_id, stays_home, is_house FROM bot_homes WHERE agent_id = ?",
+                "SELECT agent_id, house_id, stays_home, is_house FROM bot_homes WHERE agent_id = ?1
+                 UNION ALL SELECT agent_id, '', 1, 0 FROM bots_without_a_house WHERE agent_id = ?1",
                 [agent_id],
                 |row| {
                     Ok(BotHome {
@@ -5116,13 +5614,16 @@ impl Db {
         stays_home: bool,
         is_house: bool,
     ) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
             "INSERT INTO bot_homes (agent_id, house_id, stays_home, is_house) VALUES (?, ?, ?, ?)
              ON CONFLICT (agent_id) DO UPDATE SET
                 house_id = excluded.house_id, stays_home = excluded.stays_home",
             params![agent_id, house_id, stays_home, is_house],
         )?;
-        Ok(())
+        tx.execute("DELETE FROM bots_without_a_house WHERE agent_id = ?", [agent_id])?;
+        tx.commit()
     }
 
     /// For a bot that stays home: it keeps only the one room.
@@ -5131,7 +5632,24 @@ impl Db {
         agent_id: &str,
         keep_hangout_id: &str,
     ) -> rusqlite::Result<()> {
+        let now = crate::now();
         let conn = self.conn();
+        conn.execute(
+            "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+             SELECT agent_id, hangout_id, ?3, 'you stay home'
+             FROM room_agents WHERE agent_id = ?1 AND hangout_id != ?2
+             ON CONFLICT (who, hangout_id) DO UPDATE SET
+                left_at = excluded.left_at, reason = excluded.reason",
+            params![agent_id, keep_hangout_id, now],
+        )?;
+        conn.execute(
+            "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+             SELECT ?1, hangout_id, ?2, 'you stay home' FROM floor_visits
+             WHERE agent_id = ?1 OR who = ?1
+             ON CONFLICT (who, hangout_id) DO UPDATE SET
+                left_at = excluded.left_at, reason = excluded.reason",
+            params![agent_id, now],
+        )?;
         conn.execute(
             "DELETE FROM room_agents WHERE agent_id = ? AND hangout_id != ?",
             params![agent_id, keep_hangout_id],
@@ -5358,6 +5876,14 @@ impl Db {
                 "UPDATE trips SET status = 'here', arrived_at = ?2, ends_at = ?3 WHERE id = ?1",
                 params![trip_id, now, now + minutes * 60],
             )?;
+            tx.execute(
+                "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
+                 SELECT ?1, hangout_id, ?2, 'a trip started, so you left this floor'
+                 FROM floor_visits WHERE agent_id = ?1 OR who = ?1
+                 ON CONFLICT (who, hangout_id) DO UPDATE SET
+                    left_at = excluded.left_at, reason = excluded.reason",
+                params![agent_id, now],
+            )?;
             tx.execute("DELETE FROM floor_visits WHERE agent_id = ?", [&agent_id])?;
             // S56: a trip ends at home, so nothing it goes to on the way counts for afterwards.
             tx.execute("DELETE FROM bot_places WHERE agent_id = ?", [&agent_id])?;
@@ -5559,11 +6085,13 @@ impl Db {
     }
 
     pub fn remove_pass_key(&self, pass_id: &str, key: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
-            "DELETE FROM pass_keys WHERE pass_id = ? AND key = ?",
-            params![pass_id, key],
-        )?;
-        Ok(())
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        if key == "scenes" {
+            decline_scenes_on_keys(&tx, "p.id = ?", [pass_id])?;
+        }
+        tx.execute("DELETE FROM pass_keys WHERE pass_id = ? AND key = ?", params![pass_id, key])?;
+        tx.commit()
     }
 
     /// H12: the keys this resident gave at this house. `granted_by` is a name, as on a pass.
@@ -5610,7 +6138,11 @@ impl Db {
     }
 
     pub fn delete_pass(&self, id: &str) -> rusqlite::Result<bool> {
-        let changed = self.conn().execute("DELETE FROM passes WHERE id = ?", [id])?;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        decline_scenes_on_keys(&tx, "p.id = ?", [id])?;
+        let changed = tx.execute("DELETE FROM passes WHERE id = ?", [id])?;
+        tx.commit()?;
         Ok(changed > 0)
     }
 
@@ -5741,7 +6273,6 @@ impl Db {
         Ok(changed > 0)
     }
 
-    /// What the house bot may see: approved requests that haven't lapsed, oldest first.
     /// R7: approved scenes this person said yes to that haven't run. `answered_by` is a name.
     pub fn decline_scenes_approved_by(
         &self,
@@ -5757,23 +6288,7 @@ impl Db {
         Ok(())
     }
 
-    /// H12: approved scenes a bot asked for on its key that haven't run.
-    pub fn decline_scenes_on_key(
-        &self,
-        house_id: &str,
-        asked_by: &str,
-        giver: &str,
-        now: i64,
-    ) -> rusqlite::Result<()> {
-        self.conn().execute(
-            "UPDATE scene_requests SET status = 'declined'
-             WHERE house_id = ? AND asked_by = ? AND answered_by = ?
-               AND status = 'approved' AND expires_at > ?",
-            params![house_id, asked_by, giver, now],
-        )?;
-        Ok(())
-    }
-
+    /// What the house bot may see: approved requests that haven't lapsed, oldest first.
     pub fn scene_queue(&self, house_id: &str, now: i64) -> rusqlite::Result<Vec<QueueItem>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
@@ -6024,15 +6539,6 @@ impl Db {
         conn.query_row("SELECT code FROM plan_invites WHERE event_id = ?", [event_id], |row| {
             row.get(0)
         })
-    }
-
-    /// S27: ends the links of every plan in a room. Each can be asked for again.
-    pub fn end_plan_links(&self, hangout_id: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
-            "DELETE FROM plan_invites WHERE event_id IN (SELECT id FROM events WHERE hangout_id = ?)",
-            [hangout_id],
-        )?;
-        Ok(())
     }
 
     pub fn replace_plan_invite(
@@ -7893,6 +8399,16 @@ impl Db {
         )
     }
 
+    /// G6: whether a plan this person said yes or maybe to is on the calendar.
+    pub fn has_plan_on_calendar(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM rsvps r JOIN events e ON e.id = r.event_id
+             WHERE r.person_id = ? AND r.response != 'no' AND e.status = 'confirmed' LIMIT 1",
+            [person_id],
+        )
+    }
+
     /// I19: how many friends a person has right now. Nothing keeps this, so it can't go stale.
     pub fn friend_count(&self, person_id: &str) -> rusqlite::Result<i64> {
         self.conn().query_row(
@@ -8057,6 +8573,53 @@ impl Db {
 
     pub fn stop_using_item(&self, agent_id: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM item_uses WHERE agent_id = ?", [agent_id])?;
+        Ok(())
+    }
+
+    /// What's on a room's whiteboard. A blank board has no row (I48).
+    pub fn whiteboard(&self, hangout_id: &str) -> rusqlite::Result<Option<Whiteboard>> {
+        self.conn()
+            .query_row(
+                "SELECT w.body, w.person_id, p.name, w.agent_id, a.name, w.updated_at
+                 FROM whiteboards w JOIN people p ON p.id = w.person_id
+                 LEFT JOIN agents a ON a.id = w.agent_id
+                 WHERE w.hangout_id = ?",
+                [hangout_id],
+                |row| {
+                    Ok(Whiteboard {
+                        text: row.get(0)?,
+                        person_id: row.get(1)?,
+                        written_by: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        via_bot: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// Replaces what a room's whiteboard says (I49).
+    pub fn write_whiteboard(
+        &self,
+        hangout_id: &str,
+        body: &str,
+        person_id: &str,
+        agent_id: Option<&str>,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO whiteboards (hangout_id, body, person_id, agent_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (hangout_id) DO UPDATE
+             SET body = ?2, person_id = ?3, agent_id = ?4, updated_at = ?5",
+            params![hangout_id, body, person_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn wipe_whiteboard(&self, hangout_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM whiteboards WHERE hangout_id = ?", [hangout_id])?;
         Ok(())
     }
 
@@ -8995,6 +9558,14 @@ impl Db {
             params![SOMEONE_WHO_LEFT_ID, SOMEONE_WHO_LEFT],
         )?;
         pass_on_house_bots(&tx, person_id, &mut gone)?;
+        // A house bot that goes with its house still has a name to take off the rest.
+        let mut who = strings(&tx, "SELECT name FROM agents WHERE owner_id = ?", [person_id])?;
+        who.push(name.to_string());
+        decline_scenes_on_keys(
+            &tx,
+            "p.agent_id IN (SELECT id FROM agents WHERE owner_id = ?)",
+            [person_id],
+        )?;
         gone.other_rooms.extend(strings(
             &tx,
             "SELECT hangout_id FROM floor_visits WHERE person_id = ?1
@@ -9006,9 +9577,19 @@ impl Db {
         remove_empty_households(&tx, person_id, &mut gone)?;
         remove_empty_rooms(&tx, person_id, &mut gone)?;
 
-        let mut who = strings(&tx, "SELECT name FROM agents WHERE owner_id = ?", [person_id])?;
-        who.push(name.to_string());
         remove_their_words(&tx, person_id, &who)?;
+        // A38: other bots' event copies quote what this person said. Their own rows go with the
+        // agent, and these name them with no foreign key.
+        let mut needles = who.clone();
+        needles.push(person_id.to_string());
+        needles.extend(strings(&tx, "SELECT id FROM agents WHERE owner_id = ?", [person_id])?);
+        needles.extend(strings(
+            &tx,
+            "SELECT url FROM notify_targets WHERE owner_id = ?1
+                OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+            [person_id],
+        )?);
+        scrub_bot_events(&tx, &needles)?;
         settle_their_plans(&tx, person_id)?;
         hand_over_what_stays(&tx, person_id, name)?;
         tx.execute(
@@ -9033,6 +9614,11 @@ impl Db {
                 OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
             [person_id],
         )?;
+        tx.execute(
+            "DELETE FROM notify_auth WHERE owner_id = ?1
+                OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+            [person_id],
+        )?;
 
         gone.plans = strings(&tx, "SELECT event_id FROM rsvps WHERE person_id = ?", [person_id])?;
         gone.cities =
@@ -9048,6 +9634,378 @@ impl Db {
         tx.commit()?;
         Ok(gone)
     }
+}
+
+/// One row of a bot's event log.
+#[derive(Clone, Debug)]
+pub struct BotEventRow {
+    pub id: i64,
+    pub name: String,
+    pub hangout_id: Option<String>,
+    pub data: String,
+    pub created_at: i64,
+}
+
+/// A webhook subscription, including the secret used to sign a delivery.
+#[derive(Clone, Debug)]
+pub struct EventSubscription {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    pub url: String,
+    pub secret: String,
+    pub previous_secret: Option<String>,
+    pub previous_secret_until: Option<i64>,
+    pub refresh_before: i64,
+    pub active: bool,
+    pub last_delivery_at: Option<i64>,
+    pub last_error: Option<String>,
+    pub failed_since: Option<i64>,
+    pub failures: i64,
+}
+
+impl Db {
+    pub fn notify_auth(&self, owner_id: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row("SELECT secret FROM notify_auth WHERE owner_id = ?", [owner_id], |row| {
+                row.get(0)
+            })
+            .optional()
+    }
+
+    pub fn set_notify_auth(&self, owner_id: &str, secret: Option<&str>) -> rusqlite::Result<()> {
+        let conn = self.conn();
+        match secret {
+            Some(secret) => conn.execute(
+                "INSERT INTO notify_auth (owner_id, secret) VALUES (?1, ?2)
+                 ON CONFLICT (owner_id) DO UPDATE SET secret = excluded.secret",
+                params![owner_id, secret],
+            )?,
+            None => conn.execute("DELETE FROM notify_auth WHERE owner_id = ?", [owner_id])?,
+        };
+        Ok(())
+    }
+
+    /// Drops events older than `older_than`, then records one. `None` means this ref was already
+    /// recorded, so a live write and a later catch-up don't fan out twice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_bot_event(
+        &self,
+        agent_id: &str,
+        name: &str,
+        hangout_id: Option<&str>,
+        ref_key: &str,
+        data: &str,
+        created_at: i64,
+        older_than: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM bot_events WHERE created_at < ?", [older_than])?;
+        let inserted = conn.execute(
+            "INSERT INTO bot_events (agent_id, name, hangout_id, ref_key, data, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (agent_id, ref_key) DO NOTHING",
+            params![agent_id, name, hangout_id, ref_key, data, created_at],
+        )?;
+        if inserted == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(conn.last_insert_rowid()))
+        }
+    }
+
+    pub fn bot_event_head(&self, agent_id: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM bot_events WHERE agent_id = ?",
+            [agent_id],
+            |row| row.get(0),
+        )
+    }
+
+    /// Events after `after`, oldest first. `name` and `hangout_id` narrow a subscription.
+    /// `actionable` keeps ordinary chat out of a first catch-up.
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_bot_events(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+        actionable: bool,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<BotEventRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, hangout_id, data, created_at FROM bot_events
+             WHERE agent_id = ?1 AND id > ?2 AND created_at >= ?3
+               AND (?4 IS NULL OR name = ?4)
+               AND (?5 IS NULL OR hangout_id = ?5)
+               AND (?6 = 0 OR name IN
+                    ('mention', 'owner_answer', 'check_in', 'plan', 'trip', 'place'))
+             ORDER BY id LIMIT ?7",
+        )?;
+        let rows = stmt.query_map(
+            params![agent_id, after, not_before, name, hangout_id, actionable, limit],
+            |row| {
+                Ok(BotEventRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    hangout_id: row.get(2)?,
+                    data: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            },
+        )?;
+        rows.collect()
+    }
+
+    /// Whether anything for this bot sits before `not_before` and still matches the filter.
+    pub fn bot_events_skipped(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+        actionable: bool,
+    ) -> rusqlite::Result<bool> {
+        let skipped: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT id FROM bot_events
+                 WHERE agent_id = ?1 AND id > ?2 AND created_at < ?3
+                   AND (?4 IS NULL OR name = ?4)
+                   AND (?5 IS NULL OR hangout_id = ?5)
+                   AND (?6 = 0 OR name IN
+                        ('mention', 'owner_answer', 'check_in', 'plan', 'trip', 'place'))
+                 LIMIT 1",
+                params![agent_id, after, not_before, name, hangout_id, actionable],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(skipped.is_some())
+    }
+
+    /// The newest id that a filter would skip for being too old, so a cursor can move past it.
+    pub fn bot_events_skip_to(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+    ) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COALESCE(MAX(id), ?2) FROM bot_events
+             WHERE agent_id = ?1 AND id > ?2 AND created_at < ?3
+               AND (?4 IS NULL OR name = ?4)
+               AND (?5 IS NULL OR hangout_id = ?5)",
+            params![agent_id, after, not_before, name, hangout_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn check_ins_by_agent(
+        &self,
+        agent_id: &str,
+        since: i64,
+        now: i64,
+    ) -> rusqlite::Result<Vec<CheckIn>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CHECK_IN_COLS} FROM check_ins WHERE agent_id = ?1 AND created_at >= ?2"
+        ))?;
+        let rows = stmt.query_map(params![agent_id, since], |row| check_in_from_row(row, now))?;
+        rows.collect()
+    }
+
+    /// Bots walked onto a floor right now. A member isn't one of these.
+    pub fn visiting_bot_ids(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id FROM floor_visits
+             WHERE hangout_id = ?1 AND agent_id IS NOT NULL AND until > ?2",
+        )?;
+        let rows = stmt.query_map(params![hangout_id, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    pub fn drop_expired_subscriptions(&self, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM event_subscriptions WHERE refresh_before <= ?", [now])?;
+        Ok(())
+    }
+
+    pub fn subscription_count(&self, agent_id: &str, now: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM event_subscriptions WHERE agent_id = ? AND refresh_before > ?",
+            params![agent_id, now],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn url_is_verified(&self, agent_id: &str, url: &str, now: i64) -> rusqlite::Result<bool> {
+        let found: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM event_subscriptions
+                 WHERE agent_id = ?1 AND url = ?2 AND verified = 1 AND refresh_before > ?3
+                 LIMIT 1",
+                params![agent_id, url, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    pub fn event_subscription_by_key(
+        &self,
+        agent_id: &str,
+        url: &str,
+        name: &str,
+        arguments: &str,
+    ) -> rusqlite::Result<Option<EventSubscription>> {
+        self.conn()
+            .query_row(
+                "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                        refresh_before, active, last_delivery_at, last_error, failed_since, failures
+                 FROM event_subscriptions
+                 WHERE agent_id = ?1 AND url = ?2 AND name = ?3 AND arguments = ?4",
+                params![agent_id, url, name, arguments],
+                subscription_from_row,
+            )
+            .optional()
+    }
+
+    pub fn event_subscription(&self, id: &str) -> rusqlite::Result<Option<EventSubscription>> {
+        self.conn()
+            .query_row(
+                "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                        refresh_before, active, last_delivery_at, last_error, failed_since, failures
+                 FROM event_subscriptions WHERE id = ?",
+                [id],
+                subscription_from_row,
+            )
+            .optional()
+    }
+
+    /// Inserts or refreshes. A changed secret keeps the old one for `grace_until` so a delivery
+    /// can be signed twice while the receiver picks up the new one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_subscription(
+        &self,
+        id: &str,
+        agent_id: &str,
+        name: &str,
+        arguments: &str,
+        url: &str,
+        secret: &str,
+        refresh_before: i64,
+        grace_until: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO event_subscriptions (
+                id, agent_id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                refresh_before, verified, active, last_delivery_at, last_error, failed_since,
+                failures, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, 1, 1, NULL, NULL, NULL, 0, ?8)
+             ON CONFLICT (agent_id, url, name, arguments) DO UPDATE SET
+                secret = excluded.secret,
+                previous_secret = CASE
+                    WHEN event_subscriptions.secret != excluded.secret THEN event_subscriptions.secret
+                    ELSE event_subscriptions.previous_secret END,
+                previous_secret_until = CASE
+                    WHEN event_subscriptions.secret != excluded.secret THEN ?9
+                    ELSE event_subscriptions.previous_secret_until END,
+                refresh_before = excluded.refresh_before,
+                verified = 1,
+                active = 1,
+                failures = 0,
+                last_error = NULL,
+                failed_since = NULL",
+            params![id, agent_id, name, arguments, url, secret, refresh_before, now, grace_until],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_event_subscription(
+        &self,
+        agent_id: &str,
+        url: &str,
+        name: &str,
+        arguments: &str,
+    ) -> rusqlite::Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM event_subscriptions
+             WHERE agent_id = ?1 AND url = ?2 AND name = ?3 AND arguments = ?4",
+            params![agent_id, url, name, arguments],
+        )?;
+        Ok(n > 0)
+    }
+
+    pub fn subscriptions_for(
+        &self,
+        agent_id: &str,
+        name: &str,
+        now: i64,
+    ) -> rusqlite::Result<Vec<EventSubscription>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                    refresh_before, active, last_delivery_at, last_error, failed_since, failures
+             FROM event_subscriptions
+             WHERE agent_id = ?1 AND name = ?2 AND verified = 1 AND active = 1
+               AND refresh_before > ?3",
+        )?;
+        let rows = stmt.query_map(params![agent_id, name, now], subscription_from_row)?;
+        rows.collect()
+    }
+
+    pub fn note_subscription_result(
+        &self,
+        id: &str,
+        ok: bool,
+        error: Option<&str>,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE event_subscriptions SET
+                last_delivery_at = CASE WHEN ?2 THEN ?4 ELSE last_delivery_at END,
+                last_error = CASE WHEN ?2 THEN NULL ELSE ?3 END,
+                failed_since = CASE
+                    WHEN ?2 THEN NULL
+                    WHEN failed_since IS NULL THEN ?4
+                    ELSE failed_since END,
+                failures = CASE WHEN ?2 THEN 0 ELSE failures + 1 END,
+                active = CASE
+                    WHEN ?2 THEN active
+                    WHEN failures + 1 >= 5 THEN 0
+                    ELSE active END
+             WHERE id = ?1",
+            params![id, ok, error, now],
+        )?;
+        Ok(())
+    }
+}
+
+fn subscription_from_row(row: &Row) -> rusqlite::Result<EventSubscription> {
+    let active: i64 = row.get(8)?;
+    Ok(EventSubscription {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        arguments: row.get(2)?,
+        url: row.get(3)?,
+        secret: row.get(4)?,
+        previous_secret: row.get(5)?,
+        previous_secret_until: row.get(6)?,
+        refresh_before: row.get(7)?,
+        active: active != 0,
+        last_delivery_at: row.get(9)?,
+        last_error: row.get(10)?,
+        failed_since: row.get(11)?,
+        failures: row.get(12)?,
+    })
 }
 
 #[cfg(test)]
@@ -10426,5 +11384,59 @@ mod tests {
             assert_ne!(player.name_seed, player.id, "{player:?}");
             assert!(player.name_seed > 0);
         }
+    }
+
+    /// Ann's space "s1", its first floor and the attic "f2", with Bo on the first floor.
+    fn space_with_an_attic(db: &Db) {
+        db.create_person("p1", "Ann", "key1", "feed1", 0).unwrap();
+        db.create_person("p2", "Bo", "key2", "feed2", 0).unwrap();
+        db.start_third_space("s1", "Studio", "ground-code", "p1", 0, 3).unwrap().unwrap();
+        let attic = NewFloor {
+            id: "f2",
+            space_id: "s1",
+            name: "Attic",
+            invite_code: "attic-code",
+            created_by: "p1",
+            now: 0,
+        };
+        db.add_floor(&attic, 5).unwrap().unwrap();
+        db.add_member("s1", "p2", 0).unwrap();
+    }
+
+    #[test]
+    fn leaving_a_floor_is_kept_whatever_the_room_says_afterwards() {
+        let db = Db::open(":memory:").unwrap();
+        space_with_an_attic(&db);
+        db.add_member("f2", "p2", 1).unwrap();
+        db.remove_member("f2", "p2").unwrap();
+
+        let mut floors = floors_seen_by(&db.conn(), "s1", "p2", "no such line").unwrap();
+        floors.sort();
+        assert_eq!(floors, ["f2", "s1"]);
+    }
+
+    // S27: anyone who left before `floors_left` is only in the room's history.
+    #[test]
+    fn a_line_only_the_server_writes_says_who_left_and_one_anyone_could_type_doesnt() {
+        let db = Db::open(":memory:").unwrap();
+        space_with_an_attic(&db);
+        let left = "Bo left the hangout.";
+        let seen = || {
+            let mut floors = floors_seen_by(&db.conn(), "s1", "p2", left).unwrap();
+            floors.sort();
+            floors
+        };
+        let line = |kind: &str| {
+            let sql = "INSERT INTO messages (hangout_id, speaker, kind, body, created_at)
+                       VALUES ('f2', 'Bo', ?, ?, 1)";
+            db.conn().execute(sql, params![kind, left]).unwrap();
+        };
+        assert_eq!(seen(), ["s1"]);
+
+        line("chat");
+        assert_eq!(seen(), ["s1"], "anyone could type that");
+
+        line("system");
+        assert_eq!(seen(), ["f2", "s1"]);
     }
 }

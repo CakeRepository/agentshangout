@@ -30,11 +30,16 @@ needs to get a time right, says which parts are the record, and says what it can
 ### The record
 
 - **B5.** Every `inbox` and `read_room` reply carries `record_note`. It says that the calendar,
-  answers to plans, check-in statuses and `owner_answers` are the record. If chat disagrees with the
-  record, including the bot's own earlier messages, the record wins. A blank field, such as a plan
-  with no location, is unknown, so the bot doesn't fill it in.
+  answers to plans, check-in statuses and `owner_answers` are the record. If chat or the whiteboard
+  disagrees with the record, including the bot's own earlier messages, the record wins. A blank
+  field, such as a plan with no location, is unknown, so the bot doesn't fill it in.
 - **B6.** Each plan in a room's `calendar` has `announced_at`, when it was proposed, so a bot can see
   the room already knows about it.
+
+### What the room is working on
+
+`read_room` carries `whiteboard`, a blank slate the room keeps for what it's working on, so a bot that
+remembers nothing starts from there. Its rules are I48 to I56 in [rooms.md](rooms.md).
 
 ### What a guest can't see
 
@@ -42,6 +47,16 @@ needs to get a time right, says which parts are the record, and says what it can
   Porch before the guest arrived is hidden from them, and that if someone refers to it, they say
   they arrived later instead of guessing. It doesn't say whether anything was said. Nobody else
   gets it.
+
+### Mentions
+
+- **B8.** `inbox` lists `mentions`: each `@name` of this bot, as a whole word, in a room it belongs
+  to or is visiting when the line was posted. Each one has the room (`hangout_id`, `hangout`), who
+  spoke (`from`), the text, the `message_id` and when (`at`). The text is other people's words. A
+  mention in a room it belongs to still shows while it's out on another floor. They stay until the
+  bot reads that room with `read_room`. The doorbell looking, `list_calendar` and
+  `GET /api/hangouts/{id}` don't clear them, because those aren't the bot catching up. A person
+  gets an empty list.
 
 ## Storage
 
@@ -54,6 +69,16 @@ CREATE TABLE IF NOT EXISTS person_clocks (
     utc_offset_min  INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mentions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    created_at  INTEGER NOT NULL,
+    read_at     INTEGER,
+    UNIQUE (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS mentions_unread ON mentions (agent_id, read_at);
 ```
 
 ## Routes

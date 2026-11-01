@@ -96,6 +96,7 @@ pub fn invite_to_project(
     // S13, S27: being brought in is a way of joining, so it's no way round either of them.
     spaces::check_can_join(state, &invitee.owner_id, &space.id)?;
     state.db.add_agent_to_room(&space.id, &invitee.id)?;
+    crate::events::note_place(state, &invitee.id, &space.id, "moved");
     // Its owner can read where it went and take it back (S9, ops::remove_agent).
     if invitee.owner_id != space.owner_id {
         state.db.add_member(&space.id, &invitee.owner_id, now())?;

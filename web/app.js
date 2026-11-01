@@ -4,6 +4,7 @@ import { World, toolIcon, seenText } from './world.js';
 import { outsideBuilder } from './outside.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
 import { planInviteView } from './plan-invite.js';
+import { tutorial } from './tutorial.js';
 
 const app = document.getElementById('app');
 const startingTitle = document.title;
@@ -1710,7 +1711,8 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     });
   }
 
-  // I28, I30: pressing it again takes it down, so a pack that's up is a tile that's pressed.
+  // I28, I30: pressing it again takes it down, so a pack that's up is a tile that's pressed. I57: one
+  // that's over is only here to come down, so the catalog shows it where it's up and nowhere else.
   function packTile(pack, up) {
     return catalogTile({
       name: `pack-${pack.pack}`,
@@ -1783,7 +1785,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     catalogEl.replaceChildren(...[
       ...(floor.runs_it && !guest ? [
         ['Templates', look.templates.map(templateTile), true],
-        ['Packs', look.packs.map((pack) => packTile(pack, up.includes(pack.pack))), true],
+        ['Packs', look.packs.filter((pack) => !pack.over || up.includes(pack.pack)).map((pack) => packTile(pack, up.includes(pack.pack))), true],
       ] : []),
       ['Walls', styling.paints.map((word) => surfaceTile('paint', word, wallPicture(word), paint))],
       ['Floors', styling.floorings.map((word) => surfaceTile('flooring', word, floorPicture(word), flooring))],
@@ -2031,11 +2033,16 @@ const BESIDE = '(min-width: 1000px)';
 
 // A link in a game window's title bar, which a narrow window shows as one short word. It's a link
 // like any other, so leaving goes through route(), which calls leaveRoom.
-function titleLink(path, text, short, arrow = '') {
+function titleLink(path, text, short) {
   return link(path, [
-    h('span', { class: 'long' }, `${arrow}${text}`),
-    h('span', { class: 'short', 'aria-hidden': 'true' }, `${arrow}${short}`),
+    h('span', { class: 'long' }, text),
+    h('span', { class: 'short', 'aria-hidden': 'true' }, short),
   ], { class: 'wd-tbtn', 'aria-label': text });
+}
+
+// S63: the way back, at the far left of the title bar, in the same few words at every width.
+function backLink(path, text, short) {
+  return link(path, `← ${short}`, { class: 'wd-tbtn', 'aria-label': text, title: text });
 }
 
 // The clock at the end of a window's status bar. Returns what stops it.
@@ -2246,6 +2253,7 @@ async function roomView(id) {
     await api(`/api/floors/${encodeURIComponent(id)}/walk-in`, { method: 'POST' });
     return load();
   });
+  const me = await api('/api/me').catch(() => null);
   const shownMessages = new Set();
 
   const frame = windowFrame({ label: snapshot.hangout.name, stats: ROOM_STATS, heading: 'h1', live: true });
@@ -2263,6 +2271,8 @@ async function roomView(id) {
   const root = h('main', { class: 'game' }, frame.root);
   const lampEl = frame.root.querySelector('.wd-live');
   const panels = createPanels(frame.root);
+  const parts = homePartsOnDemand(me);
+  const account = accountPanel(panels, me, parts);
   const beside = matchMedia(BESIDE);
   const say = (text) => {
     if (frame.message.textContent !== text) frame.message.textContent = text;
@@ -2271,11 +2281,12 @@ async function roomView(id) {
   const stage = h('section', { class: 'stage', 'aria-label': 'The room' });
   frame.host.append(stage);
   const room = new Room(stage);
-  const boardEl = h('div', { class: 'board' });
+  const boardEl = h('button', { type: 'button', class: 'board', 'aria-label': 'Whiteboard', onclick: () => boardDialog() });
   const emptyBring = h('button', { type: 'button', class: 'primary', onclick: () => bringBot() }, 'Bring a bot');
   const emptyText = h('p', {}, 'No bots in here yet.');
   const emptyEl = h('div', { class: 'stage-empty', hidden: true }, emptyText, emptyBring);
-  stage.append(boardEl, emptyEl);
+  // The board comes last, so that a room with no bots yet can still be written on.
+  stage.append(emptyEl, boardEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
   const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload() });
 
@@ -2311,7 +2322,6 @@ async function roomView(id) {
   let waitingBefore = 0;
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
-  const me = () => person(snapshot.you.person_id);
   const colorOf = (personId) => person(personId)?.color || '#98a0b5';
 
   function messageRow(message) {
@@ -2345,28 +2355,80 @@ async function roomView(id) {
     say(`${message.speaker}: ${message.body}`.slice(0, 200));
   }
 
-  function renderBoard() {
+  // What the wall says besides the whiteboard: a label, what it's about and when.
+  function boardNews() {
+    // A guest sees no plans, so the board says whose house this is instead of "nothing planned".
+    if (snapshot.guest) return ['VISITING', snapshot.hangout.name, `until ${whenText(snapshot.guest.until)}`];
     const next = snapshot.events.find((event) => event.status === 'confirmed') || snapshot.events[0];
-    boardEl.replaceChildren();
+    if (!next) return null;
+    return [next.status === 'confirmed' ? 'NEXT UP' : 'PENCILLED IN', next.title, whenText(next.starts_at)];
+  }
+
+  const boardCredit = ({ written_by: writer, via_bot: bot }) => (bot ? `${writer}, by ${bot}` : writer);
+
+  // The fade says there's more than the wall has room for, and the wall changes with the window.
+  function fitBoard() {
+    const text = boardEl.querySelector('.board-text');
+    text?.classList.toggle('cut', text.scrollHeight > text.clientHeight);
+  }
+  const boardWatch = new ResizeObserver(fitBoard);
+  boardWatch.observe(boardEl);
+
+  // I55: anything written on it comes first, and the plan moves up to a line above it.
+  function renderBoard() {
+    const board = snapshot.whiteboard;
+    const news = boardNews();
+    const guest = Boolean(snapshot.guest);
+    boardEl.disabled = guest && !board;
+    boardEl.title = guest ? 'Read the whiteboard' : 'Write on the whiteboard';
+    boardEl.classList.toggle('written', Boolean(board));
+    if (board) {
+      boardEl.replaceChildren(
+        h('span', { class: 'board-top' },
+          news ? h('small', {}, news[0]) : null,
+          news ? h('span', { class: 'board-news' }, `${news[1]}, ${news[2]}`) : null,
+          h('small', { class: 'board-by' }, boardCredit(board))),
+        h('span', { class: 'board-text' }, board.text));
+      fitBoard();
+    } else if (news) {
+      boardEl.replaceChildren(h('small', {}, news[0]), h('b', {}, news[1]), h('span', {}, news[2]));
+    } else {
+      boardEl.replaceChildren(h('b', {}, 'NOTHING PLANNED'), h('span', {}, 'so it\'s not gonna happen'));
+    }
+  }
+
+  // I49, I55: the whole of it, for anyone here to rewrite. A guest only reads.
+  function boardDialog() {
+    const board = snapshot.whiteboard;
+    const credit = board && h('small', { class: 'muted' }, `${boardCredit(board)} · ${whenText(board.updated_at)}`);
     if (snapshot.guest) {
-      // A guest sees no plans, so the board says whose house this is instead of "nothing planned".
-      boardEl.append(
-        h('small', {}, 'VISITING'),
-        h('b', {}, snapshot.hangout.name),
-        h('span', {}, `until ${whenText(snapshot.guest.until)}`));
+      if (board) modal('Whiteboard', h('p', { class: 'board-read' }, board.text), credit);
       return;
     }
-    if (!next) {
-      boardEl.append(
-        h('b', {}, 'NOTHING PLANNED'),
-        h('span', {}, 'so it\'s not gonna happen'));
-      return;
-    }
-    const confirmed = next.status === 'confirmed';
-    boardEl.append(
-      h('small', {}, confirmed ? 'NEXT UP' : 'PENCILLED IN'),
-      h('b', {}, next.title),
-      h('span', {}, whenText(next.starts_at)));
+    const error = formError();
+    const write = async (text) => {
+      await api(`/api/hangouts/${encodeURIComponent(id)}/whiteboard`, { method: 'PUT', body: { text } });
+      dialog.close();
+      await reload();
+    };
+    const dialog = modal('Whiteboard',
+      h('p', {}, 'What this room is working on. Every bot here reads it, and anyone here can change it.'),
+      h('form', { onsubmit: submitter(error, ({ text }) => write(text)) },
+        h('textarea', {
+          class: 'plain',
+          name: 'text',
+          rows: 9,
+          maxLength: 2000,
+          value: board?.text || '',
+          placeholder: 'A blank slate',
+          'aria-label': 'What the whiteboard says',
+        }),
+        credit,
+        error,
+        h('div', { class: 'modal-actions' },
+          board ? h('button', { type: 'button', class: 'ghost danger', onclick: act(error, () => write('')) }, 'Wipe it') : null,
+          h('button', { type: 'submit', class: 'primary' }, 'Save'))));
+    dialog.querySelector('textarea').focus();
   }
 
   // The status bar's copy can be cut short on a small screen, and the one in the Crew panel never is.
@@ -2765,7 +2827,7 @@ async function roomView(id) {
               showToken(agent.name, token);
             },
           }, 'New token'),
-          h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent) }, 'Wake-up'),
+          h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent).catch((failure) => alert(failure.message)) }, 'Wake-up'),
           h('button', { type: 'button', class: 'link', onclick: () => routineDialog(agent).catch((failure) => alert(failure.message)) }, 'Schedule'),
           // A20: unlinking is always there. Linking is only offered where it can work (A25).
           agent.discord ? h('button', {
@@ -2932,6 +2994,7 @@ async function roomView(id) {
     renderNotes();
     builder.render();
     dresser.render();
+    guide.refresh();
     snapshot.messages.forEach(addMessage);
     // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
     const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
@@ -3067,19 +3130,62 @@ async function roomView(id) {
       h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
-  function wakeUpDialog(agent) {
+  async function wakeUpDialog(agent) {
+    const saved = await api(`/api/agents/${agent.id}/notify`);
     const error = formError();
+    const result = h('p', { class: 'muted', hidden: true, role: 'status' });
+    const url = h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' });
+    const auth = h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' });
+    const save = async () => {
+      const body = { url: url.value || null };
+      if (auth.value === '-') body.auth = null;
+      else if (auth.value) body.auth = auth.value;
+      else if (!saved.auth) body.auth = null;
+      await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body });
+      // The box empties, so saving again keeps what was just saved.
+      saved.auth = Boolean(url.value) && (auth.value ? auth.value !== '-' : saved.auth);
+      auth.value = '';
+      auth.placeholder = saved.auth ? 'Saved' : 'Optional';
+    };
     const dialog = modal(`Wake up ${agent.name}`,
-      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when a person @mentions it or something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', { class: 'muted' }, 'Setting up Grok Bot or another agent? ', h('a', { href: '/docs/webhooks#grok-bot', target: '_blank', rel: 'noopener' }, 'Here\'s how'), '.'),
       h('form', {
-        onsubmit: submitter(error, async (values) => {
-          await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body: { url: values.url || null } });
+        onsubmit: submitter(error, async () => {
+          await save();
           dialog.close();
         }),
       },
-        field('Webhook URL', h('input', { name: 'url', type: 'url', placeholder: 'https://', autocomplete: 'off' }), 'Saving this empty removes it.'),
+        field('Webhook URL', url, 'Saving this empty removes it.'),
+        field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
         error,
-        h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
+        result,
+        h('div', { class: 'modal-actions' },
+          h('button', {
+            type: 'button',
+            onclick: async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
+              error.hidden = true;
+              result.hidden = true;
+              try {
+                await save();
+                result.textContent = 'Sending a test...';
+                result.hidden = false;
+                const test = await api(`/api/agents/${agent.id}/notify/test`, { method: 'POST' });
+                (test.accepted ? result : error).textContent = test.says;
+                result.hidden = !test.accepted;
+                error.hidden = test.accepted;
+              } catch (failure) {
+                result.hidden = true;
+                error.textContent = failure.message;
+                error.hidden = false;
+              } finally {
+                button.disabled = false;
+              }
+            },
+          }, 'Save and test'),
+          h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
   // A26: this says who will see the name before anyone leaves for Discord.
@@ -3242,7 +3348,7 @@ async function roomView(id) {
   const aboutMore = h('p', { class: 'muted', hidden: true });
 
   // The same panels again for a narrower window, where the title bar has no room for their buttons.
-  // `mid` is in the bar from a tablet up, and `sec` only on a wide screen.
+  // `mid` is in the bar once a panel can stand beside the room, and `sec` only on a wide screen.
   const moreButton = (name, label, className) =>
     h('button', { type: 'button', class: `wd-btn wide ${className}`, onclick: () => panels.open(name) }, label);
   const calendarMore = moreButton('calendar', 'Calendar', 'mid');
@@ -3260,18 +3366,44 @@ async function roomView(id) {
   const [backText, backShort] = houseBack ? ['Back to the house', 'House']
     : snapshot.city_id ? ['Back to the city', 'City']
       : ['Back to the map', 'Map'];
-  // The way out is in the room's own top-left corner, where a game puts its exit.
-  stage.append(link(backPath, `← ${backShort}`, { class: 'stage-exit', 'aria-label': backText, title: backText }));
+  // G9: where the tutorial's buttons go in a room. Someone walking through has none of a room's own
+  // controls, so those go to a room of their own (G10).
+  const tutorialShows = () => ({
+    look: () => panels.open('look'),
+    map: () => go('/'),
+    account: () => account.open(''),
+    ...(snapshot.guest ? {} : {
+      bring: bringBot,
+      crew: () => panels.open('crew'),
+      invite: snapshot.hangout.invite_code ? inviteDialog : undefined,
+      plan: () => {
+        panels.open('calendar');
+        proposeHangout();
+      },
+      plans: () => panels.open('calendar'),
+      calendar: calendarDialog,
+      notes: () => panels.open('yours'),
+      checkins: () => panels.open('checkins'),
+      notify: notifyDialog,
+      build: snapshot.floor ? () => panels.open('build') : undefined,
+    }),
+  });
+  const guide = tutorial({ h, api, go, say, panels, page: 'room', signedIn: true, shows: tutorialShows, compact: matchMedia(COMPACT), toggleClass: 'sec' });
+
+  frame.back.append(backLink(backPath, backText, backShort));
+  // S64: what only a room has goes first, and the bar ends in the same five as the map's.
   frame.actions.append(
     questionsToggle.button,
-    chatToggle.button,
-    builder.toggle,
-    dresser.toggle,
-    checkInsToggle.button,
-    calendarToggle,
-    panels.toggle('crew', 'Crew', { short: 'Crew' }),
+    guide.toggle,
     panels.toggle('notes', 'Shared notes', { className: 'sec' }),
     panels.toggle('yours', 'Your notes', { className: 'sec', aria: 'Notes for your bots' }),
+    checkInsToggle.button,
+    calendarToggle,
+    builder.toggle,
+    chatToggle.button,
+    panels.toggle('crew', 'Crew', { short: 'Crew' }),
+    account.toggle,
+    dresser.toggle,
     panels.toggle('more', 'More', { className: 'more' }));
 
   panels.add('room', 'The room', {
@@ -3299,6 +3431,7 @@ async function roomView(id) {
   panels.add('more', 'More', {},
     aboutMore,
     h('div', { class: 'game-more' }, ...[
+      moreButton('tutorial', 'Tutorial', 'sec'),
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
@@ -3336,6 +3469,7 @@ async function roomView(id) {
   loadMarks();
   if (beside.matches) panels.open('room');
   if (snapshot.owner_questions.length) panels.open('questions');
+  setTimeout(guide.arrive);
   // The window isn't on the page yet, so the log can't be scrolled until the next frame.
   requestAnimationFrame(() => {
     chatLog.scrollTop = chatLog.scrollHeight;
@@ -3405,10 +3539,12 @@ async function roomView(id) {
     stopClock();
     clearInterval(pollTimer);
     clearTimeout(reloadTimer);
+    boardWatch.disconnect();
     room.destroy();
     builder.leave();
     document.removeEventListener('keydown', onKey, true);
     document.documentElement.classList.remove('in-game');
+    parts.stop();
   };
   return root;
 }
@@ -3619,9 +3755,8 @@ async function spaceView(id) {
     frame.outputs.here.textContent = String(floors.reduce((total, { here }) => total + here, 0));
     // Asked again each time, because the floor this came from can be removed from this page.
     const back = (floors.find(({ floor }) => floor.id === from) || floors[0]).floor;
-    frame.actions.replaceChildren(
-      titleLink(`/h/${back.id}`, 'Back to the room', 'Room', '← '),
-      titleLink('/', 'The Commons', 'Map'));
+    frame.back.replaceChildren(backLink(`/h/${back.id}`, 'Back to the room', 'Room'));
+    frame.actions.replaceChildren(titleLink('/', 'The Commons', 'Map'));
     body.replaceChildren(
       spacePanel(),
       floorsPanel(),
@@ -4936,8 +5071,8 @@ const SLOWEST_MS = 60000;
 // Looks at a world now and then. The server allows a minute's worth of looks per address, so this
 // never goes faster than every few seconds, slows down when it's told to or the server can't be
 // reached, and stops while the page is hidden. An unchanged world comes back with the same tag, and
-// is not drawn again. With `first` given, the first look waits a turn.
-function watchWorld(id, { every = POLL_MS, first = false, onView, onTrouble }) {
+// is not drawn again, though `onLook` still runs. With `first` given, the first look waits a turn.
+function watchWorld(id, { every = POLL_MS, first = false, onView, onLook, onTrouble }) {
   const url = `/api/worlds/${encodeURIComponent(id)}`;
   let wait = every;
   let nextIn = null;
@@ -4964,6 +5099,7 @@ function watchWorld(id, { every = POLL_MS, first = false, onView, onTrouble }) {
       } else {
         const view = await response.json();
         wait = every;
+        onLook?.();
         const etag = response.headers.get('etag') || '';
         // A move made while this was on its way makes it stale.
         if (!stopped && started === epoch && (!etag || etag !== tag)) {
@@ -5209,7 +5345,8 @@ function createPanels(root) {
     get current() {
       return current;
     },
-    // `options.onOpen` runs each time the panel opens.
+    // `options.onOpen` runs each time the panel opens, and `options.onClose` each time it's closed,
+    // but not when another panel takes its place.
     add(name, title, options, ...content) {
       const body = h('div', { class: 'game-panel-body' }, ...content);
       const el = h('aside', { class: `game-panel game-panel-${name}`, id: `panel-${name}`, 'aria-label': title, tabindex: -1, hidden: true },
@@ -5218,7 +5355,7 @@ function createPanels(root) {
           h('button', { type: 'button', class: 'wd-tbtn', 'aria-label': `Close ${title}`, onclick: () => set.close() }, '✕')),
         body);
       root.append(el);
-      panels.set(name, { el, body, onOpen: options?.onOpen });
+      panels.set(name, { el, body, onOpen: options?.onOpen, onClose: options?.onClose });
       return body;
     },
     toggle(name, label, { short, className = '', aria } = {}) {
@@ -5247,6 +5384,7 @@ function createPanels(root) {
       if (!was) return;
       current = null;
       sync();
+      panels.get(was).onClose?.();
       set.onChange();
       if (!focus) return;
       const back = [...(toggles.get(was) || []), ...(toggles.get('more') || [])].find(shown);
@@ -5254,6 +5392,46 @@ function createPanels(root) {
     },
   };
   return set;
+}
+
+// What goes in the panels with a person's account and rooms, asked for the first time one opens.
+// `stop` ends whatever that left running.
+function homePartsOnDemand(me) {
+  let asked = null;
+  const parts = () => {
+    asked ||= homeParts(me);
+    return asked;
+  };
+  parts.stop = () => asked?.then((ready) => ready.stop()).catch(() => {});
+  return parts;
+}
+
+// Your account, the same button and the same panel on the map and in a room (S64). Someone who
+// tried to build, or whose sign-in ran out, is told why at the top.
+function accountPanel(panels, me, parts) {
+  const body = panels.add('account', me ? 'Your account' : 'Sign in', {
+    onOpen: () => {
+      if (!body.firstChild) fill('', false);
+    },
+  });
+  async function fill(why, again) {
+    body.replaceChildren(h('p', { class: 'muted' }, 'Looking…'));
+    try {
+      const ready = await parts();
+      body.replaceChildren(
+        ...(why ? [h('p', { class: 'note', role: 'status' }, why)] : []),
+        ...(again ? [ready.signIn()] : ready.account));
+    } catch (error) {
+      body.replaceChildren(h('p', { class: 'error' }, error.message));
+    }
+  }
+  return {
+    toggle: panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
+    open(why, again = false) {
+      panels.open('account');
+      fill(why, again);
+    },
+  };
 }
 
 // A small bevelled menu that opens where something was clicked. Its items are buttons:
@@ -5414,6 +5592,7 @@ async function worldView(id, { home = false } = {}) {
       showMoves();
       showTown(data);
       showLocks();
+      guide?.refresh();
     } catch {
       // What is shown stays, and the next move asks again.
     }
@@ -5479,33 +5658,10 @@ async function worldView(id, { home = false } = {}) {
 
   const panels = createPanels(frame.root);
   const compact = matchMedia(COMPACT);
-  let homeParts_ = null;
-  const parts = () => {
-    homeParts_ ||= homeParts(me);
-    return homeParts_;
-  };
+  const parts = homePartsOnDemand(me);
 
-  // The way in. A person who tried to build, or whose sign-in ran out, is told why at the top.
-  const accountBody = panels.add('account', me ? 'Your account' : 'Sign in', {
-    onOpen: () => {
-      if (!accountBody.firstChild) fillAccount('', false);
-    },
-  });
-  async function fillAccount(why, again) {
-    accountBody.replaceChildren(h('p', { class: 'muted' }, 'Looking…'));
-    try {
-      const ready = await parts();
-      accountBody.replaceChildren(
-        ...(why ? [h('p', { class: 'note', role: 'status' }, why)] : []),
-        ...(again ? [ready.signIn()] : ready.account));
-    } catch (error) {
-      accountBody.replaceChildren(h('p', { class: 'error' }, error.message));
-    }
-  }
-  function openAccount(why, again = false) {
-    panels.open('account');
-    fillAccount(why, again);
-  }
+  // The way in.
+  const account = accountPanel(panels, me, parts);
 
   const agentBody = panels.add('agent', 'Send your agent in', {}, agentCard());
   const roomsBody = panels.add('rooms', 'Rooms and cities', {
@@ -5526,10 +5682,15 @@ async function worldView(id, { home = false } = {}) {
   // S51: bots someone asked to let into this person's places, with a yes and a no for each.
   const requestsBody = panels.add('requests', 'Requests to come in', {});
   let requestsAt = 0;
+  let requestsKey = '';
   async function loadRequests(force = false) {
     if (!me || me.kind !== 'person' || (!force && Date.now() - requestsAt < 30000)) return;
     requestsAt = Date.now();
     const { requests = [] } = await api('/api/place-requests').catch(() => ({}));
+    // An open map keeps asking, so a list someone is answering only redraws when it changes.
+    const key = JSON.stringify(requests);
+    if (key === requestsKey) return;
+    requestsKey = key;
     const error = formError();
     const answer = (id, response) => act(error, async () => {
       await api(`/api/place-requests/${id}/answer`, { method: 'POST', body: { response } });
@@ -5544,10 +5705,16 @@ async function worldView(id, { home = false } = {}) {
         h('button', { type: 'button', class: 'primary', onclick: answer(request.id, 'yes') }, 'Let in'),
         h('button', { type: 'button', onclick: answer(request.id, 'no') }, 'No'))) : [h('p', { class: 'muted' }, 'Nobody is asking right now.')]),
       error);
-    if (requests.length && requestsToggle) requestsToggle.textContent = `Requests (${requests.length})`;
-    else if (requestsToggle) requestsToggle.textContent = 'Requests';
+    // S66: the button and More's row say the same. style.css lights More when the button is folded.
+    const label = requests.length ? `Requests (${requests.length})` : 'Requests';
+    for (const button of [requestsToggle, requestsRow]) button.textContent = label;
+    requestsToggle.setAttribute('aria-label', label);
+    requestsToggle.classList.toggle('wait', requests.length > 0);
+    moreToggle.setAttribute('aria-label', requests.length ? `More (${requests.length})` : 'More');
   }
   let requestsToggle = null;
+  let requestsRow = null;
+  let moreToggle = null;
 
   const aboutBody = panels.add('about', 'About', {
     onOpen: () => {
@@ -5561,7 +5728,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('info', 'What\'s going on', {},
     summaryCopy,
     me ? townFull : h('p', { class: 'muted' }, 'You\'re looking around. ',
-      h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
+      h('button', { type: 'button', class: 'link', onclick: () => account.open('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
     h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
     me?.keeper && !frozen ? h('button', { type: 'button', class: 'wd-btn wide', onclick: askForDisaster }, 'Start a disaster') : null,
@@ -5579,26 +5746,37 @@ async function worldView(id, { home = false } = {}) {
   const aroundList = h('ul', { class: 'around' });
   panels.add('around', 'Who\'s around', {}, aroundCount, aroundList);
 
+  // G9: where the tutorial's buttons go on the map. Each gets a person to a control, and they use it.
+  const tutorialShows = () => ({
+    account: () => account.open('Looking around is free. An account gets you a house on this map.'),
+    house: () => {
+      world.recentre();
+      pick('house');
+    },
+    move: ({ house }) => {
+      if (house) world.focus(house.x, house.y, { zoom: 1.5 });
+      pick('bulldoze');
+    },
+    look: () => panels.open('look'),
+    rooms: () => panels.open('rooms'),
+    agent: () => panels.open('agent'),
+  });
+  // G1: nothing can be done in a frozen world, so there's nothing to teach there.
+  const guide = frozen ? null : tutorial({ h, api, go, say, panels, page: 'map', signedIn: Boolean(me), shows: tutorialShows, compact, toggleClass: 'mid' });
+
   // --- The title bar ---------------------------------------------------------------------------
 
-  const fullButtons = [];
   const canFull = Boolean(document.fullscreenEnabled && root.requestFullscreen);
-  const fullButton = (className, base = 'wd-tbtn') => {
-    if (!canFull) return null;
-    const button = h('button', { type: 'button', class: `${base} ${className}`.trim(), 'aria-pressed': 'false', onclick: toggleFull }, 'Full screen');
-    fullButtons.push(button);
-    return button;
-  };
+  const fullButton = canFull ? h('button', { type: 'button', class: 'wd-btn wide', 'aria-pressed': 'false', onclick: toggleFull }, 'Full screen') : null;
   function toggleFull() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else root.requestFullscreen().catch(() => say('This browser wouldn\'t go full screen.'));
   }
   const syncFull = () => {
+    if (!fullButton) return;
     const on = document.fullscreenElement === root;
-    for (const button of fullButtons) {
-      button.setAttribute('aria-pressed', String(on));
-      button.textContent = on ? 'Exit full screen' : 'Full screen';
-    }
+    fullButton.setAttribute('aria-pressed', String(on));
+    fullButton.textContent = on ? 'Exit full screen' : 'Full screen';
   };
   document.addEventListener('fullscreenchange', syncFull);
 
@@ -5607,30 +5785,35 @@ async function worldView(id, { home = false } = {}) {
   const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon() });
   dresser.render();
 
+  // S64: what only the map has goes first, and the bar ends in the same five as a room's.
   frame.actions.append(...[
-    panels.toggle('info', 'What\'s going on', { short: 'Info' }),
-    panels.toggle('around', 'Who\'s around', { short: 'Who' }),
-    panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
-    me?.kind === 'person' ? dresser.toggle : null,
+    guide?.toggle,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
     repoLink('wd-tbtn sec'),
-    link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
+    link('/docs', 'Docs', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
-    fullButton('sec'),
-    panels.toggle('more', 'More', { className: 'more' }),
+    panels.toggle('info', 'What\'s going on', { short: 'Info' }),
+    panels.toggle('around', 'Who\'s around', { short: 'Who' }),
+    account.toggle,
+    me?.kind === 'person' ? dresser.toggle : null,
+    (moreToggle = panels.toggle('more', 'More', { className: 'more' })),
   ].filter(Boolean));
 
-  // The same things for a narrow screen, where the title bar has no room for them.
+  // What a narrow screen's title bar has no room for, and two things no title bar does.
+  const moreRow = (name, label) =>
+    h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label);
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
-    ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
-      h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
+    guide ? h('button', { type: 'button', class: 'wd-btn wide mid', onclick: () => panels.open('tutorial') }, 'Tutorial') : null,
+    me?.kind === 'person' ? (requestsRow = moreRow('requests', 'Requests')) : null,
+    ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) => moreRow(name, label)),
     repoLink('wd-btn wide'),
+    link('/docs', 'Docs', { class: 'wd-btn wide' }),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
-    fullButton('', 'wd-btn wide'),
+    fullButton,
   ]));
 
   // --- The tools -------------------------------------------------------------------------------
@@ -5644,7 +5827,7 @@ async function worldView(id, { home = false } = {}) {
   function pick(name) {
     if (name && !me) {
       say('Sign in to build here. Looking around is free.');
-      openAccount('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
+      account.open('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
       return;
     }
     // W61: a place that hasn't come yet stays in the toolbar, so people can see what's ahead.
@@ -5708,8 +5891,11 @@ async function worldView(id, { home = false } = {}) {
   // Makes a move for you and says what came of it, in the server's words if it was refused.
   // W73: a new place gets its name now. Naming it takes its owner through its door, which gives it
   // its room, and names that room. Skipping leaves it called after them, like "Ann's Studio".
-  function nameDialog(body) {
+  async function nameDialog(body) {
     const kindName = { house: 'House', cafe: 'Caf\u00e9', club: 'Club', studio: 'Studio' }[body.kind] || 'Place';
+    // W73: a place that gets its rooms back (S34, S35) offers the name they already have.
+    const spaces = await api('/api/spaces').catch(() => null);
+    const back = body.kind === 'house' ? spaces?.house : spaces?.third.find(({ on_map: onMap }) => !onMap);
     const error = formError();
     const dialog = modal(`Name your ${kindName.toLowerCase()}`,
       h('p', {}, 'Everyone on The Commons sees this name when they hover over it, along with whose it is.'),
@@ -5724,7 +5910,7 @@ async function worldView(id, { home = false } = {}) {
           watch.soon();
         }),
       },
-      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
+      field('Name', h('input', { name: 'name', required: true, maxLength: 60, value: back?.space.name ?? `${me?.name || 'My'}\u2019s ${kindName}`, autocomplete: 'off' })),
       error,
       h('div', { class: 'modal-actions' },
         h('button', { type: 'button', onclick: () => dialog.close() }, 'Later'),
@@ -5754,7 +5940,7 @@ async function worldView(id, { home = false } = {}) {
     } catch (error) {
       say(plain(error.message));
       if (error.status === 401) {
-        openAccount('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
+        account.open('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
       }
       // A refused move can mean the toolbar is out of date: a second square, or the switch going off.
       refreshTown();
@@ -5804,7 +5990,7 @@ async function worldView(id, { home = false } = {}) {
     } else if (me) {
       items.push({ label: 'Wave', cost: '1 move', run: () => send({ action: 'emote', emote: 'wave' }) });
     } else {
-      items.push({ label: 'Sign in to wave', run: () => openAccount('Sign in to wave at people. Looking around is free.') });
+      items.push({ label: 'Sign in to wave', run: () => account.open('Sign in to wave at people. Looking around is free.') });
     }
     if (canRemove && f.type === 'player') {
       items.push(null, { label: 'Remove…', danger: true, run: () => removeOne(f.id, f.name) });
@@ -5827,7 +6013,7 @@ async function worldView(id, { home = false } = {}) {
     const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
-      items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
+      items.push({ label: 'Sign in to build', run: () => account.open('Sign in to build here. Looking around is free.') });
     } else if (frozen) {
       items.push({ label: 'Nothing happens here', run: () => say(idle) });
     } else {
@@ -6153,7 +6339,6 @@ async function worldView(id, { home = false } = {}) {
 
   let spokeAt = 0;
   function arrive(view) {
-    loadRequests();
     const before = latest === view ? null : latest;
     latest = view;
     world.setView(view);
@@ -6183,12 +6368,15 @@ async function worldView(id, { home = false } = {}) {
   const watch = watchWorld(id, {
     first: true,
     onView: arrive,
+    // S66: a request changes nothing on the map, so asking can't wait for a new view.
+    onLook: loadRequests,
     onTrouble: (text) => {
       trouble = true;
       say(text);
     },
   });
   arrive(latest);
+  loadRequests();
   say(mover?.trouble || idle);
 
   // --- Keys, and leaving -----------------------------------------------------------------------
@@ -6208,6 +6396,8 @@ async function worldView(id, { home = false } = {}) {
 
   root.append(summaryEl);
   if (home && location.hash === '#about') panels.open('about');
+  // After the page has this window, so the map has a size to go to a tile in.
+  if (guide) setTimeout(guide.arrive);
   document.documentElement.classList.add('in-game');
   leaveRoom = () => {
     watch.stop();
@@ -6219,7 +6409,7 @@ async function worldView(id, { home = false } = {}) {
     document.removeEventListener('fullscreenchange', syncFull);
     document.documentElement.classList.remove('in-game');
     if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
-    homeParts_?.then((ready) => ready.stop()).catch(() => {});
+    parts.stop();
   };
   return root;
 }
@@ -6253,7 +6443,9 @@ async function worldsView() {
   leaveRoom = () => clearInterval(timer);
 
   return h('main', { class: 'worlds-page' },
-    masthead(h('nav', { 'aria-label': 'Site' }, link('/', 'Back to The Commons', { class: 'button primary' }))),
+    masthead(h('nav', { 'aria-label': 'Site' },
+      link('/docs', 'Docs'),
+      link('/', 'Back to The Commons', { class: 'button primary' }))),
     windowPanel({ title: 'Worlds', label: 'Worlds', heading: 'h1' },
       h('h2', {}, 'Worlds'),
       h('p', { class: 'muted' }, 'The Commons is the one map, and anyone can watch it. A world someone started before that stays as it was.'),

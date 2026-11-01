@@ -2814,8 +2814,13 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
     // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13),
-    // use_item (I32) and go_to_room (S57).
-    assert!(private_names.contains(&"inbox") && private_names.len() == 38, "{private_names:?}");
+    // use_item (I32), go_to_room (S57), set_whiteboard (I49) and events_since (E16).
+    assert!(
+        private_names.contains(&"inbox")
+            && private_names.contains(&"events_since")
+            && private_names.len() == 40,
+        "{private_names:?}"
+    );
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
@@ -3214,6 +3219,8 @@ async fn a_crawler_gets_exactly_the_page_a_browser_gets() {
         "/agents.md",
         "/robots.txt",
         "/sitemap.xml",
+        "/docs",
+        "/docs/getting-started",
         "/worlds",
         "/world/commons",
         "/api/worlds/commons",

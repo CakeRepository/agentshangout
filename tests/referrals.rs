@@ -903,3 +903,85 @@ async fn new_accounts_from_plan_links_are_limited_per_address() {
     assert!(over.set_cookie.is_none());
     answer(11, "203.0.113.21").await.ok();
 }
+
+// F10, S27
+#[tokio::test]
+async fn someone_turned_out_cant_open_or_answer_a_plans_link() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let bo = server.join(&room.invite, "Bo").await;
+    // Bo was never on this floor, so turning them out leaves its links working for everyone else.
+    let path = format!("/api/spaces/{}/floors", room.id);
+    let attic = server.post(&room.ann.key, &path, json!({ "name": "Attic" })).await.ok();
+    let plan = server.plan(&room.ann, &text(&attic["id"]), 2).await;
+    let code = server.link(&room.ann, &plan).await;
+
+    let path = format!("/api/spaces/{}/people/{}/turn-out", room.id, bo.id);
+    server.post(&room.ann.key, &path, json!({})).await.ok();
+
+    let link = format!("/api/plan-invites/{code}");
+    assert_eq!(server.get(&bo.key, &link).await.status, StatusCode::NOT_FOUND);
+    let calendar = format!("{link}/plan.ics");
+    assert_eq!(server.get(&bo.key, &calendar).await.status, StatusCode::NOT_FOUND);
+    let answered = server.answer(&bo.key, &code, json!({ "response": "yes" })).await;
+    assert_eq!(answered.status, StatusCode::NOT_FOUND, "{}", answered.body);
+    server.get("", &link).await.ok();
+}
+
+// F14, F16, S27: nothing they answered keeps them in a space that's a 404 to them.
+#[tokio::test]
+async fn someone_turned_out_stops_being_a_guest_of_a_plan_in_that_space() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let bo = server.join(&room.invite, "Bo").await;
+    let path = format!("/api/spaces/{}/floors", room.id);
+    let attic = server.post(&room.ann.key, &path, json!({ "name": "Attic" })).await.ok();
+    let plan = server.plan(&room.ann, &text(&attic["id"]), 2).await;
+    let code = server.link(&room.ann, &plan).await;
+    // Ann's proposal is one yes and this is the other, so it's on everyone's calendar.
+    server.answer(&bo.key, &code, json!({ "response": "yes" })).await.ok();
+    assert_eq!(server.state.db.event(&plan).unwrap().unwrap().status, "confirmed");
+    assert!(server.feed(&bo).await.contains("SUMMARY:Tacos"));
+
+    let path = format!("/api/spaces/{}/people/{}/turn-out", room.id, bo.id);
+    server.post(&room.ann.key, &path, json!({})).await.ok();
+
+    assert_eq!(server.state.db.event(&plan).unwrap().unwrap().status, "proposed");
+    assert!(!server.feed(&bo).await.contains("SUMMARY:Tacos"));
+    // The link they used is finished, so they can't answer it again under another name.
+    let body = json!({ "response": "yes", "your_name": "Not Bo" });
+    let again = server.answer("", &code, body).await;
+    assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.body);
+}
+
+// S27, R40: a plan that has started is what's happening, so turning someone out doesn't rewrite it.
+#[tokio::test]
+async fn turning_someone_out_leaves_their_answers_to_plans_that_have_started() {
+    let server = Server::start().await;
+    let room = server.room("Ann").await;
+    let bo = server.join(&room.invite, "Bo").await;
+    let db = &server.state.db;
+    for (plan, ends_at) in [("over-plan-5512", now() - DAY), ("under-way-5512", now() + DAY)] {
+        db.insert_event(&NewEvent {
+            id: plan,
+            hangout_id: &room.id,
+            title: "Old",
+            location: "",
+            notes: "",
+            starts_at: now() - 2 * DAY,
+            ends_at,
+            min_yes: 1,
+            proposed_by: &room.ann.id,
+            proposer: "Ann",
+            now: now() - 3 * DAY,
+        })
+        .unwrap();
+        db.upsert_rsvp(plan, &bo.id, "yes", None, "", now() - 3 * DAY).unwrap();
+    }
+
+    let path = format!("/api/spaces/{}/people/{}/turn-out", room.id, bo.id);
+    server.post(&room.ann.key, &path, json!({})).await.ok();
+
+    assert!(db.rsvp("over-plan-5512", &bo.id).unwrap().is_some(), "that rewrote what happened");
+    assert!(db.rsvp("under-way-5512", &bo.id).unwrap().is_some(), "that rewrote what's happening");
+}

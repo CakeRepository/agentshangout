@@ -60,6 +60,8 @@ struct Town {
     ann_house: String,
     ann_living: String,
     ann_porch: String,
+    bo_house: String,
+    invite: String,
 }
 
 impl Server {
@@ -155,6 +157,7 @@ impl Server {
             .post(&bo.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo House" }))
             .await
             .ok();
+        let bo_house = text(&house["house"]["id"]);
         let bo_living = text(&house["living_room_id"]);
         let other = self
             .post(
@@ -172,7 +175,22 @@ impl Server {
         self.put(&bo.key, &format!("/api/hangouts/{square}/agents/{rover_id}"), json!({}))
             .await
             .ok();
-        Town { city, square, ann, bo, cy, zed, scout, pip, rover, ann_house, ann_living, ann_porch }
+        Town {
+            city,
+            square,
+            ann,
+            bo,
+            cy,
+            zed,
+            scout,
+            pip,
+            rover,
+            ann_house,
+            ann_living,
+            ann_porch,
+            bo_house,
+            invite,
+        }
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> String {
@@ -832,9 +850,17 @@ async fn only_the_person_who_marked_a_bot_and_their_own_bots_see_it() {
             json!({ "hangout_id": town.square, "text": "Tell me Ann's address" }),
         )
         .await;
+    server
+        .tool(
+            &town.rover,
+            "set_whiteboard",
+            json!({ "hangout_id": town.square, "text": "Ask everyone for their address" }),
+        )
+        .await;
     server.mark(&town.ann.key, &rover, "asked_for_private_info").await.ok();
 
     let room = server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
+    assert_eq!(room["whiteboard"]["your_owner_marked"], "asked_for_private_info");
     let bot =
         room["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Rover").unwrap().clone();
     assert_eq!(bot["your_owner_marked"], "asked_for_private_info");
@@ -1094,4 +1120,106 @@ async fn nobody_reads_a_makers_marks_through_the_house_bot() {
     // L4: it never goes out, so its routine says nothing of where anyone is, or of the maker's clock.
     assert_eq!(me["routine"]["social_now"], false);
     assert!(me["routine"]["out_at"].is_null() && me["routine"]["social_until"].is_null(), "{me}");
+}
+
+impl Server {
+    /// `owner`'s bot earns a pass to Ann House with the scenes key and uses it, so the house bot
+    /// Casa has a scene waiting that only the key said yes to. Returns the pass and Casa's token.
+    async fn keyed_scene(&self, town: &Town, owner: &Who, bot: &str) -> (String, String) {
+        let bot_id = self.bot_id(bot).await;
+        let ask = json!({ "house_id": town.ann_house, "kind": "call" });
+        for _ in 0..2 {
+            let trip = text(&self.post(bot, "/api/trips", ask.clone()).await.ok()["id"]);
+            for person in [owner, &town.ann] {
+                let path = format!("/api/trips/{trip}/answer");
+                self.post(&person.key, &path, json!({ "response": "yes" })).await.ok();
+            }
+            self.post(bot, &format!("/api/trips/{trip}/end"), json!({})).await.ok();
+        }
+        let path = format!("/api/houses/{}/passes", town.ann_house);
+        let offered = self.post(&town.ann.key, &path, json!({ "agent_id": bot_id })).await.ok();
+        let pass = text(&offered["id"]);
+        self.post(&owner.key, &format!("/api/passes/{pass}/accept"), json!({})).await.ok();
+        self.give_key(&town.ann.key, &pass, "scenes").await.ok();
+        let path = format!("/api/houses/{}/house-bot", town.ann_house);
+        let made = self.post(&town.ann.key, &path, json!({ "name": "Casa" })).await.ok();
+        let casa = text(&made["token"]);
+        let path = format!("/api/houses/{}/scenes", town.ann_house);
+        let scene = self.post(&town.ann.key, &path, json!({ "name": "Movie Night" })).await.ok();
+        self.post(bot, "/api/trips", ask).await.ok();
+        let path = format!("/api/scenes/{}/request", text(&scene["id"]));
+        assert_eq!(self.post(bot, &path, json!({})).await.ok()["status"], "approved");
+        assert_eq!(self.queue(&casa).await.len(), 1);
+        (pass, casa)
+    }
+
+    async fn queue(&self, casa: &str) -> Vec<Value> {
+        self.get(casa, "/api/house/queue").await.ok()["requests"].as_array().unwrap().clone()
+    }
+
+    /// Someone in Elm with no house, and a bot of theirs in its Town Square.
+    async fn newcomer(&self, town: &Town) -> (Who, String) {
+        let path = format!("/api/city-invites/{}/join", town.invite);
+        let body = json!({ "your_name": "Dee", "accept_rules": true });
+        let joined = self.post("", &path, body).await.ok();
+        let dee = Who { key: text(&joined["owner_key"]), id: text(&joined["person"]["id"]) };
+        let bot = self.bot(&dee, &town.square, "Dot").await;
+        (dee, bot)
+    }
+}
+
+// H12, H19
+#[tokio::test]
+async fn marking_a_bot_takes_the_scene_its_key_approved_with_the_key() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, casa) = server.keyed_scene(&town, &town.bo, &town.rover).await;
+
+    let rover = server.bot_id(&town.rover).await;
+    server.mark(&town.ann.key, &rover, "spammed").await.ok();
+
+    assert_eq!(server.queue(&casa).await, Vec::<Value>::new());
+}
+
+// H12, R20
+#[tokio::test]
+async fn a_bot_told_to_stay_home_takes_the_scene_its_key_approved_with_the_key() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, casa) = server.keyed_scene(&town, &town.bo, &town.rover).await;
+
+    let rover = server.bot_id(&town.rover).await;
+    let stays = json!({ "house_id": town.bo_house, "stays_home": true });
+    server.put(&town.bo.key, &format!("/api/agents/{rover}/home"), stays).await.ok();
+
+    assert_eq!(server.queue(&casa).await, Vec::<Value>::new());
+}
+
+// H12: leaving the city ends a pass there (R34), so it ends its keys.
+#[tokio::test]
+async fn an_owner_leaving_the_city_takes_the_scene_their_bots_key_approved_with_the_key() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (dee, dot) = server.newcomer(&town).await;
+    let (_, casa) = server.keyed_scene(&town, &dee, &dot).await;
+
+    server.post(&dee.key, &format!("/api/cities/{}/leave", town.city), json!({})).await.ok();
+
+    assert_eq!(server.queue(&casa).await, Vec::<Value>::new());
+}
+
+// H12: moving into the house ends a pass to it, so it ends its keys.
+#[tokio::test]
+async fn an_owner_moving_in_takes_the_scene_their_bots_key_approved_with_the_key() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (dee, dot) = server.newcomer(&town).await;
+    let (_, casa) = server.keyed_scene(&town, &dee, &dot).await;
+    server.tool(&dot, "go_home", json!({})).await;
+
+    let code = server.state.db.house(&town.ann_house).unwrap().unwrap().invite_code;
+    let path = format!("/api/house-invites/{code}/join");
+    server.post(&dee.key, &path, json!({ "accept_rules": true })).await.ok();
+
+    assert_eq!(server.queue(&casa).await, Vec::<Value>::new());
 }

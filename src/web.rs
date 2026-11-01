@@ -1,15 +1,26 @@
 //! The page and the bot guide, compiled into the binary so a deployment is one file.
 
+use std::{
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
+
 use axum::{
-    extract::{Request, State},
+    body::{Body, BodyDataStream, Bytes, HttpBody},
+    extract::{Path, Request, State},
     http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use futures_util::{stream, Stream, StreamExt};
 
 use crate::AppState;
+
+/// The most the server reads of a body nobody used, and how long it waits for it (W88).
+const MAX_UNREAD_BYTES: usize = 1024 * 1024;
+const MAX_UNREAD_WAIT: Duration = Duration::from_secs(5);
 
 const INDEX: &str = include_str!("../web/index.html");
 const HOME: &str = include_str!("../web/home.html");
@@ -33,6 +44,7 @@ const OUTSIDE_DECOR_JS: &str = include_str!("../web/outside-decor.js");
 const PETS_JS: &str = include_str!("../web/pets.js");
 const PASSKEY_JS: &str = include_str!("../web/passkey.js");
 const PLAN_INVITE_JS: &str = include_str!("../web/plan-invite.js");
+const TUTORIAL_JS: &str = include_str!("../web/tutorial.js");
 const FAVICON: &str = include_str!("../web/favicon.svg");
 const AGENT_GUIDE: &str = include_str!("../web/agents.md");
 const OG_IMAGE: &[u8] = include_bytes!("../web/og.jpg");
@@ -43,6 +55,7 @@ const MCP_REGISTRY_AUTH: &str = include_str!("../web/mcp-registry-auth.txt");
 /// Where an agent that opens the home page reads about this place. The same for everyone (W38).
 const HOME_LINKS: &str = "</llms.txt>; rel=\"describedby\"; type=\"text/plain\", \
                           </agents.md>; rel=\"service-doc\"; type=\"text/markdown\", \
+                          </docs>; rel=\"help\"; type=\"text/html\", \
                           </.well-known/ai-catalog.json>; rel=\"describedby\"; type=\"application/ai-catalog+json\"";
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
@@ -85,7 +98,7 @@ async fn index(State(state): State<AppState>) -> Response {
     addressed(&state, "text/html; charset=utf-8", INDEX)
 }
 
-/// Only the home page is meant to be found. Everything else is a private room or invite.
+/// The home page is meant to be found. Rooms and invites are not.
 async fn home(State(state): State<AppState>) -> Response {
     let mut response = addressed(&state, "text/html; charset=utf-8", HOME);
     response.headers_mut().insert(header::LINK, HeaderValue::from_static(HOME_LINKS));
@@ -119,6 +132,33 @@ async fn og_image() -> Response {
 
 async fn privacy(State(state): State<AppState>) -> Response {
     addressed(&state, "text/html; charset=utf-8", PRIVACY)
+}
+
+fn docs_html(state: &AppState, page: &crate::docs::Page) -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")],
+        crate::docs::render(state, page),
+    )
+        .into_response()
+}
+
+async fn docs_index(State(state): State<AppState>) -> Response {
+    docs_html(&state, &crate::docs::INDEX)
+}
+
+async fn docs_page(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
+    match crate::docs::by_slug(&slug) {
+        Some(page) => docs_html(&state, page),
+        None => (
+            StatusCode::NOT_FOUND,
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            NOT_FOUND_PAGE,
+        )
+            .into_response(),
+    }
 }
 
 async fn robots(State(state): State<AppState>) -> Response {
@@ -165,6 +205,9 @@ pub fn routes() -> Router<AppState> {
         .route("/discord/linked", get(index))
         .route("/sign-in/back", get(index))
         .route("/privacy", get(privacy))
+        .route("/docs", get(docs_index))
+        .route("/docs/", get(docs_index))
+        .route("/docs/{slug}", get(docs_page))
         .route("/style.css", get(|| async { asset("text/css; charset=utf-8", STYLE) }))
         .route("/app.js", get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }))
         .route("/room.js", get(|| async { asset("text/javascript; charset=utf-8", ROOM_JS) }))
@@ -197,6 +240,10 @@ pub fn routes() -> Router<AppState> {
             "/plan-invite.js",
             get(|| async { asset("text/javascript; charset=utf-8", PLAN_INVITE_JS) }),
         )
+        .route(
+            "/tutorial.js",
+            get(|| async { asset("text/javascript; charset=utf-8", TUTORIAL_JS) }),
+        )
         .route("/favicon.svg", get(|| async { asset("image/svg+xml", FAVICON) }))
         .route("/og.jpg", get(og_image))
         .route("/agents.md", get(agent_guide))
@@ -211,6 +258,41 @@ pub fn routes() -> Router<AppState> {
             "/.well-known/mcp-registry-auth",
             get(|| async { asset("text/plain; charset=utf-8", MCP_REGISTRY_AUTH) }),
         )
+}
+
+/// A connection closed with bytes still coming gets reset, and a reset can lose the answer on its
+/// way to the sender, so whatever a route left of a body is read before the answer goes out (W88).
+pub async fn read_what_was_left(request: Request, next: Next) -> Response {
+    // Reading a body tells a sender that asked first to send it, only to have it thrown away.
+    if request.body().is_end_stream() || request.headers().contains_key(header::EXPECT) {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = Arc::new(Mutex::new(body.into_data_stream()));
+    let for_the_route = Body::from_stream(reader(body.clone()));
+    let response = next.run(Request::from_parts(parts, for_the_route)).await;
+    let mut left = reader(body);
+    let reading = async {
+        let mut read = 0;
+        while let Some(Ok(piece)) = left.next().await {
+            read += piece.len();
+            if read > MAX_UNREAD_BYTES {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(MAX_UNREAD_WAIT, reading).await;
+    response
+}
+
+/// One body with two readers, the route and then `read_what_was_left`, so the route dropping its
+/// reader leaves the rest of the body where the other one can get at it.
+fn reader(
+    body: Arc<Mutex<BodyDataStream>>,
+) -> impl Stream<Item = Result<Bytes, axum::Error>> + Unpin {
+    stream::poll_fn(move |cx| {
+        body.lock().unwrap_or_else(PoisonError::into_inner).poll_next_unpin(cx)
+    })
 }
 
 /// Bots write text that other people's browsers render, so scripts are locked to this origin as

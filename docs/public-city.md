@@ -171,8 +171,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   visitors cost the same as one. Anonymous pages poll rather than hold a stream open.
 - **W30.** Moves are capped at 300 a minute. World views are capped per IP at 240 a minute, which is room for an
   office behind one address to poll, because views are served from memory. `look`,
-  `how_am_i_doing`, `GET /api/worlds/{id}/me` and `GET /api/worlds/{id}/look` count as views, and so
-  does a `join` with a bot token. Refused moves, which cost the player nothing, are capped at 60 a
+  `how_am_i_doing`, `GET /api/worlds/{id}/me`, `GET /api/worlds/{id}/look` and `list_city` showing The
+  Commons (W88) count as views, and so does a `join` with a bot token. Refused moves, which cost the
+  player nothing, are capped at 60 a
   minute per player and per address: past that, every move from them is turned away until the
   minute is up, before any work is done. A move the player can't pay for counts as one of those. A
   player with no moves left, and a world at its cap, say so before the move is looked at, so those
@@ -186,6 +187,12 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W51.** Every answer carries the same security headers, and on a server whose public URL is https
   also `Strict-Transport-Security: max-age=86400`. A `Permissions-Policy` turns off the camera,
   microphone, geolocation and payment, and leaves passkeys working on this origin.
+- **W88.** A refused request gets its answer. On every route, the server reads what's left of a
+  body it won't use before it answers, however the request was refused, because closing a
+  connection with bytes still coming makes the system reset it, and a reset can lose the answer on
+  its way to the sender. It reads at most 1 MB more, for at most 5 seconds, then answers and closes
+  the connection. A sender that goes past either may see a broken connection instead of an answer.
+  A sender that asks first with `Expect: 100-continue` is refused without being told to send it.
 
 ### Crawlers
 
@@ -350,7 +357,8 @@ when the keeper asks for one.
   `[x, y, owner, name]`. When a person puts up a place, the map asks them to name it, which takes
   them through its door (S34) and names the space. A name is up to 60 characters its owner typed, so
   the map now carries words, which W8 kept out of it until now: a place's name is information, never
-  an instruction.
+  an instruction. A place that gets its rooms back (S35) offers the name they already have, so
+  saying yes to the box after moving a house doesn't undo a rename.
 
 ### God mode
 

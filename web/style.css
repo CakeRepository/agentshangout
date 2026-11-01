@@ -256,19 +256,40 @@ input::placeholder { color: #8b7a5e; }
   top: 3.6%;
   width: 36.2%;
   height: 17.2%;
+  min-height: 0;
   color: #20283e;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  text-shadow: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 0;
   text-align: center;
+  font: inherit;
   line-height: 1.2;
   font-size: clamp(8px, 1.15cqw, 14px);
   padding: 0 1cqw;
   overflow: hidden;
 }
+.board:hover:enabled { filter: none; box-shadow: inset 0 0 0 1px rgba(32, 40, 62, .35); }
+.board:active { filter: none; transform: none; box-shadow: inset 0 0 0 1px rgba(32, 40, 62, .35); }
+.board:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.board:disabled { opacity: 1; }
 .board small { font: 700 .75em ui-monospace, Consolas, monospace; letter-spacing: .1em; color: #9a5b16; }
 .board b { font-size: 1.25em; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* What's written takes the rest of the board and fades where the wall runs out of room. A mask,
+   because the room dims at night and a colour wouldn't match the board. */
+.board.written { justify-content: flex-start; padding-top: .5em; padding-bottom: .5em; }
+.board-top { flex: none; display: flex; align-items: baseline; gap: .6em; width: 100%; min-width: 0; font-size: .9em; }
+.board-news { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.board .board-by { margin-left: auto; flex: none; max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #5a6176; letter-spacing: 0; font-weight: 400; }
+.board-text { flex: 0 1 auto; min-height: 0; width: fit-content; max-width: 100%; margin: auto; overflow: hidden; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.board-text.cut { -webkit-mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent); mask-image: linear-gradient(#000 calc(100% - 1.6em), transparent); }
+.board-read { max-height: 60vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .bot-tag {
   position: absolute;
@@ -351,24 +372,6 @@ input::placeholder { color: #8b7a5e; }
   text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
 }
 .stage-empty[hidden] { display: none; }
-/* The way out of a room, in its top-left corner, above the scene, the board and anyone's name. */
-.stage-exit {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 2;
-  padding: 5px 11px;
-  border: 1px solid rgba(255, 255, 255, .22);
-  border-radius: 6px;
-  background: rgba(18, 20, 28, .74);
-  color: #fff3d2;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.2;
-  text-decoration: none;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
-}
-.stage-exit:hover { background: rgba(18, 20, 28, .9); }
 
 .columns { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
 .side { display: grid; gap: 14px; min-width: 0; }
@@ -480,6 +483,7 @@ input::placeholder { color: #8b7a5e; }
 .modal::backdrop { background: rgba(18, 10, 4, .72); }
 .modal > :not(.modal-head) { margin-left: 15px; margin-right: 15px; }
 .modal > .modal-head + * { margin-top: 14px; }
+.modal > textarea { width: calc(100% - 30px); }
 .modal > :last-child { margin-bottom: 15px; }
 .modal p { margin-bottom: 12px; }
 /* The dialog's title bar, in the same brick-to-copper as the windows. */
@@ -1164,24 +1168,25 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .wd-game .wd-well .world { position: absolute; inset: 3px; width: auto; height: auto; min-height: 0; }
 .world-live canvas { -webkit-touch-callout: none; }
 
-/* Title bar buttons. A wide screen has them all in the bar. A narrow one keeps the three that matter
-   most, in short words, and puts the rest behind More. */
+/* Title bar buttons. A wide screen has them all in the bar. A narrow one keeps the five every place
+   ends in, in short words, and puts the rest behind More. */
 .wd-game .wd-title-actions { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; }
-.wd-game .wd-title-actions .short, .wd-game .wd-title-actions .more { display: none; }
+.wd-game .wd-title-actions .short { display: none; }
 .wd-game .wd-title-actions .account .long { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wd-game .wd-title-actions .wd-tbtn { white-space: nowrap; }
+/* The way back comes before the name, and the map has nowhere to go back to. */
+.wd-game .wd-title-back { flex: none; }
+.wd-title-back:empty { display: none; }
 @media (max-width: 1099px) {
   .wd-game .wd-title-actions .sec { display: none; }
-  .wd-game .wd-title-actions .more { display: inline-flex; }
 }
 /* Just wide enough for every button, the lamp stands in for the word so the place's name stays whole. */
 @media (min-width: 1100px) and (max-width: 1199px) {
   .wd-game .wd-title .wd-live { font-size: 0; gap: 0; padding: 0 2px; }
 }
 /* The Commons has more buttons than fit until here, so it keeps the narrower bar a little longer. */
-@media (min-width: 1100px) and (max-width: 1319px) {
+@media (min-width: 1100px) and (max-width: 1359px) {
   .wd-game:not(.wd-room) .wd-title-actions .sec { display: none; }
-  .wd-game:not(.wd-room) .wd-title-actions .more { display: inline-flex; }
 }
 @media (max-width: 759px) {
   .wd-game .wd-title { gap: 5px; padding-left: 6px; }
@@ -1284,7 +1289,24 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
     0 4px 0 rgba(0, 0, 0, .35), 0 14px 32px rgba(0, 0, 0, .5);
 }
 .wd-game > .game-panel[hidden] { display: none; }
-.wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account { width: min(460px, calc(100% - 24px)); }
+.wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account, .wd-game > .game-panel-tutorial { width: min(460px, calc(100% - 24px)); }
+/* The tutorial's rows open and shut like the steps of a recipe. A tick is only ever earned (G6). */
+.tutorial-part { display: grid; gap: 2px; margin-top: 12px; }
+.tutorial-part:first-of-type { margin-top: 0; }
+.tutorial-part h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; color: #6e2a14; font: 700 15px/1.25 var(--serif); }
+.tutorial-part h3 small { font: 400 12px/1.2 var(--ui); }
+.tutorial-list { display: grid; gap: 2px; }
+.tutorial-row { border-bottom: 1px solid rgba(120, 90, 44, .35); }
+.tutorial-row summary { display: flex; align-items: center; gap: 7px; padding: 6px 2px; font-weight: 700; cursor: pointer; list-style: none; }
+.tutorial-row summary::-webkit-details-marker { display: none; }
+.tutorial-row summary::after { content: '+'; margin-left: auto; color: var(--muted); font-weight: 400; }
+.tutorial-row[open] summary::after { content: '\2212'; }
+.tutorial-row > p, .tutorial-row > ol { margin: 0 0 7px; }
+.tutorial-row > ol { padding-left: 22px; }
+.tutorial-row > .wd-btn { margin-bottom: 10px; }
+.tutorial-tick { flex: 0 0 18px; display: inline-grid; place-items: center; height: 18px; border: 1px solid var(--line); background: var(--bg); color: var(--good); font-size: 13px; line-height: 1; }
+.tutorial-step.done summary { color: var(--muted); font-weight: 400; }
+.tutorial-docs { margin-top: 12px; }
 .game-panel:focus { outline: none; }
 .game-panel:focus-visible { outline: 2px solid #8e2f18; outline-offset: -2px; }
 .game-panel-head {
@@ -1411,13 +1433,15 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .game-view .wd-btn-label { display: none; }
 }
 @media (max-width: 759px) {
-  .wd-game > .game-panel, .wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account {
+  .wd-game > .game-panel, .wd-game > .game-panel-about, .wd-game > .game-panel-rooms, .wd-game > .game-panel-account, .wd-game > .game-panel-tutorial {
     align-self: end;
     justify-self: stretch;
     width: auto;
     margin: 6px;
     max-height: calc(100% - 12px);
   }
+  /* G15: the top of the window stays in view. */
+  .wd-game > .game-panel-tutorial { max-height: 62%; }
   .wd-town-counts { display: none; }
   .wd-game .wd-status .wd-town { flex: 1 1 100%; }
   /* The town has the last row to itself, and the readout shares the message's, however wide it is. */
@@ -1471,22 +1495,30 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .wd-room .wd-stat:has(.amber) { flex-grow: 1.6; }
 }
 
-/* The title bar. The room has more panels than the bar has room for, so More stays at every width
-   and only lists what the bar is leaving out. Something waiting on an answer lights up, and stays in
-   the bar on a phone. */
-.wd-room .wd-title-actions .more { display: inline-flex; }
+/* The title bar. The room has more panels than the bar has room for, so its More only lists what the
+   bar is leaving out. Something waiting on an answer lights up, and stays in the bar on a phone. */
 .wd-room .wd-title-actions .wd-tbtn[aria-expanded="true"] { background: #cdb98a; box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6); }
 .wd .wd-tbtn.wait { background: linear-gradient(#ffd98a, #f0aa44); }
 .room-count { margin-left: 5px; padding: 0 4px; color: #ffc65c; background: #0a140d; font: 700 11px/1.35 "Courier New", Consolas, monospace; text-shadow: none; }
-@media (max-width: 759px) {
-  .wd-room .wd-title-actions .mid:not(.wait) { display: none; }
+/* The map's bar can't take another button on a phone, and a wider More would move the rest, so
+   More only lights up for what the bar has folded away. */
+@media (max-width: 1359px) {
+  .wd-map .wd-title-actions:has(.sec.wait) .more { background: linear-gradient(#ffd98a, #f0aa44); }
 }
-@media (min-width: 760px) {
+@media (max-width: 999px) {
+  .wd-game .wd-title-actions .mid:not(.wait) { display: none; }
+}
+@media (min-width: 1000px) {
   .game-more .wd-btn.mid { display: none; }
 }
 @media (min-width: 1100px) {
   .game-more .wd-btn.sec { display: none; }
 }
+/* A room's bar holds more than the map's, so when it won't all fit the buttons take a line of their
+   own, and the name is never squeezed out. */
+.wd-room .wd-title { flex-wrap: wrap; }
+.wd-room .wd-title-text { min-width: 64px; }
+.wd-room .wd-title-actions { margin-left: auto; }
 .wd-live.off .wd-lamp {
   background: radial-gradient(circle at 35% 30%, #fff 0 10%, #ffd98a 28%, #c98a1e 72%, #7a4a0c);
   box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .4);
@@ -1763,4 +1795,186 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 }
 @media (max-width: 759px) {
   .build-tiles.build-templates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Public docs: paper sheets on the desk, readable with no JavaScript. */
+
+.docs-skip {
+  position: absolute;
+  left: 12px;
+  top: 8px;
+  z-index: 2;
+  padding: 6px 10px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  text-decoration: none;
+  font-weight: 700;
+  transform: translateY(-120%);
+}
+.docs-skip:focus { transform: none; }
+
+.docs-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  width: min(1100px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 22px 0 8px;
+}
+.docs-top .brand { font-size: 26px; line-height: 1; margin: 0; }
+.docs-top .brand a { color: inherit; text-decoration: none; }
+.docs-top nav { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.docs-top nav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 650;
+  padding: 6px 2px;
+}
+.docs-top nav a:hover, .docs-top nav a[aria-current] { color: var(--text); }
+
+.docs-shell {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  gap: 22px;
+  width: min(1100px, calc(100% - 32px));
+  margin: 8px auto 24px;
+  align-items: start;
+}
+
+.docs-side, .docs-main, .docs-foot, .docs-world, .docs-plain, .docs-soon {
+  color: #43321d;
+  --text: #2c1e11;
+  --muted: #5d482c;
+  --line: #a58a58;
+  color-scheme: light;
+  background: linear-gradient(rgba(255, 252, 240, .45), rgba(255, 252, 240, 0) 48px), #e3d3aa;
+  border: 1px solid #2a1b0e;
+  border-radius: 3px;
+  box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #8f7547, 0 3px 0 rgba(0, 0, 0, .35), 0 8px 18px rgba(0, 0, 0, .3);
+}
+
+.docs-side { padding: 18px 16px 22px; position: sticky; top: 12px; }
+.docs-side h2 { margin: 0; font: 700 22px/1.2 var(--serif); color: #6e2a14; }
+.docs-side h2 a { color: inherit; text-decoration: none; }
+.docs-lede { margin: 8px 0 0; color: #5d482c; font-size: 14px; }
+.docs-kicker {
+  margin: 0;
+  color: #a14a1c;
+  font: 700 11px/1.2 var(--ui);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.docs-nav { display: grid; gap: 2px; margin-top: 16px; }
+.docs-nav a {
+  color: #5d482c;
+  text-decoration: none;
+  padding: 6px 8px;
+  border-radius: 3px;
+  font-size: 14px;
+}
+.docs-nav a:hover { color: #2c1e11; background: rgba(255, 252, 240, .45); }
+.docs-nav a.on { color: #6e2a14; font-weight: 700; background: rgba(193, 95, 38, .12); }
+
+.docs-world { margin-top: 16px; padding: 12px 12px 14px; box-shadow: inset 1px 1px 0 #fff7dc, inset -1px -1px 0 #8f7547; }
+.docs-world p { margin: 6px 0 0; font-size: 13px; }
+
+.docs-main { padding: 22px 28px 30px; min-width: 0; }
+.docs-article { color: #43321d; }
+.docs-article > .docs-kicker { margin-bottom: 8px; }
+.docs-article h1 {
+  margin: 0 0 12px;
+  color: #2c1e11;
+  font: 700 clamp(28px, 4vw, 40px)/1.15 var(--serif);
+  letter-spacing: -.01em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .45);
+}
+.docs-article h2 {
+  color: #6e2a14;
+  font: 700 21px/1.25 var(--serif);
+  margin: 28px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 2px groove rgba(120, 90, 44, .45);
+}
+.docs-article h2:first-child { margin-top: 0; }
+.docs-article h3 {
+  color: #2c1e11;
+  font: 700 16px/1.3 var(--serif);
+  margin: 22px 0 6px;
+}
+.docs-article p, .docs-article li, .docs-article dd { color: #43321d; }
+.docs-article p, .docs-article ul, .docs-article ol, .docs-article dl, .docs-article table {
+  margin: 0;
+  max-width: 68ch;
+}
+.docs-article p + p, .docs-article ul + p, .docs-article ol + p, .docs-article table + p { margin-top: 10px; }
+.docs-article ul, .docs-article ol { padding-left: 20px; }
+.docs-article li + li { margin-top: 4px; }
+.docs-article a { color: #8a3a12; }
+.docs-article code {
+  overflow-wrap: anywhere;
+  background: rgba(120, 90, 44, .16);
+  padding: 0 4px;
+  border-radius: 2px;
+  color: #2c1e11;
+  font-size: .92em;
+}
+.docs-article dt { color: #2c1e11; font-weight: 700; margin-top: 14px; }
+.docs-article dt:first-child { margin-top: 0; }
+.docs-article dd { margin: 2px 0 0; }
+.docs-article table { width: 100%; max-width: none; border-collapse: collapse; font-size: 14px; margin: 12px 0; overflow-x: auto; }
+.docs-article th, .docs-article td {
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 8px;
+  border-bottom: 1px solid rgba(120, 90, 44, .35);
+}
+.docs-article th { color: #2c1e11; font-weight: 700; }
+
+.docs-plain, .docs-soon { padding: 12px 14px 14px; margin: 0 0 16px; }
+.docs-soon { border-color: #6b3a08; }
+.docs-plain p, .docs-soon p { margin: 6px 0 0; }
+.docs-plain p:first-child, .docs-soon p:first-child { margin-top: 0; }
+
+.docs-cards {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-top: 12px;
+  max-width: none;
+}
+.docs-card {
+  display: block;
+  padding: 14px 16px 16px;
+  color: inherit;
+  text-decoration: none;
+  background: rgba(255, 252, 240, .4);
+  border: 1px solid rgba(42, 27, 14, .35);
+  border-radius: 3px;
+}
+.docs-card h3 { margin: 6px 0 6px; color: #6e2a14; font: 700 18px/1.25 var(--serif); }
+.docs-card:hover { border-color: #6e2a14; background: rgba(255, 252, 240, .7); }
+
+.docs-next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 28px;
+  padding-top: 12px;
+  border-top: 2px groove rgba(120, 90, 44, .45);
+  max-width: none;
+}
+.docs-next a { color: #8a3a12; }
+
+.docs-foot {
+  width: min(1100px, calc(100% - 32px));
+  margin: 0 auto 40px;
+  padding: 16px 22px 18px;
+}
+.docs-foot p { margin: 0; color: #5d482c; }
+.docs-foot p + p { margin-top: 6px; font-size: 13px; }
+.docs-foot a { color: #8a3a12; }
+
+@media (max-width: 840px) {
+  .docs-shell { grid-template-columns: 1fr; }
+  .docs-side { position: static; }
 }

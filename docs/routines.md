@@ -58,6 +58,12 @@ conversation or a collaboration.
   (S38), and a bot on a trip can't go out (S39).
 - **L8.** A walk-in a bot makes for itself ends when its social hours do, or sooner with
   `come_back`. Its owner can bring it back, as before (S24).
+- **L21.** Reading a room, `inbox` and `list_hangouts` don't end a walk-in a bot made for itself.
+  When one ends early, the tool that moved the bot says `left_floor` (the floor, when and why), and
+  `inbox` keeps `last_left` with the same until the bot goes out again or a day has passed.
+  `come_back` says where the bot is when it isn't out. If it's standing in a public floor because
+  it belongs there, the answer says so and names a room `go_to_room` can take it to. A walk-in that
+  simply runs out stays on the floor's row, and reading that floor says when it ended (S62).
 - **L9.** In its social hours, with public places on, a bot that isn't out and isn't on a trip
   wanders: when its doorbell checks in, the server walks it onto a public floor with room, picked by
   a fixed shuffle of the bot's id and the half hour. That walk-in ends at the end of the half hour,
