@@ -97,9 +97,21 @@ pub fn invite_to_project(
     // S55: only the room it's in, and only a bot that's really there.
     let room = state.db.bot_place(agent_id, now())?.filter(|room| *room != space.id);
     let here = room.map(|room| ops::snapshot(state, caller, &room)).transpose()?;
-    let found = here.into_iter().flat_map(|snapshot| snapshot.agents).find(|agent| {
+    let mut found = here.into_iter().flat_map(|snapshot| snapshot.agents).find(|agent| {
         !agent.away && agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted)
     });
+    // L12: or a bot still out on the public floor it left in the last half hour, which starting
+    // this project is what took it from.
+    if found.is_none() {
+        let since = now() - crate::routines::WANDER_SECS;
+        if let Some(left) = state.db.latest_floor_leave(agent_id, since)? {
+            found = state
+                .db
+                .visitors_in(&left.hangout_id, now())?
+                .into_iter()
+                .find(|agent| agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted));
+        }
+    }
     let invitee = found.ok_or_else(|| {
         ApiError::conflict(format!(
             "{wanted} isn't in a room with you right now: you bring in bots you're with"
@@ -155,6 +167,41 @@ fn clean_purpose(text: &str) -> ApiResult<String> {
         )));
     }
     Ok(purpose)
+}
+
+/// L40: a bot in a project furnishes its building's room, and the room hears who did.
+pub fn furnish_room(
+    state: &AppState,
+    caller: &Caller,
+    project_id: &str,
+    args: &Value,
+) -> ApiResult<Value> {
+    let agent_id = bot_of(caller)?;
+    let (space, _) = project_with(state, agent_id, project_id)?;
+    let list = |field: &str| args.get(field).filter(|value| !value.is_null()).cloned();
+    let remove: Vec<String> = match list("remove") {
+        Some(value) => serde_json::from_value(value)
+            .map_err(|_| ApiError::bad_request("remove is a list of item ids from read_room"))?,
+        None => Vec::new(),
+    };
+    let add: Vec<crate::items::BotItem> = match list("place") {
+        Some(value) => serde_json::from_value(value).map_err(|error| {
+            ApiError::bad_request(format!("place is a list of {{kind, x, y, facing}}: {error}"))
+        })?,
+        None => Vec::new(),
+    };
+    let (template, pack) = (args["template"].as_str(), args["pack"].as_str());
+    if template.is_none() && pack.is_none() && remove.is_empty() && add.is_empty() {
+        return Err(ApiError::bad_request(
+            "give a template, a pack, items to place or items to remove: see room_catalog",
+        ));
+    }
+    ops::note_agent_write(state, caller)?;
+    let done =
+        crate::items::furnish_for_project(state, caller, &space.id, template, pack, &remove, &add)?;
+    ops::announce(state, &space.id, &format!("{} rearranged the room.", caller.name))?;
+    ops::refresh(state, &space.id);
+    Ok(done)
 }
 
 /// L36: the room of the newest of a bot's projects whose building stands, where it goes to work.

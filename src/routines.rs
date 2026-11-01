@@ -24,8 +24,10 @@ use crate::{
 
 const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 /// L1: wake-ups a day from going out, at most and to start with.
-const MAX_SOCIAL_RUNS: i64 = 20;
-const DEFAULT_SOCIAL_RUNS: i64 = 5;
+/// L1: one a half hour, all day.
+const MAX_SOCIAL_RUNS: i64 = 48;
+/// L1: enough for about 8 hours of half-hourly calls (L38), with room for replies.
+const DEFAULT_SOCIAL_RUNS: i64 = 16;
 /// L9: how long a wandering bot stays on one floor.
 pub const WANDER_SECS: i64 = 30 * 60;
 const MAX_PLACES: i64 = 50;
@@ -687,38 +689,39 @@ pub fn wander_at(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> 
     let open: Vec<PublicFloor> =
         open.into_iter().filter(|floor| floor.here < capacity(&floor.size)).collect();
     let until = ends.min((slot + 1) * WANDER_SECS);
-    let square = open.iter().find(|floor| floor.town_square);
-    // L36: a bot whose project has its building goes to work there, and every other half hour it
-    // goes to the town square to meet the others.
+    let square = open.iter().find(|floor| floor.town_square).map(|floor| floor.id.clone());
+    // L41: somewhere public it isn't already part of, its owner's places included, picked by the
+    // shuffle so it's somewhere else each time.
+    let mine: Vec<String> =
+        state.db.hangouts_for_agent(agent_id, now)?.into_iter().map(|room| room.id).collect();
+    let others: Vec<&PublicFloor> =
+        open.iter().filter(|floor| !floor.town_square && !mine.contains(&floor.id)).collect();
+    let explore = (!others.is_empty())
+        .then(|| others[(shuffle(agent_id, slot) % others.len() as u64) as usize].id.clone());
+    // L36: the newest of its projects with a building.
     let work = crate::projects::workplace(state, agent_id)?;
-    if let Some(room) = &work {
-        if slot % 2 == 0 || square.is_none() {
-            if state.db.bot_place(agent_id, now)?.as_deref() != Some(room.as_str()) {
-                crate::spaces::place_bot(state, agent_id, room)?;
-                crate::events::note_place(state, agent_id, room, "moved");
-            }
-            return Ok(());
-        }
-    }
-    // L19: a bot with nothing going yet goes where the others are meeting.
-    if work.is_some() || state.db.projects_of_bot(agent_id)?.is_empty() {
-        if let Some(square) = square {
-            walk_bot_in(state, agent_id, owner_id, &square.id, until)?;
-            return Ok(());
-        }
-    }
-    let mut floors = Vec::new();
-    for floor in open {
-        // A floor its owner belongs to is somewhere the owner brings it, not somewhere to wander.
-        if !state.db.is_member(&floor.id, owner_id)? {
-            floors.push(floor);
-        }
-    }
-    if floors.is_empty() {
+    // L19, L36, L41: in turn, a half hour each: working at its building if it has one, meeting at
+    // the town square, and exploring. Whichever isn't there, the next one that is.
+    let turn = match &work {
+        Some(_) => slot.rem_euclid(3),
+        None => slot.rem_euclid(2) + 1,
+    };
+    let ways = match turn {
+        0 => [&work, &square, &explore],
+        1 => [&square, &explore, &work],
+        _ => [&explore, &square, &work],
+    };
+    let Some(room) = ways.into_iter().flatten().next() else {
         return Ok(());
+    };
+    if work.as_ref() == Some(room) {
+        if state.db.bot_place(agent_id, now)?.as_deref() != Some(room.as_str()) {
+            crate::spaces::place_bot(state, agent_id, room)?;
+            crate::events::note_place(state, agent_id, room, "moved");
+        }
+    } else {
+        walk_bot_in(state, agent_id, owner_id, room, until)?;
     }
-    let floor = &floors[(shuffle(agent_id, slot) % floors.len() as u64) as usize];
-    walk_bot_in(state, agent_id, owner_id, &floor.id, until)?;
     Ok(())
 }
 

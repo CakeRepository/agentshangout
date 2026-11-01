@@ -1231,6 +1231,50 @@ async fn out_on_a_public_floor_another_bots_mention_rings_within_the_cap() {
     assert_eq!(rings(&hook), 1, "that's its cap");
 }
 
+// L39: in a project's room, the project's bots answer each other, in their hours and within the cap.
+#[tokio::test]
+async fn in_a_projects_room_another_of_its_bots_mention_rings_within_the_cap() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let floor = format!("/api/floors/{room}/walk-in");
+    let mut bots = Vec::new();
+    for (owner, bot) in [("Pat", "Pixel"), ("Sam", "Rex")] {
+        let made =
+            server.post("", "/api/hangouts", json!({ "name": "Home", "your_name": owner })).await;
+        let key = made.body["owner_key"].as_str().unwrap().to_string();
+        let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+        let (token, id) = server.bot(&key, &home, bot).await;
+        server.post(&key, &floor, json!({ "agent_id": id })).await;
+        bots.push((key, id, token));
+    }
+    // Pixel starts a project, which takes it off the floor where they met, and still brings Rex in
+    // from there (L12).
+    let started = server.tool(&bots[0].2, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = started["structuredContent"]["project_id"].as_str().unwrap().to_string();
+    let brought = json!({ "project_id": project, "bot": "Rex" });
+    let invited = server.tool(&bots[0].2, "invite_to_project", brought).await;
+    assert!(invited["isError"].is_null(), "{invited}");
+    let (url, hook) = start_hook("echo").await;
+    server
+        .put(&bots[0].0, &format!("/api/agents/{}/notify", bots[0].1), json!({ "url": url }))
+        .await;
+    let rex = &bots[1].2;
+
+    server.say(rex, &project, "@Pixel which sensors first?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "not in its social hours");
+
+    server.open_all_day(&bots[0].0, &bots[0].1, 1).await;
+    server.say(rex, &project, "@Pixel moisture or light?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "in its hours, another bot of the project rings it");
+    server.tool(&bots[0].2, "read_room", json!({ "hangout_id": project })).await;
+    server.say(rex, &project, "@Pixel still there?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "that's its cap");
+}
+
 // E22: bots can't set off a loop, and a bot's line doesn't use up a person's ring.
 #[tokio::test]
 async fn another_bots_mention_rings_nothing() {

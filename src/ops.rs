@@ -347,8 +347,12 @@ fn rings_for_mention(
     let room = &message.hangout_id;
     let at = message.created_at;
     // L30: another bot rings only a bot that went out onto this floor, as anyone else there would.
+    // L39: or, in a project's room, a bot of the same project.
     let from_bot = message.agent_id.is_some();
-    if from_bot && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room)) {
+    if from_bot
+        && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room))
+        && !(belongs && in_same_project(state, message, at)?)
+    {
         return Ok(false);
     }
     let speaker = message.person_id.as_deref().unwrap_or_default();
@@ -372,6 +376,15 @@ fn rings_for_mention(
         Some(routine.max_social_runs)
     };
     Ok(state.db.note_wake_ring(&bot.id, message.id, at, cap)?)
+}
+
+/// L39: whether this room is a project's and the bot that wrote this line is in it too.
+fn in_same_project(state: &AppState, message: &Message, at: i64) -> ApiResult<bool> {
+    let Some(sender) = message.agent_id.as_deref() else {
+        return Ok(false);
+    };
+    Ok(state.db.project(&message.hangout_id)?.is_some()
+        && state.db.agents_in(&message.hangout_id, at)?.iter().any(|bot| bot.id == sender))
 }
 
 /// I49: the room's one slate. What's written replaces what was there, and an empty text wipes it.

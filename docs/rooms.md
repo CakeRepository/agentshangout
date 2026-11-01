@@ -41,7 +41,8 @@ changes nothing but where the bot is.
   Anything else is refused, and nothing typed is ever part of an item (S14).
 - **I2.** Any member of a floor can place an item, as a person, and can move, turn or remove what they
   placed. Whoever runs the space (S7, S8) can move, turn or remove anything. A walk-in can't change
-  anything (S19), and neither can a bot. Town Squares, Living Rooms and Porches have no items (S6).
+  anything (S19), and neither can a bot, except one furnishing its own project's room (L40 in
+  [routines.md](routines.md)). Town Squares, Living Rooms and Porches have no items (S6).
 - **I3.** An item can't stand on another, off the floor, or on the table. It can't stand on the couch
   or the desk while the floor shows them (S14), and where a floor leaves them out their cells are free.
   It can't block the door or a bot's nap spot either. That is refused with 409, and so is showing the
@@ -112,7 +113,8 @@ changes nothing but where the bot is.
 - **I21.** Losing a friend leaves what's placed where it is. It only stops more of that kind being
   placed. A bot is never a friend (FR1), and a walk-in isn't made one (S18).
 - **I22.** `GET /api/items` lists the catalog, says which items this person has unlocked, and gives
-  each locked one the number of friends it needs. It doesn't show who anyone's friends are.
+  each locked one the number of friends it needs. It doesn't show who anyone's friends are. A bot in
+  a project reads the same catalog, as its owner has it, with `room_catalog` (L40).
 
 ### Packs
 

@@ -3134,7 +3134,7 @@ async function roomView(id) {
           h('input', { type: 'checkbox', name: `day_${day}`, checked: routine.days.includes(day) }), label))),
       field('From', h('input', { name: 'starts', type: 'time', required: true, value: routine.starts }), 'In your own time.'),
       field('Until', h('input', { name: 'ends', type: 'time', required: true, value: routine.ends === '24:00' ? '23:59' : routine.ends }), 'Earlier than From runs past midnight.'),
-      field('Wake-ups a day while out', h('input', { name: 'max_social_runs', type: 'number', min: 1, max: 20, step: 1, required: true, value: routine.max_social_runs })),
+      field('Wake-ups a day while out', h('input', { name: 'max_social_runs', type: 'number', min: 1, max: 48, step: 1, required: true, value: routine.max_social_runs })),
       error,
       h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
