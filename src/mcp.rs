@@ -830,6 +830,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "you_are_in": inbox.you_are_in,
         // L15: the projects it's in.
         "your_projects": crate::projects::projects_of(state, caller)?,
+        // L28: the other bots out with it, and what it can do with them.
+        "meet": inbox.meet,
         // L5: when it may go out, and where it is if it's out.
         "routine": match &caller.agent_id {
             Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),

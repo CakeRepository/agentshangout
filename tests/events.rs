@@ -1162,6 +1162,75 @@ async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_roo
     assert_eq!(rings(&hook), 2, "unread in one room doesn't hold another room's bell");
 }
 
+// L29: out with another bot, a bot with a wake-up URL is rung to meet, once a half hour.
+#[tokio::test]
+async fn out_with_another_bot_a_bot_is_rung_to_meet_once_a_half_hour() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let mut bots = Vec::new();
+    for (owner, bot) in [("Pat", "Pixel"), ("Sam", "Rex")] {
+        let made =
+            server.post("", "/api/hangouts", json!({ "name": "Home", "your_name": owner })).await;
+        let key = made.body["owner_key"].as_str().unwrap().to_string();
+        let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+        let (_, id) = server.bot(&key, &home, bot).await;
+        server.open_all_day(&key, &id, 3).await;
+        bots.push((key, id));
+    }
+    let (url, hook) = start_hook("echo").await;
+    server
+        .put(&bots[0].0, &format!("/api/agents/{}/notify", bots[0].1), json!({ "url": url }))
+        .await;
+
+    // L27 walks both out onto the one public floor there is, and Pixel is rung once.
+    agenthangout::worlds::housekeeping(&server.state, now());
+    let ping = wait_for(&hook, |hit| hit.body["event"] == "meet").await;
+    assert!(ping.body.to_string().contains(&room), "{}", ping.body);
+    agenthangout::worlds::housekeeping(&server.state, now());
+    settle().await;
+    let meets = hook.hits().iter().filter(|hit| hit.body["event"] == "meet").count();
+    assert_eq!(meets, 1, "once a half hour");
+}
+
+// L30, E22: on a public floor they went out to, bots answer each other, within the cap.
+#[tokio::test]
+async fn out_on_a_public_floor_another_bots_mention_rings_within_the_cap() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    server.put(&justin, &format!("/api/floors/{room}"), json!({ "access": "public" })).await;
+    let floor = format!("/api/floors/{room}/walk-in");
+    let mut bots = Vec::new();
+    for (owner, bot) in [("Pat", "Pixel"), ("Sam", "Rex")] {
+        let made =
+            server.post("", "/api/hangouts", json!({ "name": "Home", "your_name": owner })).await;
+        let key = made.body["owner_key"].as_str().unwrap().to_string();
+        let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+        let (token, id) = server.bot(&key, &home, bot).await;
+        let walked = server.post(&key, &floor, json!({ "agent_id": id })).await;
+        assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
+        bots.push((key, id, token));
+    }
+    let (url, hook) = start_hook("echo").await;
+    server
+        .put(&bots[0].0, &format!("/api/agents/{}/notify", bots[0].1), json!({ "url": url }))
+        .await;
+    let rex = &bots[1].2;
+
+    server.say(rex, &room, "@Pixel shall we build something?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "not in its social hours");
+
+    server.open_all_day(&bots[0].0, &bots[0].1, 1).await;
+    server.say(rex, &room, "@Pixel how about a workshop?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "out in its hours, another bot can ring it");
+    server.tool(&bots[0].2, "read_room", json!({ "hangout_id": room })).await;
+    server.say(rex, &room, "@Pixel still there?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "that's its cap");
+}
+
 // E22: bots can't set off a loop, and a bot's line doesn't use up a person's ring.
 #[tokio::test]
 async fn another_bots_mention_rings_nothing() {
