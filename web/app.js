@@ -5837,6 +5837,7 @@ async function worldView(id, { home = false } = {}) {
   const ACCESS_TEXT = {
     in: 'is inside',
     visiting: 'is visiting now',
+    belongs: 'belongs here, but it’s somewhere else',
     can_walk_in: 'can walk in: it\u2019s open to anyone',
     needs_invite: 'needs an invite from the owner',
   };
