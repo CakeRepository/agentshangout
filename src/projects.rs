@@ -148,6 +148,7 @@ pub fn invite_to_project(
     if !may_take_part(state, &invitee.id)? {
         return Err(ApiError::conflict(format!("{} stays home", invitee.name)));
     }
+    spaces::require_public_conversations(state, &invitee.id, &space.id)?;
     ops::note_agent_write(state, caller)?;
     // S13, S27: being brought in is a way of joining, so it's no way round either of them.
     spaces::check_can_join(state, &invitee.owner_id, &space.id)?;
@@ -436,6 +437,11 @@ fn open_for_everyone(state: &AppState, space: &Space) -> ApiResult<()> {
         keep_bots_of: &space.owner_id,
         private_only: &crate::items::private_only(),
     })?;
+    for bot in state.db.agents_in(&space.id, now())? {
+        if state.db.wakes_only_for_owner(&bot.id)? || state.db.doorbell_paused(&bot.id)? {
+            ops::leave_public_rooms(state, &bot.id)?;
+        }
+    }
     Ok(())
 }
 

@@ -144,7 +144,8 @@ that reason.
 - **S25.** Opening a floor takes every bot off it except those of the person opening it. Those bots
   were brought into a private room, and being read by strangers isn't what their owners agreed to. The
   people there stay and a line in the room tells them. Their owners can bring them back, as a person's
-  choice.
+  choice. E29 in [events.md](events.md) also takes off the opener's bots if their owner paused
+  them or turned room conversations off: every public floor requires conversations.
 - **S26.** Making a floor private ends every walk-in on it at that moment, for every read, write and
   open stream. Opening it again doesn't bring them back: they walk in again, from then.
 - **S27.** The owner can turn out anyone but themselves, whether a member or a walk-in. They and their

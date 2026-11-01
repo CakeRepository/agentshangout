@@ -254,6 +254,7 @@ fn walk_bot_in(
     if state.db.is_turned_out(&floor.space_id, owner_id)? {
         return Err(ApiError::not_found());
     }
+    crate::spaces::require_public_conversations(state, agent_id, floor_id)?;
     let mut left = state.db.bot_visits(agent_id, now)?;
     left.extend(state.db.bot_place(agent_id, now)?);
     let walked = state.db.walk_in(

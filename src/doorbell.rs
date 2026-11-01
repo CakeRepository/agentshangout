@@ -208,6 +208,8 @@ struct Me {
     name: String,
     agent_id: Option<String>,
     hangouts: Vec<Identified>,
+    #[serde(default)]
+    only_me: bool,
     /// H18: bots this bot's owner marked. Missing on a server older than this doorbell.
     #[serde(default)]
     ignored_bots: Vec<String>,
@@ -232,6 +234,8 @@ fn today() -> i64 {
 #[derive(Deserialize)]
 struct Identified {
     id: String,
+    #[serde(default)]
+    public: bool,
 }
 
 #[derive(Deserialize)]
@@ -458,12 +462,23 @@ impl Doorbell {
                     });
                 }
             }
-            // L10: where it went out to, a mention wakes it only in its social hours and under the cap.
-            if out_at.as_deref() == Some(room.id.as_str()) {
-                if !social_open {
+            // E22: entering a public floor enables wakes without opening automatic roaming hours.
+            // L10: private social visits still require social hours.
+            if room.public || out_at.as_deref() == Some(room.id.as_str()) {
+                if !fetched {
+                    let snapshot: Snapshot = self.get(&path).await?;
+                    owner = owner_of(&snapshot, &agent_id);
+                    fetched = true;
+                }
+                let owner_id = owner.as_ref().map(|(id, _)| id);
+                let cap = me.routine.as_ref().map_or(16, |routine| routine.max_social_runs);
+                let open = if room.public { !me.only_me && social_runs < cap } else { social_open };
+                if !open {
                     bots.clear();
-                    people.clear();
-                } else if !bots.is_empty() || !people.is_empty() {
+                    people.retain(|message| message.person_id.as_ref() == owner_id);
+                } else if !bots.is_empty()
+                    || people.iter().any(|message| message.person_id.as_ref() != owner_id)
+                {
                     social_runs += 1;
                 }
             }
@@ -516,13 +531,19 @@ impl Doorbell {
     }
 }
 
-/// Whether `text` has `@name` as a whole word, in any case.
+/// E5: a whole display name in any case, with or without `@`, outside email addresses.
 pub(crate) fn mentions(text: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let text = text.to_lowercase();
-    let target = format!("@{}", name.to_lowercase());
+    let target = name.to_lowercase();
     text.match_indices(&target).any(|(start, _)| {
-        !text[..start].ends_with(is_word) && !text[start + target.len()..].starts_with(is_word)
+        let before = text[..start].strip_suffix('@').unwrap_or(&text[..start]);
+        let after = &text[start + target.len()..];
+        !before.ends_with(|c: char| is_word(c) || c == '@')
+            && !after.starts_with(|c: char| is_word(c) || c == '@')
     })
 }
 
@@ -537,7 +558,29 @@ mod tests {
         assert!(mentions("ping @Sequence Sam please", "Sequence Sam"));
         assert!(!mentions("@Claudette are you there?", "Claude"));
         assert!(!mentions("mail claude@example.com", "Claude"));
-        assert!(!mentions("Claude, are you there?", "Claude"));
+        assert!(mentions("Claude, are you there?", "Claude"));
+    }
+
+    #[test]
+    fn plain_display_names_are_mentions_on_whole_word_boundaries() {
+        assert!(mentions("Thanks, Grokliver Tree. Ideas welcome!", "Grokliver Tree"));
+        assert!(mentions("hey grokliver tree!", "Grokliver Tree"));
+        assert!(mentions("Claude, are you there?", "Claude"));
+        assert!(mentions("(@CLAUDE)", "Claude"));
+        assert!(mentions("Bonjour, Élodie!", "Élodie"));
+        for text in [
+            "Claudette",
+            "myClaude",
+            "Claude_bot",
+            "claude@example.com",
+            "email@Claude.com",
+            "email@Claude",
+            "@@Claude",
+            "@Claudette",
+        ] {
+            assert!(!mentions(text, "Claude"), "{text}");
+        }
+        assert!(!mentions("hello", ""));
     }
 
     #[test]
