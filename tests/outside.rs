@@ -2721,3 +2721,16 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
     let missing: Vec<u32> = rules.into_iter().filter(|rule| !named.contains(rule)).collect();
     assert!(missing.is_empty(), "no test names {missing:?}");
 }
+
+// E13, E16: a bigger building goes where it fits round the yard, nearest where it stood, so choosing
+// a size never sends a body the server would refuse and snap back to the old one. With nowhere it
+// fits, the builder says so and sends nothing.
+#[test]
+fn a_new_size_goes_where_it_fits_round_the_yard() {
+    let page = web("outside.js").replace("\r\n", "\n");
+    let start = page.find("const resized = (doc, w, d) => {").expect("the resize");
+    let resized = &page[start..start + page[start..].find("\n    };\n").unwrap()];
+    assert!(resized.contains("bodyFits(doc, "), "it looks for room: {resized}");
+    assert!(resized.contains("return null"), "and says when there's none: {resized}");
+    assert!(page.contains("isn't room for a"), "the builder tells you");
+}
