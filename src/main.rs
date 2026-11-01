@@ -1,6 +1,6 @@
 use std::env;
 
-use agenthangout::{app, db::Db, worlds, AppState, Config};
+use agenthangout::{app, db::Db, discord, worlds, AppState, Config};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -46,7 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("listening beyond localhost: the public worlds trust X-Forwarded-For for their per-address limits");
     }
 
-    let state = AppState::new(
+    let discord = discord::App::from_settings(
+        env::var("AGENTHANGOUT_DISCORD_CLIENT_ID").ok(),
+        env::var("AGENTHANGOUT_DISCORD_CLIENT_SECRET").ok(),
+    );
+    let state = AppState::with_discord(
         Db::open(&db_path)?,
         Config {
             public_url: public_url.clone(),
@@ -55,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             keeper_id,
             god_ids,
         },
+        discord,
     );
     // W28: The Commons is there before anyone asks.
     if let Err(error) = worlds::ensure_commons(&state) {

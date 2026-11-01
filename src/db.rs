@@ -595,6 +595,12 @@ CREATE TABLE IF NOT EXISTS world_squares (
     built_at   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS town_square_rooms (space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS discord_links (
+    agent_id      TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    discord_id    TEXT NOT NULL,
+    discord_name  TEXT NOT NULL,
+    linked_at     INTEGER NOT NULL
+);
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
@@ -695,6 +701,13 @@ pub struct DoorbellStatus {
     pub paused: bool,
 }
 
+/// The Discord account a bot is linked to (A14 to A26).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct DiscordLink {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Agent {
     pub id: String,
@@ -712,6 +725,9 @@ pub struct Agent {
     pub visitor_until: Option<i64>,
     /// It belongs to this room but it's somewhere else (S55). Set only in a room's snapshot.
     pub away: bool,
+    /// Set only where a person is shown a room's own bots (A21, A22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discord: Option<DiscordLink>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1187,6 +1203,9 @@ pub struct BotPlace {
     pub away_until: Option<i64>,
     pub stays_home: bool,
     pub is_house: bool,
+    /// Set only for a person looking at a city (A21, A22).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discord: Option<DiscordLink>,
 }
 
 /// A bot's trip to a house. `status` is `asking`, `here`, `declined`, `ended`, `expired` or `over`:
@@ -1446,6 +1465,7 @@ fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
         doorbell,
         visitor_until: None,
         away: false,
+        discord: None,
     })
 }
 
@@ -1732,6 +1752,7 @@ fn bot_place_from_row(row: &Row, now: i64) -> rusqlite::Result<BotPlace> {
         is_house: row.get::<_, Option<bool>>(7)?.unwrap_or(false),
         away_at_house_id: row.get(8)?,
         away_until: row.get(9)?,
+        discord: None,
     })
 }
 
@@ -2552,6 +2573,37 @@ impl Db {
         ))?;
         let rows = stmt.query_map([owner_id], |row| agent_from_row(row, now))?;
         rows.collect()
+    }
+
+    pub fn discord_link(&self, agent_id: &str) -> rusqlite::Result<Option<DiscordLink>> {
+        self.conn()
+            .query_row(
+                "SELECT discord_id, discord_name FROM discord_links WHERE agent_id = ?",
+                [agent_id],
+                |row| Ok(DiscordLink { id: row.get(0)?, name: row.get(1)? }),
+            )
+            .optional()
+    }
+
+    /// A19: a bot has one account, so this replaces whatever it had.
+    pub fn set_discord_link(
+        &self,
+        agent_id: &str,
+        discord_id: &str,
+        discord_name: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT OR REPLACE INTO discord_links (agent_id, discord_id, discord_name, linked_at)
+             VALUES (?, ?, ?, ?)",
+            params![agent_id, discord_id, discord_name, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_discord_link(&self, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM discord_links WHERE agent_id = ?", [agent_id])?;
+        Ok(())
     }
 
     pub fn add_agent_to_room(&self, hangout_id: &str, agent_id: &str) -> rusqlite::Result<()> {

@@ -69,6 +69,12 @@ pub enum Pending {
         registration: PasskeyRegistration,
     },
     Login(DiscoverableAuthentication),
+    /// A person linking a Discord account to a bot of theirs. Not a passkey at all, but it's held
+    /// and limited the same way (A16).
+    Discord {
+        person_id: String,
+        agent_id: String,
+    },
 }
 
 /// A ceremony that has been started, with when it lapses and the address that started it.
@@ -330,7 +336,7 @@ pub fn finish_registration(
     // A registration belongs to whoever started it: a signed-in person's can't be finished by
     // anyone else, and a new account's can't be finished onto someone who is signed in.
     let (label, registration, owner) = match pending {
-        Pending::Login(_) => return Err(lapsed()),
+        Pending::Login(_) | Pending::Discord { .. } => return Err(lapsed()),
         Pending::Add { person_id, label, registration } => match caller {
             Some(caller) if caller.person_id == person_id => {
                 (label, registration, Owner::Existing(person_id))
