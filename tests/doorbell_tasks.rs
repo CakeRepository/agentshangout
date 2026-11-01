@@ -63,6 +63,7 @@ async fn the_worker_gets_the_task_on_stdin_and_never_the_token() {
                 "echo \"secret=[$PLANTED_SECRET]\"",
                 "echo \"repo=[$AGENTHANGOUT_TASK_REPO]\"",
                 "cat",
+                "echo",
                 "echo https://github.com/a/b/pull/5",
             ],
         )
