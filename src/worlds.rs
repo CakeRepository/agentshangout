@@ -1018,8 +1018,24 @@ fn apply_move(
             if player.kind() == PlayerKind::Person && !god {
                 return Err(ApiError::forbidden("people don't lay roads here: agents do"));
             }
-            let tiles = tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, 1)?;
-            plan_parts(world::plan_road(land, &tiles, builder, *span))?
+            let tiles =
+                tiles_near(tx, &world.id, land, *span, world::MAX_ROAD_TILES, world::SIDE_STREET)?;
+            let planned = plan_parts(world::plan_road(land, &tiles, builder, *span))?;
+            // W85: its new tiles follow the streets of their neighborhood, unless it's a lane.
+            let fresh: Vec<world::Pos> = planned
+                .0
+                .iter()
+                .filter_map(|change| match change {
+                    Change::Set(pos, _) => Some(*pos),
+                    _ => None,
+                })
+                .collect();
+            // God mode isn't held back by the streets either (W76).
+            if !god {
+                let hoods = world::neighborhoods(world.seed, world.size);
+                world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
+            }
+            planned
         }
         Parsed::Place(kind, x, y) => {
             may_place(tx, world, &player, *kind, god, now)?;
@@ -1632,6 +1648,9 @@ struct ViewOut<'a> {
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
+    /// W87: `[name, character, x, y]` for each neighborhood's point.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    neighborhoods: Option<Vec<(String, &'static str, i64, i64)>>,
     /// W71, W73: `[x, y, owner, name]`, whose each place is and what it's called.
     #[serde(skip_serializing_if = "Option::is_none")]
     owners: Option<Vec<(u16, u16, String, String)>>,
@@ -1801,6 +1820,12 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         crawlers,
         visitors,
         people,
+        neighborhoods: (world.id == COMMONS_ID).then(|| {
+            world::neighborhoods(world.seed, world.size)
+                .into_iter()
+                .map(|hood| (hood.name, hood.character.as_str(), hood.x, hood.y))
+                .collect()
+        }),
         owners,
         bots_out,
         disaster,
@@ -2054,6 +2079,18 @@ pub fn look(
     let around = [region[0] - reach, region[1] - reach, region[2] + reach, region[3] + reach];
     let nearby = state.db.world_tiles_in(&world.id, around)?;
     let reserved = world::reserved_in(&land.land, &nearby, region);
+    // W87: the neighborhood the window is centred on, and the open tiles a road may go on.
+    let hoods = world::neighborhoods(world.seed, world.size);
+    let neighborhood = world::hood_at(&hoods, cx as i64, cy as i64)
+        .map(|i| json!({ "name": hoods[i].name, "character": hoods[i].character.as_str() }));
+    let streets: Vec<(u16, u16)> = (region[1]..=region[3])
+        .flat_map(|y| (region[0]..=region[2]).map(move |x| (x, y)))
+        .filter_map(|(x, y)| land.land.locate(x, y))
+        .filter(|pos| {
+            !nearby.contains_key(pos) && land.land.at(*pos).is_some_and(|ground| ground.is_open())
+        })
+        .filter(|pos| world::on_street(&hoods, &nearby, *pos))
+        .collect();
     let mut built: Vec<(u16, u16, &'static str, u8)> = nearby
         .iter()
         .filter(|(&(x, y), _)| {
@@ -2085,10 +2122,14 @@ pub fn look(
                    built is [x, y, kind, level], and a kind of house, cafe, club or studio is a \
                    place a person put up. A kind of square is the town square, where bots meet. \
                    players is [id, name, x, y, emote]. reserved is [x, y] \
-                   for each open tile kept for a side street: a place can't use it and roads may.",
+                   for each open tile kept for a side street: a place can't use it and roads may. \
+                   streets is [x, y] for each open tile a road may go on (W85): roads follow the \
+                   streets of their neighborhood, and a lane of 3 tiles or fewer can go anywhere.",
         "land": rows,
         "built": built,
         "reserved": reserved,
+        "neighborhood": neighborhood,
+        "streets": streets,
         "players": players,
     });
     if let Some(player) = you {

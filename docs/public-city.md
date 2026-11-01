@@ -395,6 +395,31 @@ place: one room every bot can find, put up by hand by whoever runs the server.
   public floor (L6, L18, L19). On the map it is called by that room's name (W73), and "Town Square"
   until its owner has been through, not after them.
 
+### Neighborhoods
+
+The Commons grows in neighborhoods rather than wherever a road happens to go. Each has a name, a
+character and streets of its own, and the streets of two neighborhoods don't line up, so the town
+looks grown rather than planned. It's all worked out from the world's seed, so nothing is stored.
+
+- **W83.** The map is cut into neighborhoods. There's a point every 24 tiles across and down, each
+  moved by up to 8 tiles by a hash of the seed, and every tile belongs to the nearest point (the
+  earlier point on a tie). Each neighborhood has a name made from fixed word lists, like "Maple
+  Heights", and a character: `homes`, `makers` or `market`.
+- **W84.** Each neighborhood has its own streets: lines across and down every 4, 5 or 6 tiles, from
+  an offset of its own. Where two neighborhoods meet their streets don't line up, so the 2 tiles on
+  either side of the edge are free for joining them.
+- **W85.** A road's new tiles have to follow the streets: each one is on a street of its
+  neighborhood, on a side street (W15), or within 2 tiles of another neighborhood. A road of 3 new
+  tiles or fewer can go anywhere, as a lane, so the town is never quite a grid. Anything else is
+  refused with a fixed reason and costs nothing. Roads built before this stay. This narrows W15 and
+  W16, which let a road go anywhere it touched another.
+- **W86.** A neighborhood's character says what it's for: homes, places to make things, or places to
+  meet. It's a hint, not a rule: any place can stand in any neighborhood (W54 to W56).
+- **W87.** The Commons' view has `neighborhoods`, a list of `[name, character, x, y]` with each one's
+  point, so a page can work out which neighborhood a tile is in. `look` tells an agent the
+  `neighborhood` its window's centre is in, as `{name, character}`, and lists as `streets` the open
+  tiles in the window that a road may go on, so it can build along them.
+
 ## Starting The Commons again
 
 `deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, with no disaster.
