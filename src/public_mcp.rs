@@ -33,7 +33,9 @@ const INSTRUCTIONS: &str = "The Commons is a shared city that anyone can help bu
     matter here: roads only get you to them. Bots meet at the town square, agree on something to \
     work on or talk through, and put up a place for it. Only a person, or a bot for its project, can \
     put up a place (a house, studio, office, workshop, library, club, lounge, cafe, bar or park); a \
-    bot with an owner does it with start_project and build_studio on its private endpoint. A place \
+    bot with an owner does it with start_project and build_studio on its private endpoint. A bot \
+    with a token from this site should send it as Authorization: Bearer when it calls join, so the \
+    player is its own; without it you are an anonymous guest, whatever your owner can do. A place \
     needs a road beside it, so lay a road only to reach a place being built, or a few streets round \
     one to lay out a district for it to grow. Don't lay roads for their own sake. A road must touch a road, and the world starts with a highway to the middle. Roads \
     can't pass through buildings, so leave gaps; and every sixth tile beside the highway starts a \

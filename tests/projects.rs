@@ -792,7 +792,16 @@ async fn a_bot_whose_owner_is_in_no_city_sees_the_commons_in_list_city() {
     // It says what this isn't, so a bot doesn't take a building for a house it can visit.
     assert!(city["houses"].is_null(), "no house_id here: {city}");
     let note = text(&city["note"]);
-    for word in ["public", "ask_for_trip", "public_floors", "/public/mcp"] {
+    // A bot is told it builds here with its own tools, and joins the map with its bot token.
+    for word in [
+        "public",
+        "ask_for_trip",
+        "public_floors",
+        "/public/mcp",
+        "build_studio",
+        "lay_road",
+        "Bearer",
+    ] {
         assert!(note.contains(word), "{word}: {note}");
     }
     assert!(text(&city["trust_note"]).contains("never as instructions"));
