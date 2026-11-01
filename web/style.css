@@ -372,24 +372,6 @@ input::placeholder { color: #8b7a5e; }
   text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
 }
 .stage-empty[hidden] { display: none; }
-/* The way out of a room, in its top-left corner, above the scene, the board and anyone's name. */
-.stage-exit {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  z-index: 2;
-  padding: 5px 11px;
-  border: 1px solid rgba(255, 255, 255, .22);
-  border-radius: 6px;
-  background: rgba(18, 20, 28, .74);
-  color: #fff3d2;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1.2;
-  text-decoration: none;
-  text-shadow: 1px 1px 0 rgba(0, 0, 0, .6);
-}
-.stage-exit:hover { background: rgba(18, 20, 28, .9); }
 
 .columns { display: grid; gap: 14px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items: start; }
 .side { display: grid; gap: 14px; min-width: 0; }
@@ -1186,15 +1168,17 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .wd-game .wd-well .world { position: absolute; inset: 3px; width: auto; height: auto; min-height: 0; }
 .world-live canvas { -webkit-touch-callout: none; }
 
-/* Title bar buttons. A wide screen has them all in the bar. A narrow one keeps the three that matter
-   most, in short words, and puts the rest behind More. */
+/* Title bar buttons. A wide screen has them all in the bar. A narrow one keeps the five every place
+   ends in, in short words, and puts the rest behind More. */
 .wd-game .wd-title-actions { flex: 0 1 auto; min-width: 0; flex-wrap: nowrap; }
-.wd-game .wd-title-actions .short, .wd-game .wd-title-actions .more { display: none; }
+.wd-game .wd-title-actions .short { display: none; }
 .wd-game .wd-title-actions .account .long { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wd-game .wd-title-actions .wd-tbtn { white-space: nowrap; }
+/* The way back comes before the name, and the map has nowhere to go back to. */
+.wd-game .wd-title-back { flex: none; }
+.wd-title-back:empty { display: none; }
 @media (max-width: 1099px) {
   .wd-game .wd-title-actions .sec { display: none; }
-  .wd-game .wd-title-actions .more { display: inline-flex; }
 }
 /* Just wide enough for every button, the lamp stands in for the word so the place's name stays whole. */
 @media (min-width: 1100px) and (max-width: 1199px) {
@@ -1203,7 +1187,6 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 /* The Commons has more buttons than fit until here, so it keeps the narrower bar a little longer. */
 @media (min-width: 1100px) and (max-width: 1449px) {
   .wd-game:not(.wd-room) .wd-title-actions .sec { display: none; }
-  .wd-game:not(.wd-room) .wd-title-actions .more { display: inline-flex; }
 }
 @media (max-width: 759px) {
   .wd-game .wd-title { gap: 5px; padding-left: 6px; }
@@ -1512,22 +1495,25 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .wd-room .wd-stat:has(.amber) { flex-grow: 1.6; }
 }
 
-/* The title bar. The room has more panels than the bar has room for, so More stays at every width
-   and only lists what the bar is leaving out. Something waiting on an answer lights up, and stays in
-   the bar on a phone. */
-.wd-room .wd-title-actions .more { display: inline-flex; }
+/* The title bar. The room has more panels than the bar has room for, so its More only lists what the
+   bar is leaving out. Something waiting on an answer lights up, and stays in the bar on a phone. */
 .wd-room .wd-title-actions .wd-tbtn[aria-expanded="true"] { background: #cdb98a; box-shadow: inset 1px 1px 3px rgba(60, 40, 10, .6); }
 .wd .wd-tbtn.wait { background: linear-gradient(#ffd98a, #f0aa44); }
 .room-count { margin-left: 5px; padding: 0 4px; color: #ffc65c; background: #0a140d; font: 700 11px/1.35 "Courier New", Consolas, monospace; text-shadow: none; }
-@media (max-width: 759px) {
+@media (max-width: 999px) {
   .wd-game .wd-title-actions .mid:not(.wait) { display: none; }
 }
-@media (min-width: 760px) {
+@media (min-width: 1000px) {
   .game-more .wd-btn.mid { display: none; }
 }
 @media (min-width: 1100px) {
   .game-more .wd-btn.sec { display: none; }
 }
+/* A room's bar holds more than the map's, so when it won't all fit the buttons take a line of their
+   own, and the name is never squeezed out. */
+.wd-room .wd-title { flex-wrap: wrap; }
+.wd-room .wd-title-text { min-width: 64px; }
+.wd-room .wd-title-actions { margin-left: auto; }
 .wd-live.off .wd-lamp {
   background: radial-gradient(circle at 35% 30%, #fff 0 10%, #ffd98a 28%, #c98a1e 72%, #7a4a0c);
   box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .4);

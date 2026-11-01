@@ -594,6 +594,41 @@ fn a_button_only_gets_someone_to_the_control() {
     }
 }
 
+// G9: a name that's gone only fails when someone presses the button, so nothing else would catch it.
+// #164 moved the account panel, and a button here went on calling the function it replaced.
+#[test]
+fn every_function_a_button_uses_is_on_the_page() {
+    let app = page("app.js");
+    let on_the_map = part(&app, "  const tutorialShows = () => ({\n    account:", "\n  });");
+    let in_a_room = part(&app, "  const tutorialShows = () => ({\n    look:", "\n  });");
+    let exists = |name: &str| {
+        app.contains(&format!("function {name}(")) || app.contains(&format!("const {name} = "))
+    };
+    let mut checked = 0;
+    for block in [on_the_map, in_a_room] {
+        for line in block.lines().map(str::trim) {
+            // `bring: bringBot,` hands one over.
+            if let Some((_, name)) = line.strip_suffix(',').and_then(|line| line.split_once(": ")) {
+                if name.chars().all(|c| c.is_ascii_alphanumeric()) {
+                    assert!(exists(name), "a button uses {name}, and the page has no such thing");
+                    checked += 1;
+                }
+            }
+            // `pick('house');` and `go('/')` call one. `world.focus(` is a method of something else.
+            for (at, _) in line.match_indices('(') {
+                let start = line[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).map_or(0, |i| i + 1);
+                let name = &line[start..at];
+                let method = start > 0 && line.as_bytes()[start - 1] == b'.';
+                if !name.is_empty() && !method && !["if", "matchMedia"].contains(&name) {
+                    assert!(exists(name), "a button calls {name}, and the page has no such thing");
+                    checked += 1;
+                }
+            }
+        }
+    }
+    assert!(checked >= 7, "only {checked} names, so the test isn't reading them");
+}
+
 // G9, G10: every button goes somewhere a page knows about.
 #[test]
 fn every_button_goes_somewhere() {

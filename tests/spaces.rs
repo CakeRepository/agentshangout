@@ -3272,3 +3272,113 @@ async fn leaving_a_room_takes_you_out_of_it_at_once() {
     server.post(&ann.key, &away, json!({})).await.ok();
     assert_eq!(server.present(&bo.key, &room).await, ids(&[&bo]), "she left and is still here");
 }
+
+/// What a page puts in its top bar, from `frame.actions.append(` to the end of that statement.
+fn top_bar<'a>(app: &'a str, view: &str) -> &'a str {
+    let view = app.split_once(&format!("async function {view}(")).unwrap().1;
+    let bar = view.split_once("frame.actions.append(").unwrap().1;
+    bar.split_once("));").unwrap().0
+}
+
+/// That each of `buttons` is in `bar`, in that order.
+fn in_order(bar: &str, buttons: &[&str]) {
+    let at: Vec<usize> = buttons
+        .iter()
+        .map(|button| bar.find(button).unwrap_or_else(|| panic!("{button} isn't in {bar}")))
+        .collect();
+    assert!(at.is_sorted(), "{buttons:?} are out of order in {bar}");
+}
+
+// S63
+#[test]
+fn the_way_back_is_in_the_top_bar_and_nothing_to_leave_by_is_drawn_over_a_room() {
+    // Someone in a house couldn't find the way out when it stood in the room's corner, where a panel
+    // could cover it (#159). Nothing here runs a browser, so this reads the page.
+    let frame = include_str!("../web/city.js");
+    assert!(
+        frame.contains("header.append(back, title, actions);"),
+        "the way back isn't first in the bar"
+    );
+    let app = include_str!("../web/app.js");
+    assert!(
+        app.contains("frame.back.append(backLink(backPath, backText, backShort));"),
+        "a room's way back isn't in the bar"
+    );
+    assert!(
+        app.contains(
+            "frame.back.replaceChildren(backLink(`/h/${back.id}`, 'Back to the room', 'Room'));"
+        ),
+        "the Customize page's way back isn't in the same place"
+    );
+    assert!(
+        app.contains("return link(path, `← ${short}`, {"),
+        "the way back says something else at some width"
+    );
+    let css = include_str!("../web/style.css");
+    assert!(
+        !app.contains("stage-exit") && !css.contains("stage-exit"),
+        "the way out is still drawn over the room"
+    );
+    assert!(
+        css.contains(".wd-title-back:empty { display: none; }"),
+        "the map, with nothing to go back to, keeps a gap for it"
+    );
+}
+
+// S64
+#[test]
+fn a_room_keeps_the_top_bar_of_the_map() {
+    let app = include_str!("../web/app.js");
+    let map = top_bar(app, "worldView");
+    let room = top_bar(app, "roomView");
+    // The same five end both bars, and the buttons are held to the right, so what only one of them
+    // has goes in front. Then a door moves none of the five.
+    in_order(
+        map,
+        &[
+            "panels.toggle('about'",
+            "panels.toggle('info'",
+            "panels.toggle('around'",
+            "account.toggle",
+            "dresser.toggle",
+            "panels.toggle('more'",
+        ],
+    );
+    in_order(
+        room,
+        &[
+            "questionsToggle.button",
+            "panels.toggle('notes'",
+            "checkInsToggle.button",
+            "builder.toggle",
+            "chatToggle.button",
+            "panels.toggle('crew'",
+            "account.toggle",
+            "dresser.toggle",
+            "panels.toggle('more'",
+        ],
+    );
+    for bar in [map, room] {
+        let more = bar.split_once("panels.toggle('more'").unwrap().1;
+        assert!(!more.contains(".toggle"), "More isn't last in {bar}");
+    }
+    let css = include_str!("../web/style.css");
+    assert!(!css.contains(".wd-title-actions .more {"), "More comes and goes with the width");
+    assert_eq!(
+        app.matches("const account = accountPanel(panels, me, parts);").count(),
+        2,
+        "your account isn't the same panel on the map and in a room"
+    );
+}
+
+// S65
+#[test]
+fn a_narrow_room_keeps_its_name_and_every_button() {
+    let css = include_str!("../web/style.css");
+    assert!(css.contains(".wd-room .wd-title { flex-wrap: wrap; }"), "the buttons can't wrap");
+    assert!(css.contains(".wd-room .wd-title-text { min-width: 64px; }"), "the name can vanish");
+    assert!(
+        css.contains(".wd-room .wd-title-actions { margin-left: auto; }"),
+        "buttons on a line of their own aren't where they were"
+    );
+}
