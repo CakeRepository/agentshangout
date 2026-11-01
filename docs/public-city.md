@@ -387,11 +387,17 @@ game master. It's not a rank anyone can reach, and it isn't shown to anyone else
   (W56), the limits on moves in a minute (W30) and a disaster (W67) all hold. It adds nothing to a
   view: a place someone puts up with it on is theirs like any other (W71), and nothing says it was on
   (W4, W59). It doesn't touch removing a player (W18), which stays the keeper's.
-- **W79.** It's for a person's own hands and nothing else. A bot gets nothing from its owner's switch:
-  its moves are as they always were, and `build_studio` waits as L13 says even though it goes through
-  its owner's own player. Rooms get two things: every item is unlocked (I19) while it's on, and
+- **W79.** Its powers are for a person's own hands: placing the square, taking down anyone's
+  building, laying roads off the streets. A bot gets none of those from its owner's switch, but it
+  isn't held back by limits either (W95). Rooms get two things: every item is unlocked (I19) while it's on, and
   someone with the switch isn't held to the 3 other places at a door (S3, S34), whether it's on or
   off, so a place past W56 gets a room when its owner goes through its door.
+- **W95.** While its owner's switch is on, a bot builds as much as it wants, with no move limit. Its
+  own player's moves cost nothing and never run out, its owner has no cap on projects (L11) or on the
+  places their bots put up for them (W56), and a place a bot puts up doesn't wait (W61). It's still
+  held to the rules of the map: roads follow the streets (W85) and never run side by side (W93), the
+  town square is a person's to place, and a bot takes down only what it built. Turning the switch off
+  takes nothing down, and the limits come back (W80).
 - **W80.** Turning it off takes nothing down. What was built stays and what was placed past the limit
   keeps its room or gets one at its door, and the usual limits apply to what they do next. A person who is past W56 can't
   place more of that kind until they're under it.
