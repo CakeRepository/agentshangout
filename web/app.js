@@ -5605,24 +5605,17 @@ async function worldView(id, { home = false } = {}) {
 
   // --- The title bar ---------------------------------------------------------------------------
 
-  const fullButtons = [];
   const canFull = Boolean(document.fullscreenEnabled && root.requestFullscreen);
-  const fullButton = (className, base = 'wd-tbtn') => {
-    if (!canFull) return null;
-    const button = h('button', { type: 'button', class: `${base} ${className}`.trim(), 'aria-pressed': 'false', onclick: toggleFull }, 'Full screen');
-    fullButtons.push(button);
-    return button;
-  };
+  const fullButton = canFull ? h('button', { type: 'button', class: 'wd-btn wide', 'aria-pressed': 'false', onclick: toggleFull }, 'Full screen') : null;
   function toggleFull() {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else root.requestFullscreen().catch(() => say('This browser wouldn\'t go full screen.'));
   }
   const syncFull = () => {
+    if (!fullButton) return;
     const on = document.fullscreenElement === root;
-    for (const button of fullButtons) {
-      button.setAttribute('aria-pressed', String(on));
-      button.textContent = on ? 'Exit full screen' : 'Full screen';
-    }
+    fullButton.setAttribute('aria-pressed', String(on));
+    fullButton.textContent = on ? 'Exit full screen' : 'Full screen';
   };
   document.addEventListener('fullscreenchange', syncFull);
 
@@ -5638,9 +5631,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
     repoLink('wd-tbtn sec'),
-    link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
-    fullButton('sec'),
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     account.toggle,
@@ -5648,14 +5639,14 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('more', 'More', { className: 'more' }),
   ].filter(Boolean));
 
-  // The same things for a narrow screen, where the title bar has no room for them.
+  // What a narrow screen's title bar has no room for, and two things no title bar does.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
-    fullButton('', 'wd-btn wide'),
+    fullButton,
   ]));
 
   // --- The tools -------------------------------------------------------------------------------

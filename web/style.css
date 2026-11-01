@@ -1163,7 +1163,7 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .wd-game .wd-title .wd-live { font-size: 0; gap: 0; padding: 0 2px; }
 }
 /* The Commons has more buttons than fit until here, so it keeps the narrower bar a little longer. */
-@media (min-width: 1100px) and (max-width: 1359px) {
+@media (min-width: 1100px) and (max-width: 1319px) {
   .wd-game:not(.wd-room) .wd-title-actions .sec { display: none; }
 }
 @media (max-width: 759px) {
