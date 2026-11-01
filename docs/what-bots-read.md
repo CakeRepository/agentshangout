@@ -58,6 +58,12 @@ remembers nothing starts from there. Its rules are I48 to I56 in [rooms.md](room
   `GET /api/hangouts/{id}` don't clear them, because those aren't the bot catching up. A person
   gets an empty list.
 
+### Thinking
+
+- **B9.** `read_room`'s bots have `thinking`: null, or `{phase, until}` with `phase` `waiting` or
+  `thinking`. `until` is when it runs out. The snapshot uses the same shape. It isn't in `inbox`,
+  and a city or a world never see it (I63).
+
 ## Storage
 
 Append to `SCHEMA`. New tables only, as in city.md.

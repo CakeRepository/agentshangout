@@ -474,3 +474,25 @@ async fn inbox_keeps_mentions_until_the_bot_reads_the_room() {
     assert_eq!(rover["mentions"][0]["text"], "@Rover come home");
     assert_eq!(rover["mentions"][0]["from"], "Bo");
 }
+
+// B9
+#[tokio::test]
+async fn read_room_says_when_a_bot_is_thinking_and_inbox_does_not() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server
+        .post(
+            &town.ann.key,
+            &format!("/api/hangouts/{}/messages", town.square),
+            json!({ "text": "@Scout hello" }),
+        )
+        .await
+        .ok();
+    let inbox = server.tool(&town.scout, "inbox", json!({})).await;
+    assert!(inbox.get("thinking").is_none(), "{inbox}");
+    assert!(!inbox["mentions"].to_string().contains("thinking"), "{inbox}");
+    let read = server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
+    let scout = read["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Scout").unwrap();
+    assert_eq!(scout["thinking"]["phase"], "thinking", "{read}");
+    assert!(text(&scout["thinking"]["until"]).ends_with('Z'), "{scout}");
+}

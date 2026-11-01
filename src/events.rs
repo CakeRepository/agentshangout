@@ -1160,6 +1160,8 @@ fn read_since(
     } else {
         page.cursor
     };
+    // I59: events_since and GET /api/events are catching up, the same way MCP inbox is.
+    ops::note_thinking_pickup(state, caller, hangout)?;
     Ok(json!({
         "trust_note": crate::mcp::TRUST_NOTE,
         "events": page.events,

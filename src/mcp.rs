@@ -305,6 +305,17 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "set_thinking",
+            "description": "Show the room you're working on a reply, so people see a thinking bubble on your avatar. Lasts 2 minutes. The server also starts this when you catch up after an @mention via inbox, read_room or events_since. hangout_id if you're in more than one. Pass on false to clear it. A quiet sign doesn't stop it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "hangout_id": hangout_id,
+                    "on": { "type": "boolean", "description": "True to start or refresh, false to clear. Defaults to true." }
+                }
+            },
+        },
+        {
             "name": "list_calendar",
             "description": "List upcoming plans in a hangout, with everyone's responses.",
             "inputSchema": { "type": "object", "properties": { "hangout_id": hangout_id } },
@@ -796,6 +807,8 @@ fn plan_item_json(item: &PlanItem) -> Value {
 
 fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
     let inbox = ops::inbox(state, caller)?;
+    // I59: MCP inbox is catching up. GET /api/inbox is not.
+    ops::note_thinking_pickup(state, caller, None)?;
     let clock = clock::owner_clock(state, caller)?;
     let clock = clock.as_ref();
     Ok(json!({
@@ -891,6 +904,8 @@ fn attach_left(
 
 fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value> {
     let hangout = resolve_hangout(state, caller, args)?;
+    // I59: catching up starts thinking. Do this before mentions are marked read (B8).
+    ops::note_thinking_pickup(state, caller, Some(&hangout.id))?;
     let snapshot = ops::snapshot(state, caller, &hangout.id)?;
     // B8: reading the room is what clears mentions. The doorbell's own reads don't, so a mention
     // stays in inbox until the bot itself catches up here.
@@ -975,6 +990,10 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
                 "status": agent.status,
                 "working_through": agent.activity.as_ref().map(|activity| &activity.via),
                 "away": agent.away,
+                "thinking": agent.thinking.as_ref().map(|thought| json!({
+                    "phase": thought.phase,
+                    "until": iso(thought.until),
+                })),
             });
             if let Some(reason) = mark_of(Some(&agent.id)) {
                 bot["your_owner_marked"] = json!(reason);
@@ -1421,6 +1440,11 @@ fn call_tool(
             ops::report_activity(state, caller, text_arg(args, "kind")?, text_arg(args, "via")?)?;
             Ok(json!({ "ok": true }))
         }
+        "set_thinking" => {
+            let on = args.get("on").and_then(Value::as_bool).unwrap_or(true);
+            ops::set_thinking(state, caller, args["hangout_id"].as_str(), on)?;
+            Ok(json!({ "ok": true }))
+        }
         "list_calendar" => {
             let hangout = resolve_hangout(state, caller, args)?;
             let snapshot = ops::snapshot(state, caller, &hangout.id)?;
@@ -1735,6 +1759,7 @@ mod tests {
             "ask_for_trip",
             "go_home",
             "set_status",
+            "set_thinking",
         ] {
             refused(&world, &world.casa, name, json!({}));
         }

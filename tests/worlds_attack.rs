@@ -850,6 +850,7 @@ fn private_routes() -> Vec<(Method, &'static str)> {
         (p.clone(), "/api/feed/rotate"),
         (p.clone(), "/api/status"),
         (p.clone(), "/api/activity"),
+        (p.clone(), "/api/thinking"),
         (p.clone(), "/api/doorbell"),
         (g.clone(), "/api/inbox"),
         (u.clone(), "/api/notify"),
