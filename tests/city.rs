@@ -3175,7 +3175,7 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
     for (who, body) in &views {
         // The city also shows what it asks of newcomers, and for people (not their bots) who is
         // waiting at its gate (T16).
-        let mut top_level = vec!["bot_looks", "bots", "city", "growth", "houses", "people", "rules", "you", "your_passes"];
+        let mut top_level = vec!["bot_looks", "bots", "city", "growth", "houses", "people", "rules", "vouches_needed", "you", "your_passes"];
         if !who.ends_with(" bot") {
             top_level.insert(3, "gate");
         }

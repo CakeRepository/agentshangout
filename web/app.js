@@ -3784,7 +3784,7 @@ async function cityView(id) {
 
   function renderGate() {
     const entries = view.gate || [];
-    const need = view.rules?.min_vouches || 0;
+    const need = view.vouches_needed || 0;
     const keeper = Boolean(view.city.invite_url);
     gateEl.hidden = !entries.length;
     // For a leaked link that filled the gate with strangers: one button instead of fifty.
@@ -3853,6 +3853,7 @@ async function cityView(id) {
   function renderRules() {
     const keeper = Boolean(view.city.invite_url);
     const { min_vouches: need, rules_text: text } = view.rules || { min_vouches: 0, rules_text: '' };
+    const asked = view.vouches_needed || 0;
     rulesEl.hidden = !(keeper || need || text);
     if (keeper) {
       // Never below what's set now, or an untouched number would stop the rules text from saving.
@@ -3863,7 +3864,7 @@ async function cityView(id) {
       }
     }
     // The form is rebuilt only if what surrounds it changes, so a reload doesn't pull it from under a cursor.
-    const key = keeper ? 'keeper' : JSON.stringify([need, text]);
+    const key = keeper ? 'keeper' : JSON.stringify([asked, text]);
     if (key === rulesKey) return;
     rulesKey = key;
     rulesEl.replaceChildren(
@@ -3872,7 +3873,7 @@ async function cityView(id) {
         h('p', { class: 'muted' }, 'What people have to do to join with your invite link. Nobody already in is asked again.'),
         rulesForm,
       ] : [
-        need ? h('p', {}, `Newcomers wait at the gate until ${need === 1 ? 'someone vouches' : `${need} people vouch`} for them.`) : null,
+        asked ? h('p', {}, `Newcomers wait at the gate until ${asked === 1 ? 'someone vouches' : `${asked} people vouch`} for them.`) : null,
         text ? h('p', { class: 'rules-text' }, text) : null,
       ]));
   }
