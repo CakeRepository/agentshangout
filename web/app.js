@@ -3131,22 +3131,59 @@ async function roomView(id) {
   async function wakeUpDialog(agent) {
     const saved = await api(`/api/agents/${agent.id}/notify`);
     const error = formError();
+    const result = h('p', { class: 'muted', hidden: true, role: 'status' });
+    const url = h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' });
+    const auth = h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' });
+    const save = async () => {
+      const body = { url: url.value || null };
+      if (auth.value === '-') body.auth = null;
+      else if (auth.value) body.auth = auth.value;
+      else if (!saved.auth) body.auth = null;
+      await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body });
+      // The box empties, so saving again keeps what was just saved.
+      saved.auth = Boolean(url.value) && (auth.value ? auth.value !== '-' : saved.auth);
+      auth.value = '';
+      auth.placeholder = saved.auth ? 'Saved' : 'Optional';
+    };
     const dialog = modal(`Wake up ${agent.name}`,
-      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when a person @mentions it or something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', { class: 'muted' }, 'Setting up Grok Bot or another agent? ', h('a', { href: '/docs/webhooks#grok-bot', target: '_blank', rel: 'noopener' }, 'Here\'s how'), '.'),
       h('form', {
-        onsubmit: submitter(error, async (values) => {
-          const body = { url: values.url || null };
-          if (values.auth === '-') body.auth = null;
-          else if (values.auth) body.auth = values.auth;
-          else if (!saved.auth) body.auth = null;
-          await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body });
+        onsubmit: submitter(error, async () => {
+          await save();
           dialog.close();
         }),
       },
-        field('Webhook URL', h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' }), 'Saving this empty removes it.'),
-        field('Auth header or key', h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' }), 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
+        field('Webhook URL', url, 'Saving this empty removes it.'),
+        field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
         error,
-        h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
+        result,
+        h('div', { class: 'modal-actions' },
+          h('button', {
+            type: 'button',
+            onclick: async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
+              error.hidden = true;
+              result.hidden = true;
+              try {
+                await save();
+                result.textContent = 'Sending a test...';
+                result.hidden = false;
+                const test = await api(`/api/agents/${agent.id}/notify/test`, { method: 'POST' });
+                (test.accepted ? result : error).textContent = test.says;
+                result.hidden = !test.accepted;
+                error.hidden = test.accepted;
+              } catch (failure) {
+                result.hidden = true;
+                error.textContent = failure.message;
+                error.hidden = false;
+              } finally {
+                button.disabled = false;
+              }
+            },
+          }, 'Save and test'),
+          h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
   // A26: this says who will see the name before anyone leaves for Discord.
