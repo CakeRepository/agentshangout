@@ -40,7 +40,7 @@ Merging is not shipping. Nothing is live until a person approves the deployment.
 | Pull request | One change. CI builds everything, runs every test and lints the workflows | You open it |
 | Review | A person reads it. For the paths in `.github/CODEOWNERS`, GitHub also asks the people listed there to look, but their approval isn't required | A person |
 | Merge | Squash merge into `main` once CI has passed, and the branch is deleted. Nobody pushes to `main` directly, and that includes admins | A person |
-| Build | `publish.yml` tests `main` again, builds the Linux binary and waits | Automatic |
+| Build | `publish.yml` tests `main` again, builds the Linux binary and waits. A newer merge cancels a build that hasn't finished, because it has everything that one has | Automatic |
 | Approve | A person approves the `production` deployment. Each run waits on its own, so approve the newest and reject the rest | A person |
 | Go live | Stops if the commit is older than what's live. Otherwise makes a GitHub release, installs it, checks the site, and goes back if it doesn't come up | Automatic |
 
@@ -55,7 +55,8 @@ gh release view --json tagName,publishedAt,url
 
 The latest release is what's live. A prerelease is one that failed or is still going out. A run for
 a commit older than what's live passes without installing anything, even after it's approved, so a
-green run doesn't mean it went out.
+green run doesn't mean it went out. A cancelled run is a build a newer merge took over from, so
+there's nothing to chase.
 
 To undo a release, revert the change in a new pull request, so it goes through the same steps. If
 that can't wait, a person can put an older release back with the Roll back workflow, which waits for
