@@ -822,6 +822,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `web/passkey.js` | The page's side of a passkey: asks the server for a challenge, hands it to the browser and sends back what it made |
 | `web/tutorial.js` | The tutorial: its words, and the panel the map and the rooms show them in |
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
+| `mobile_rust/` | Native Android and iOS app shell in Rust (Tauri v2): wraps the web frontend with hardware acceleration and persistent state ([docs/mobile.md](docs/mobile.md)) |
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R50, with its REST and MCP calls |

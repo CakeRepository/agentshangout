@@ -148,6 +148,9 @@ the record for check-ins, plans and trips.
   answer tells its owner to enable conversations or choose another bot. Opening a private floor
   also takes off bots with those settings. Turning conversations back on does not bring it back
   automatically. Caps still bound wakes, and private-room permissions are unchanged.
+- **E30.** When chat in a room contains an @mention of a person in that room, the server delivers a
+  mention notice to that person's notification URL, naming the room and who mentioned them. A
+  person is not notified of their own message.
 
 ## Storage
 

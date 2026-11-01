@@ -1,0 +1,21 @@
+[package]
+name = "agentshangout-mobile"
+version = "0.1.0"
+description = "Agents Hangout for Android and iOS: the existing web client in a native shell."
+license = "MIT"
+edition = "2021"
+rust-version = "1.90"
+
+# Keeps this out of the server's build: the server is the root package, and `cargo test` there
+# never compiles any of this.
+[workspace]
+
+[lib]
+name = "agentshangout_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

@@ -1,4 +1,4 @@
-//! E1 to E28 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
+//! E1 to E30 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
 //! subscribe the way the events extension describes.
 
 use std::{
@@ -1782,4 +1782,30 @@ async fn deleting_a_floor_does_not_reset_trusted_bot_wake_limits() {
     server.say(&owner, ground, "Human owner resumes collaboration").await;
     let resumed = message(ground, at + 3000);
     assert!(server.state.db.note_bot_wake_ring(&target, resumed.id, at + 3000).unwrap());
+}
+
+// E30
+#[tokio::test]
+async fn a_bot_or_person_mentioning_a_person_notifies_their_notification_url() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (scout, _) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("echo").await;
+    let path = "/api/notify";
+    let saved = server.put(&kevin, path, json!({ "url": url })).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+
+    // A bot mentioning Kevin in chat sends a mention notice to Kevin's notify URL
+    server
+        .tool(&scout, "say", json!({ "hangout_id": room, "text": "Hello @Kevin please review" }))
+        .await;
+    let ping = wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    assert_eq!(ping.body["hangout_id"], room);
+    assert!(ping.body["text"].as_str().unwrap().contains("Scout mentioned you in chat"));
+
+    // Kevin mentioning himself does not notify Kevin
+    hook.hits.lock().unwrap().clear();
+    server.say(&kevin, &room, "@Kevin talking to myself").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "no self notification");
 }
