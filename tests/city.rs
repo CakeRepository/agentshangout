@@ -446,6 +446,27 @@ async fn start_receiver() -> (String, Arc<Mutex<Vec<Value>>>) {
     (url, received)
 }
 
+// E24: a trip is a visit its owner agreed to, so it isn't held to the limits for going out.
+#[tokio::test]
+async fn the_people_a_bot_is_visiting_can_wake_it() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
+    let (url, received) = start_receiver().await;
+    let saved = server
+        .put(&w.bo.key, &format!("/api/agents/{}/notify", scout.id), json!({ "url": url }))
+        .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+    server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "call", "").await;
+
+    let path = format!("/api/hangouts/{}/messages", w.ann_home.porch);
+    let said = server.post(&w.ann.key, &path, json!({ "text": "@Scout welcome" })).await;
+    assert_eq!(said.status, StatusCode::OK, "{}", said.body);
+
+    let ping = wait_for_notice(&received, "mention").await;
+    assert_eq!(ping["hangout_id"], json!(w.ann_home.porch));
+}
+
 async fn wait_for_notice(received: &Mutex<Vec<Value>>, event: &str) -> Value {
     for _ in 0..60 {
         let found =
@@ -4640,6 +4661,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "notify_auth",
         "bots_without_a_house",
         "floors_left",
+        "wake_settings",
+        "wake_rings",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -4669,6 +4692,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
             "whiteboards",
             "mentions",
             "floor_leaves",
+            "wake_rings",
+            "wake_settings",
             "floors_left",
             "bots_without_a_house",
             "bot_places",

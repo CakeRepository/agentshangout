@@ -286,7 +286,7 @@ pub fn post_message(
 }
 
 /// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22: a
-/// person's also rings a bot that belongs here.
+/// person's can also ring it.
 fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     if message.kind != "chat" {
         return Ok(());
@@ -302,7 +302,7 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
         if crate::doorbell::mentions(&message.body, &bot.name) {
             // Asked before adding this one, which would otherwise be what it's waiting to read.
             let rings =
-                message.agent_id.is_none() && belongs && rings_for_mention(state, message, bot)?;
+                message.agent_id.is_none() && rings_for_mention(state, message, bot, belongs)?;
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
             if rings {
                 let notice = notify::Notice {
@@ -318,11 +318,37 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     Ok(())
 }
 
-/// E22: a paused bot stays asleep, and one that hasn't read the last ring doesn't need another.
-fn rings_for_mention(state: &AppState, message: &Message, bot: &Agent) -> ApiResult<bool> {
-    let since = message.created_at - MENTION_RING_SECS;
-    Ok(!state.db.doorbell_paused(&bot.id)?
-        && !state.db.person_mention_unread(&bot.id, &message.hangout_id, since)?)
+/// E22, E24, E25: whether this person's @mention rings this bot. `belongs` is whether the bot
+/// belongs in this room. A ring is recorded here, because the cap is decided as it's counted.
+fn rings_for_mention(
+    state: &AppState,
+    message: &Message,
+    bot: &Agent,
+    belongs: bool,
+) -> ApiResult<bool> {
+    let room = &message.hangout_id;
+    let at = message.created_at;
+    let speaker = message.person_id.as_deref().unwrap_or_default();
+    let owner = speaker == bot.owner_id;
+    if state.db.notify_url(&bot.id)?.is_none()
+        || state.db.doorbell_paused(&bot.id)?
+        || state.db.wake_ring_unread(&bot.id, room, at - MENTION_RING_SECS)?
+        || (!owner && state.db.wakes_only_for_owner(&bot.id)?)
+    {
+        return Ok(false);
+    }
+    // A bot on a trip isn't out, so its hosts can wake it the way the doorbell does (L10).
+    let out = !belongs && state.db.bot_visits(&bot.id, at)?.contains(room);
+    let cap = if owner || (!out && state.db.is_member(room, speaker)?) {
+        None
+    } else {
+        let routine = crate::routines::routine_view(state, &bot.id, &bot.owner_id)?;
+        if !routine.social_now {
+            return Ok(false);
+        }
+        Some(routine.max_social_runs)
+    };
+    Ok(state.db.note_wake_ring(&bot.id, message.id, at, cap)?)
 }
 
 /// I49: the room's one slate. What's written replaces what was there, and an empty text wipes it.
@@ -1020,8 +1046,13 @@ pub fn set_agent_notify(
     agent_id: &str,
     url: NotifyAuth<'_>,
     auth: NotifyAuth<'_>,
+    only_me: Option<bool>,
 ) -> ApiResult<()> {
     own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
+    // Everything is checked before anything is written, so a save that's refused changes nothing.
+    if let NotifyAuth::Set(secret) = &auth {
+        notify::auth_header(secret)?;
+    }
     // Leaving the URL out keeps the one already saved. An empty one removes the ping and the key.
     let url = match url {
         NotifyAuth::Keep => state.db.notify_url(agent_id)?,
@@ -1035,6 +1066,9 @@ pub fn set_agent_notify(
             }
         }
     };
+    if let Some(only_me) = only_me {
+        state.db.set_wakes_only_for_owner(agent_id, only_me)?;
+    }
     if url.is_none() {
         state.db.set_notify_url(agent_id, None)?;
         state.db.set_notify_auth(agent_id, None)?;
@@ -1044,10 +1078,7 @@ pub fn set_agent_notify(
     match auth {
         NotifyAuth::Keep => {}
         NotifyAuth::Clear => state.db.set_notify_auth(agent_id, None)?,
-        NotifyAuth::Set(secret) => {
-            notify::auth_header(secret)?;
-            state.db.set_notify_auth(agent_id, Some(secret.trim()))?;
-        }
+        NotifyAuth::Set(secret) => state.db.set_notify_auth(agent_id, Some(secret.trim()))?,
     }
     Ok(())
 }
@@ -1074,7 +1105,8 @@ pub fn agent_notify(
     own_agent(state, caller, agent_id, "see a bot's wake-up URL")?;
     let url = state.db.notify_url(agent_id)?;
     let auth = state.db.notify_auth(agent_id)?.is_some();
-    Ok(serde_json::json!({ "url": url, "auth": auth }))
+    let only_me = state.db.wakes_only_for_owner(agent_id)?;
+    Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me }))
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {
