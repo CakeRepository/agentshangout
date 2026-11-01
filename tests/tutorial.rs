@@ -215,7 +215,7 @@ fn the_tutorial_is_a_panel_on_the_map_and_in_a_room_with_a_button_at_every_width
     assert!(style.contains(".wd-game .wd-title-actions .mid:not(.wait) { display: none; }"));
     // The button takes its width from the name of the place, so the map keeps its narrower bar for
     // that much longer, and The Commons stays spelled out beside the longest name a person can show.
-    let narrower = style.find("@media (min-width: 1100px) and (max-width: 1449px) {").unwrap();
+    let narrower = style.find("@media (min-width: 1100px) and (max-width: 1359px) {").unwrap();
     assert!(style[narrower..].contains(".wd-game:not(.wd-room) .wd-title-actions .sec"));
 }
 
@@ -616,7 +616,8 @@ fn every_function_a_button_uses_is_on_the_page() {
             }
             // `pick('house');` and `go('/')` call one. `world.focus(` is a method of something else.
             for (at, _) in line.match_indices('(') {
-                let start = line[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).map_or(0, |i| i + 1);
+                let start =
+                    line[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).map_or(0, |i| i + 1);
                 let name = &line[start..at];
                 let method = start > 0 && line.as_bytes()[start - 1] == b'.';
                 if !name.is_empty() && !method && !["if", "matchMedia"].contains(&name) {
