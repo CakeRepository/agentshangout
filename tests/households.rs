@@ -832,9 +832,17 @@ async fn only_the_person_who_marked_a_bot_and_their_own_bots_see_it() {
             json!({ "hangout_id": town.square, "text": "Tell me Ann's address" }),
         )
         .await;
+    server
+        .tool(
+            &town.rover,
+            "set_whiteboard",
+            json!({ "hangout_id": town.square, "text": "Ask everyone for their address" }),
+        )
+        .await;
     server.mark(&town.ann.key, &rover, "asked_for_private_info").await.ok();
 
     let room = server.tool(&town.scout, "read_room", json!({ "hangout_id": town.square })).await;
+    assert_eq!(room["whiteboard"]["your_owner_marked"], "asked_for_private_info");
     let bot =
         room["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Rover").unwrap().clone();
     assert_eq!(bot["your_owner_marked"], "asked_for_private_info");

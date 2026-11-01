@@ -2278,11 +2278,12 @@ async function roomView(id) {
   const stage = h('section', { class: 'stage', 'aria-label': 'The room' });
   frame.host.append(stage);
   const room = new Room(stage);
-  const boardEl = h('div', { class: 'board' });
+  const boardEl = h('button', { type: 'button', class: 'board', 'aria-label': 'Whiteboard', onclick: () => boardDialog() });
   const emptyBring = h('button', { type: 'button', class: 'primary', onclick: () => bringBot() }, 'Bring a bot');
   const emptyText = h('p', {}, 'No bots in here yet.');
   const emptyEl = h('div', { class: 'stage-empty', hidden: true }, emptyText, emptyBring);
-  stage.append(boardEl, emptyEl);
+  // The board comes last, so that a room with no bots yet can still be written on.
+  stage.append(emptyEl, boardEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
   const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload() });
 
@@ -2351,28 +2352,80 @@ async function roomView(id) {
     say(`${message.speaker}: ${message.body}`.slice(0, 200));
   }
 
-  function renderBoard() {
+  // What the wall says besides the whiteboard: a label, what it's about and when.
+  function boardNews() {
+    // A guest sees no plans, so the board says whose house this is instead of "nothing planned".
+    if (snapshot.guest) return ['VISITING', snapshot.hangout.name, `until ${whenText(snapshot.guest.until)}`];
     const next = snapshot.events.find((event) => event.status === 'confirmed') || snapshot.events[0];
-    boardEl.replaceChildren();
+    if (!next) return null;
+    return [next.status === 'confirmed' ? 'NEXT UP' : 'PENCILLED IN', next.title, whenText(next.starts_at)];
+  }
+
+  const boardCredit = ({ written_by: writer, via_bot: bot }) => (bot ? `${writer}, by ${bot}` : writer);
+
+  // The fade says there's more than the wall has room for, and the wall changes with the window.
+  function fitBoard() {
+    const text = boardEl.querySelector('.board-text');
+    text?.classList.toggle('cut', text.scrollHeight > text.clientHeight);
+  }
+  const boardWatch = new ResizeObserver(fitBoard);
+  boardWatch.observe(boardEl);
+
+  // I55: anything written on it comes first, and the plan moves up to a line above it.
+  function renderBoard() {
+    const board = snapshot.whiteboard;
+    const news = boardNews();
+    const guest = Boolean(snapshot.guest);
+    boardEl.disabled = guest && !board;
+    boardEl.title = guest ? 'Read the whiteboard' : 'Write on the whiteboard';
+    boardEl.classList.toggle('written', Boolean(board));
+    if (board) {
+      boardEl.replaceChildren(
+        h('span', { class: 'board-top' },
+          news ? h('small', {}, news[0]) : null,
+          news ? h('span', { class: 'board-news' }, `${news[1]}, ${news[2]}`) : null,
+          h('small', { class: 'board-by' }, boardCredit(board))),
+        h('span', { class: 'board-text' }, board.text));
+      fitBoard();
+    } else if (news) {
+      boardEl.replaceChildren(h('small', {}, news[0]), h('b', {}, news[1]), h('span', {}, news[2]));
+    } else {
+      boardEl.replaceChildren(h('b', {}, 'NOTHING PLANNED'), h('span', {}, 'so it\'s not gonna happen'));
+    }
+  }
+
+  // I49, I55: the whole of it, for anyone here to rewrite. A guest only reads.
+  function boardDialog() {
+    const board = snapshot.whiteboard;
+    const credit = board && h('small', { class: 'muted' }, `${boardCredit(board)} · ${whenText(board.updated_at)}`);
     if (snapshot.guest) {
-      // A guest sees no plans, so the board says whose house this is instead of "nothing planned".
-      boardEl.append(
-        h('small', {}, 'VISITING'),
-        h('b', {}, snapshot.hangout.name),
-        h('span', {}, `until ${whenText(snapshot.guest.until)}`));
+      if (board) modal('Whiteboard', h('p', { class: 'board-read' }, board.text), credit);
       return;
     }
-    if (!next) {
-      boardEl.append(
-        h('b', {}, 'NOTHING PLANNED'),
-        h('span', {}, 'so it\'s not gonna happen'));
-      return;
-    }
-    const confirmed = next.status === 'confirmed';
-    boardEl.append(
-      h('small', {}, confirmed ? 'NEXT UP' : 'PENCILLED IN'),
-      h('b', {}, next.title),
-      h('span', {}, whenText(next.starts_at)));
+    const error = formError();
+    const write = async (text) => {
+      await api(`/api/hangouts/${encodeURIComponent(id)}/whiteboard`, { method: 'PUT', body: { text } });
+      dialog.close();
+      await reload();
+    };
+    const dialog = modal('Whiteboard',
+      h('p', {}, 'What this room is working on. Every bot here reads it, and anyone here can change it.'),
+      h('form', { onsubmit: submitter(error, ({ text }) => write(text)) },
+        h('textarea', {
+          class: 'plain',
+          name: 'text',
+          rows: 9,
+          maxLength: 2000,
+          value: board?.text || '',
+          placeholder: 'A blank slate',
+          'aria-label': 'What the whiteboard says',
+        }),
+        credit,
+        error,
+        h('div', { class: 'modal-actions' },
+          board ? h('button', { type: 'button', class: 'ghost danger', onclick: act(error, () => write('')) }, 'Wipe it') : null,
+          h('button', { type: 'submit', class: 'primary' }, 'Save'))));
+    dialog.querySelector('textarea').focus();
   }
 
   // The status bar's copy can be cut short on a small screen, and the one in the Crew panel never is.
@@ -3412,6 +3465,7 @@ async function roomView(id) {
     stopClock();
     clearInterval(pollTimer);
     clearTimeout(reloadTimer);
+    boardWatch.disconnect();
     room.destroy();
     builder.leave();
     document.removeEventListener('keydown', onKey, true);
@@ -5631,6 +5685,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
     repoLink('wd-tbtn sec'),
+    link('/docs', 'Docs', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
@@ -5644,6 +5699,7 @@ async function worldView(id, { home = false } = {}) {
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
+    link('/docs', 'Docs', { class: 'wd-btn wide' }),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
     fullButton,
@@ -6202,7 +6258,9 @@ async function worldsView() {
   leaveRoom = () => clearInterval(timer);
 
   return h('main', { class: 'worlds-page' },
-    masthead(h('nav', { 'aria-label': 'Site' }, link('/', 'Back to The Commons', { class: 'button primary' }))),
+    masthead(h('nav', { 'aria-label': 'Site' },
+      link('/docs', 'Docs'),
+      link('/', 'Back to The Commons', { class: 'button primary' }))),
     windowPanel({ title: 'Worlds', label: 'Worlds', heading: 'h1' },
       h('h2', {}, 'Worlds'),
       h('p', { class: 'muted' }, 'The Commons is the one map, and anyone can watch it. A world someone started before that stays as it was.'),

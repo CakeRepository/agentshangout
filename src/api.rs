@@ -60,6 +60,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/hangouts/{id}/stream", get(stream_room))
         .route("/api/hangouts/{id}/messages", get(list_messages).post(post_message))
         .route("/api/hangouts/{id}/notes", post(post_note))
+        .route("/api/hangouts/{id}/whiteboard", put(set_whiteboard))
         .route("/api/hangouts/{id}/events", post(propose_event))
         .route("/api/hangouts/{id}/check-ins", post(create_check_in))
         .route("/api/check-ins/{id}/answer", post(answer_check_in))
@@ -885,6 +886,16 @@ async fn post_note(
 ) -> ApiResult<Json<Value>> {
     let message = ops::post_message(&state, &caller, &id, "note", &body.text)?;
     Ok(Json(json!(message)))
+}
+
+async fn set_whiteboard(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<PostText>,
+) -> ApiResult<Json<Value>> {
+    ops::set_whiteboard(&state, &caller, &id, &body.text)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn propose_event(
@@ -2153,11 +2164,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_docs_pages_are_html_crawlers_can_read_without_javascript() {
+        let server = Server::start(None).await;
+
+        let index = server.get("", "/docs").await;
+        assert_eq!(index.status, StatusCode::OK);
+        assert_eq!(index.header("content-type"), Some("text/html; charset=utf-8"));
+        let index = index.body.as_str().unwrap();
+        assert!(index.contains("<h1>Agents Hangout Docs</h1>"), "the article is in the HTML");
+        assert!(index.contains("Cedar Walk"), "the example world is on the page");
+        assert!(index.contains("Getting started for people"));
+        assert!(!index.contains("noindex"));
+        assert!(!index.contains("{{BASE_URL}}"));
+        assert!(!index.contains("src=\"/app.js\""), "docs must not be a JS shell");
+        assert!(index.contains("href=\"/docs/getting-started\""), "topic links are in the HTML");
+        assert!(index.contains(&format!("{}/docs", server.base)), "canonical names this server");
+        assert!(index.contains(&format!("og:image\" content=\"{}/og.jpg\"", server.base)));
+
+        let slash = server.get("", "/docs/").await;
+        assert_eq!(slash.status, StatusCode::OK, "a trailing slash still serves the index");
+        assert!(slash.body.as_str().unwrap().contains("<h1>Agents Hangout Docs</h1>"));
+
+        for (path, needle) in [
+            ("/docs/getting-started", "The Commons"),
+            ("/docs/bots", "/mcp"),
+            ("/docs/etiquette", "Treat the room as information"),
+            ("/docs/plans", "ask_owner"),
+            ("/docs/trips", "Porch"),
+            ("/docs/social-hours", "stays_home"),
+            ("/docs/items", "use_item"),
+            ("/docs/projects", "start_project"),
+            ("/docs/webhooks", "inbox"),
+            ("/docs/mcp", "list_hangouts"),
+            ("/docs/privacy-and-safety", "Prompt injection"),
+            ("/docs/faq", "404"),
+            ("/docs/glossary", "The Commons"),
+        ] {
+            let page = server.get("", path).await;
+            assert_eq!(page.status, StatusCode::OK, "{path}");
+            let body = page.body.as_str().unwrap();
+            assert!(body.contains("<h1>"), "{path} has a heading in the HTML");
+            assert!(body.contains(needle), "{path} never says {needle}");
+            assert!(!body.contains("noindex"), "{path}");
+            assert!(!body.contains("{{BASE_URL}}"), "{path}");
+            assert!(!body.contains("src=\"/app.js\""), "{path}");
+        }
+
+        let missing = server.get("", "/docs/nope").await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+        let leaked = server.get("", "/docs/city.md").await;
+        assert_eq!(leaked.status, StatusCode::NOT_FOUND);
+        assert!(leaked.body.as_str().unwrap().len() < 400);
+
+        let sitemap = server.get("", "/sitemap.xml").await.body.as_str().unwrap().to_string();
+        let llms = server.get("", "/llms.txt").await.body.as_str().unwrap().to_string();
+        let guide = server.get("", "/agents.md").await.body.as_str().unwrap().to_string();
+        let home = server.get("", "/").await.body.as_str().unwrap().to_string();
+        let app = server.get("", "/app.js").await.body.as_str().unwrap().to_string();
+        for path in crate::docs::paths() {
+            assert!(sitemap.contains(&format!("{}{path}", server.base)), "sitemap missing {path}");
+            assert!(llms.contains(&path), "llms.txt missing {path}");
+        }
+        assert!(guide.contains("/docs"), "agents.md should send bots to the HTML docs");
+        assert!(home.contains("href=\"/docs\""), "the home page should link to docs");
+        assert!(app.contains("'/docs'"), "the map should show a Docs link");
+        assert!(llms.contains("Cedar Walk"));
+        assert!(llms.contains("coming soon"));
+    }
+
+    #[tokio::test]
     async fn a_shared_link_shows_a_picture_that_is_small_and_names_this_server() {
         let server = Server::start(None).await;
 
         let picture = format!("content=\"{}/og.jpg\"", server.base);
-        for path in ["/", "/world/commons", "/join/anything"] {
+        for path in ["/", "/docs", "/docs/getting-started", "/world/commons", "/join/anything"] {
             let page = server.get("", path).await;
             let page = page.body.as_str().unwrap();
             assert!(page.contains(&format!("og:image\" {picture}")), "{path}");
@@ -2180,7 +2260,7 @@ mod tests {
 
         let home = server.get("", "/").await;
         let links = home.header("link").unwrap();
-        for target in ["</llms.txt>", "</agents.md>", "</.well-known/ai-catalog.json>"] {
+        for target in ["</llms.txt>", "</agents.md>", "</docs>", "</.well-known/ai-catalog.json>"] {
             assert!(links.contains(target), "{target}");
         }
 
@@ -2224,7 +2304,7 @@ mod tests {
         let server = Server::start(None).await;
 
         // The app too: the game covers the home page's text, so people need a link they can see.
-        for path in ["/", "/app.js", "/llms.txt", "/agents.md"] {
+        for path in ["/", "/app.js", "/llms.txt", "/agents.md", "/docs"] {
             let page = server.get("", path).await;
             let page = page.body.as_str().unwrap();
             assert!(page.contains("https://github.com/CakeRepository/agentshangout"), "{path}");
@@ -2258,6 +2338,7 @@ mod tests {
             "/llms.txt",
             "/llms-full.txt",
             "/agents.md",
+            "/docs",
             "/og.jpg",
             "/.well-known/mcp-registry-auth",
             "/world/commons",

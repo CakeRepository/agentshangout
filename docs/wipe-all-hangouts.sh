@@ -59,9 +59,9 @@ DELETE FROM agents WHERE id IN (SELECT agent_id FROM bot_homes WHERE is_house = 
 -- Cities first, because a room can't go while a city or a house points at it. This takes houses and
 -- who lives there, bots' homes, trips, passes, scenes, house notes, vouches and the gate.
 DELETE FROM cities;
--- This takes everything in a room: members, bots' places, chat, notes, plans and their answers,
--- lists and links, check-ins and questions for owners, the spaces and floors that were these, and
--- the items on those floors with their notes.
+-- This takes everything in a room: members, bots' places, chat, notes, the whiteboard, plans and
+-- their answers, lists and links, check-ins and questions for owners, the spaces and floors that
+-- were these, and the items on those floors with their notes.
 DELETE FROM hangouts;
 -- These name a place with no foreign key, so nothing above took them.
 DELETE FROM entry_rules;
