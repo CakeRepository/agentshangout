@@ -188,6 +188,7 @@ impl Server {
                 create_code,
                 allow_private_webhooks: true,
                 keeper_id,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -869,8 +870,8 @@ async fn playing_a_world_changes_nothing_in_a_private_city() {
         server.act(&ann, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     }
     let map = Map::from_db(&server, COMMONS);
-    let (first, last) = map.line_from_road(3).unwrap();
-    server.act(&ann, COMMONS, road_move(first, last)).await.ok();
+    let spot = building_spots(&map, 1)[0];
+    server.act(&ann, COMMONS, place("house", spot)).await.ok();
 
     let after = server
         .get(&format!("/api/cities/{city}/people/{person}/standing"))
@@ -3614,18 +3615,14 @@ async fn a_person_signed_in_plays_as_themself_with_300_moves_and_no_join() {
         .as_array()
         .unwrap()
         .is_empty());
-    let road = {
-        let map = Map::from_db(&server, COMMONS);
-        let (first, last) = map.line_from_road(2).unwrap();
-        road_move(first, last)
-    };
+    let house = place("house", building_spots(&Map::from_db(&server, COMMONS), 1)[0]);
     let reply = server
-        .post(&format!("/api/worlds/{COMMONS}/act"), road)
+        .post(&format!("/api/worlds/{COMMONS}/act"), house)
         .cookie(&ann.cookie)
         .send()
         .await
         .ok();
-    assert_eq!(reply["moves_left"], 298);
+    assert_eq!(reply["moves_left"], 299);
     let mine = server.get("/api/players/mine").cookie(&ann.cookie).send().await.ok();
     assert_eq!(mine["players"].as_array().unwrap().len(), 1);
     assert_eq!(mine["players"][0]["kind"], "person");
@@ -3639,7 +3636,7 @@ async fn a_person_signed_in_plays_as_themself_with_300_moves_and_no_join() {
             .len(),
         1
     );
-    assert_eq!(server.me(&ann.key, COMMONS).await["moves_left"], 297);
+    assert_eq!(server.me(&ann.key, COMMONS).await["moves_left"], 298);
     // A person who is signed in doesn't join. It would only make a guest, so it says to just build.
     let reply = server.post("/api/public/join", json!({})).token(&ann.key).send().await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
@@ -4654,8 +4651,9 @@ async fn after_the_highway_the_server_builds_nothing_in_the_commons_or_a_world_o
 async fn a_step_leaves_what_a_player_has_built_as_theirs() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
+    let agent = server.guest().await;
     let (first, last) = Map::from_db(&server, COMMONS).line_from_road(8).unwrap();
-    server.act(&ann.key, COMMONS, road_move(first, last)).await.ok();
+    server.act(&agent.token, COMMONS, road_move(first, last)).await.ok();
     let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
     server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
 
@@ -5016,7 +5014,8 @@ async fn a_place_needs_open_land_with_a_road_beside_it() {
     server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
     let again = server.place_at(&ann, "club", spot, now() + 4 * 86_400).unwrap_err();
     assert_eq!(again.status.as_u16(), StatusCode::BAD_REQUEST.as_u16(), "{}", again.message);
-    let road = server.act(&ann.key, COMMONS, road_move(spot, spot)).await;
+    let agent = server.guest().await;
+    let road = server.act(&agent.token, COMMONS, road_move(spot, spot)).await;
     assert_eq!(road.status, StatusCode::BAD_REQUEST, "{}", road.show());
     assert_eq!(tile_kind(&server, spot), Some(Kind::House));
 }
@@ -5171,13 +5170,14 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
     let server = Server::start().await;
     let map = Map::from_db(&server, COMMONS);
     let ann = server.person("Ann").await;
+    let agent = server.guest().await;
     let (first, last) = branch_from_road(&map, 8);
-    server.act(&ann.key, COMMONS, road_move(first, last)).await.ok();
+    server.act(&agent.token, COMMONS, road_move(first, last)).await.ok();
 
     // Control: nothing depends on it yet, so its builder can cut it and lay it back.
     let cut = json!({ "action": "bulldoze", "x": first.0, "y": first.1 });
-    server.act(&ann.key, COMMONS, cut.clone()).await.ok();
-    server.act(&ann.key, COMMONS, road_move(first, first)).await.ok();
+    server.act(&agent.token, COMMONS, cut.clone()).await.ok();
+    server.act(&agent.token, COMMONS, road_move(first, first)).await.ok();
 
     let map = Map::from_db(&server, COMMONS);
     let beside = [(1, 0), (-1, 0), (0, 1), (0, -1)]
@@ -5198,7 +5198,7 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
         (town["roads"].clone(), Some(town["places"].as_u64().unwrap() + 1))
     );
 
-    let reply = server.act(&ann.key, COMMONS, cut).await;
+    let reply = server.act(&agent.token, COMMONS, cut).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
     assert_eq!(tile_kind(&server, first), Some(Kind::Road));
 }

@@ -787,6 +787,8 @@ pub enum Kind {
     Cafe,
     Club,
     Studio,
+    /// W81: the town square. A world has one.
+    Square,
 }
 
 impl Kind {
@@ -802,6 +804,7 @@ impl Kind {
             Kind::Cafe => "cafe",
             Kind::Club => "club",
             Kind::Studio => "studio",
+            Kind::Square => "square",
         }
     }
 
@@ -817,6 +820,7 @@ impl Kind {
             Kind::Cafe,
             Kind::Club,
             Kind::Studio,
+            Kind::Square,
         ]
         .into_iter()
         .find(|kind| kind.as_str() == word)
@@ -824,7 +828,7 @@ impl Kind {
 
     /// W54: what a person places by hand: somewhere they can go into.
     pub fn is_building(self) -> bool {
-        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio)
+        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio | Kind::Square)
     }
 }
 
@@ -1067,12 +1071,31 @@ pub fn plan_bulldoze(
     gone: &dyn Fn(u64) -> bool,
 ) -> Planned {
     let plan = plan_bulldoze_tile(land, tiles, player, x, y, gone)?;
+    leaves_every_place_a_road(land, tiles, x, y)?;
+    Ok(plan)
+}
+
+/// W77: what god mode takes down: anything built, whoever built it. `tiles` must be every tile in the
+/// world when the tile is a road, because a road a place depends on stays, as in W17.
+pub fn plan_god_bulldoze(land: &Land, tiles: &Tiles, player: u64, x: i64, y: i64) -> Planned {
+    let plan = plan_god_bulldoze_tile(land, tiles, player, x, y)?;
+    leaves_every_place_a_road(land, tiles, x, y)?;
+    Ok(plan)
+}
+
+/// W17: refuses to take down a road that a place depends on.
+fn leaves_every_place_a_road(
+    land: &Land,
+    tiles: &Tiles,
+    x: i64,
+    y: i64,
+) -> Result<(), &'static str> {
     let road =
         land.locate(x, y).filter(|pos| tiles.get(pos).is_some_and(|tile| tile.kind == Kind::Road));
     if road.is_some_and(|pos| strands_a_building(tiles, pos)) {
         return Err(NEEDED);
     }
-    Ok(plan)
+    Ok(())
 }
 
 /// W17: whether a tile can be taken down, which needs the tile and nothing around it. A road that
@@ -1085,6 +1108,30 @@ pub fn plan_bulldoze_tile(
     x: i64,
     y: i64,
     gone: &dyn Fn(u64) -> bool,
+) -> Planned {
+    let allowed = |tile: &Tile| {
+        // W57: a building stays on the map however long its owner is away.
+        let abandoned =
+            tile.level == 0 && !tile.kind.is_building() && tile.player.is_some_and(gone);
+        tile.player == Some(player) || abandoned
+    };
+    clear_tile(land, tiles, player, (x, y), &allowed, "you can only bulldoze what you built")
+}
+
+/// W77: the same for god mode, from the tile alone. The highway has no builder, and every road joins it.
+pub fn plan_god_bulldoze_tile(land: &Land, tiles: &Tiles, player: u64, x: i64, y: i64) -> Planned {
+    let allowed = |tile: &Tile| tile.kind != Kind::Road || tile.player.is_some();
+    clear_tile(land, tiles, player, (x, y), &allowed, "the highway stays where it is")
+}
+
+/// What taking a tile down does, if `allowed` says it may come down.
+fn clear_tile(
+    land: &Land,
+    tiles: &Tiles,
+    player: u64,
+    (x, y): (i64, i64),
+    allowed: &dyn Fn(&Tile) -> bool,
+    refused: &'static str,
 ) -> Planned {
     let pos = land.locate(x, y).ok_or(OFF_MAP)?;
     let cleared = Tile { kind: Kind::Cleared, level: 0, player: Some(player) };
@@ -1102,11 +1149,8 @@ pub fn plan_bulldoze_tile(
     if tile.kind == Kind::Cleared {
         return Err("that forest is already cleared");
     }
-    let mine = tile.player == Some(player);
-    // W57: a building stays on the map however long its owner is away.
-    let abandoned = tile.level == 0 && !tile.kind.is_building() && tile.player.is_some_and(gone);
-    if !mine && !abandoned {
-        return Err("you can only bulldoze what you built");
+    if !allowed(tile) {
+        return Err(refused);
     }
     let change = if forest { Change::Set(pos, cleared) } else { Change::Remove(pos) };
     Ok(Plan { changes: vec![change], cost: BULLDOZE_COST, skipped: 0 })

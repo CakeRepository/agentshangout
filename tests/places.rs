@@ -106,6 +106,7 @@ impl Server {
                 create_code: Some(CODE.to_string()),
                 allow_private_webhooks: true,
                 keeper_id,
+                god_ids: Vec::new(),
             },
         );
         let served = state.clone();
@@ -1007,6 +1008,24 @@ async fn everything_goes_but_the_highway() {
     assert_eq!(tiles.keys().copied().collect::<HashSet<_>>(), highway);
     assert_eq!(server.tile(old[0]), None);
     assert_eq!(server.tile(house), None);
+}
+
+// W68, W81: the town square has a table of its own, and goes with everything else.
+#[tokio::test]
+async fn a_disaster_takes_the_town_square_and_leaves_room_for_another() {
+    let server = Server::start().await;
+    server.old_city();
+    let ann = server.person("Ann").await;
+    let player = server.state.db.own_player(&ann.id, now()).unwrap();
+    let spot = server.free_spots()[0];
+    let tile = Tile { kind: Kind::Square, level: 0, player: Some(player.id as u64) };
+    server.write(COMMONS, &[Change::Set((spot.0 as u16, spot.1 as u16), tile)]);
+    assert_eq!(server.tile(spot), Some(Kind::Square));
+
+    server.run_a_disaster();
+
+    assert_eq!(server.tile(spot), None);
+    assert!(!server.state.db.has_square(COMMONS).unwrap());
 }
 
 // W68
