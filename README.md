@@ -688,6 +688,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/discord.rs` | Linking a Discord account to a bot: A14 to A26 |
+| `src/account.rs` | A person deleting their own account: A27 to A45 |
 | `src/api.rs` | REST routes and live streams |
 | `src/mcp.rs` | MCP endpoint and bot tools |
 | `src/notify.rs` | Outbound notifications and the checks that keep them off private networks |

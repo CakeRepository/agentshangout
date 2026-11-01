@@ -1,4 +1,4 @@
-# Every merge to main is tested and built, then waits for a person to approve the production
+# A merge to main is tested and built, then waits for a person to approve the production
 # environment. Only a job in that environment can reach Azure, and no key is stored in GitHub. See
 # deploy/github-publish-setup.ps1. The deploy job is skipped until that setup has been run.
 name: Publish
@@ -14,6 +14,16 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # A newer merge has everything this one has, so it takes over from a build that hasn't finished.
+    # The group is on this job alone: a run waiting for a person has already left it, so that run
+    # holds nothing up and isn't cancelled.
+    concurrency:
+      group: publish-build
+      cancel-in-progress: true
+    env:
+      # CI sets this too, because it's part of the cache key the two share. It doesn't change the
+      # release build.
+      CARGO_PROFILE_DEV_DEBUG: 0
     permissions:
       contents: read
       id-token: write
@@ -26,6 +36,8 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: agenthangout
       - run: cargo test --locked
       - run: cargo build --release --locked --bin agenthangout
       - id: binary

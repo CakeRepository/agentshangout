@@ -7,10 +7,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    account,
     auth::{self, Caller},
     db::{
         Agent, Arrival, BotPlace, City, House, HouseStatus, MoveIn, NewCity, NewHouse, NewPass,
         NewSceneRequest, NewTrip, Pass, Person, QueueItem, Road, Scene, SceneRequest, Trip,
+        SOMEONE_WHO_LEFT,
     },
     error::{ApiError, ApiResult},
     looks::{self, Look},
@@ -652,8 +654,37 @@ pub fn leave_house(state: &AppState, caller: &Caller, house_id: &str) -> ApiResu
     state.db.remove_resident(&house.id, &caller.person_id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
     end_what_they_agreed(state, caller, &caller.person_id, &caller.name, &house)?;
+    warn_about_house_bot(state, &caller.person_id, &caller.name, &house)?;
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
+    Ok(())
+}
+
+/// A37: someone deleting their account moves out of a house others live in, with their name kept off
+/// what that ends. The house bot is `Db::delete_person`'s to pass on, so nobody is warned about it here.
+pub(crate) fn move_out_for_good(state: &AppState, caller: &Caller, house: &House) -> ApiResult<()> {
+    ops::announce(state, &house.living_room_id, account::LINE)?;
+    state.db.remove_resident(&house.id, &caller.person_id)?;
+    state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
+    let by = Caller { name: SOMEONE_WHO_LEFT.to_string(), ..caller.clone() };
+    end_what_they_agreed(state, &by, &caller.person_id, &caller.name, house)?;
+    refresh_house(state, house);
+    Ok(())
+}
+
+/// A33: the house bot has a new owner and a token nobody holds, so it stops until a resident replaces it.
+pub(crate) fn house_bot_needs_a_token(state: &AppState, house_id: &str) -> ApiResult<()> {
+    let Some(house) = state.db.house(house_id)? else {
+        return Ok(());
+    };
+    let text = "This house's bot has stopped, because the person who made it deleted their account. Replace its token to start it again.";
+    ping(
+        state,
+        resident_ids(state, &house.id)?,
+        "house.bot_maker_left",
+        &house.living_room_id,
+        text,
+    );
     Ok(())
 }
 
@@ -684,6 +715,7 @@ pub fn remove_resident(
     state.db.remove_resident(&house.id, &person.id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
     end_what_they_agreed(state, caller, &person.id, &person.name, &house)?;
+    warn_about_house_bot(state, &person.id, &person.name, &house)?;
     let text = format!("{} moved you out of {}.", caller.name, house.name);
     ping(state, vec![person.id.clone()], "house.moved_out", "", &text);
     refresh_house(state, &house);
@@ -1309,7 +1341,17 @@ fn end_what_they_agreed(
             ops::refresh_city(state, &house.city_id);
         }
     }
-    if state.db.house_bot(&house.id, now)?.is_some_and(|bot| bot.owner_id == person_id) {
+    Ok(())
+}
+
+/// R44: whoever made the house bot may still hold its token.
+fn warn_about_house_bot(
+    state: &AppState,
+    person_id: &str,
+    name: &str,
+    house: &House,
+) -> ApiResult<()> {
+    if state.db.house_bot(&house.id, now())?.is_some_and(|bot| bot.owner_id == person_id) {
         let text = format!(
             "{name} made this house's bot and has moved out. If they kept its token they can still use it, so replace it."
         );

@@ -1,6 +1,7 @@
 //! Tests for the first step of the deploy job in .github/workflows/publish.yml, which stops an older
 //! commit going out over a newer one. Publish only runs after a merge, so this takes the step's text
-//! from the workflow and runs it the way Actions does, with a stand-in for gh.
+//! from the workflow and runs it the way Actions does, with a stand-in for gh. It also holds which
+//! of the workflow's jobs a newer merge can cancel.
 
 #![cfg(unix)]
 
@@ -132,6 +133,17 @@ fn a_run_that_cant_tell_whats_live_fails() {
     for call in ["release list", "release view", "api"] {
         fails(&run("v0.1.68", "ahead", call));
     }
+}
+
+// A group on the deploy job let a run waiting for a person hold up the newer ones, which is how
+// v0.1.67 went out over v0.1.68. A group on the whole workflow would cancel runs that are waiting.
+#[test]
+fn a_newer_merge_can_only_cancel_a_build() {
+    let (before_deploy, deploy) = WORKFLOW.split_once("\n  deploy:\n").unwrap();
+    let (top, build) = before_deploy.split_once("\n  build:\n").unwrap();
+    assert!(build.contains("cancel-in-progress: true"));
+    assert!(!top.contains("concurrency:"));
+    assert!(!deploy.contains("concurrency:"));
 }
 
 // Skipping a step is what stops the deploy, so one without this would run for an older commit.

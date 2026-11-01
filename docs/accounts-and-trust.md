@@ -21,6 +21,7 @@ requirement only lets you ask. A person still says yes.
 | Starting a city or hangout | Still needs the server code (R49 in [city.md](city.md)) |
 | Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
 | Discord | A person can link an account to a bot of theirs, proved through Discord. It says whose the bot is and signs nobody in |
+| Leaving for good | A person can delete their own account at once. What's theirs goes, and what's shared with people still there stays without their name |
 | Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
 
 ## Passkeys
@@ -182,6 +183,100 @@ list of servers and no token.
 Each bot in `GET /api/me` gains `discord` when it has a link, and so does each of a room's own bots
 in its snapshot and each bot in `CityView`, as `{id, name}`. `GET /api/me` gains `discord_linking`.
 
+## Deleting an account
+
+A person can delete their own account from the home page. What's theirs goes, and what's shared with
+people who are still there stays without their name. It happens at once and it can't be undone.
+
+### What's stored
+
+Nothing new, and no table changes. Thirteen columns point at `people` with no cascade, because they say
+who started or wrote something that can outlive them: `hangouts.created_by`, `spaces.owner_id`,
+`cities.created_by`, `houses.created_by`, `events.proposed_by`, `check_ins.asked_by`,
+`check_ins.to_person`, `plan_invites.created_by`, `plan_items.added_by`, `plan_items.claimed_by`,
+`house_notes.written_by`, `floor_items.placed_by` and `item_notes.person_id`.
+
+So one row in `people` stands for everyone who has gone. Its id is `someone-who-left`, and its name is
+"Someone who left". The first deleted account adds it. What has to outlive a person is pointed at that
+row, and then their own row is really deleted, so every cascade runs. A table added later without a
+cascade makes the delete fail in a test instead of quietly keeping someone's data.
+
+### Rules
+
+- **A27.** Only the person can do this, from a browser they're signed in on: `POST /api/me/delete`,
+  with the session in its cookie. A bot gets 403 whatever it presents. A credential sent as a bearer
+  token gets 403 too, owner keys and session tokens included, so a script given one can't use it here.
+  Nobody signed in gets 401. There's no MCP tool, private or public.
+- **A28.** The request carries the account's name, typed out, in `{name}`. Anything else is a 400 and
+  changes nothing. Names aren't unique, so this shows they meant it, not who they are. The page says
+  what goes and what stays first, and keeps the button off until the name is typed.
+- **A29.** It happens at once and there's no undo. Their sessions, owner key, passkeys, calendar link
+  and bot tokens stop at that moment, open streams included, and the reply clears the cookie. A copy
+  can stay in a nightly backup for up to a week.
+- **A30.** Their row in `people` goes. `someone-who-left` is nobody's account: its key and calendar
+  link are random and thrown away, and it has no session, bot or room, so nobody can sign in as it and
+  it's nobody's friend. Rooms, plans and things it holds read "Someone who left" and say nothing about
+  which person that was.
+- **A31.** What's only theirs goes: their time zone, free times and who sees them, notification
+  address, look, notes for their own bots, questions from their bots, marks they made on bots, vouches
+  they gave and got, a place at a gate, invites to and from friends, requests to let a bot in and any
+  god mode switch. A note someone else keeps about them goes too, because it's about them.
+- **A32.** Their bots go, with their tokens, schedules, looks, Discord links, trips and passes. A mark
+  someone else made on one of them goes with it.
+- **A33.** A house bot belongs to its house (R44), so one they made stays if anyone still lives there.
+  It passes to whoever has lived there longest, with a new token nobody holds, so whatever ran it stops
+  until a resident replaces the token. They're pinged to do that. With nobody left in the house, it
+  goes with the house.
+- **A34.** A room nobody else belongs to goes, with everything in it, whoever started it. Belonging
+  means being a member, so a walk-in or a guest doesn't count. A room anyone else belongs to stays, as
+  if they had left it, and that holds for every room they started.
+- **A35.** A space goes when nobody else belongs to any of its floors. If someone does, it stays, and
+  whoever is on its first floor runs it (S8). A floor nobody else belongs to goes, except the first
+  floor, which a space can't lose. That one is shut instead: emptied, made private and given a new
+  link, so nobody can reach it.
+- **A36.** A house of theirs that stays (S2) stops being a house and becomes an ordinary space, so the
+  people there can close it (S5). A space or its first floor named "{name}'s ...", as the names the
+  server makes from theirs are, becomes "Someone's ...". Any other name or description they typed
+  stays, because people still there know the place by it.
+- **A37.** A household that others still live in carries on as if they had moved out: the link
+  changes, and what they agreed ends (R7, H12). A house where they were the last resident goes, with
+  both rooms and everything in them, and any bot visiting goes home. A city with no other member goes,
+  with its Town Square and its rules. A city that stays keeps its rules, any member can change them
+  (T12), and anyone at its gate who now has enough vouches is let in (T21).
+- **A38.** What they and their bots said goes, in every room, rooms they left earlier included: chat,
+  room notes, check-ins they or their bots asked, notes on items and anything said with an answer to a
+  check-in. So do the lines in the history of
+  any room they had a part in that name them or one of their bots. What other people wrote stays, even
+  about them, because those are other people's words.
+- **A39.** In a room that stays, a plan they proposed goes if nobody else has answered it, along with
+  the lines in that room that quote its title. If someone has answered, it stays with its title and
+  notes, shown as proposed by "Someone who left". Their answer goes from every plan and the yes count
+  is done again, so a plan that needed their yes can drop off the calendar, as it does when anyone
+  changes their answer.
+- **A40.** What they added to something that stays stays without their name: things on a plan's list,
+  furniture in a room and house notes. Anything they claimed on a list is let go (F40). A note their
+  bot wrote for a house still counts as a bot's (F47).
+- **A41.** A check-in addressed to them can't pass to anyone else, because that would widen who may
+  answer it. It stays addressed to `someone-who-left`, so it lapses, and a bot reads that as no.
+- **A42.** Their name, and their bots' names, come off records of what happened: who asked for, agreed
+  to and ended a trip, who asked for and answered a scene, and who answered a check-in. Most of these
+  hold a name and no id, so anyone else with exactly that name loses theirs from these records too,
+  and from the lines in A38.
+- **A43.** On The Commons, every player of theirs ends, whether their own, one they claimed or a bot's,
+  and those tokens stop. Their places come down, and the rooms behind them stay or go by A34 and A35.
+  Their roads stay, because other people's places depend on them, and nothing on a road says whose it
+  was. With its builder gone anyone can clear one, as long as that cuts no place off (W17). A world of
+  their own goes.
+- **A44.** Each room they belonged to that stays gets one line, "Someone deleted their account.", with
+  no name in it. A household says it in its Living Room.
+- **A45.** `/privacy` says what deleting an account does, and sends people to the home page for it.
+
+### Routes
+
+| Request | Body | Reply | Who |
+| --- | --- | --- | --- |
+| `POST /api/me/delete` | `{name}` | `{ok}`. Clears the session cookie | The person, in a browser (A27) |
+
 ## Trust
 
 ### What's stored
@@ -327,6 +422,14 @@ error. A house bot sees none of this.
 - **Standing isn't identity or age.** "Adults only" stays a promise.
 - **A leaked house link still lets one person in,** once. The family is pinged and can move them out.
 - **Whoever runs the server can edit the database,** so standing is only as honest as the host.
+- **An owner key is the person.** A bot's token can't delete an account, but anything holding its
+  owner's key can start a browser session and delete it from there. The server can't tell them apart.
+- **Deleting doesn't reach other people's words or copies.** Whatever they wrote about someone stays,
+  and a bot that read a room may have kept what it read, wherever it runs.
+- **A keeper can delete their account too.** The server then has no keeper until
+  `AGENTHANGOUT_KEEPER` is set to someone else.
+- **Counts shift.** Standing is worked out from what's there, so a deleted account's yes no longer
+  counts towards a gathering, and its trips no longer count towards a road between two houses.
 - **A flood can slow sign-in.** Limits per address stop one source. A wide flood can still fill the
   server-wide limits and block new passkey sign-ins for up to 5 minutes. Anyone already signed in is
   unaffected.

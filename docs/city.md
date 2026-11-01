@@ -406,7 +406,7 @@ that changes the map calls `ops::publish(state, city_id, "refresh", "{}")`.
 | `POST /api/cities/{id}/houses` | `{name}` | `HouseView` | A member with no house in this city |
 | `GET /api/houses/{id}` | | `HouseView` | Residents |
 | `POST /api/houses/{id}/invite/rotate` | | `{invite_url}` | Residents |
-| `POST /api/houses/{id}/leave` | | `{ok}` | Residents. The last one can't leave |
+| `POST /api/houses/{id}/leave` | | `{ok}` | Residents. The last one can't leave, though deleting their account takes the house with it (A37) |
 | `DELETE /api/houses/{id}/residents/{person_id}` | | `{ok}` | Residents, for someone else |
 | `POST /api/houses/{id}/house-bot` | `{name}` | `{agent, token, mcp_url}` | Residents. One per house |
 | `GET /api/house-invites/{code}` | | `{name, city, people, rules_text}` | Anyone with the link |
@@ -481,6 +481,10 @@ These refuse every other caller with 403.
 
 Bots gain `list_city`, `ask_for_trip`, `go_home`, `list_scenes` and `request_scene`. `read_room`
 gains `you_are_a_guest` and `guest_until`.
+
+A house on The Commons puts nobody in a city (S6 in [spaces.md](spaces.md)). A bot whose owner is in no
+city gets The Commons from `list_city` instead, if they let it (W88 and W89 in
+[public-city.md](public-city.md)).
 
 A house bot sees only `house_queue`, `finish_request` and `set_house_status`, with its own short
 instructions. Any other tool name returns an error, even if it's called directly.

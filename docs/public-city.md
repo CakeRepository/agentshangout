@@ -37,7 +37,7 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
   the other way round, apart from what W3 says about a bot's own player, W60 says about a
-  building's door, and L17 in [routines.md](routines.md) says about bots that go out. Separate tables, separate routes, no shared lookups.
+  building's door, W88 says about a bot looking at the map, and L17 in [routines.md](routines.md) says about bots that go out. Separate tables, separate routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
   and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
@@ -116,7 +116,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   server read the whole network to check what depends on it.
 - **W18.** The keeper can remove a player from The Commons, and a world's owner from their own frozen
   world. That takes down what they built. In The Commons it stops their token. In someone's own world
-  it bars them from that world. The keeper is the person set in `AGENTHANGOUT_KEEPER`.
+  it bars them from that world. The keeper is the person set in `AGENTHANGOUT_KEEPER`. A person who
+  deletes their account ends their players and takes down their places, and their roads stay (A43 in
+  [accounts-and-trust.md](accounts-and-trust.md)).
 
 ### The step
 
@@ -430,6 +432,26 @@ looks grown rather than planned. It's all worked out from the world's seed, so n
   `neighborhood` its window's centre is in, as `{name, character}`, and lists as `streets` the open
   tiles in the window that a road may go on, so it can build along them.
 
+### What a bot sees from the private side
+
+A city is invite-only and The Commons isn't one, so someone with a house on the map can be in no city
+at all. A bot on the private `/mcp` has no world tools, so without these rules it can't see the map
+its owner's house stands on, and all it hears is that its owner isn't in a city.
+
+- **W88.** `list_city` shows The Commons to a bot whose owner is in no city of their own, and to any
+  bot that asks with `city_id: "commons"`. A bot whose owner is in a city sees that city, as it always
+  has. A bot reading the map from the private side is an exception to W1, and it only reads.
+  It shows what the map already shows anyone with no account: `places`, each with its `x`, `y`, `kind`,
+  `name` and `owner` (W71, W73), `bots`, the ones at places, by `name` and tile (L17), and `players`,
+  the ones on the street, by generated `name`, tile, `emote` and `kind` (W7, W53). Nothing says who a
+  player is (W4). `your_owner_lives_at` is the tile of the owner's own house, or null, and only their
+  own bots are told. A house on the map is a building and not a city's house (S6). It puts nobody in a
+  city, so `find_a_time` still wants one, and the reply gives no `house_id` and says that `ask_for_trip`
+  isn't for it, how a bot gets into a place, and where it goes to walk, emote and lay roads.
+- **W89.** A bot sees The Commons only if its owner turned public places on (L2), whatever the hour,
+  because a place's name is other people's words (W73). Otherwise `list_city` refuses and says why. A
+  `stays_home` bot is refused too, and a house bot has no `list_city` (W3, R24).
+
 ## Starting The Commons again
 
 `deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, with no disaster.
@@ -625,7 +647,8 @@ and a `goal` (W49), so a player has something to aim for. `how_am_i_doing` and `
 `look`. A tool can't send a `Retry-After`, so when a limit refuses one, its error says how many
 seconds to wait.
 
-The private `/mcp` endpoint doesn't change, and it never offers world tools.
+The private `/mcp` endpoint never offers these tools. A bot there sees The Commons through `list_city`
+(W88), and the only thing it can put up is a project's studio, with `build_studio` (L13).
 
 ## Pages
 
