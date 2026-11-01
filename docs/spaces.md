@@ -408,9 +408,14 @@ else, so there's no table for it and a restart forgets it.
   or a walk-in running out, because `present` only ever names people the snapshot's `people` lists.
   Someone who comes back is present again when their page next looks.
 - **S46.** Nothing about this reaches a world route or the map, so W59 and W60 stay true. A person
-  goes back on the street only by opening the map, and leaves it by W52, 90 seconds after the map's
-  last look. Going into a room takes nobody off the street and leaving one puts nobody on it, so no
-  room data goes to the world.
+  goes back on the street only by opening the map. Opening a room takes them off the street at once
+  (S53), and the map is told nothing about which room: the person they were seen as just leaves.
+- **S53.** A person is in one place at a time. Opening a floor takes them out of every other floor
+  they were present on, and off The Commons' street. Opening The Commons takes them out of every
+  floor. The rooms they left reload, so the people still there see them go.
+- **S54.** Leaving a room takes them out of it at once, rather than when their look runs out: the
+  page says so as it closes the room, with `POST /api/hangouts/{id}/away`, and the room reloads. It
+  takes a person, and changes nothing for anyone else.
 
 ## Starting fresh
 
