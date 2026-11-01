@@ -787,7 +787,7 @@ fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind, god
     }
     // W81: the town square isn't anyone's to place but god mode's, and a world has one.
     if kind == Kind::Square && !god {
-        return Err(ApiError::forbidden("only god mode can place the town square"));
+        return Err(ApiError::forbidden("only someone who runs this server can place the town square"));
     }
     if kind == Kind::Square && tx.has_square(&world.id)? {
         return Err(ApiError::conflict("this world already has its town square"));

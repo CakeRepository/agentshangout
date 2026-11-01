@@ -594,6 +594,7 @@ CREATE TABLE IF NOT EXISTS world_squares (
     player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     built_at   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS town_square_rooms (space_id TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE);
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
@@ -4034,7 +4035,8 @@ impl Db {
                     EXISTS (SELECT 1 FROM space_plots d
                             JOIN world_squares q ON q.world_id = d.world_id AND q.x = d.x AND q.y = d.y
                             JOIN players pl ON pl.id = q.player_id AND pl.person_id = s.owner_id
-                            WHERE d.space_id = s.id) AS town_square
+                            WHERE d.space_id = s.id
+                              AND s.id IN (SELECT space_id FROM town_square_rooms)) AS town_square
              FROM floors f
              JOIN hangouts h ON h.id = f.hangout_id
              JOIN spaces s ON s.id = f.space_id
@@ -6874,6 +6876,17 @@ impl Db {
     /// W81: whether this world's town square stands.
     pub fn has_square(&self, world_id: &str) -> rusqlite::Result<bool> {
         q_has_square(&self.conn(), world_id)
+    }
+
+    /// W82: whether this room is the one behind a town square, whatever it is called.
+    pub fn is_town_square_room(&self, space_id: &str) -> rusqlite::Result<bool> {
+        exists(&self.conn(), "SELECT 1 FROM town_square_rooms WHERE space_id = ?", [space_id])
+    }
+
+    /// W82: marks a room as the town square's, for good.
+    pub fn mark_town_square_room(&self, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("INSERT OR IGNORE INTO town_square_rooms (space_id) VALUES (?)", [space_id])?;
+        Ok(())
     }
 
     /// The tiles inside a box, corners included.

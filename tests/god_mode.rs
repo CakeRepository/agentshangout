@@ -826,3 +826,124 @@ async fn the_town_square_is_called_town_square_with_or_without_a_visit() {
     server.put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" })).await.ok();
     assert_eq!(name_at(&server.view().await).1, "Meeting Green");
 }
+
+/// The floors in the public list that say they are the town square's.
+async fn square_floors(server: &Server, token: &str) -> Vec<String> {
+    let floors = server.get(token, "/api/spaces/public").await.ok();
+    floors["floors"].as_array().unwrap().iter().filter(|floor| floor["town_square"] == true).map(|floor| text(&floor["id"])).collect()
+}
+
+// W82: a square on a tile that was a cafe opens a room of its own, not the cafe's.
+#[tokio::test]
+async fn a_square_on_a_cafes_tile_opens_a_new_room_and_not_the_cafes() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let spot = server.build(&justin, "cafe").await;
+    let cafe_room = text(&server.go_in(&justin.key, spot).await.ok()["hangout_id"]);
+    server.clear(&justin, spot).await.ok();
+    server.place(&justin, "square", spot).await.ok();
+    let room = text(&server.go_in(&justin.key, spot).await.ok()["hangout_id"]);
+    assert_ne!(room, cafe_room);
+    assert_eq!(square_floors(&server, &justin.key).await, vec![room.clone()]);
+    let floors = server.get(&justin.key, "/api/spaces/public").await.ok();
+    let floor = floors["floors"].as_array().unwrap().iter().find(|floor| floor["id"] == room.as_str()).unwrap().clone();
+    assert_eq!(floor["size"], "big");
+    assert_eq!(floor["town_square"], true);
+}
+
+// W82: a cafe on the tile the square stood on never opens the square's room.
+#[tokio::test]
+async fn a_cafe_on_the_squares_old_tile_doesnt_get_its_room() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let spot = server.build(&justin, "square").await;
+    let door = server.go_in(&justin.key, spot).await.ok();
+    let (square_room, square_space) = (text(&door["hangout_id"]), text(&door["space_id"]));
+    server.clear(&justin, spot).await.ok();
+    server.place(&justin, "cafe", spot).await.ok();
+    let door = server.go_in(&justin.key, spot).await.ok();
+    assert_ne!(text(&door["hangout_id"]), square_room);
+    assert!(!server.state.db.is_town_square_room(&text(&door["space_id"])).unwrap());
+
+    server.clear(&justin, spot).await.ok();
+    let elsewhere = server.free_spots().into_iter().find(|at| *at != spot).unwrap();
+    server.place(&justin, "square", elsewhere).await.ok();
+    let door = server.go_in(&justin.key, elsewhere).await.ok();
+    assert_eq!(door["hangout_id"], square_room.as_str());
+    assert!(server.state.db.is_town_square_room(&square_space).unwrap());
+    assert_eq!(square_floors(&server, &justin.key).await, vec![square_room]);
+}
+
+// W82: which room is the square's is stored, not worked out from its name.
+#[tokio::test]
+async fn renaming_the_squares_room_keeps_it_the_squares_and_a_cafe_called_town_square_isnt() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let spot = server.build(&justin, "square").await;
+    let door = server.go_in(&justin.key, spot).await.ok();
+    let (room, space) = (text(&door["hangout_id"]), text(&door["space_id"]));
+    server.put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" })).await.ok();
+    server.clear(&justin, spot).await.ok();
+    let elsewhere = server.free_spots().into_iter().find(|at| *at != spot).unwrap();
+    server.place(&justin, "square", elsewhere).await.ok();
+    assert_eq!(server.go_in(&justin.key, elsewhere).await.ok()["hangout_id"], room.as_str());
+
+    // Calling an ordinary room "Town Square" doesn't make it the square's, and it still comes back.
+    let ann = server.person("Ann").await;
+    server.build(&ann, "house").await;
+    let cafe = server.build_later(&ann, "cafe", 8);
+    let door = server.go_in(&ann.key, cafe).await.ok();
+    let (cafe_room, cafe_space) = (text(&door["hangout_id"]), text(&door["space_id"]));
+    server.put(&ann.key, &format!("/api/spaces/{cafe_space}"), json!({ "name": "Town Square" })).await.ok();
+    server.clear(&ann, cafe).await.ok();
+    let again = server.free_spots().into_iter().find(|at| *at != spot && *at != elsewhere).unwrap();
+    let at = now() + 9 * DAY;
+    let player = server.state.db.own_player(&ann.id, at).unwrap();
+    let mv = Move { action: "place".to_string(), x: Some(again.0), y: Some(again.1), x2: None, y2: None, kind: Some("cafe".to_string()), emote: None };
+    worlds::act(&server.state, &player, COMMONS, &mv, at).unwrap();
+    assert_eq!(server.go_in(&ann.key, again).await.ok()["hangout_id"], cafe_room.as_str());
+    assert!(!server.state.db.is_town_square_room(&cafe_space).unwrap());
+}
+
+// W79, W80, S34: a place past the limit, built with the switch on, gets its room with it off.
+#[tokio::test]
+async fn a_place_past_the_limit_opens_a_room_after_the_switch_goes_off() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let first = server.build(&justin, "cafe").await;
+    let second = server.build(&justin, "club").await;
+    let third = server.build(&justin, "studio").await;
+    let fourth = server.build(&justin, "cafe").await;
+    for at in [first, second, third] {
+        server.go_in(&justin.key, at).await.ok();
+    }
+    server.switch(&justin, false).await;
+    server.go_in(&justin.key, fourth).await.ok();
+}
+
+// W79, S34: holding the square and the 3 other places, a third other room still opens.
+#[tokio::test]
+async fn the_square_and_three_other_places_all_get_rooms_with_the_switch_off() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    server.build(&justin, "house").await;
+    let square = server.build(&justin, "square").await;
+    let cafe = server.build(&justin, "cafe").await;
+    let club = server.build(&justin, "club").await;
+    server.go_in(&justin.key, square).await.ok();
+    server.go_in(&justin.key, cafe).await.ok();
+    server.go_in(&justin.key, club).await.ok();
+    server.switch(&justin, false).await;
+    let studio = server.build_later(&justin, "studio", 8);
+    server.go_in(&justin.key, studio).await.ok();
+}
+
+// W75, W81: someone without the switch is told nothing about it when they try the square.
+#[tokio::test]
+async fn placing_the_square_without_the_switch_is_refused_without_saying_why() {
+    let (server, _, _) = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.free_spots()[0];
+    let reply = server.place(&ann, "square", spot).await.refused(StatusCode::FORBIDDEN);
+    assert!(!reply.to_string().to_lowercase().contains("god"), "{reply}");
+}

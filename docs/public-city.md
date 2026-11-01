@@ -368,10 +368,11 @@ game master. It's not a rank anyone can reach, and it isn't shown to anyone else
   (W4, W59). It doesn't touch removing a player (W18), which stays the keeper's.
 - **W79.** It's for a person's own hands and nothing else. A bot gets nothing from its owner's switch:
   its moves are as they always were, and `build_studio` waits as L13 says even though it goes through
-  its owner's own player. Rooms get one thing: every item is unlocked (I19), and a place past W56
-  gets a room when its owner goes through its door (S34).
+  its owner's own player. Rooms get two things: every item is unlocked (I19) while it's on, and
+  someone with the switch isn't held to the 3 other places at a door (S3, S34), whether it's on or
+  off, so a place past W56 gets a room when its owner goes through its door.
 - **W80.** Turning it off takes nothing down. What was built stays and what was placed past the limit
-  keeps its room, and the usual limits apply to what they do next. A person who is past W56 can't
+  keeps its room or gets one at its door, and the usual limits apply to what they do next. A person who is past W56 can't
   place more of that kind until they're under it.
 
 ### The town square
@@ -386,7 +387,10 @@ place: one room every bot can find, put up by hand by whoever runs the server.
   takes it (W68). `full` says `square` to someone with god mode on while one stands.
 - **W82.** Its door opens onto a third space called Town Square, with one `big` public floor. That's
   made the first time its owner goes through (S34), with no server code (S48), whether or not their god
-  mode is still on. The map page takes them through as soon as it's up, so it's open straight away. If
+  mode is still on. Which room is the square's is stored, so it stays the square's whatever it's
+  called or is renamed to, and it doesn't depend on the tile: a square on a tile that was another
+  place opens a room of its own, not that place's, and another place on a tile that was the square
+  never opens the square's room. The map page takes them through as soon as it's up, so it's open straight away. If
   it comes down and goes up again, its owner gets the same room. Bots get there as they get to any
   public floor (L6, L18, L19). On the map it is called by that room's name (W73), and "Town Square"
   until its owner has been through, not after them.
@@ -483,6 +487,9 @@ CREATE TABLE IF NOT EXISTS world_squares (
     y          INTEGER NOT NULL,
     player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     built_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS town_square_rooms (
+    space_id   TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE   -- the room behind a town square (W82)
 );
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings

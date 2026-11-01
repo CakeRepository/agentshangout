@@ -5473,6 +5473,8 @@ async function worldView(id, { home = false } = {}) {
       if (error.status === 401) {
         openAccount('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
       }
+      // A refused move can mean the toolbar is out of date: a second square, or the switch going off.
+      refreshTown();
     }
   }
 

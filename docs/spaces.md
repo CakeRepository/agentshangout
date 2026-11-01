@@ -341,8 +341,9 @@ comes from the person, the first time they go through their own door, on a route
 - **S34.** A person's own building with no room gets one the first time they go through. A `house`
   gets their house (S2). A `cafe`, `club` or `studio` gets their oldest third space with no building
   standing, or a new one named after them and the kind if they have none. That takes no server code,
-  because placing the building is what's limited (W56). With god mode on, S3 doesn't hold them to 3,
-  so a place past that limit gets a room too (W79).
+  because placing the building is what's limited (W56). Someone with the god mode switch, on or
+  off, isn't held to S3's 3, so a place past that limit gets a room too (W79). The town square's
+  room is marked and only the square opens it (W82).
 - **S35.** When a building comes down its rooms stay, as they do when its owner is away. Its owner's
   next building of that sort gets them back through S34, so bulldozing and placing again moves a
   space. Nothing here ever deletes a room.
