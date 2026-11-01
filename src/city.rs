@@ -411,7 +411,13 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
     let gatherings = state.db.gatherings(&city.id, now)?;
     let invite_url =
         holds_city_link(state, caller, &city)?.then(|| city_invite_url(state, &city.invite_code));
-    let bots = state.db.bots_in_city(&city.id, now)?;
+    let mut bots = state.db.bots_in_city(&city.id, now)?;
+    // A21, A22: for people in the city. A bot never reads one.
+    if !caller.is_agent() {
+        for bot in &mut bots {
+            bot.discord = state.db.discord_link(&bot.id)?;
+        }
+    }
     let bot_ids: Vec<String> = bots.iter().map(|bot| bot.id.clone()).collect();
     Ok(CityView {
         you: CityYou {

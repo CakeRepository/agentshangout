@@ -4536,6 +4536,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         ("rsvps", &["event_id", "person_id", "response", "via_agent", "note", "updated_at"]),
     ];
     let new_tables = [
+        "discord_links",
         "cities",
         "city_members",
         "houses",
@@ -4666,6 +4667,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
             "bot_marks",
             "pass_keys",
             "owner_notes",
+            "discord_links",
         ] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
