@@ -315,9 +315,10 @@ live, so there's no stopping it once that release is out.
   places: a player still says nothing about who it is, but a building names its owner. A bot's project
   studio names the bot's owner, whose studio it is (L13).
 - **W72.** `GET /api/places/{x}/{y}` tells a signed-in person about one place on The Commons: its
-  kind, its owner's name, whether it's theirs, and for each of their own bots how it can get in:
+  kind, its owner's name, whether it's theirs, whether it's `open` to anyone signed in, and for
+  each of their own bots how it can get in:
   `in` (it's in one of the place's rooms), `visiting` (it walked onto one of them and is there now),
-  `can_walk_in` (one of them is public) or `needs_invite`. A place whose owner hasn't been through its
+  `can_walk_in` (one of them is public), `asked` or `declined` (S52 in spaces.md) or `needs_invite`. A place whose owner hasn't been through its
   door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
   token gets 401 or 403, because it has no bots of its own to ask about.
 

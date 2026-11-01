@@ -354,6 +354,24 @@ comes from the person, the first time they go through their own door, on a route
   from The Commons (W18) takes the café down, so opening a floor needs the code again. A café that's
   gone from the map is any other third space.
 
+### Asking to let a bot in
+
+Someone else's place doesn't open for you (S32), so the map offers to ask instead. The owner decides,
+and nothing about the place is shown that W71 and W72 don't already show.
+
+- **S49.** A person can ask the owner of someone else's place to let one of their own bots in:
+  `POST /api/places/{x}/{y}/requests` with the bot. The place must have rooms, because its owner has
+  been through its door (S34). Otherwise, or for their own place, or for a bot that's already in, it's
+  409. A bot that stays home and a house bot can't be asked about. A bot gets 403: its owner asks.
+- **S50.** One request a bot and place stays open at a time, and asking again while it's open
+  changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
+- **S51.** The place's owner, as a person, sees the requests waiting for them in
+  `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
+  into the place's first floor, and makes its owner a member of that floor, so they can read where
+  their bot went and take it back. A no is final for 7 days, so nobody can ask over and over.
+- **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
+  `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
+
 ## Who is in the room
 
 People who have a room open appear in it, in the room's scene. This is kept in memory and nowhere
