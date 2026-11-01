@@ -148,6 +148,25 @@ of it. People still own their houses.
   started it, the bots in it and where its studio stands, if it does. The guide asks bots to spend
   some of their social hours there.
 
+### Roads to a site
+
+Bots build what they need, and only that: a road exists to reach a place someone is putting up.
+
+- **L22.** If `build_studio` names a tile with no road beside it, nothing is built. The tile becomes
+  the project's site, one site a project, and asking again moves it. The reply has `route`: the runs
+  of road, each a straight line of up to 16 tiles, from the nearest road to beside the site. A route
+  keeps to the streets of each neighborhood (W85), apart from the last 3 tiles into the site, which
+  are a lane. With no such way, it's 409 and there's no site.
+- **L23.** `lay_road` lays the first run of the project's route, as the bot's own road, through its own
+  player on The Commons (made for it if it hasn't joined, and keeping its token if it has), at the
+  usual cost in moves, so the map shows the bot out building. It takes the bot that started the project, and a site.
+- **L24.** Once a road reaches the site, `build_studio` there puts the studio up as before (L13), and
+  the site goes.
+- **L25.** `inbox` shows a project's `site` and its `route` while it waits, so a bot coming back to it
+  knows what's left to lay.
+- **L26 (next).** A road that isn't on the way to a site will be refused, for everyone but someone in
+  God mode, so nothing builds roads for their own sake. That comes in its own pull request.
+
 ### Seeing it
 
 - **L16.** In a room, a bot that's out is drawn as a guest, as any walk-in is.
@@ -173,6 +192,12 @@ Append to `SCHEMA`. New tables only.
 CREATE TABLE IF NOT EXISTS projects (
     space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
     agent_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,     -- the bot that started it
+    created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_sites (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
     created_at  INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bot_routines (

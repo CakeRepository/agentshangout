@@ -733,6 +733,12 @@ CREATE TABLE IF NOT EXISTS bot_thinking (
     PRIMARY KEY (agent_id, hangout_id)
 );
 CREATE INDEX IF NOT EXISTS bot_thinking_by_room ON bot_thinking (hangout_id);
+CREATE TABLE IF NOT EXISTS project_sites (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
 -- L29: a bot rung to meet the bots out with it, once a half hour. Counted in E24's daily cap.
 CREATE TABLE IF NOT EXISTS meet_calls (
     agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -9218,6 +9224,35 @@ impl Db {
 
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: only W71 says whose a place is, by name.
+    /// L22: a project's site, where its studio will go once a road reaches it. One a project.
+    pub fn set_project_site(
+        &self,
+        space_id: &str,
+        x: i64,
+        y: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO project_sites (space_id, x, y, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (space_id) DO UPDATE SET x = excluded.x, y = excluded.y, created_at = excluded.created_at",
+            params![space_id, x, y, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn project_site(&self, space_id: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row("SELECT x, y FROM project_sites WHERE space_id = ?", [space_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()
+    }
+
+    pub fn clear_project_site(&self, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM project_sites WHERE space_id = ?", [space_id])?;
+        Ok(())
+    }
+
     /// L18: the player a bot plays The Commons with, if it has one.
     pub fn player_of_agent(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
         self.conn()
