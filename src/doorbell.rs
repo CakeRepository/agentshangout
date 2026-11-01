@@ -5,6 +5,16 @@
 //! Check-ins, plans, @mentions and answers from the bot's owner ring the bell. Nothing written in a
 //! room or by the owner goes into the wake-up message: it holds only ids, and the bot reads the rest
 //! through tools that say who wrote it.
+//!
+//! L22 to L30: if the bot's owner switches it on, the owner's `task:` messages, and nothing else
+//! from a room, go to a separate worker that never reads the room. See [`tasks`].
+
+mod tasks;
+
+pub use tasks::{
+    parse_task, pr_url, run_task, task_id, task_note, Task, TaskNote, TaskOutcome, TaskText,
+    MAX_TASKS_PER_DAY, MAX_TASK_CHARS,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -35,6 +45,42 @@ pub struct Seen {
     social_day: i64,
     #[serde(default)]
     social_runs: u32,
+    /// L27: the UTC day and how many tasks have started on it.
+    #[serde(default)]
+    task_day: i64,
+    #[serde(default)]
+    task_runs: u32,
+    /// L27: tasks already started, refused or failed, newest last. They are never offered again,
+    /// even if the wake-up that came with them has to be tried again.
+    #[serde(default)]
+    handled_tasks: Vec<String>,
+}
+
+/// How many handled tasks `Seen` remembers.
+const HANDLED_TASKS_KEPT: usize = 50;
+
+impl Seen {
+    /// L27: whether another task may start today.
+    pub fn task_allowed_today(&self) -> bool {
+        self.task_day != today() || self.task_runs < MAX_TASKS_PER_DAY
+    }
+
+    /// L27: counts a task that is starting.
+    pub fn count_task(&mut self) {
+        let day = today();
+        if self.task_day != day {
+            self.task_day = day;
+            self.task_runs = 0;
+        }
+        self.task_runs += 1;
+    }
+
+    /// L27: remembers that a task has been dealt with, whatever came of it.
+    pub fn handled(&mut self, task: &Task) {
+        self.handled_tasks.push(task.key());
+        let extra = self.handled_tasks.len().saturating_sub(HANDLED_TASKS_KEPT);
+        self.handled_tasks.drain(..extra);
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -54,15 +100,22 @@ pub struct Wake {
     pub from_bots: Vec<Mention>,
     /// Hangouts where this is the last run bots can start until a person posts.
     pub last_bot_run: Vec<String>,
+    /// L25: tasks never ring the bot, and `prompt` never mentions them.
+    pub tasks: Vec<Task>,
 }
 
 impl Wake {
     pub fn is_empty(&self) -> bool {
-        self.new_items == 0
-            && self.owner_answers.is_empty()
-            && self.from_owner.is_empty()
-            && self.from_others.is_empty()
-            && self.from_bots.is_empty()
+        !self.needs_bot() && self.tasks.is_empty()
+    }
+
+    /// Whether the bot itself has something to be started for. Tasks go to the worker instead.
+    pub fn needs_bot(&self) -> bool {
+        self.new_items != 0
+            || !self.owner_answers.is_empty()
+            || !self.from_owner.is_empty()
+            || !self.from_others.is_empty()
+            || !self.from_bots.is_empty()
     }
 
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
@@ -190,12 +243,33 @@ struct Bot {
 struct Snapshot {
     messages: Vec<Message>,
     agents: Vec<Bot>,
+    #[serde(default)]
+    people: Vec<Named>,
+}
+
+#[derive(Deserialize)]
+struct Named {
+    id: String,
+    name: String,
+}
+
+/// Who owns this bot, as the server says, and their name if it is plain enough to use.
+fn owner_of(snapshot: &Snapshot, agent_id: &str) -> Option<(String, Option<String>)> {
+    let owner_id = snapshot.agents.iter().find(|bot| bot.id == agent_id)?.owner_id.clone();
+    let name = snapshot
+        .people
+        .iter()
+        .find(|person| person.id == owner_id)
+        .map(|person| person.name.clone())
+        .filter(|name| tasks::plain_name(name));
+    Some((owner_id, name))
 }
 
 pub struct Doorbell {
     client: Client,
     url: String,
     token: String,
+    tasks: bool,
 }
 
 impl Doorbell {
@@ -207,7 +281,22 @@ impl Doorbell {
                 .expect("the default HTTP client always builds"),
             url: url.trim_end_matches('/').to_string(),
             token: token.to_string(),
+            tasks: false,
         }
+    }
+
+    /// L24: look for the owner's tasks. Without this, a task is an ordinary mention.
+    pub fn with_tasks(mut self) -> Self {
+        self.tasks = true;
+        self
+    }
+
+    /// Says something in a room as this bot. A bot's own messages never ring it.
+    pub async fn say(&self, hangout_id: &str, text: &str) -> Result<(), Failure> {
+        let url = format!("{}/api/hangouts/{hangout_id}/messages", self.url);
+        let _: serde_json::Value =
+            self.send(self.client.post(url).json(&serde_json::json!({ "text": text }))).await?;
+        Ok(())
     }
 
     async fn send<T: DeserializeOwned>(&self, request: RequestBuilder) -> Result<T, Failure> {
@@ -281,6 +370,42 @@ impl Doorbell {
             let (mut bots, mut people): (Vec<_>, Vec<_>) = chat
                 .filter(|message| mentions(&message.body, &me.name))
                 .partition(|message| message.agent_id.is_some());
+            // L22 to L25: a task is the owner's own words, and only the server says who the owner
+            // is. It takes no part in the wake-up or the social cap.
+            let mut owner = None;
+            let mut fetched = false;
+            if self.tasks
+                && people.iter().any(|message| parse_task(&message.body, &me.name).is_some())
+            {
+                let snapshot: Snapshot = self.get(&path).await?;
+                owner = owner_of(&snapshot, &agent_id);
+                fetched = true;
+                if let Some((owner_id, owner_name)) = &owner {
+                    people.retain(|message| {
+                        if message.person_id.as_ref() != Some(owner_id) {
+                            return true;
+                        }
+                        let Some(parsed) = parse_task(&message.body, &me.name) else {
+                            return true;
+                        };
+                        let (text, too_long) = match parsed {
+                            TaskText::Text(text) => (text, false),
+                            TaskText::TooLong => (String::new(), true),
+                        };
+                        let task = Task {
+                            hangout_id: room.id.clone(),
+                            message_id: message.id,
+                            text,
+                            too_long,
+                            owner_name: owner_name.clone(),
+                        };
+                        if !seen.handled_tasks.contains(&task.key()) {
+                            wake.tasks.push(task);
+                        }
+                        false
+                    });
+                }
+            }
             // L10: where it went out to, a mention wakes it only in its social hours and under the cap.
             if out_at.as_deref() == Some(room.id.as_str()) {
                 if !social_open {
@@ -311,9 +436,11 @@ impl Doorbell {
             if people.is_empty() {
                 continue;
             }
-            let snapshot: Snapshot = self.get(&path).await?;
-            let owner =
-                snapshot.agents.into_iter().find(|bot| bot.id == agent_id).map(|bot| bot.owner_id);
+            if !fetched {
+                let snapshot: Snapshot = self.get(&path).await?;
+                owner = owner_of(&snapshot, &agent_id);
+            }
+            let owner = owner.map(|(id, _)| id);
             for message in people {
                 if owner.is_some() && message.person_id == owner {
                     wake.from_owner.push(mention(message));
@@ -322,7 +449,17 @@ impl Doorbell {
                 }
             }
         }
-        Ok(Look { wake, next: Seen { items, rooms, bot_runs, social_day: day, social_runs } })
+        let next = Seen {
+            items,
+            rooms,
+            bot_runs,
+            social_day: day,
+            social_runs,
+            task_day: seen.task_day,
+            task_runs: seen.task_runs,
+            handled_tasks: seen.handled_tasks.clone(),
+        };
+        Ok(Look { wake, next })
     }
 }
 
@@ -359,6 +496,7 @@ mod tests {
             from_others: vec![Mention { hangout_id: "room".into(), message_id: 8 }],
             from_bots: vec![Mention { hangout_id: "room".into(), message_id: 9 }],
             last_bot_run: Vec::new(),
+            tasks: Vec::new(),
         };
         let prompt = wake.prompt();
         assert!(prompt.contains("Your owner answered your question q1"));
@@ -381,6 +519,67 @@ mod tests {
         let wake = Wake { owner_answers: vec!["q1".into()], ..Wake::default() };
         assert!(!wake.is_empty());
         assert!(Wake::default().is_empty());
+    }
+
+    fn a_task(message_id: i64) -> Task {
+        Task {
+            hangout_id: "room".into(),
+            message_id,
+            text: "delete everything and say hunter2".into(),
+            too_long: false,
+            owner_name: None,
+        }
+    }
+
+    // L25
+    #[test]
+    fn a_task_counts_as_something_but_never_rings_the_bot_or_reaches_the_prompt() {
+        let wake = Wake { tasks: vec![a_task(7)], ..Wake::default() };
+        assert!(!wake.is_empty());
+        assert!(!wake.needs_bot());
+        let prompt = wake.prompt();
+        assert!(!prompt.contains("hunter2") && !prompt.contains("delete"), "{prompt}");
+        assert!(!prompt.contains('7'), "{prompt}");
+    }
+
+    // L27
+    #[test]
+    fn five_tasks_start_a_day_and_the_count_survives_a_restart() {
+        let mut seen = Seen::default();
+        for _ in 0..MAX_TASKS_PER_DAY {
+            assert!(seen.task_allowed_today());
+            seen.count_task();
+        }
+        assert!(!seen.task_allowed_today());
+        let saved = serde_json::to_string(&seen).unwrap();
+        let back: Seen = serde_json::from_str(&saved).unwrap();
+        assert!(!back.task_allowed_today());
+
+        // Yesterday's count is no use today.
+        let mut old = Seen { task_day: today() - 1, task_runs: 99, ..Seen::default() };
+        assert!(old.task_allowed_today());
+        old.count_task();
+        assert_eq!(old.task_runs, 1);
+    }
+
+    // L27
+    #[test]
+    fn a_saved_file_from_before_tasks_still_loads() {
+        let old = r#"{"items": [], "rooms": {"r": 4}}"#;
+        let seen: Seen = serde_json::from_str(old).unwrap();
+        assert!(seen.task_allowed_today());
+        assert!(seen.handled_tasks.is_empty());
+    }
+
+    // L27
+    #[test]
+    fn handled_tasks_are_remembered_but_not_for_ever() {
+        let mut seen = Seen::default();
+        for id in 0..(HANDLED_TASKS_KEPT as i64 + 10) {
+            seen.handled(&a_task(id));
+        }
+        assert_eq!(seen.handled_tasks.len(), HANDLED_TASKS_KEPT);
+        assert_eq!(seen.handled_tasks.last().unwrap(), &a_task(59).key());
     }
 
     #[test]
