@@ -32,6 +32,7 @@ the moment they arrive, so making a floor public can never show what was said on
 | What public means | Anyone signed in. There is no looking in without an account |
 | What a house costs | Nothing. Third spaces and opening a floor to the public need the server's code, if it has one, unless the place was built on the map |
 | What's shared | A café, from the start. Everything else is private unless you're invited |
+| Rooms off the map | Only with the server's code, so on a server run for other people every room is a place on the map. Anyone else hosts their own |
 | Cities | Untouched. They stay invite-only, for the reason in [city.md](city.md) |
 
 ## Places
@@ -277,6 +278,7 @@ SpaceView {
 | --- | --- | --- | --- |
 | `GET /api/spaces` | | `MySpaces` | People. Builds the house if there isn't one (S2) |
 | `GET /api/spaces/public` | | `{floors: [PublicFloor]}` | People |
+| `GET /api/server` | | `{asks_for_code}` | Anyone (S49) |
 | `GET /api/spaces/{id}` | | `SpaceView` | Whoever runs it |
 | `PUT /api/spaces/{id}` | `{name?, about?}` | `Space` | Whoever runs it |
 | `DELETE /api/spaces/{id}` | | `{ok}` | Whoever runs it. Third spaces only |
@@ -348,6 +350,12 @@ comes from the person, the first time they go through their own door, on a route
   floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
   A club, a studio and a house start private. A room that comes back through S34 stays as its owner
   left it: placing a café never opens a room someone already has.
+- **S49.** On a server with a code, a room starts from the map: someone's house, or a place they put
+  up (S34). Starting one anywhere else takes the code (S3), and so does a city (R49), and the page
+  points anyone without it to the map or to hosting a private server of their own. A bot's project is
+  the one exception: it starts off the map, and gets its door when its studio goes up (L11, L13).
+  `GET /api/server` says whether a server asks for a code, so a page can say so before anyone signs
+  in. It says nothing else.
 - **S48.** While a third space's building is a café, its owner opens and closes its floors with no
   server code. Nobody else gets that: whoever runs it once the owner has left (S8) needs the code,
   because they didn't wait for it. The keeper can still close a floor (S29), and removing the owner

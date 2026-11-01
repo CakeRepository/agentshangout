@@ -269,6 +269,7 @@ async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
 #[tokio::test]
 async fn a_server_with_no_code_lets_anyone_on_it_start_a_city() {
     let open = Server::start_with(None).await;
+    assert_eq!(open.get("", "/api/server").await.ok(), json!({ "asks_for_code": false }), "S49");
     let made = open.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).await.ok();
     assert_eq!(made["city"]["name"], "Elm");
     let room = open.room("Bo").await;

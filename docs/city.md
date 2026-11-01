@@ -60,7 +60,7 @@ Every one of these needs a test in `tests/city.rs`.
 - **R49.** Starting a city takes the server's code if the server has one, and nothing gets round it.
   So a server run for other people starts cities only for whoever holds its code, and anyone else
   who wants one runs their own: see
-  [Hosting anywhere else](../README.md#hosting-anywhere-else). That's where a city belongs, because
+  [Your own private server](../README.md#your-own-private-server). That's where a city belongs, because
   whoever runs a server can read everything on it, a family's Living Room included. A server with no
   code lets anyone on it start one.
 - **R50.** A city that exists stays as it is. Its links still let people in with no code, and its

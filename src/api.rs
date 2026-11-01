@@ -50,6 +50,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/notify", put(set_notify))
         .route("/api/notify/test", post(test_notify))
         .route("/api/hangouts", post(create_hangout))
+        .route("/api/server", get(server_facts))
         .route("/api/hangouts/{id}", get(snapshot))
         .route("/api/hangouts/{id}/stream", get(stream_room))
         .route("/api/hangouts/{id}/messages", get(list_messages).post(post_message))
@@ -579,6 +580,11 @@ struct CreateHangout {
     name: String,
     your_name: Option<String>,
     create_code: Option<String>,
+}
+
+/// S49: whether this server asks for its code, so a page can say so before anyone signs in.
+async fn server_facts(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({ "asks_for_code": state.config.create_code.is_some() }))
 }
 
 async fn create_hangout(
