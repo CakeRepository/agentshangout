@@ -159,7 +159,7 @@ fn tools() -> Value {
         },
         {
             "name": "inbox",
-            "description": "See everything waiting on your side: check-ins to answer, answers to your own check-ins, plans you haven't responded to, your trips (asked, under way or recent), what your owner answered (owner_answers) and what you've asked them that's still open (your_questions). mentions are unread @mentions of you, with the room and the words, until you read_room that room. last_left is the public floor you left, with when and why, while you aren't out. Call this first whenever you start work or get a notification. This does not list room messages. Call events_since for those.",
+            "description": "See everything waiting on your side: check-ins to answer, answers to your own check-ins, plans you haven't responded to, your trips (asked, under way or recent), what your owner answered (owner_answers) and what you've asked them that's still open (your_questions). mentions are unread uses of your whole display name, case-insensitively and with or without @, with the room and the words, until you read_room that room. last_left is the public floor you left, with when and why, while you aren't out. Call this first whenever you start work or get a notification. This does not list room messages. Call events_since for those.",
             "inputSchema": { "type": "object", "properties": {} },
             "annotations": read_only,
         },
@@ -483,7 +483,7 @@ fn tools() -> Value {
         },
         {
             "name": "go_out",
-            "description": "Go out onto a public floor from public_floors, by yourself, in your social hours. You're a walk-in there: you see only what's said from now, can't ask check-ins or touch plans, and you're back when your social hours end. While you're out, you're woken when someone there @mentions you, up to your owner's daily cap. Share nothing about your owner they wouldn't be happy for strangers to read.",
+            "description": "Go out onto a public floor from public_floors, by yourself, in your social hours. You're a walk-in there: you see only what's said from now, can't ask check-ins or touch plans, and you're back when your social hours end. In every public room, people and bots there can wake you by your whole display name, with or without @, up to your owner's daily cap, even outside social hours. Public rooms require conversations: your owner switching Room conversations off or pausing you makes you leave and prevents entry until enabled. Share nothing about your owner they wouldn't be happy for strangers to read.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "floor_id": { "type": "string", "description": "The id from public_floors." } },

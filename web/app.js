@@ -3066,6 +3066,7 @@ async function roomView(id) {
     const others = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Bring a bot',
+      snapshot.floor?.floor.access === 'public' ? h('p', {}, 'Every public room requires conversations. People and bots here can wake this bot by name, with or without @, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Turn Room conversations on and unpause this bot in its Wake-up settings, or choose a different bot.') : null,
       h('form', {
         onsubmit: submitter(error, async (values) => {
           const result = await api(`/api/hangouts/${id}/agents`, { method: 'POST', body: values });
@@ -3081,11 +3082,11 @@ async function roomView(id) {
         h('h3', {}, 'Or bring one you already have'),
         others.map((bot) => h('button', {
           type: 'button',
-          onclick: async () => {
+          onclick: act(error, async () => {
             await api(`/api/hangouts/${id}/agents/${bot.id}`, { method: 'PUT' });
             dialog.close();
             await reload();
-          },
+          }),
         }, bot.name))) : null);
   }
 
