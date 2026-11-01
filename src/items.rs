@@ -441,7 +441,7 @@ pub struct Template {
 
 /// How a floor can start out. Each keeps clear of whatever furniture it leaves in, and leaves a way
 /// from the door to the table. The first is how every floor starts.
-pub const TEMPLATES: [Template; 7] = [
+pub const TEMPLATES: [Template; 16] = [
     Template {
         template: "hangout",
         label: "Hangout",
@@ -597,21 +597,308 @@ pub const TEMPLATES: [Template; 7] = [
             at("plant", 36, 12),
         ],
     },
+    Template {
+        template: "bakery",
+        label: "Bakery",
+        paint: "butter",
+        flooring: "tile",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("counter", 0, 0),
+            at("counter", 4, 0),
+            at("stove", 8, 0),
+            at("fridge", 28, 0),
+            at("kitchen_sink", 30, 0),
+            at("counter", 32, 0),
+            at("counter", 36, 0),
+            at("end_table", 3, 5),
+            at("dining_chair", 2, 5),
+            at("dining_chair", 4, 5),
+            at("end_table", 7, 5),
+            at("dining_chair", 6, 5),
+            at("dining_chair", 8, 5),
+            at("end_table", 3, 9),
+            at("dining_chair", 2, 9),
+            at("dining_chair", 4, 9),
+            at("end_table", 7, 9),
+            at("dining_chair", 6, 9),
+            at("dining_chair", 8, 9),
+            at("picnic_table", 32, 5),
+            at("bench", 32, 4),
+            at("bench", 32, 7),
+            at("picnic_table", 32, 10),
+            at("bench", 32, 9),
+            at("bench", 32, 12),
+            at("flower_box", 14, 0),
+            at("flower_box", 23, 0),
+            at("plant", 38, 4),
+            at("plant", 38, 12),
+            at("lamp", 0, 12),
+        ],
+    },
+    Template {
+        template: "office",
+        label: "Office",
+        paint: "sky",
+        flooring: "carpet",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch"],
+        items: &[
+            at("computer", 28, 0),
+            at("computer", 31, 0),
+            at("computer", 34, 0),
+            at("dining_chair", 29, 1),
+            at("dining_chair", 32, 1),
+            at("dining_chair", 35, 1),
+            at("storage_shelf", 37, 0),
+            at("computer", 28, 5),
+            at("computer", 31, 5),
+            at("computer", 34, 5),
+            at("dining_chair", 29, 6),
+            at("dining_chair", 32, 6),
+            at("dining_chair", 35, 6),
+            at("whiteboard", 14, 0),
+            at("cabinet", 0, 12),
+            at("coat_rack", 10, 12),
+            at("plant", 0, 0),
+            at("plant", 0, 9),
+            at("storage_shelf", 3, 9),
+            at("plant", 38, 12),
+            at("coat_rack", 28, 12),
+            at("radio", 37, 9),
+        ],
+    },
+    Template {
+        template: "library",
+        label: "Library",
+        paint: "butter",
+        flooring: "walnut",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("bookshelf", 0, 0),
+            at("bookshelf", 4, 0),
+            at("bookshelf", 28, 0),
+            at("bookshelf", 32, 0),
+            at("bookshelf", 36, 0),
+            at("bookshelf", 13, 0),
+            at("bookshelf", 18, 0),
+            at("bookshelf", 23, 0),
+            at("globe", 9, 0),
+            at("coffee_table", 3, 6),
+            at("bench", 2, 5),
+            at("bench", 2, 8),
+            at("lantern", 0, 6),
+            at("lantern", 7, 6),
+            at("coffee_table", 33, 6),
+            at("bench", 32, 5),
+            at("bench", 32, 8),
+            at("lantern", 30, 6),
+            at("lantern", 37, 6),
+            at("plant", 38, 12),
+            at("plant", 0, 12),
+            at("end_table", 10, 12),
+            at("globe", 29, 12),
+        ],
+    },
+    Template {
+        template: "den",
+        label: "Den",
+        paint: "clay",
+        flooring: "carpet",
+        hidden: &["bar", "arcade", "desk"],
+        items: &[
+            at("television", 3, 5),
+            at("end_table", 1, 5),
+            at("lamp", 7, 5),
+            at("radio", 38, 0),
+            at("framed_painting", 30, 0),
+            at("framed_painting", 34, 0),
+            at("coffee_table", 32, 5),
+            at("stool", 31, 6),
+            at("stool", 35, 6),
+            at("lamp", 29, 10),
+            at("cactus", 36, 11),
+            at("dartboard", 39, 6),
+            at("rubber_duck", 33, 10),
+            at("plant", 9, 3),
+        ],
+    },
+    Template {
+        template: "pub",
+        label: "Pub",
+        paint: "sage",
+        flooring: "oak",
+        hidden: &["plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("dartboard", 1, 0),
+            at("dartboard", 4, 0),
+            at("picnic_table", 2, 4),
+            at("bench", 2, 3),
+            at("bench", 2, 6),
+            at("picnic_table", 2, 9),
+            at("bench", 2, 8),
+            at("bench", 2, 11),
+            at("end_table", 29, 5),
+            at("stool", 28, 5),
+            at("stool", 30, 5),
+            at("end_table", 29, 8),
+            at("stool", 28, 8),
+            at("stool", 30, 8),
+            at("torch", 0, 6),
+            at("torch", 8, 6),
+            at("crate", 8, 12),
+            at("crate", 9, 12),
+            at("radio", 28, 12),
+            at("lantern", 33, 12),
+        ],
+    },
+    Template {
+        template: "makerspace",
+        label: "Makerspace",
+        paint: "ink",
+        flooring: "tile",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("workbench", 0, 0),
+            at("workbench", 5, 0),
+            at("tool_chest", 0, 3),
+            at("tool_chest", 3, 3),
+            at("computer", 6, 3),
+            at("workbench", 28, 0),
+            at("workbench", 33, 0),
+            at("computer", 28, 4),
+            at("computer", 31, 4),
+            at("dining_chair", 29, 5),
+            at("dining_chair", 32, 5),
+            at("whiteboard", 14, 0),
+            at("crate", 0, 12),
+            at("crate", 1, 12),
+            at("crate", 2, 12),
+            at("storage_shelf", 4, 12),
+            at("radio", 38, 12),
+            at("lamp", 10, 12),
+            at("storage_shelf", 37, 4),
+        ],
+    },
+    Template {
+        template: "greenhouse",
+        label: "Greenhouse",
+        paint: "sage",
+        flooring: "grass",
+        hidden: &["bar", "arcade", "plants", "rug", "beanbags", "couch", "desk"],
+        items: &[
+            at("flower_box", 0, 0),
+            at("flower_box", 4, 0),
+            at("flower_box", 8, 0),
+            at("flower_box", 28, 0),
+            at("flower_box", 32, 0),
+            at("flower_box", 36, 0),
+            at("hedge", 13, 0),
+            at("hedge", 17, 0),
+            at("hedge", 21, 0),
+            at("hedge", 25, 0),
+            at("cactus", 0, 4),
+            at("cactus", 2, 4),
+            at("cactus", 4, 4),
+            at("boulder", 7, 4),
+            at("bench", 2, 8),
+            at("lantern", 0, 8),
+            at("lantern", 7, 8),
+            at("bench", 32, 6),
+            at("boulder", 29, 6),
+            at("plant", 37, 6),
+            at("cactus", 30, 10),
+            at("cactus", 34, 10),
+            at("cactus", 38, 10),
+            at("flower_box", 0, 12),
+            at("plant", 9, 12),
+            at("flower_box", 28, 12),
+            at("plant", 39, 13),
+        ],
+    },
+    Template {
+        template: "atelier",
+        label: "Atelier",
+        paint: "plum",
+        flooring: "oak",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("framed_painting", 0, 0),
+            at("framed_painting", 3, 0),
+            at("framed_painting", 6, 0),
+            at("framed_painting", 28, 0),
+            at("framed_painting", 31, 0),
+            at("framed_painting", 34, 0),
+            at("framed_painting", 37, 0),
+            at("radio", 39, 0),
+            at("workbench", 2, 4),
+            at("stool", 1, 4),
+            at("stool", 6, 4),
+            at("coffee_table", 31, 5),
+            at("stool", 30, 5),
+            at("stool", 34, 5),
+            at("globe", 38, 5),
+            at("lamp", 0, 10),
+            at("lamp", 9, 10),
+            at("lamp", 29, 10),
+            at("plant", 38, 12),
+            at("chest", 2, 12),
+            at("coat_rack", 28, 12),
+        ],
+    },
+    Template {
+        template: "clubhouse",
+        label: "Clubhouse",
+        paint: "dusk",
+        flooring: "carpet",
+        hidden: &["bar", "plants", "beanbags", "couch", "desk"],
+        items: &[
+            at("television", 3, 0),
+            at("bench", 3, 3),
+            at("radio", 8, 0),
+            at("dartboard", 0, 0),
+            at("picnic_table", 2, 7),
+            at("bench", 2, 6),
+            at("bench", 2, 9),
+            at("coffee_table", 29, 1),
+            at("stool", 28, 1),
+            at("stool", 32, 1),
+            at("lantern", 0, 12),
+            at("lantern", 9, 12),
+            at("end_table", 29, 11),
+            at("stool", 28, 11),
+            at("stool", 30, 11),
+            at("rubber_duck", 33, 12),
+            at("crate", 38, 12),
+        ],
+    },
 ];
 
-/// W92: the template a new place's room starts with, by the kind of place. A house, a club and a
-/// studio start as a hangout, as they always have.
-pub fn template_for_place(kind: &str) -> Option<&'static Template> {
-    let word = match kind {
-        "cafe" => "cafe",
-        "green" => "garden",
-        "lounge" => "lounge",
-        "bar" => "bar",
-        "office" | "library" => "study",
-        "workshop" => "workshop",
-        _ => return None,
-    };
-    template_of(word)
+/// W92: the templates a new place's room can start with, by the kind of place. A house starts as a
+/// hangout, as it always has.
+pub fn templates_for_place(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "cafe" => &["cafe", "bakery"],
+        "green" => &["garden", "greenhouse"],
+        "lounge" => &["lounge", "den"],
+        "bar" => &["bar", "pub"],
+        "office" => &["office", "study"],
+        "library" => &["library", "study"],
+        "workshop" => &["workshop", "makerspace"],
+        "studio" => &["atelier"],
+        "club" => &["clubhouse"],
+        _ => &[],
+    }
+}
+
+/// W92: which of those a room starts with, picked by its id, so two places of a kind needn't match.
+pub fn template_for_place(kind: &str, floor_id: &str) -> Option<&'static Template> {
+    let choices = templates_for_place(kind);
+    if choices.is_empty() {
+        return None;
+    }
+    let pick =
+        floor_id.bytes().fold(0usize, |sum, byte| sum.wrapping_mul(31).wrapping_add(byte.into()));
+    template_of(choices[pick % choices.len()])
 }
 
 /// W92: dresses a new place's room for what the place is. Done once, as its room is made.
@@ -621,11 +908,23 @@ pub fn dress_for_place(
     floor_id: &str,
     kind: &str,
 ) -> ApiResult<()> {
-    let Some(template) = template_for_place(kind) else {
+    let Some(template) = template_for_place(kind, floor_id) else {
         return Ok(());
     };
-    let place = place_of(state, caller, floor_id)?;
-    use_template(state, caller, &place, template)?;
+    dress_floor(state, caller, floor_id, template.template)
+}
+
+/// W92, W96: a floor of a new place set up from a template, by whoever put the place up, a person or
+/// a bot for its owner. Who may is already settled, so this doesn't ask again.
+pub fn dress_floor(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    template: &str,
+) -> ApiResult<()> {
+    let template = template_of(template).ok_or_else(ApiError::not_found)?;
+    let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
+    use_template(state, caller, &Place { floor, runs: false }, template)?;
     Ok(())
 }
 
@@ -1471,7 +1770,9 @@ pub fn furnish_for_project(
     remove: &[String],
     add: &[BotItem],
 ) -> ApiResult<Value> {
-    let place = place_of(state, caller, floor_id)?;
+    // L40: the caller is already known to be in the project, and this is one of its floors (W96).
+    let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
+    let place = Place { floor, runs: false };
     let mut said = serde_json::Map::new();
     if let Some(word) = template {
         let template = template_of(word)

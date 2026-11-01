@@ -569,6 +569,61 @@ pub fn place_title(kind: &str) -> &'static str {
     }
 }
 
+/// W96: the floors above the first that a new place of this kind gets, as a name and a template. The
+/// one above is the other template for its kind, so the two floors don't look alike.
+pub fn upper_floors(kind: &str, first: &str) -> Vec<(&'static str, &'static str)> {
+    let other = items::templates_for_place(kind).iter().copied().find(|word| *word != first);
+    match kind {
+        "office" => other.map(|template| ("Meeting room", template)).into_iter().collect(),
+        "library" => other.map(|template| ("Reading loft", template)).into_iter().collect(),
+        "workshop" => other.map(|template| ("Upstairs", template)).into_iter().collect(),
+        "bar" => vec![("Upstairs lounge", "den")],
+        "club" => vec![("Game room", "pub")],
+        _ => Vec::new(),
+    }
+}
+
+/// W96: a new place's floors above the first, open and set up, unless its space has more than its
+/// first floor already, as one that came back does (S35).
+pub fn build_upper_floors(
+    state: &AppState,
+    caller: &Caller,
+    space_id: &str,
+    kind: &str,
+) -> ApiResult<()> {
+    let floors = state.db.floors_of(space_id)?;
+    let [first] = floors.as_slice() else {
+        return Ok(());
+    };
+    let started = items::template_for_place(kind, &first.id).map_or("hangout", |one| one.template);
+    for (name, template) in upper_floors(kind, started) {
+        let new = NewFloor {
+            id: &auth::new_id(),
+            space_id,
+            name,
+            invite_code: &auth::new_invite_code(),
+            created_by: &caller.person_id,
+            now: now(),
+        };
+        let Some(floor) = state.db.add_floor(&new, MAX_FLOORS)? else {
+            break;
+        };
+        state.db.change_floor(&FloorChange {
+            id: &floor.id,
+            name: None,
+            access: Some("public"),
+            size: None,
+            paint: None,
+            flooring: None,
+            keep_bots_of: &caller.person_id,
+            private_only: &items::private_only(),
+        })?;
+        items::dress_floor(state, caller, &floor.id, template)?;
+    }
+    refresh_space(state, &state.db.floors_of(space_id)?);
+    Ok(())
+}
+
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
 /// one. W56 keeps a person to 3 such buildings, so there's always room for the one they just placed.
 /// Someone with the god mode switch, on or off, isn't held to that limit (W79). S47: a new one behind a café starts
@@ -616,6 +671,7 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
     }
     if !square {
         items::dress_for_place(state, caller, &id, place)?;
+        build_upper_floors(state, caller, &id, place)?;
     }
     state.db.space(&id)?.ok_or_else(ApiError::not_found)
 }
