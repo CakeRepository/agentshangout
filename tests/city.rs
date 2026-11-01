@@ -396,6 +396,13 @@ fn has(value: &Value, needle: &str) -> bool {
     value.to_string().contains(needle)
 }
 
+/// This JSON as text, with these ids taken out. An id is random, so by chance one can spell a short
+/// name such as Bo, and that gives nobody away. Pass ids the test knows from elsewhere, not ones read
+/// from this reply, so that an id that shouldn't be in it is still found.
+fn without_ids(value: &Value, ids: &[impl AsRef<str>]) -> String {
+    ids.iter().fold(value.to_string(), |said, id| said.replace(id.as_ref(), "ID"))
+}
+
 fn is_refusal(reply: &Reply) -> bool {
     matches!(reply.status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND)
 }
@@ -2621,8 +2628,7 @@ async fn the_house_bot_has_four_calls_and_every_other_call_is_refused() {
         ("status", &status.body),
         ("finish", &finished.body),
     ] {
-        // The request's id is random, and by chance it can spell a short name such as Bo.
-        let said = body.to_string().replace(&id, "ID");
+        let said = without_ids(body, &[&set.request, &casa.id]);
         for secret in secrets {
             assert!(!said.contains(secret), "{name} told the house bot {secret}: {body}");
         }
@@ -2753,7 +2759,8 @@ async fn the_queue_holds_an_id_and_a_scene_name_and_nothing_else() {
     assert_ok(&server.answer_scene(&set.w.ann.key, &set.request, "yes").await);
     assert_ok(&server.answer_scene(&set.w.ann.key, &text(&by_bot.body["id"]), "yes").await);
     let own = server.scene(&set.w.ann, &set.w.ann_home, "Morning Light").await;
-    assert_ok(&server.request_scene(&set.w.ann.key, &own).await);
+    let by_herself = server.request_scene(&set.w.ann.key, &own).await;
+    assert_ok(&by_herself);
 
     let queue = server.queue(&casa).await;
     assert_eq!(queue.len(), 4, "{queue:?}");
@@ -2766,7 +2773,16 @@ async fn the_queue_holds_an_id_and_a_scene_name_and_nothing_else() {
         assert!(item.get("id").is_some() && item.get("scene").is_some());
     }
     let raw = server.get(&casa.token, "/api/house/queue").await;
+    let requests = [
+        text(&sneaky.body["id"]),
+        set.request.clone(),
+        text(&by_bot.body["id"]),
+        text(&by_herself.body["id"]),
+    ];
+    let said = without_ids(&raw.body, &requests);
     for forbidden in [
+        "Ann",
+        "Bo",
         "Scout",
         "Pixel",
         GOAL,
@@ -2784,13 +2800,7 @@ async fn the_queue_holds_an_id_and_a_scene_name_and_nothing_else() {
         &set.scene,
         &dinner,
     ] {
-        assert!(!has(&raw.body, forbidden), "the queue shows {forbidden}: {}", raw.body);
-    }
-    // Ids are random letters, and three of them can spell a short name by accident, so those two
-    // names are looked for in the scene names alone.
-    let scene_names: Vec<&Value> = queue.iter().map(|item| &item["scene"]).collect();
-    for name in ["Ann", "Bo"] {
-        assert!(!has(&json!(scene_names), name), "the queue shows {name}: {}", raw.body);
+        assert!(!said.contains(forbidden), "the queue shows {forbidden}: {}", raw.body);
     }
     // MCP gives it the same and no more.
     let over_mcp = server.tool(&casa.token, "house_queue", json!({})).await;

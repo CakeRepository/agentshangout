@@ -507,6 +507,13 @@ fn has(value: &Value, needle: &str) -> bool {
     value.to_string().contains(needle)
 }
 
+/// This JSON as text, with these ids taken out. An id is random, so by chance one can spell a short
+/// name such as Bo, and that gives nobody away. Pass ids the test knows from elsewhere, not ones read
+/// from this reply, so that an id that shouldn't be in it is still found.
+fn without_ids(value: &Value, ids: &[impl AsRef<str>]) -> String {
+    ids.iter().fold(value.to_string(), |said, id| said.replace(id.as_ref(), "ID"))
+}
+
 fn keys_of(value: &Value) -> Vec<String> {
     let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
     keys.sort();
@@ -1742,8 +1749,9 @@ async fn a_resident_sees_how_each_asker_stands_beside_their_request_and_nobody_e
         assert_eq!(keys_of(bo), STANDING_KEYS);
         assert_eq!((bo["gatherings"].as_i64(), bo["vouches"].clone()), (Some(1), json!(["Ann"])));
         assert_eq!(standing[&cy.id]["gatherings"], 0);
+        let said = without_ids(&view.body["standing"], &[&w.bo.id, &cy.id]);
         for secret in [PLAN_TITLE, TRIP_GOAL, "Scout", "Pip", "Bo House"] {
-            assert!(!has(&view.body["standing"], secret), "{secret} in the standing map");
+            assert!(!said.contains(secret), "{secret} in the standing map");
         }
     }
     // Only residents have the page.
@@ -2430,9 +2438,10 @@ async fn the_gate_is_seen_by_people_in_the_city_and_not_by_their_bots_nor_the_pe
     assert_eq!(people, ["Ann", "Bo"], "the people waiting are not people in the city");
     let listed = server.tool(&w.scout.token, "list_city", json!({})).await;
     assert!(listed["structuredContent"].get("gate").is_none(), "{listed}");
+    let homes = [&w.ann_home.id, &w.bo_home.id];
     assert!(
-        !has(&listed["structuredContent"]["bots"], "Eve")
-            && !has(&listed["structuredContent"]["houses"], "Eve"),
+        !without_ids(&listed["structuredContent"]["bots"], &homes).contains("Eve")
+            && !without_ids(&listed["structuredContent"]["houses"], &homes).contains("Eve"),
         "{listed}"
     );
     // The house bot has no city at all, and the people waiting can't see who else is.
@@ -2882,10 +2891,12 @@ async fn someone_at_the_gate_sees_only_their_own_count_in_me_and_nothing_else_of
         (place["name"].as_str(), place["vouches"].as_i64(), place["vouches_needed"].as_i64()),
         (Some("Elm"), Some(0), Some(3))
     );
+    assert_eq!(place["city_id"], w.city.as_str());
+    let said = without_ids(&me["waiting"], &[&w.city]);
     for secret in
         ["Ann", "Bo", "Cy", "Secret handshake", w.square.as_str(), "Ann House", "Bo House", "Scout"]
     {
-        assert!(!has(&me["waiting"], secret), "{secret} in {}", me["waiting"]);
+        assert!(!said.contains(secret), "{secret} in {}", me["waiting"]);
     }
     assert!(!has(&me, "Secret handshake") && !has(&me, w.square.as_str()), "{me}");
     assert_eq!(me["cities"], json!([]));
@@ -3522,7 +3533,8 @@ async fn no_notification_from_the_gate_or_the_rules_carries_standing_requirement
     }
     assert!(!everything.is_empty());
     for notice in &everything {
-        let said = text(&notice["text"]);
+        // The text ends in a link to the Town Square, with its id in it.
+        let said = without_ids(&notice["text"], &[&w.square]);
         for forbidden in [
             "min_",
             "requirement",
