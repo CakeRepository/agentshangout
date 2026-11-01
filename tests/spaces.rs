@@ -1738,7 +1738,7 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 28] = [
+const KEPT_BY_THE_WIPE: [&str; 29] = [
     "people",
     "passkey_users",
     "passkeys",
@@ -1752,6 +1752,7 @@ const KEPT_BY_THE_WIPE: [&str; 28] = [
     "agents",
     "agent_activity",
     "agent_doorbell",
+    "discord_links",
     "notify_targets",
     "free_sharing",
     "free_windows",

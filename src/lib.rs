@@ -7,6 +7,7 @@ pub mod city;
 pub mod clock;
 pub mod closeness;
 pub mod db;
+pub mod discord;
 pub mod doorbell;
 pub mod error;
 pub mod friends;
@@ -79,6 +80,8 @@ pub struct Shared {
     pub webauthn: Option<webauthn_rs::Webauthn>,
     /// Passkey ceremonies that are waiting on a browser, and the cap on new sign-ups.
     pub ceremonies: passkey::Ceremonies,
+    /// The Discord app that proves a linked account. `None` turns linking off (A25).
+    pub discord: Option<discord::App>,
     /// The public worlds' memory: land, built views, limits, and who is passing through.
     pub worlds: worlds::Runtime,
     /// The limits on plan links and on cities started without a code.
@@ -103,6 +106,10 @@ impl Deref for AppState {
 
 impl AppState {
     pub fn new(db: Db, config: Config) -> Self {
+        Self::with_discord(db, config, None)
+    }
+
+    pub fn with_discord(db: Db, config: Config, discord: Option<discord::App>) -> Self {
         let (hub, _) = broadcast::channel(256);
         let webauthn = passkey::webauthn_for(&config.public_url);
         Self(Arc::new(Shared {
@@ -111,6 +118,7 @@ impl AppState {
             hub,
             webauthn,
             ceremonies: passkey::Ceremonies::default(),
+            discord,
             worlds: worlds::Runtime::new(),
             referrals: referrals::Limits::new(),
             closeness: closeness::Limits::new(),

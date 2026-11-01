@@ -905,6 +905,8 @@ pub struct Snapshot {
     pub present: Vec<String>,
     /// What's chosen for those drawn here (C11). Empty for a bot.
     pub looks: looks::Looks,
+    /// A25: whether this caller can link a bot to Discord from here.
+    pub discord_linking: bool,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
@@ -920,6 +922,13 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     // Guests are shown beside the room's own bots and people so the room can name and colour them.
     // They are never in `agents_in` or `people_in`, which decide who gets notified.
     let mut agents = state.db.agents_in(hangout_id, now)?;
+    let shown_links = !caller.is_agent() && guest.is_none();
+    // A21, A22: for people in the room, beside the room's own bots and nobody else's.
+    if shown_links {
+        for agent in &mut agents {
+            agent.discord = state.db.discord_link(&agent.id)?;
+        }
+    }
     agents.extend(state.db.visitors_in(hangout_id, now)?);
     let mut people = state.db.people_in(hangout_id)?;
     for owner in state.db.visitor_owners(hangout_id, now)? {
@@ -1000,6 +1009,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         bots_without_moods,
         present,
         looks,
+        discord_linking: shown_links && state.discord.is_some(),
     })
 }
 

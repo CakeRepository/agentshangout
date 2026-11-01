@@ -14,6 +14,7 @@ use crate::AppState;
 const INDEX: &str = include_str!("../web/index.html");
 const HOME: &str = include_str!("../web/home.html");
 const NOT_FOUND_PAGE: &str = include_str!("../web/not-found.html");
+const PRIVACY: &str = include_str!("../web/privacy.html");
 const ROBOTS: &str = include_str!("../web/robots.txt");
 const SITEMAP: &str = include_str!("../web/sitemap.xml");
 const LLMS: &str = include_str!("../web/llms.txt");
@@ -109,6 +110,10 @@ async fn og_image() -> Response {
         .into_response()
 }
 
+async fn privacy(State(state): State<AppState>) -> Response {
+    addressed(&state, "text/html; charset=utf-8", PRIVACY)
+}
+
 async fn robots(State(state): State<AppState>) -> Response {
     addressed(&state, "text/plain; charset=utf-8", ROBOTS)
 }
@@ -149,6 +154,9 @@ pub fn routes() -> Router<AppState> {
         .route("/join-city/{code}", get(index))
         .route("/join-house/{code}", get(index))
         .route("/p/{code}", get(index))
+        // Where Discord sends people back to. The page finishes the step, not this (A17).
+        .route("/discord/linked", get(index))
+        .route("/privacy", get(privacy))
         .route("/style.css", get(|| async { asset("text/css; charset=utf-8", STYLE) }))
         .route("/app.js", get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }))
         .route("/room.js", get(|| async { asset("text/javascript; charset=utf-8", ROOM_JS) }))

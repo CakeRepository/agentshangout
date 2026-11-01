@@ -6,6 +6,8 @@ import { planInviteView } from './plan-invite.js';
 
 const app = document.getElementById('app');
 const startingTitle = document.title;
+// Where someone was when they left to link a bot on Discord, for this tab only.
+const DISCORD_WAY_BACK = 'discord-way-back';
 let leaveRoom = () => {};
 
 // Builds DOM with text nodes only. Nothing a bot writes is ever parsed as HTML.
@@ -2636,6 +2638,11 @@ async function roomView(id) {
             guest ? h('span', { class: 'guest-tag' }, 'Guest') : null,
             doorbellBadge(agent)),
           h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`),
+          agent.discord ? h('small', { class: 'muted' }, 'Discord: ', h('a', {
+            href: `https://discord.com/users/${agent.discord.id}`,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          }, agent.discord.name)) : null,
           mark ? h('small', { class: 'error' }, `You marked it: ${MARK_REASONS[mark.reason]}`) : null),
         mine ? h('div', { class: 'crew-actions' },
           agent.doorbell ? h('button', {
@@ -2674,6 +2681,23 @@ async function roomView(id) {
           }, 'New token'),
           h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent) }, 'Wake-up'),
           h('button', { type: 'button', class: 'link', onclick: () => routineDialog(agent).catch((failure) => alert(failure.message)) }, 'Schedule'),
+          // A20: unlinking is always there. Linking is only offered where it can work (A25).
+          agent.discord ? h('button', {
+            type: 'button',
+            class: 'link',
+            onclick: async () => {
+              if (!confirm(`Unlink ${agent.discord.name} from ${agent.name}? It's deleted right away.`)) return;
+              try {
+                await api(`/api/agents/${agent.id}/discord`, { method: 'DELETE' });
+                await reload();
+              } catch (error) {
+                say(error.message);
+              }
+            },
+          }, 'Unlink Discord') : null,
+          !agent.discord && !guest && snapshot.discord_linking
+            ? h('button', { type: 'button', class: 'link', onclick: () => discordDialog(agent) }, 'Link Discord')
+            : null,
           guest ? h('button', {
             type: 'button',
             class: 'link danger',
@@ -2967,6 +2991,25 @@ async function roomView(id) {
         field('Webhook URL', h('input', { name: 'url', type: 'url', placeholder: 'https://', autocomplete: 'off' }), 'Saving this empty removes it.'),
         error,
         h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
+  }
+
+  // A26: this says who will see the name before anyone leaves for Discord.
+  function discordDialog(agent) {
+    const error = formError();
+    modal(`Link Discord to ${agent.name}`,
+      h('p', {}, 'People in this bot\'s rooms and city will see your Discord username beside it, with a link to your profile. Bots won\'t, and nothing public will.'),
+      h('p', { class: 'muted' }, 'Discord gives us the account\'s id and username and nothing else. You can unlink it any time, which deletes it right away. ',
+        h('a', { href: '/privacy', target: '_blank' }, 'Privacy')),
+      error,
+      h('div', { class: 'modal-actions' }, h('button', {
+        type: 'button',
+        class: 'primary',
+        onclick: act(error, async () => {
+          const { url } = await api(`/api/agents/${agent.id}/discord`, { method: 'POST' });
+          sessionStorage.setItem(DISCORD_WAY_BACK, location.pathname);
+          location.assign(url);
+        }),
+      }, 'Continue to Discord')));
   }
 
   async function notifyDialog() {
@@ -6077,6 +6120,30 @@ function saveClock() {
   api('/api/clock', { method: 'PUT', body }).then(() => { clockSaved = true; }).catch(() => {});
 }
 
+// A17: Discord sends people back here with a code. The session cookie stayed behind on that
+// redirect, so the server can't tell who this is until this page asks from its own site. Null means
+// it worked, and the page they came from is the address again.
+async function discordLinkedView() {
+  const query = new URLSearchParams(location.search);
+  const back = sessionStorage.getItem(DISCORD_WAY_BACK) || '/';
+  sessionStorage.removeItem(DISCORD_WAY_BACK);
+  history.replaceState({}, '', '/discord/linked');
+  let problem = 'Nothing was linked, because Discord wasn\'t given a yes.';
+  if (query.get('code')) {
+    try {
+      await api('/api/discord/finish', { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      history.replaceState({}, '', back);
+      return null;
+    } catch (error) {
+      problem = error.message;
+    }
+  }
+  return h('main', { class: 'home' }, h('div', { class: 'card' },
+    h('h2', {}, 'That didn\'t link'),
+    h('p', { class: 'muted' }, problem),
+    link(back, 'Go back')));
+}
+
 async function route() {
   leaveRoom();
   leaveRoom = () => {};
@@ -6107,6 +6174,10 @@ async function route() {
       });
     }
     else if (path === '/worlds') view = await worldsView();
+    else if (path === '/discord/linked') {
+      view = await discordLinkedView();
+      if (!view) return route();
+    }
     else view = await homeView();
     app.replaceChildren(view);
     // These pages need someone signed in, so only they save the clock.

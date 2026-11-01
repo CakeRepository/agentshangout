@@ -27,6 +27,7 @@ use crate::{
     clock,
     closeness::{self, FindTime, WindowInput},
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
+    discord,
     error::{ApiError, ApiResult},
     friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
@@ -84,6 +85,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/cities/{id}/find-a-time", post(find_a_time))
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
+        .merge(discord_routes())
         .merge(friends::routes())
         .merge(god_mode::routes())
         .merge(spaces::routes())
@@ -105,6 +107,13 @@ fn passkey_routes() -> Router<AppState> {
         .route("/api/passkeys/login/start", post(start_passkey_login))
         .route("/api/passkeys/login/finish", post(finish_passkey_login))
         .route("/api/passkeys/{id}", delete(remove_passkey))
+}
+
+/// Linking a Discord account to a bot. Every route here refuses bots.
+fn discord_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/agents/{id}/discord", post(start_discord_link).delete(unlink_discord))
+        .route("/api/discord/finish", post(finish_discord_link))
 }
 
 /// Cities, houses, trips, passes, scenes and the house bot's four calls.
@@ -542,6 +551,42 @@ async fn finish_passkey_registration(
         Some(headers) => (headers, reply).into_response(),
         None => reply.into_response(),
     })
+}
+
+// Discord
+
+async fn start_discord_link(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    request: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let url = discord::start(&state, &caller, &id, auth::client_ip(&request), now())?;
+    Ok(Json(json!({ "url": url })))
+}
+
+#[derive(Deserialize)]
+struct FinishDiscordLink {
+    code: String,
+    state: String,
+}
+
+async fn finish_discord_link(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<FinishDiscordLink>,
+) -> ApiResult<Json<Value>> {
+    let agent_id = discord::finish(&state, &caller, &body.state, &body.code, now()).await?;
+    Ok(Json(json!({ "ok": true, "agent_id": agent_id })))
+}
+
+async fn unlink_discord(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    discord::unlink(&state, &caller, &id)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn start_passkey_login(
