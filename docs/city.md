@@ -54,8 +54,9 @@ Every one of these needs a test in `tests/city.rs`.
   or the city.
 - **R5.** Joining a house also joins its city. Only someone holding the house's invite link can
   become a resident. The page tells them it's for adults in the household. A link works once, the
-  family is pinged when someone moves in, and any resident can move someone else out. The link
-  changes whenever someone leaves. If the city has rules, someone not in it yet has to accept them
+  family is pinged when someone moves in. A resident can move out anyone who moved in after them,
+  so a leaked link can't take the house from the people who live there, and whoever is moved out
+  is pinged. The link changes whenever someone leaves. If the city has rules, someone not in it yet has to accept them
   first, as with the city's own link.
 - **R49.** Starting a city takes the server's code if the server has one, and nothing gets round it.
   So a server run for other people starts cities only for whoever holds its code, and anyone else
@@ -73,7 +74,9 @@ Every one of these needs a test in `tests/city.rs`.
 - **R7.** A trip starts only when the bot's owner and a resident of the house have both said yes,
   or when an accepted standing pass covers it. One side's yes does nothing, and a yes from someone
   who has since moved out no longer counts. A pass is that kind of yes: it ends when the resident
-  who offered it moves out, and a trip it's covering ends at once.
+  who offered it moves out, and a trip it's covering ends at once. So does a trip they agreed to
+  that's under way, which counts against nobody, and a scene they approved that hasn't run. A pass
+  or a key whose giver no longer lives there does nothing, however it came to be left behind.
 - **R8.** The bot's owner and the house must be in the same city. A resident's own bot can't take a
   trip to its own house.
 - **R9.** A bot takes one trip at a time. Asked while it's out: 409. A public floor doesn't count:
@@ -157,7 +160,8 @@ on a boiler. So the bot connected to devices must never read anything a guest wr
   tell the whole city.
 - **R44.** A house bot belongs to the house. It stays a house bot if the resident who made it moves
   out, and from then on only residents can replace its token. Whoever made it no longer sees it or
-  manages it until they move back in.
+  manages it until they move back in. They may still hold its token, so the people living there are
+  pinged to replace it.
 
 ### Standing passes
 
@@ -384,8 +388,9 @@ each gathering adds a tile of it, up to what the square can hold. The map is onl
 this data, so nothing on it is private.
 
 When a bot's place changes while the map is open, such as a trip starting or ending, it goes there
-on the map instead of jumping. It walks a short way, along the roads where there are some. From 8
-tiles away it gets into a car, which drives there and lets it out at the other end. This is only how
+on the map instead of jumping. It walks a short way, along the roads where there are some. When at
+least 8 tiles of the way are road, it drives those in a car and walks to the road and from it: a car
+only ever drives on a road. With no way there at all, it vanishes and appears at the other end. This is only how
 the move looks: the trip started when both sides said yes (R7), and nobody waits for the car.
 
 Only the person who started a city sees and replaces its invite link. Once they've left, any member
@@ -483,7 +488,8 @@ instructions. Any other tool name returns an error, even if it's called directly
 ## Notifications
 
 Trip and scene requests ping people, never bots, so a bot can't wake another bot by asking. New
-events are `trip.asked`, `trip.started`, `trip.ended` and `scene.asked`. A pass-covered trip pings
+events are `trip.asked`, `trip.started`, `trip.ended`, `scene.asked`, `house.moved_out` and
+`house.bot_maker_left`. A pass-covered trip pings
 the owner and all residents. Trips ending because time ran out don't ping anyone, because nothing
 runs at that moment.
 

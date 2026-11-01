@@ -155,7 +155,11 @@ impl Server {
             return Reply { status, body: Value::String("<event stream>".into()), set_cookie };
         }
         let text = response.text().await.unwrap();
-        Reply { status, set_cookie, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
+        Reply {
+            status,
+            set_cookie,
+            body: serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        }
     }
 
     async fn request(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -180,12 +184,17 @@ impl Server {
     }
 
     async fn mcp(&self, token: &str, method: &str, params: Value) -> Reply {
-        self.post(token, "/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
-            .await
+        self.post(
+            token,
+            "/mcp",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }),
+        )
+        .await
     }
 
     async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
-        let reply = self.mcp(token, "tools/call", json!({ "name": name, "arguments": arguments })).await;
+        let reply =
+            self.mcp(token, "tools/call", json!({ "name": name, "arguments": arguments })).await;
         reply.body["result"].clone()
     }
 
@@ -202,9 +211,11 @@ impl Server {
     // People
 
     async fn new_city(&self, name: &str, your_name: &str) -> (String, String, String, Who) {
-        let made = self.post("", "/api/cities", json!({ "name": name, "your_name": your_name })).await;
+        let made =
+            self.post("", "/api/cities", json!({ "name": name, "your_name": your_name })).await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
-        let person = Who { key: text(&made.body["owner_key"]), id: text(&made.body["person"]["id"]) };
+        let person =
+            Who { key: text(&made.body["owner_key"]), id: text(&made.body["person"]["id"]) };
         (
             text(&made.body["city"]["id"]),
             text(&made.body["city"]["square_id"]),
@@ -215,7 +226,8 @@ impl Server {
 
     /// Someone new uses the city's link and is simply in (the city has asked for nothing yet).
     async fn join_city(&self, code: &str, name: &str) -> Who {
-        let joined = self.use_link(code, "", json!({ "your_name": name, "accept_rules": true })).await;
+        let joined =
+            self.use_link(code, "", json!({ "your_name": name, "accept_rules": true })).await;
         assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
         assert_eq!(joined.body["waiting"], false, "{}", joined.body);
         Who { key: text(&joined.body["owner_key"]), id: text(&joined.body["person"]["id"]) }
@@ -228,7 +240,8 @@ impl Server {
 
     /// A new person arrives at the gate of a city that asks for vouches, and waits.
     async fn at_the_gate(&self, code: &str, name: &str) -> Who {
-        let arrived = self.use_link(code, "", json!({ "your_name": name, "accept_rules": true })).await;
+        let arrived =
+            self.use_link(code, "", json!({ "your_name": name, "accept_rules": true })).await;
         assert_eq!(arrived.status, StatusCode::OK, "{}", arrived.body);
         assert_eq!(arrived.body["waiting"], true, "{}", arrived.body);
         Who { key: text(&arrived.body["owner_key"]), id: text(&arrived.body["person"]["id"]) }
@@ -247,9 +260,8 @@ impl Server {
     }
 
     async fn key_person(&self, name: &str) -> Who {
-        let made = self
-            .post("", "/api/hangouts", json!({ "name": "Home", "your_name": name }))
-            .await;
+        let made =
+            self.post("", "/api/hangouts", json!({ "name": "Home", "your_name": name })).await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
         Who { key: text(&made.body["owner_key"]), id: text(&made.body["person"]["id"]) }
     }
@@ -276,7 +288,11 @@ impl Server {
 
     async fn house_bot(&self, resident: &Who, home: &Home, name: &str) -> Bot {
         let made = self
-            .post(&resident.key, &format!("/api/houses/{}/house-bot", home.id), json!({ "name": name }))
+            .post(
+                &resident.key,
+                &format!("/api/houses/{}/house-bot", home.id),
+                json!({ "name": name }),
+            )
             .await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
         Bot { token: text(&made.body["token"]), id: text(&made.body["agent"]["id"]) }
@@ -294,7 +310,8 @@ impl Server {
     /// Signs up with a passkey, as the sign-up page does. The session is a cookie.
     async fn sign_up(&self, name: &str) -> Account {
         let mut key = Authenticator::new(&self.origin);
-        let started = self.post("", "/api/passkeys/register/start", json!({ "your_name": name })).await;
+        let started =
+            self.post("", "/api/passkeys/register/start", json!({ "your_name": name })).await;
         assert_eq!(started.status, StatusCode::OK, "{}", started.body);
         let credential = key.register(&started.body["options"]);
         let done = self
@@ -378,7 +395,13 @@ impl Server {
 
     // Trips
 
-    async fn ask_trip(&self, token: &str, agent: Option<&str>, house: &str, minutes: Option<i64>) -> Reply {
+    async fn ask_trip(
+        &self,
+        token: &str,
+        agent: Option<&str>,
+        house: &str,
+        minutes: Option<i64>,
+    ) -> Reply {
         let mut body = json!({ "house_id": house, "kind": "call", "goal": TRIP_GOAL });
         if let Some(agent) = agent {
             body["agent_id"] = json!(agent);
@@ -390,7 +413,8 @@ impl Server {
     }
 
     async fn answer_trip(&self, token: &str, trip: &str, response: &str) -> Reply {
-        self.post(token, &format!("/api/trips/{trip}/answer"), json!({ "response": response })).await
+        self.post(token, &format!("/api/trips/{trip}/answer"), json!({ "response": response }))
+            .await
     }
 
     async fn end_trip(&self, token: &str, trip: &str) -> Reply {
@@ -408,7 +432,13 @@ impl Server {
         id
     }
 
-    async fn offer_and_accept_pass(&self, resident: &Who, owner: &Who, house: &str, bot: &str) -> String {
+    async fn offer_and_accept_pass(
+        &self,
+        resident: &Who,
+        owner: &Who,
+        house: &str,
+        bot: &str,
+    ) -> String {
         let offered = self
             .post(&resident.key, &format!("/api/houses/{house}/passes"), json!({ "agent_id": bot }))
             .await;
@@ -579,7 +609,11 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
         (Method::POST, format!("/api/cities/{city}/leave"), Some(json!({}))),
         (Method::POST, format!("/api/cities/{city}/houses"), Some(json!({ "name": "Mine" }))),
         (Method::PUT, format!("/api/cities/{city}/rules"), Some(json!({ "min_vouches": 1 }))),
-        (Method::PUT, format!("/api/cities/{city}/rules"), Some(json!({ "rules_text": "mine now" }))),
+        (
+            Method::PUT,
+            format!("/api/cities/{city}/rules"),
+            Some(json!({ "rules_text": "mine now" })),
+        ),
         (Method::PUT, format!("/api/cities/{city}/rules"), Some(json!({ "min_vouches": "x" }))),
         (Method::GET, format!("/api/cities/{city}/people/{person}/standing"), None),
         (Method::POST, format!("/api/cities/{city}/people/{person}/vouch"), Some(json!({}))),
@@ -596,7 +630,11 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
         (Method::POST, format!("/api/houses/{house}/passes"), Some(json!({ "agent_id": bot }))),
         (Method::GET, format!("/api/houses/{house}/scenes"), None),
         (Method::POST, format!("/api/houses/{house}/scenes"), Some(json!({ "name": "Party" }))),
-        (Method::PUT, format!("/api/agents/{bot}/home"), Some(json!({ "house_id": house, "stays_home": false }))),
+        (
+            Method::PUT,
+            format!("/api/agents/{bot}/home"),
+            Some(json!({ "house_id": house, "stays_home": false })),
+        ),
         (
             Method::POST,
             "/api/trips".to_string(),
@@ -622,7 +660,11 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
             (Method::GET, format!("/api/hangouts/{room}/messages?after=0"), None),
             (Method::POST, format!("/api/hangouts/{room}/messages"), Some(json!({ "text": "hi" }))),
             (Method::POST, format!("/api/hangouts/{room}/notes"), Some(json!({ "text": "hi" }))),
-            (Method::POST, format!("/api/hangouts/{room}/check-ins"), Some(json!({ "about": "hi" }))),
+            (
+                Method::POST,
+                format!("/api/hangouts/{room}/check-ins"),
+                Some(json!({ "about": "hi" })),
+            ),
             (Method::POST, format!("/api/hangouts/{room}/agents"), Some(json!({ "name": "Spy" }))),
             (Method::POST, format!("/api/hangouts/{room}/invite/rotate"), Some(json!({}))),
             (Method::POST, format!("/api/hangouts/{room}/leave"), Some(json!({}))),
@@ -671,7 +713,8 @@ impl Server {
         let real_calls = probes(real);
         let fake_calls = probes(fake);
         assert!(real_calls.len() > 60);
-        for ((method, path, body), (_, fake_path, fake_body)) in real_calls.iter().zip(&fake_calls) {
+        for ((method, path, body), (_, fake_path, fake_body)) in real_calls.iter().zip(&fake_calls)
+        {
             let seen = self.request(token, method.clone(), path, body.clone()).await;
             let nothing = self.request(token, method.clone(), fake_path, fake_body.clone()).await;
             assert_eq!(
@@ -727,7 +770,11 @@ async fn standing_is_only_the_counts_the_doc_names_and_is_worked_out_on_every_re
 
     // A trip that arrived and went home is a good one the moment it is over, and not before.
     let trip = server.arrive(&w.scout, &w.bo, &w.ann, &w.ann_home.id).await;
-    assert_eq!(server.stand(&w.ann.key, &w.city, &w.bo.id).await["good_trips"], 0, "still under way");
+    assert_eq!(
+        server.stand(&w.ann.key, &w.city, &w.bo.id).await["good_trips"],
+        0,
+        "still under way"
+    );
     assert_ok(&server.end_trip(&w.scout.token, &trip).await);
     assert_eq!(server.stand(&w.ann.key, &w.city, &w.bo.id).await["good_trips"], 1);
 }
@@ -738,23 +785,33 @@ async fn no_table_in_the_database_holds_a_score_or_a_copy_of_standing() {
     let path = std::env::temp_dir().join(format!("trust-schema-{}.db", std::process::id()));
     let _ = std::fs::remove_file(&path);
     drop(Db::open(path.to_str().unwrap()).unwrap());
-    let conn = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let conn =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
     let mut tables = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap();
-    let names: Vec<String> = tables.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
-    assert!(names.iter().any(|name| name == "vouches") && names.iter().any(|name| name == "sent_home"));
+    let names: Vec<String> =
+        tables.query_map([], |row| row.get(0)).unwrap().map(Result::unwrap).collect();
+    assert!(
+        names.iter().any(|name| name == "vouches") && names.iter().any(|name| name == "sent_home")
+    );
     for table in &names {
-        for banned in ["standing", "score", "reputation", "points", "karma", "rank", "level", "credit"] {
+        for banned in
+            ["standing", "score", "reputation", "points", "karma", "rank", "level", "credit"]
+        {
             assert!(!table.contains(banned), "a table called {table} suggests stored standing");
         }
         let mut columns = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
-        let cols: Vec<String> = columns.query_map([], |row| row.get(1)).unwrap().map(Result::unwrap).collect();
+        let cols: Vec<String> =
+            columns.query_map([], |row| row.get(1)).unwrap().map(Result::unwrap).collect();
         for column in cols {
             for banned in ["score", "reputation", "points", "karma", "standing"] {
                 assert!(!column.contains(banned), "{table}.{column} looks like stored standing");
             }
             // The counts themselves are worked out, never kept. (`min_gatherings` and so on are what a
             // house asks for, which is a choice and not a count.)
-            for banned in ["good_trips", "gatherings", "member_days", "sent_home_count", "vouch_count"] {
+            for banned in
+                ["good_trips", "gatherings", "member_days", "sent_home_count", "vouch_count"]
+            {
                 assert_ne!(column, banned, "{table}.{column} looks like a stored count");
             }
         }
@@ -774,20 +831,31 @@ async fn chat_notes_tokens_bot_activity_and_requests_never_add_to_standing() {
     let before = server.stand(&w.ann.key, &w.city, &w.bo.id).await;
 
     // Scout and Bo talk in the Town Square, share notes, report activity, set a status.
-    let bring = server.put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", w.square, w.scout.id), json!({})).await;
+    let bring = server
+        .put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", w.square, w.scout.id), json!({}))
+        .await;
     assert_ok(&bring);
     for token in [&w.bo.key, &w.scout.token] {
         for n in 0..3 {
             let said = json!({ "text": format!("{CHAT_WORDS} {n}") });
-            assert_ok(&server.post(token, &format!("/api/hangouts/{}/messages", w.square), said).await);
+            assert_ok(
+                &server.post(token, &format!("/api/hangouts/{}/messages", w.square), said).await,
+            );
             let noted = json!({ "text": CHAT_WORDS });
-            assert_ok(&server.post(token, &format!("/api/hangouts/{}/notes", w.square), noted).await);
+            assert_ok(
+                &server.post(token, &format!("/api/hangouts/{}/notes", w.square), noted).await,
+            );
         }
     }
     assert_ok(&server.post(&w.scout.token, "/api/status", json!({ "status": "busy" })).await);
-    assert_ok(&server.post(&w.scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" })).await);
+    assert_ok(
+        &server
+            .post(&w.scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
+            .await,
+    );
     // New tokens, and asking again and again, and being turned down.
-    let rotated = server.post(&w.bo.key, &format!("/api/agents/{}/rotate", w.scout.id), json!({})).await;
+    let rotated =
+        server.post(&w.bo.key, &format!("/api/agents/{}/rotate", w.scout.id), json!({})).await;
     let scout = text(&rotated.body["token"]);
     for _ in 0..3 {
         let asked = server.ask_trip(&scout, None, &w.ann_home.id, None).await;
@@ -807,14 +875,19 @@ async fn chat_notes_tokens_bot_activity_and_requests_never_add_to_standing() {
 
 // T2
 #[tokio::test]
-async fn a_bots_yes_is_its_owners_but_a_gathering_still_needs_a_second_person_and_a_finished_plan() {
+async fn a_bots_yes_is_its_owners_but_a_gathering_still_needs_a_second_person_and_a_finished_plan()
+{
     let server = Server::start().await;
     let w = server.world().await;
 
     // The owner and the owner's own bot both say yes: one person, not two (a gathering needs two).
     let alone = server.plan(&w.square, "confirmed", 3600, &[&w.bo]);
     server.state.db.upsert_rsvp(&alone, &w.bo.id, "yes", Some("Scout"), "", now()).unwrap();
-    assert_eq!(server.stand(&w.ann.key, &w.city, &w.bo.id).await["gatherings"], 0, "one person is not a gathering");
+    assert_eq!(
+        server.stand(&w.ann.key, &w.city, &w.bo.id).await["gatherings"],
+        0,
+        "one person is not a gathering"
+    );
 
     // A second person's yes makes it one, and the bot's yes for Bo is Bo's.
     let together = server.plan(&w.square, "confirmed", 3600, &[&w.ann]);
@@ -841,11 +914,20 @@ async fn a_gathering_that_has_not_happened_yet_counts_for_nobody_however_many_sa
     let starts = time::OffsetDateTime::now_utc() + time::Duration::days(1);
     let starts = starts.format(&time::format_description::well_known::Rfc3339).unwrap();
     let body = json!({ "title": PLAN_TITLE, "starts_at": starts });
-    let proposed = server.post(&w.ann.key, &format!("/api/hangouts/{}/events", w.square), body).await;
+    let proposed =
+        server.post(&w.ann.key, &format!("/api/hangouts/{}/events", w.square), body).await;
     assert_ok(&proposed);
     let id = text(&proposed.body["id"]);
-    assert_ok(&server.post(&w.ann.key, &format!("/api/events/{id}/rsvp"), json!({ "response": "yes" })).await);
-    assert_ok(&server.post(&w.bo.key, &format!("/api/events/{id}/rsvp"), json!({ "response": "yes" })).await);
+    assert_ok(
+        &server
+            .post(&w.ann.key, &format!("/api/events/{id}/rsvp"), json!({ "response": "yes" }))
+            .await,
+    );
+    assert_ok(
+        &server
+            .post(&w.bo.key, &format!("/api/events/{id}/rsvp"), json!({ "response": "yes" }))
+            .await,
+    );
     for person in [&w.ann, &w.bo] {
         let standing = server.stand(&w.ann.key, &w.city, &person.id).await;
         assert_eq!(standing["gatherings"], 0, "a plan that hasn't happened is not a gathering");
@@ -876,18 +958,27 @@ async fn only_a_person_in_the_city_vouches_and_never_for_themselves_or_twice() {
     // Once per person: asking again changes nothing, and two asks from Ann are not two vouches.
     let first = server.vouch(&w.ann.key, &w.city, &eve.id).await;
     assert_ok(&first);
-    assert_eq!((first.body["vouches"].as_i64(), first.body["let_in"].as_bool()), (Some(1), Some(false)));
+    assert_eq!(
+        (first.body["vouches"].as_i64(), first.body["let_in"].as_bool()),
+        (Some(1), Some(false))
+    );
     for _ in 0..4 {
         let again = server.vouch(&w.ann.key, &w.city, &eve.id).await;
         assert_ok(&again);
-        assert_eq!((again.body["vouches"].as_i64(), again.body["let_in"].as_bool()), (Some(1), Some(false)));
+        assert_eq!(
+            (again.body["vouches"].as_i64(), again.body["let_in"].as_bool()),
+            (Some(1), Some(false))
+        );
     }
     assert_eq!(server.me(&eve.key).await["waiting"][0]["vouches"], 1);
     assert_not_found(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
 
     // A different person is the second.
     let second = server.vouch(&cy.key, &w.city, &eve.id).await;
-    assert_eq!((second.body["vouches"].as_i64(), second.body["let_in"].as_bool()), (Some(2), Some(true)));
+    assert_eq!(
+        (second.body["vouches"].as_i64(), second.body["let_in"].as_bool()),
+        (Some(2), Some(true))
+    );
 
     // Taking a vouch back, which is only ever your own, and which can be done twice quietly.
     assert_ok(&server.vouch(&dan.key, &w.city, &w.bo.id).await);
@@ -943,12 +1034,19 @@ async fn a_vouch_from_someone_who_has_left_stops_counting_and_does_not_let_anyon
     assert_eq!(server.gate(&w.ann.key, &w.city).await[0]["vouches"], 1);
     // Cy has no house, so Cy can leave the city.
     assert_ok(&server.post(&cy.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
-    assert_eq!(server.gate(&w.ann.key, &w.city).await[0]["vouches"], 0, "Cy's vouch no longer counts");
+    assert_eq!(
+        server.gate(&w.ann.key, &w.city).await[0]["vouches"],
+        0,
+        "Cy's vouch no longer counts"
+    );
     assert_eq!(server.me(&eve.key).await["waiting"][0]["vouches"], 0);
 
     // One more vouch is therefore one, not two.
     let one = server.vouch(&w.ann.key, &w.city, &eve.id).await;
-    assert_eq!((one.body["vouches"].as_i64(), one.body["let_in"].as_bool()), (Some(1), Some(false)));
+    assert_eq!(
+        (one.body["vouches"].as_i64(), one.body["let_in"].as_bool()),
+        (Some(1), Some(false))
+    );
     assert_not_found(&server.get(&eve.key, &format!("/api/cities/{}", w.city)).await);
     // Someone who left cannot vouch (they are not in the city), nor take the vouch back.
     assert_not_found(&server.vouch(&cy.key, &w.city, &eve.id).await);
@@ -992,7 +1090,9 @@ async fn standing_never_carries_a_plan_title_a_trip_goal_a_house_or_bot_name_or_
     for person in [&w.ann, &w.bo] {
         let standing = server.stand(&w.ann.key, &w.city, &person.id).await;
         assert_eq!(keys_of(&standing), STANDING_KEYS);
-        for secret in [PLAN_TITLE, PLAN_PLACE, TRIP_GOAL, "Scout", "Ann House", "Bo House", CHAT_WORDS, "Elm"] {
+        for secret in
+            [PLAN_TITLE, PLAN_PLACE, TRIP_GOAL, "Scout", "Ann House", "Bo House", CHAT_WORDS, "Elm"]
+        {
             assert!(!has(&standing, secret), "{secret} in {standing}");
         }
         // The only text is the names of people who vouch.
@@ -1009,7 +1109,8 @@ async fn standing_never_carries_a_plan_title_a_trip_goal_a_house_or_bot_name_or_
 
 // T5
 #[tokio::test]
-async fn standing_is_for_people_in_the_city_and_their_bots_and_everyone_else_gets_the_404_a_missing_city_would() {
+async fn standing_is_for_people_in_the_city_and_their_bots_and_everyone_else_gets_the_404_a_missing_city_would(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     server.require_vouches(&w.ann, &w.city, 1).await;
@@ -1070,9 +1171,14 @@ async fn the_bot_of_someone_at_the_gate_sees_nothing_of_the_city_either() {
     assert_not_found(&server.city_view(&bot.token, &w.city).await);
     let listed = server.tool(&bot.token, "list_city", json!({ "city_id": w.city })).await;
     assert_eq!(listed["isError"], true, "{listed}");
-    let asked = server.tool(&bot.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" })).await;
+    let asked = server
+        .tool(&bot.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" }))
+        .await;
     assert_eq!(asked["isError"], true, "{asked}");
-    assert!(!has(&asked, "asks for"), "a bot at the gate learns nothing of the house's requirements: {asked}");
+    assert!(
+        !has(&asked, "asks for"),
+        "a bot at the gate learns nothing of the house's requirements: {asked}"
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1126,7 +1232,8 @@ async fn a_resident_who_is_a_person_sets_what_the_house_asks_and_nobody_else_can
 
     let path = format!("/api/houses/{}/rules", w.ann_home.id);
     let fake = format!("/api/houses/{NO_SUCH_THING}/rules");
-    let ask = json!({ "min_member_days": 7, "min_gatherings": 2, "min_good_trips": 1, "min_vouches": 1 });
+    let ask =
+        json!({ "min_member_days": 7, "min_gatherings": 2, "min_good_trips": 1, "min_vouches": 1 });
 
     // Not a bot, not the house bot, not a neighbour, not a stranger, not a stranger's bot, and
     // not someone who isn't signed in: nothing changes, and a stranger can't tell the house exists.
@@ -1142,7 +1249,12 @@ async fn a_resident_who_is_a_person_sets_what_the_house_asks_and_nobody_else_can
     let on_nothing = server.put(&w.scout.token, &fake, ask.clone()).await;
     assert_not_found(&refused);
     assert_eq!((refused.status, &refused.body), (on_nothing.status, &on_nothing.body));
-    for (who, token) in [("a neighbour", &w.bo.key), ("a stranger", &outsider.key), ("a stranger's bot", &oak_bot.token), ("someone at the gate", &gate.key)] {
+    for (who, token) in [
+        ("a neighbour", &w.bo.key),
+        ("a stranger", &outsider.key),
+        ("a stranger's bot", &oak_bot.token),
+        ("someone at the gate", &gate.key),
+    ] {
         let refused = server.put(token, &path, ask.clone()).await;
         let on_nothing = server.put(token, &fake, ask.clone()).await;
         assert_not_found(&refused);
@@ -1150,12 +1262,17 @@ async fn a_resident_who_is_a_person_sets_what_the_house_asks_and_nobody_else_can
     }
     assert_status(&server.put("", &path, ask.clone()).await, StatusCode::UNAUTHORIZED);
     let view = server.house_view(&w.ann.key, &w.ann_home.id).await;
-    assert_eq!(view.body["rules"], json!({ "min_member_days": 0, "min_gatherings": 0, "min_good_trips": 0, "min_vouches": 0 }));
+    assert_eq!(
+        view.body["rules"],
+        json!({ "min_member_days": 0, "min_gatherings": 0, "min_good_trips": 0, "min_vouches": 0 })
+    );
 
     // Residents who are people can, and either one.
     assert_ok(&server.set_house_rules(&w.ann.key, &w.ann_home.id, ask.clone()).await);
     assert_eq!(server.house_view(&partner.key, &w.ann_home.id).await.body["rules"], ask);
-    assert_ok(&server.set_house_rules(&partner.key, &w.ann_home.id, json!({ "min_gatherings": 3 })).await);
+    assert_ok(
+        &server.set_house_rules(&partner.key, &w.ann_home.id, json!({ "min_gatherings": 3 })).await,
+    );
     let now_asks = server.house_view(&w.ann.key, &w.ann_home.id).await.body["rules"].clone();
     assert_eq!(now_asks["min_gatherings"], 3);
     assert_eq!(now_asks["min_member_days"], 7, "a number left out stays as it was");
@@ -1163,7 +1280,13 @@ async fn a_resident_who_is_a_person_sets_what_the_house_asks_and_nobody_else_can
     // Everyone in the city sees it on the map, and so does a bot of theirs.
     for token in [&w.bo.key, &w.scout.token, &w.ann.key] {
         let city = server.city_view(token, &w.city).await;
-        let house = city.body["houses"].as_array().unwrap().iter().find(|h| h["id"] == w.ann_home.id.as_str()).unwrap().clone();
+        let house = city.body["houses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["id"] == w.ann_home.id.as_str())
+            .unwrap()
+            .clone();
         assert_eq!(house["requirements"]["min_gatherings"], 3);
     }
 }
@@ -1185,18 +1308,47 @@ async fn what_a_house_asks_has_limits_and_a_number_that_is_out_of_range_changes_
     assert_ok(&server.set_house_rules(&w.ann.key, house, json!({ "min_member_days": 0, "min_gatherings": 0, "min_good_trips": 0, "min_vouches": 0 })).await);
 
     // One past the largest, below zero, and the numbers that overflow: all refused, none applied.
-    let steady = json!({ "min_member_days": 3, "min_gatherings": 2, "min_good_trips": 1, "min_vouches": 1 });
+    let steady =
+        json!({ "min_member_days": 3, "min_gatherings": 2, "min_good_trips": 1, "min_vouches": 1 });
     assert_ok(&server.set_house_rules(&w.ann.key, house, steady.clone()).await);
-    for (field, largest) in [("min_member_days", 365i64), ("min_gatherings", 100), ("min_good_trips", 100), ("min_vouches", 5)] {
-        for bad in [json!(largest + 1), json!(-1), json!(i64::MAX), json!(i64::MIN), json!(u64::MAX), json!(1e30), json!(2.5), json!("7"), json!(true), json!([1]), json!({ "n": 1 })] {
-            let refused = server.set_house_rules(&w.ann.key, house, json!({ field: bad.clone() })).await;
+    for (field, largest) in [
+        ("min_member_days", 365i64),
+        ("min_gatherings", 100),
+        ("min_good_trips", 100),
+        ("min_vouches", 5),
+    ] {
+        for bad in [
+            json!(largest + 1),
+            json!(-1),
+            json!(i64::MAX),
+            json!(i64::MIN),
+            json!(u64::MAX),
+            json!(1e30),
+            json!(2.5),
+            json!("7"),
+            json!(true),
+            json!([1]),
+            json!({ "n": 1 }),
+        ] {
+            let refused =
+                server.set_house_rules(&w.ann.key, house, json!({ field: bad.clone() })).await;
             assert_status(&refused, StatusCode::BAD_REQUEST);
             // Mixed with good numbers, the lot is refused.
-            let mixed = server.set_house_rules(&w.ann.key, house, json!({ "min_gatherings": 9, field: bad.clone() })).await;
+            let mixed = server
+                .set_house_rules(
+                    &w.ann.key,
+                    house,
+                    json!({ "min_gatherings": 9, field: bad.clone() }),
+                )
+                .await;
             if field != "min_gatherings" {
                 assert_status(&mixed, StatusCode::BAD_REQUEST);
             }
-            assert_eq!(server.house_view(&w.ann.key, house).await.body["rules"], steady, "{field} = {bad}");
+            assert_eq!(
+                server.house_view(&w.ann.key, house).await.body["rules"],
+                steady,
+                "{field} = {bad}"
+            );
         }
     }
     // Not the shape at all.
@@ -1204,16 +1356,33 @@ async fn what_a_house_asks_has_limits_and_a_number_that_is_out_of_range_changes_
         let refused = server.set_house_rules(&w.ann.key, house, body.clone()).await;
         assert!(refused.status.is_client_error(), "{body}: {}", refused.show());
     }
-    let raw = server.send(&w.ann.key, Method::PUT, &format!("/api/houses/{house}/rules"), Some(b"{not json".to_vec()), Some("application/json")).await;
+    let raw = server
+        .send(
+            &w.ann.key,
+            Method::PUT,
+            &format!("/api/houses/{house}/rules"),
+            Some(b"{not json".to_vec()),
+            Some("application/json"),
+        )
+        .await;
     assert_status(&raw, StatusCode::BAD_REQUEST);
-    let no_type = server.send(&w.ann.key, Method::PUT, &format!("/api/houses/{house}/rules"), Some(b"{}".to_vec()), None).await;
+    let no_type = server
+        .send(
+            &w.ann.key,
+            Method::PUT,
+            &format!("/api/houses/{house}/rules"),
+            Some(b"{}".to_vec()),
+            None,
+        )
+        .await;
     assert_status(&no_type, StatusCode::BAD_REQUEST);
     assert_eq!(server.house_view(&w.ann.key, house).await.body["rules"], steady);
 }
 
 // T7
 #[tokio::test]
-async fn a_bot_whose_owner_falls_short_is_told_what_is_missing_in_the_houses_terms_and_nothing_is_asked() {
+async fn a_bot_whose_owner_falls_short_is_told_what_is_missing_in_the_houses_terms_and_nothing_is_asked(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     server
@@ -1229,17 +1398,27 @@ async fn a_bot_whose_owner_falls_short_is_told_what_is_missing_in_the_houses_ter
     let said = text(&by_bot.body["error"]);
     assert_eq!(said, text(&by_owner.body["error"]));
     assert!(said.starts_with("Ann House asks for "), "{said}");
-    for need in ["7 days in the city (Bo has 0)", "2 gatherings (Bo has 0)", "1 good trip (Bo has 0)", "1 vouch (Bo has 0)"] {
+    for need in [
+        "7 days in the city (Bo has 0)",
+        "2 gatherings (Bo has 0)",
+        "1 good trip (Bo has 0)",
+        "1 vouch (Bo has 0)",
+    ] {
         assert!(said.contains(need), "{need} missing from {said}");
     }
-    let by_mcp = server.tool(&w.scout.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" })).await;
+    let by_mcp = server
+        .tool(&w.scout.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" }))
+        .await;
     assert_eq!(by_mcp["isError"], true, "{by_mcp}");
     assert_eq!(by_mcp["content"][0]["text"], said.as_str());
 
     // Nothing was asked: no trip waiting, nobody pinged, the bot still at home.
     assert!(server.asking(&w.ann, &w.ann_home).await.is_empty());
     assert_eq!(server.get(&w.scout.token, "/api/me").await.body["trip"], Value::Null);
-    assert!(all_notices(&ann_pings).await.is_empty(), "the house is not pinged for a request it would turn away");
+    assert!(
+        all_notices(&ann_pings).await.is_empty(),
+        "the house is not pinged for a request it would turn away"
+    );
     // And the words are about the asker alone: no one else's numbers, no other house.
     assert!(!said.contains("Bo House") && !said.contains("Scout"), "{said}");
 }
@@ -1260,7 +1439,10 @@ async fn each_requirement_stops_an_ask_on_its_own_and_only_that_one_is_named() {
         let refused = server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await;
         assert_status(&refused, StatusCode::CONFLICT);
         let said = text(&refused.body["error"]);
-        assert!(said.contains(&format!("1 {word}")) && said.contains("Bo has 0"), "{field}: {said}");
+        assert!(
+            said.contains(&format!("1 {word}")) && said.contains("Bo has 0"),
+            "{field}: {said}"
+        );
         for (_, other) in kinds.iter().filter(|(name, _)| *name != field) {
             if !word.contains(other) && !other.contains(word) {
                 assert!(!said.contains(other), "{field} should not mention {other}: {said}");
@@ -1284,7 +1466,10 @@ async fn the_requirement_is_measured_on_the_bots_owner_and_each_number_counts_wh
 
     // Dee has been in the city for ten days. Bo, who joined a moment ago, has not.
     assert_ok(&server.ask_trip(&dash.token, None, &w.ann_home.id, None).await);
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
     // Days are whole days: 6 days and a bit is 6.
     let almost = server.old_member(&w.city, "Almost", 6);
     assert_eq!(server.stand(&w.ann.key, &w.city, &almost.id).await["member_days"], 6);
@@ -1294,23 +1479,33 @@ async fn the_requirement_is_measured_on_the_bots_owner_and_each_number_counts_wh
     server.require(&w.ann, &w.ann_home, json!({ "min_member_days": 0, "min_gatherings": 1 })).await;
     let (eve, eve_home) = server.neighbour(&w, "Eve").await;
     let pip = server.bot(&eve, &eve_home.living, "Pip").await;
-    assert_status(&server.ask_trip(&pip.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&pip.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
     server.gathering(&w.square, &[&eve, &w.ann]);
     assert_ok(&server.ask_trip(&pip.token, None, &w.ann_home.id, None).await);
     // The plan was Eve's and Ann's. Bo still has none of it.
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
 
     // Vouches: counts people in the city who vouch for the asker.
     server.require(&w.ann, &w.ann_home, json!({ "min_gatherings": 0, "min_vouches": 2 })).await;
     assert_ok(&server.vouch(&w.ann.key, &w.city, &w.bo.id).await);
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
     assert_ok(&server.vouch(&dee.key, &w.city, &w.bo.id).await);
     assert_ok(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await);
 }
 
 // T8
 #[tokio::test]
-async fn meeting_the_requirements_only_lets_you_ask_and_a_person_on_each_side_still_has_to_say_yes() {
+async fn meeting_the_requirements_only_lets_you_ask_and_a_person_on_each_side_still_has_to_say_yes()
+{
     let server = Server::start().await;
     let w = server.world().await;
     server.require(&w.ann, &w.ann_home, json!({ "min_vouches": 1 })).await;
@@ -1320,9 +1515,17 @@ async fn meeting_the_requirements_only_lets_you_ask_and_a_person_on_each_side_st
     let by_bot = server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await;
     assert_ok(&by_bot);
     assert_eq!(by_bot.body["status"], "asking");
-    assert!(by_bot.body["host_ok_by"].is_null() && by_bot.body["owner_ok_by"].is_null(), "{}", by_bot.body);
+    assert!(
+        by_bot.body["host_ok_by"].is_null() && by_bot.body["owner_ok_by"].is_null(),
+        "{}",
+        by_bot.body
+    );
     let id = text(&by_bot.body["id"]);
-    assert_eq!(server.get(&w.scout.token, "/api/me").await.body["trip"], Value::Null, "the bot is still at home");
+    assert_eq!(
+        server.get(&w.scout.token, "/api/me").await.body["trip"],
+        Value::Null,
+        "the bot is still at home"
+    );
 
     // Not the resident's yes, not a bot's, and the owner's alone is not enough.
     assert_forbidden(&server.answer_trip(&w.scout.token, &id, "yes").await);
@@ -1356,16 +1559,28 @@ async fn standing_that_far_exceeds_the_requirements_still_starts_nothing_on_its_
     }
     assert_ok(&server.vouch(&w.ann.key, &w.city, &dee.id).await);
     assert_ok(&server.vouch(&w.bo.key, &w.city, &dee.id).await);
-    server.require(&w.ann, &w.ann_home, json!({ "min_member_days": 1, "min_gatherings": 1, "min_vouches": 1 })).await;
+    server
+        .require(
+            &w.ann,
+            &w.ann_home,
+            json!({ "min_member_days": 1, "min_gatherings": 1, "min_vouches": 1 }),
+        )
+        .await;
     let ask = server.ask_trip(&dash.token, None, &w.ann_home.id, None).await;
     assert_ok(&ask);
     assert_eq!(ask.body["status"], "asking");
     assert_eq!(server.get(&dash.token, "/api/me").await.body["trip"], Value::Null);
-    assert!(server.get(&w.ann.key, &format!("/api/hangouts/{}/messages?after=0", w.ann_home.porch)).await.body["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|m| !text(&m["body"]).contains("arrived")), "nobody arrived");
+    assert!(
+        server
+            .get(&w.ann.key, &format!("/api/hangouts/{}/messages?after=0", w.ann_home.porch))
+            .await
+            .body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|m| !text(&m["body"]).contains("arrived")),
+        "nobody arrived"
+    );
 }
 
 // T9
@@ -1373,17 +1588,33 @@ async fn standing_that_far_exceeds_the_requirements_still_starts_nothing_on_its_
 async fn a_resident_inviting_a_bot_skips_what_the_house_asks_but_the_owner_still_says_yes() {
     let server = Server::start().await;
     let w = server.world().await;
-    server.require(&w.ann, &w.ann_home, json!({ "min_gatherings": 5, "min_vouches": 3, "min_member_days": 300 })).await;
+    server
+        .require(
+            &w.ann,
+            &w.ann_home,
+            json!({ "min_gatherings": 5, "min_vouches": 3, "min_member_days": 300 }),
+        )
+        .await;
     let (cy, _) = server.neighbour(&w, "Cy").await;
     let nobody = server.key_person("Nobody").await;
 
     // Asked for by the owner or the bot: turned away. Invited by a resident: through.
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
-    assert_status(&server.ask_trip(&w.bo.key, Some(&w.scout.id), &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
+    assert_status(
+        &server.ask_trip(&w.bo.key, Some(&w.scout.id), &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
     let invited = server.ask_trip(&w.ann.key, Some(&w.scout.id), &w.ann_home.id, None).await;
     assert_ok(&invited);
     assert_eq!(invited.body["status"], "asking", "an invitation is half of a trip");
-    assert!(!invited.body["host_ok_by"].is_null() && invited.body["owner_ok_by"].is_null(), "{}", invited.body);
+    assert!(
+        !invited.body["host_ok_by"].is_null() && invited.body["owner_ok_by"].is_null(),
+        "{}",
+        invited.body
+    );
     let id = text(&invited.body["id"]);
     assert_eq!(server.get(&w.scout.token, "/api/me").await.body["trip"], Value::Null);
     assert_eq!(server.answer_trip(&w.bo.key, &id, "yes").await.body["status"], "here");
@@ -1402,7 +1633,8 @@ async fn a_resident_inviting_a_bot_skips_what_the_house_asks_but_the_owner_still
 
 // T9
 #[tokio::test]
-async fn an_accepted_pass_skips_what_the_house_asks_and_one_that_is_not_accepted_or_not_for_that_house_does_not() {
+async fn an_accepted_pass_skips_what_the_house_asks_and_one_that_is_not_accepted_or_not_for_that_house_does_not(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let (cy, cy_home) = server.neighbour(&w, "Cy").await;
@@ -1412,15 +1644,25 @@ async fn an_accepted_pass_skips_what_the_house_asks_and_one_that_is_not_accepted
     assert_ok(&server.end_trip(&w.scout.token, &first).await);
     server.require(&w.ann, &w.ann_home, json!({ "min_gatherings": 5 })).await;
     server.require(&cy, &cy_home, json!({ "min_gatherings": 5 })).await;
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
 
     // A pass that the owner has not accepted changes nothing.
     let offered = server
-        .post(&w.ann.key, &format!("/api/houses/{}/passes", w.ann_home.id), json!({ "agent_id": w.scout.id }))
+        .post(
+            &w.ann.key,
+            &format!("/api/houses/{}/passes", w.ann_home.id),
+            json!({ "agent_id": w.scout.id }),
+        )
         .await;
     assert_ok(&offered);
     let pass = text(&offered.body["id"]);
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
 
     // Accepted, it covers a short trip to that house: the trip starts at once...
     assert_ok(&server.post(&w.bo.key, &format!("/api/passes/{pass}/accept"), json!({})).await);
@@ -1430,11 +1672,20 @@ async fn an_accepted_pass_skips_what_the_house_asks_and_one_that_is_not_accepted
     assert_eq!(covered.body["pass_id"], pass.as_str());
     assert_ok(&server.end_trip(&w.scout.token, &text(&covered.body["id"])).await);
     // ...but not a longer one than the pass allows, and not a trip to another house.
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, Some(120)).await, StatusCode::CONFLICT);
-    assert_status(&server.ask_trip(&w.scout.token, None, &cy_home.id, Some(30)).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, Some(120)).await,
+        StatusCode::CONFLICT,
+    );
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &cy_home.id, Some(30)).await,
+        StatusCode::CONFLICT,
+    );
     // Cancelled, it covers nothing.
     assert_ok(&server.delete(&w.ann.key, &format!("/api/passes/{pass}")).await);
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, Some(30)).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, Some(30)).await,
+        StatusCode::CONFLICT,
+    );
 }
 
 // T9
@@ -1517,7 +1768,11 @@ async fn a_house_bot_never_sees_the_standing_of_an_asker_or_what_the_house_asks(
         (Method::GET, format!("/api/cities/{}", w.city), None),
         (Method::GET, "/api/inbox".to_string(), None),
         (Method::GET, format!("/api/cities/{}/people/{}/standing", w.city, w.bo.id), None),
-        (Method::PUT, format!("/api/houses/{}/rules", w.ann_home.id), Some(json!({ "min_gatherings": 0 }))),
+        (
+            Method::PUT,
+            format!("/api/houses/{}/rules", w.ann_home.id),
+            Some(json!({ "min_gatherings": 0 })),
+        ),
         (Method::PUT, format!("/api/cities/{}/rules", w.city), Some(json!({ "min_vouches": 1 }))),
         (Method::POST, format!("/api/cities/{}/people/{}/vouch", w.city, w.bo.id), Some(json!({}))),
         (Method::DELETE, format!("/api/cities/{}/people/{}/vouch", w.city, w.bo.id), None),
@@ -1526,17 +1781,31 @@ async fn a_house_bot_never_sees_the_standing_of_an_asker_or_what_the_house_asks(
         let reply = server.request(&casa.token, method.clone(), &path, body).await;
         if path == "/api/inbox" {
             assert!(!reply.status.is_server_error(), "{}", reply.show());
-            assert!(!has(&reply.body, "min_gatherings") && !has(&reply.body, "standing") && !has(&reply.body, "requirements"), "{}", reply.body);
+            assert!(
+                !has(&reply.body, "min_gatherings")
+                    && !has(&reply.body, "standing")
+                    && !has(&reply.body, "requirements"),
+                "{}",
+                reply.body
+            );
         } else {
             assert_forbidden(&reply);
         }
     }
     let me = server.get(&casa.token, "/api/me").await;
-    assert!(!has(&me.body, "waiting") && !has(&me.body, "passkeys") && !has(&me.body, "requirements"), "{}", me.body);
+    assert!(
+        !has(&me.body, "waiting") && !has(&me.body, "passkeys") && !has(&me.body, "requirements"),
+        "{}",
+        me.body
+    );
     assert_eq!(server.tool(&casa.token, "list_city", json!({})).await["isError"], true);
-    assert_eq!(server.tool(&casa.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" })).await["isError"], true);
+    assert_eq!(
+        server
+            .tool(&casa.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" }))
+            .await["isError"],
+        true
+    );
 }
-
 
 impl Server {
     async fn assert_sent_home(&self, w: &World, expected: i64) {
@@ -1596,13 +1865,19 @@ async fn a_resident_sending_a_bot_home_is_recorded_and_nothing_else_that_ends_a_
     assert_eq!(covered.body["status"], "here", "{}", covered.body);
     assert_ok(&server.delete(&w.ann.key, &format!("/api/passes/{pass}")).await);
     let covered_id = text(&covered.body["id"]);
-    assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{covered_id}")).await.body["status"], "ended");
+    assert_eq!(
+        server.get(&w.bo.key, &format!("/api/trips/{covered_id}")).await.body["status"],
+        "ended"
+    );
     let pass = server.offer_and_accept_pass(&w.ann, &w.bo, ann_house, &w.scout.id).await;
     let covered = server.ask_trip(&w.scout.token, None, ann_house, Some(30)).await;
     assert_eq!(covered.body["status"], "here", "{}", covered.body);
     assert_ok(&server.delete(&w.bo.key, &format!("/api/passes/{pass}")).await);
     let covered_id = text(&covered.body["id"]);
-    assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{covered_id}")).await.body["status"], "ended");
+    assert_eq!(
+        server.get(&w.bo.key, &format!("/api/trips/{covered_id}")).await.body["status"],
+        "ended"
+    );
     server.assert_sent_home(&w, 0).await;
 
     // A resident showing the bot out is. Either resident, and each trip only once.
@@ -1619,11 +1894,15 @@ async fn a_resident_sending_a_bot_home_is_recorded_and_nothing_else_that_ends_a_
 
 // T11
 #[tokio::test]
-async fn a_trip_a_resident_ended_is_not_a_good_one_and_one_cut_short_by_the_owner_leaving_is_not_marked() {
+async fn a_trip_a_resident_ended_is_not_a_good_one_and_one_cut_short_by_the_owner_leaving_is_not_marked(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let cy = server.join_city(&w.code, "Cy").await;
-    let cy_room = text(&server.post(&cy.key, "/api/hangouts", json!({ "name": "Cy's own" })).await.body["hangout"]["id"]);
+    let cy_room = text(
+        &server.post(&cy.key, "/api/hangouts", json!({ "name": "Cy's own" })).await.body["hangout"]
+            ["id"],
+    );
     let pip = server.bot(&cy, &cy_room, "Pip").await;
 
     // Bo's only trip is one Ann cut short: no good trip, one sent home.
@@ -1664,7 +1943,8 @@ impl Server {
     }
 
     async fn town_square_says(&self, token: &str, square: &str) -> Vec<String> {
-        let read = self.get(token, &format!("/api/hangouts/{square}/messages?after=0&limit=200")).await;
+        let read =
+            self.get(token, &format!("/api/hangouts/{square}/messages?after=0&limit=200")).await;
         assert_ok(&read);
         read.body["messages"].as_array().unwrap().iter().map(|m| text(&m["body"])).collect()
     }
@@ -1698,43 +1978,71 @@ async fn the_person_who_started_the_city_sets_its_rules_and_nobody_else_does() {
         assert_not_found(&reply);
         assert_eq!((reply.status, &reply.body), (nowhere.status, &nowhere.body));
     }
-    assert_status(&server.set_city_rules("", &w.city, asked.clone()).await, StatusCode::UNAUTHORIZED);
+    assert_status(
+        &server.set_city_rules("", &w.city, asked.clone()).await,
+        StatusCode::UNAUTHORIZED,
+    );
     assert_eq!(server.city_rules_of(&w.ann.key, &w.city).await, before);
     assert_eq!(server.get(&gate.key, "/api/me").await.body["waiting"][0]["vouches_needed"], 2);
 
     // The keeper can, and the other requirements stay at nothing.
     assert_ok(&server.set_city_rules(&w.ann.key, &w.city, asked.clone()).await);
-    assert_eq!(server.city_rules_of(&w.bo.key, &w.city).await, json!({ "min_vouches": 1, "rules_text": "mine now" }));
+    assert_eq!(
+        server.city_rules_of(&w.bo.key, &w.city).await,
+        json!({ "min_vouches": 1, "rules_text": "mine now" })
+    );
     for field in ["min_member_days", "min_gatherings", "min_good_trips"] {
         let refused = server.set_city_rules(&w.ann.key, &w.city, json!({ field: 1 })).await;
         assert_status(&refused, StatusCode::BAD_REQUEST);
         assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ field: 0 })).await);
     }
-    assert_eq!(server.city_rules_of(&w.bo.key, &w.city).await, json!({ "min_vouches": 1, "rules_text": "mine now" }));
+    assert_eq!(
+        server.city_rules_of(&w.bo.key, &w.city).await,
+        json!({ "min_vouches": 1, "rules_text": "mine now" })
+    );
     // Leaving a field out leaves it as it was.
     assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 2 })).await);
-    assert_eq!(server.city_rules_of(&w.ann.key, &w.city).await, json!({ "min_vouches": 2, "rules_text": "mine now" }));
+    assert_eq!(
+        server.city_rules_of(&w.ann.key, &w.city).await,
+        json!({ "min_vouches": 2, "rules_text": "mine now" })
+    );
     assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "" })).await);
-    assert_eq!(server.city_rules_of(&w.ann.key, &w.city).await, json!({ "min_vouches": 2, "rules_text": "" }));
+    assert_eq!(
+        server.city_rules_of(&w.ann.key, &w.city).await,
+        json!({ "min_vouches": 2, "rules_text": "" })
+    );
 }
 
 // T12
 #[tokio::test]
-async fn once_the_keeper_has_left_any_member_looks_after_the_rules_and_the_keeper_holds_them_again_on_returning() {
+async fn once_the_keeper_has_left_any_member_looks_after_the_rules_and_the_keeper_holds_them_again_on_returning(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let pat = server.move_in(&w.ann_home, "Pat").await;
     // Ann leaves her house (Pat stays), then the city.
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     assert_ok(&server.post(&w.ann.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
 
     // Now it is anyone's, so a link can never be left with nobody to replace it.
-    assert_ok(&server.set_city_rules(&w.bo.key, &w.city, json!({ "min_vouches": 1, "rules_text": "Be kind." })).await);
+    assert_ok(
+        &server
+            .set_city_rules(
+                &w.bo.key,
+                &w.city,
+                json!({ "min_vouches": 1, "rules_text": "Be kind." }),
+            )
+            .await,
+    );
     assert_ok(&server.set_city_rules(&pat.key, &w.city, json!({ "min_vouches": 0 })).await);
     let view = server.city_view(&w.bo.key, &w.city).await;
     assert!(view.body["city"]["invite_url"].is_string(), "any member holds the link now");
     // Ann is out of it entirely.
-    assert_not_found(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 0 })).await);
+    assert_not_found(
+        &server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 0 })).await,
+    );
     assert_not_found(&server.decline(&w.ann.key, &w.city, &w.bo.id).await);
 
     // She comes back by the link, and the rules are hers to look after again.
@@ -1751,14 +2059,20 @@ async fn a_city_cannot_ask_for_more_vouches_than_it_has_people_or_more_than_five
     let server = Server::start().await;
     let (city, _, code, ann) = server.new_city("Elm", "Ann").await;
     // One person: the one vouch can only come from them.
-    assert_status(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 2 })).await, StatusCode::BAD_REQUEST);
+    assert_status(
+        &server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 2 })).await,
+        StatusCode::BAD_REQUEST,
+    );
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 1 })).await);
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 0 })).await);
 
     server.join_city(&code, "Bo").await;
     server.join_city(&code, "Cy").await;
     // Three people.
-    assert_status(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 4 })).await, StatusCode::BAD_REQUEST);
+    assert_status(
+        &server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 4 })).await,
+        StatusCode::BAD_REQUEST,
+    );
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 3 })).await);
     assert_eq!(server.city_rules_of(&ann.key, &city).await["min_vouches"], 3);
 
@@ -1768,15 +2082,38 @@ async fn a_city_cannot_ask_for_more_vouches_than_it_has_people_or_more_than_five
         server.join_city(&code, &format!("Filler {n}")).await;
     }
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "min_vouches": 5 })).await);
-    for bad in [json!(6), json!(7), json!(-1), json!(i64::MAX), json!(i64::MIN), json!(u64::MAX), json!(1e30), json!(2.5), json!("2"), json!(true), json!([2]), json!({ "n": 2 })] {
-        let refused = server.set_city_rules(&ann.key, &city, json!({ "min_vouches": bad.clone() })).await;
+    for bad in [
+        json!(6),
+        json!(7),
+        json!(-1),
+        json!(i64::MAX),
+        json!(i64::MIN),
+        json!(u64::MAX),
+        json!(1e30),
+        json!(2.5),
+        json!("2"),
+        json!(true),
+        json!([2]),
+        json!({ "n": 2 }),
+    ] {
+        let refused =
+            server.set_city_rules(&ann.key, &city, json!({ "min_vouches": bad.clone() })).await;
         assert_status(&refused, StatusCode::BAD_REQUEST);
         assert_eq!(server.city_rules_of(&ann.key, &city).await["min_vouches"], 5, "{bad}");
     }
     // The same for the other three, which can only ever be 0.
     for field in ["min_member_days", "min_gatherings", "min_good_trips"] {
-        for bad in [json!(1), json!(-1), json!(i64::MAX), json!(i64::MIN), json!(2.5), json!("0"), json!(1e30)] {
-            let refused = server.set_city_rules(&ann.key, &city, json!({ field: bad.clone() })).await;
+        for bad in [
+            json!(1),
+            json!(-1),
+            json!(i64::MAX),
+            json!(i64::MIN),
+            json!(2.5),
+            json!("0"),
+            json!(1e30),
+        ] {
+            let refused =
+                server.set_city_rules(&ann.key, &city, json!({ field: bad.clone() })).await;
             assert!(refused.status.is_client_error(), "{field} = {bad}: {}", refused.show());
         }
     }
@@ -1789,17 +2126,27 @@ async fn rules_text_is_at_most_a_thousand_characters_and_whatever_it_holds_stays
     let (city, _, code, ann) = server.new_city("Elm", "Ann").await;
     let longest = "x".repeat(1000);
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "rules_text": longest })).await);
-    assert_eq!(text(&server.city_rules_of(&ann.key, &city).await["rules_text"]).chars().count(), 1000);
-    assert_status(&server.set_city_rules(&ann.key, &city, json!({ "rules_text": "x".repeat(1001) })).await, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        text(&server.city_rules_of(&ann.key, &city).await["rules_text"]).chars().count(),
+        1000
+    );
+    assert_status(
+        &server.set_city_rules(&ann.key, &city, json!({ "rules_text": "x".repeat(1001) })).await,
+        StatusCode::BAD_REQUEST,
+    );
     // A thousand characters is a thousand characters, however many bytes each is.
     let wide = "é".repeat(1000);
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "rules_text": wide })).await);
     let emoji = "🙂".repeat(1000);
     assert_ok(&server.set_city_rules(&ann.key, &city, json!({ "rules_text": emoji })).await);
-    assert_status(&server.set_city_rules(&ann.key, &city, json!({ "rules_text": "🙂".repeat(1001) })).await, StatusCode::BAD_REQUEST);
+    assert_status(
+        &server.set_city_rules(&ann.key, &city, json!({ "rules_text": "🙂".repeat(1001) })).await,
+        StatusCode::BAD_REQUEST,
+    );
     // Not text at all.
     for bad in [json!(5), json!(true), json!(["a"]), json!({ "a": 1 })] {
-        let refused = server.set_city_rules(&ann.key, &city, json!({ "rules_text": bad.clone() })).await;
+        let refused =
+            server.set_city_rules(&ann.key, &city, json!({ "rules_text": bad.clone() })).await;
         assert_status(&refused, StatusCode::BAD_REQUEST);
     }
     // Whatever it says is handed back as it was written, trimmed, and as text.
@@ -1819,9 +2166,20 @@ async fn the_invite_page_shows_the_rules_and_the_vouches_needed_and_joining_need
     let w = server.world().await;
     let plain = server.get("", &format!("/api/city-invites/{}", w.code)).await;
     assert_eq!(keys_of(&plain.body), ["name", "people", "rules_text", "vouches_needed"]);
-    assert_eq!((plain.body["rules_text"].as_str(), plain.body["vouches_needed"].as_i64()), (Some(""), Some(0)));
+    assert_eq!(
+        (plain.body["rules_text"].as_str(), plain.body["vouches_needed"].as_i64()),
+        (Some(""), Some(0))
+    );
 
-    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 2, "rules_text": "Be kind. Ask first." })).await);
+    assert_ok(
+        &server
+            .set_city_rules(
+                &w.ann.key,
+                &w.city,
+                json!({ "min_vouches": 2, "rules_text": "Be kind. Ask first." }),
+            )
+            .await,
+    );
     let shown = server.get("", &format!("/api/city-invites/{}", w.code)).await;
     assert_eq!(shown.body["rules_text"], "Be kind. Ask first.");
     assert_eq!(shown.body["vouches_needed"], 2);
@@ -1829,16 +2187,27 @@ async fn the_invite_page_shows_the_rules_and_the_vouches_needed_and_joining_need
 
     // Nobody signed in, no `accept_rules`: 409, and no account is left behind.
     let people = server.state.db.person_count().unwrap();
-    for body in [json!({ "your_name": "Eve" }), json!({ "your_name": "Eve", "accept_rules": false }), json!({ "your_name": "Eve", "accept_rules": null })] {
+    for body in [
+        json!({ "your_name": "Eve" }),
+        json!({ "your_name": "Eve", "accept_rules": false }),
+        json!({ "your_name": "Eve", "accept_rules": null }),
+    ] {
         let refused = server.use_link(&w.code, "", body.clone()).await;
         assert_status(&refused, StatusCode::CONFLICT);
         assert!(refused.body["error"].as_str().unwrap().contains("rules"), "{}", refused.body);
-        assert!(refused.set_cookie.is_none() && refused.body.get("owner_key").is_none(), "{}", refused.body);
+        assert!(
+            refused.set_cookie.is_none() && refused.body.get("owner_key").is_none(),
+            "{}",
+            refused.body
+        );
     }
     assert_eq!(server.state.db.person_count().unwrap(), people, "a refused join makes no account");
     assert!(server.gate(&w.ann.key, &w.city).await.is_empty());
     // Not the right type is not a yes either.
-    for body in [json!({ "your_name": "Eve", "accept_rules": "true" }), json!({ "your_name": "Eve", "accept_rules": 1 })] {
+    for body in [
+        json!({ "your_name": "Eve", "accept_rules": "true" }),
+        json!({ "your_name": "Eve", "accept_rules": 1 }),
+    ] {
         let refused = server.use_link(&w.code, "", body).await;
         assert!(refused.status.is_client_error(), "{}", refused.show());
     }
@@ -1847,11 +2216,17 @@ async fn the_invite_page_shows_the_rules_and_the_vouches_needed_and_joining_need
     // Someone with an account, signed in, is asked the same.
     let cy = server.key_person("Cy").await;
     assert_status(&server.use_link(&w.code, &cy.key, json!({})).await, StatusCode::CONFLICT);
-    assert!(server.gate(&w.ann.key, &w.city).await.is_empty(), "refused people don't reach the gate");
+    assert!(
+        server.gate(&w.ann.key, &w.city).await.is_empty(),
+        "refused people don't reach the gate"
+    );
     assert_eq!(server.me(&cy.key).await["waiting"], json!([]));
     let accepted = server.use_link(&w.code, &cy.key, json!({ "accept_rules": true })).await;
     assert_ok(&accepted);
-    assert_eq!((accepted.body["waiting"].as_bool(), accepted.body["vouches_needed"].as_i64()), (Some(true), Some(2)));
+    assert_eq!(
+        (accepted.body["waiting"].as_bool(), accepted.body["vouches_needed"].as_i64()),
+        (Some(true), Some(2))
+    );
 
     // Someone already in doesn't have to accept anything to use the link again.
     assert_ok(&server.use_link(&w.code, &w.bo.key, json!({})).await);
@@ -1861,14 +2236,19 @@ async fn the_invite_page_shows_the_rules_and_the_vouches_needed_and_joining_need
 // Rules are for newcomers: someone already at the gate when they change isn't asked again, and
 // someone arriving after is.
 #[tokio::test]
-async fn rules_added_after_someone_reached_the_gate_are_not_asked_of_them_again_but_a_newcomer_is_asked() {
+async fn rules_added_after_someone_reached_the_gate_are_not_asked_of_them_again_but_a_newcomer_is_asked(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let cy = server.join_city(&w.code, "Cy").await;
     server.require_vouches(&w.ann, &w.city, 2).await;
     let eve = server.at_the_gate(&w.code, "Eve").await;
     assert_ok(&server.vouch(&w.ann.key, &w.city, &eve.id).await);
-    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Read this first." })).await);
+    assert_ok(
+        &server
+            .set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Read this first." }))
+            .await,
+    );
 
     // She uses the link again without accepting anything, and isn't turned back.
     assert_eq!(server.use_link(&w.code, &eve.key, json!({})).await.body["waiting"], true);
@@ -1882,7 +2262,8 @@ async fn rules_added_after_someone_reached_the_gate_are_not_asked_of_them_again_
     let asked = server.use_link(&w.code, "", json!({ "your_name": "Fay" })).await;
     assert_status(&asked, StatusCode::CONFLICT);
     assert_eq!(server.state.db.person_count().unwrap(), people, "no account left behind");
-    let fay = server.use_link(&w.code, "", json!({ "your_name": "Fay", "accept_rules": true })).await;
+    let fay =
+        server.use_link(&w.code, "", json!({ "your_name": "Fay", "accept_rules": true })).await;
     assert_eq!(fay.body["waiting"], true, "{}", fay.body);
 }
 
@@ -1893,7 +2274,9 @@ async fn someone_at_the_gate_is_not_asked_about_new_rules_on_a_house_link_either
     let w = server.world().await;
     server.require_vouches(&w.ann, &w.city, 2).await;
     let eve = server.at_the_gate(&w.code, "Eve").await;
-    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Be kind." })).await);
+    assert_ok(
+        &server.set_city_rules(&w.ann.key, &w.city, json!({ "rules_text": "Be kind." })).await,
+    );
     let path = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
     assert_ok(&server.post(&eve.key, &path, json!({})).await);
 }
@@ -1915,14 +2298,25 @@ async fn joining_a_house_into_a_city_with_rules_needs_the_rules_accepted_too() {
 
     // Someone new, without accepting: refused, no account made, and the link is still good.
     let people = server.state.db.person_count().unwrap();
-    for body in [json!({ "your_name": "Newcomer" }), json!({ "your_name": "Newcomer", "accept_rules": false })] {
+    for body in [
+        json!({ "your_name": "Newcomer" }),
+        json!({ "your_name": "Newcomer", "accept_rules": false }),
+    ] {
         let refused = server.post("", &path, body).await;
         assert_status(&refused, StatusCode::CONFLICT);
         assert!(refused.body["error"].as_str().unwrap().contains("rules"), "{}", refused.body);
-        assert!(refused.set_cookie.is_none() && refused.body.get("owner_key").is_none(), "{}", refused.body);
+        assert!(
+            refused.set_cookie.is_none() && refused.body.get("owner_key").is_none(),
+            "{}",
+            refused.body
+        );
     }
     assert_eq!(server.state.db.person_count().unwrap(), people, "no account left behind");
-    assert!(server.post("", &path, json!({ "your_name": "Newcomer", "accept_rules": "yes" })).await.status.is_client_error());
+    assert!(server
+        .post("", &path, json!({ "your_name": "Newcomer", "accept_rules": "yes" }))
+        .await
+        .status
+        .is_client_error());
 
     // Someone with an account who isn't in the city is asked the same, and stays outside until they accept.
     let cy = server.key_person("Cy").await;
@@ -1946,15 +2340,20 @@ async fn with_vouches_asked_for_the_link_leads_to_the_gate_and_the_city_stays_a_
     let w = server.world().await;
     server.require_vouches(&w.ann, &w.city, 2).await;
 
-    let arrived = server.use_link(&w.code, "", json!({ "your_name": "Eve", "accept_rules": true })).await;
+    let arrived =
+        server.use_link(&w.code, "", json!({ "your_name": "Eve", "accept_rules": true })).await;
     assert_ok(&arrived);
     assert_eq!(arrived.body["waiting"], true);
-    assert_eq!((arrived.body["vouches"].as_i64(), arrived.body["vouches_needed"].as_i64()), (Some(0), Some(2)));
+    assert_eq!(
+        (arrived.body["vouches"].as_i64(), arrived.body["vouches_needed"].as_i64()),
+        (Some(0), Some(2))
+    );
     assert_eq!(arrived.body["city_id"], w.city.as_str());
     // She has an account, a key and a session, and a name.
     assert!(arrived.body["owner_key"].as_str().unwrap().starts_with("ah_owner_"));
     assert!(arrived.set_cookie.as_deref().unwrap().contains("ah_session=ah_sess_"));
-    let eve = Who { key: text(&arrived.body["owner_key"]), id: text(&arrived.body["person"]["id"]) };
+    let eve =
+        Who { key: text(&arrived.body["owner_key"]), id: text(&arrived.body["person"]["id"]) };
     assert_eq!(server.me(&eve.key).await["name"], "Eve");
 
     // But the city is a 404, the Town Square is a 404, and so is everything in it, to her and her bots.
@@ -1972,8 +2371,20 @@ async fn with_vouches_asked_for_the_link_leads_to_the_gate_and_the_city_stays_a_
     ] {
         assert_not_found(&server.get(&eve.key, &path).await);
     }
-    assert_not_found(&server.post(&eve.key, &format!("/api/hangouts/{}/messages", w.square), json!({ "text": "let me in" })).await);
-    assert_not_found(&server.post(&eve.key, &format!("/api/cities/{}/houses", w.city), json!({ "name": "Mine" })).await);
+    assert_not_found(
+        &server
+            .post(
+                &eve.key,
+                &format!("/api/hangouts/{}/messages", w.square),
+                json!({ "text": "let me in" }),
+            )
+            .await,
+    );
+    assert_not_found(
+        &server
+            .post(&eve.key, &format!("/api/cities/{}/houses", w.city), json!({ "name": "Mine" }))
+            .await,
+    );
     assert_eq!(server.me(&eve.key).await["cities"], json!([]));
     // A person in the city already is not sent to the gate by a rule that came later.
     let again = server.use_link(&w.code, &w.bo.key, json!({})).await;
@@ -1999,7 +2410,10 @@ async fn the_gate_is_seen_by_people_in_the_city_and_not_by_their_bots_nor_the_pe
             // Name, colour, how many vouch, and when they asked. Nothing that is theirs alone.
             let allowed = ["asked_at", "color", "name", "person_id", "vouches", "you_vouched"];
             assert_eq!(keys_of(entry), allowed, "{entry}");
-            assert!(entry["asked_at"].as_i64().unwrap() > 0 && entry["color"].as_str().unwrap().starts_with('#'));
+            assert!(
+                entry["asked_at"].as_i64().unwrap() > 0
+                    && entry["color"].as_str().unwrap().starts_with('#')
+            );
         }
         let mine = gate.iter().find(|entry| entry["name"] == "Eve").unwrap();
         assert_eq!(mine["vouches"], 1);
@@ -2009,12 +2423,17 @@ async fn the_gate_is_seen_by_people_in_the_city_and_not_by_their_bots_nor_the_pe
     let by_bot = server.city_view(&w.scout.token, &w.city).await;
     assert_ok(&by_bot);
     assert!(by_bot.body.get("gate").is_none(), "{}", by_bot.body);
-    let mut people: Vec<String> = by_bot.body["people"].as_array().unwrap().iter().map(|p| text(&p["name"])).collect();
+    let mut people: Vec<String> =
+        by_bot.body["people"].as_array().unwrap().iter().map(|p| text(&p["name"])).collect();
     people.sort();
     assert_eq!(people, ["Ann", "Bo"], "the people waiting are not people in the city");
     let listed = server.tool(&w.scout.token, "list_city", json!({})).await;
     assert!(listed["structuredContent"].get("gate").is_none(), "{listed}");
-    assert!(!has(&listed["structuredContent"]["bots"], "Eve") && !has(&listed["structuredContent"]["houses"], "Eve"), "{listed}");
+    assert!(
+        !has(&listed["structuredContent"]["bots"], "Eve")
+            && !has(&listed["structuredContent"]["houses"], "Eve"),
+        "{listed}"
+    );
     // The house bot has no city at all, and the people waiting can't see who else is.
     assert_forbidden(&server.city_view(&casa.token, &w.city).await);
     assert_not_found(&server.city_view(&eve.key, &w.city).await);
@@ -2041,7 +2460,10 @@ async fn enough_vouches_let_someone_in_at_once_and_they_are_pinged_and_nobody_el
     assert_eq!(first.body["let_in"], false);
     assert!(notices_of(&eve_pings, "city.let_in").await.is_empty(), "one of two is not in");
     let second = server.vouch(&w.bo.key, &w.city, &eve.id).await;
-    assert_eq!((second.body["let_in"].as_bool(), second.body["vouches"].as_i64()), (Some(true), Some(2)));
+    assert_eq!(
+        (second.body["let_in"].as_bool(), second.body["vouches"].as_i64()),
+        (Some(true), Some(2))
+    );
 
     // At once: the city, the Town Square and the people in it are hers now.
     assert_ok(&server.city_view(&eve.key, &w.city).await);
@@ -2058,7 +2480,12 @@ async fn enough_vouches_let_someone_in_at_once_and_they_are_pinged_and_nobody_el
     assert!(text(&let_in[0]["text"]).contains("Elm"));
     assert!(notices_of(&ann_pings, "city.let_in").await.is_empty());
     assert!(notices_of(&bo_pings, "city.let_in").await.is_empty());
-    let joined: Vec<_> = server.town_square_says(&w.ann.key, &w.square).await.into_iter().filter(|l| l.contains("Eve")).collect();
+    let joined: Vec<_> = server
+        .town_square_says(&w.ann.key, &w.square)
+        .await
+        .into_iter()
+        .filter(|l| l.contains("Eve"))
+        .collect();
     assert_eq!(joined, ["Eve joined Elm."]);
     // Asking again, or a third vouch, does nothing more.
     assert_ok(&server.use_link(&w.code, &eve.key, json!({})).await);
@@ -2108,7 +2535,11 @@ async fn only_the_keeper_of_the_link_turns_someone_away_and_it_clears_their_vouc
     assert_eq!(server.gate(&w.ann.key, &w.city).await.len(), 1);
     assert_eq!(server.me(&eve.key).await["waiting"], json!([]));
     assert_not_found(&server.vouch(&w.ann.key, &w.city, &eve.id).await);
-    assert_eq!(server.state.db.vouch_count(&w.city, &eve.id).unwrap(), 0, "the vouches are gone, not just hidden");
+    assert_eq!(
+        server.state.db.vouch_count(&w.city, &eve.id).unwrap(),
+        0,
+        "the vouches are gone, not just hidden"
+    );
     assert_not_found(&server.city_view(&eve.key, &w.city).await);
 }
 
@@ -2126,26 +2557,43 @@ async fn someone_turned_away_starts_again_from_nothing_and_a_new_link_keeps_them
 
     // The old vouchers' vouches don't come back with her: she needs all three again.
     let back = server.use_link(&w.code, &eve.key, json!({ "accept_rules": true })).await;
-    assert_eq!((back.body["waiting"].as_bool(), back.body["vouches"].as_i64()), (Some(true), Some(0)), "{}", back.body);
+    assert_eq!(
+        (back.body["waiting"].as_bool(), back.body["vouches"].as_i64()),
+        (Some(true), Some(0)),
+        "{}",
+        back.body
+    );
     let one = server.vouch(&w.bo.key, &w.city, &eve.id).await;
-    assert_eq!((one.body["vouches"].as_i64(), one.body["let_in"].as_bool()), (Some(1), Some(false)));
+    assert_eq!(
+        (one.body["vouches"].as_i64(), one.body["let_in"].as_bool()),
+        (Some(1), Some(false))
+    );
     // Walking back in by asking is the same as the first time: nothing is kept against her, and no further vouch is owed.
     assert_ok(&server.decline(&w.ann.key, &w.city, &eve.id).await);
 
     // Replacing the link is how to keep someone out: the old one is a 404.
-    let rotated = server.post(&w.ann.key, &format!("/api/cities/{}/invite/rotate", w.city), json!({})).await;
+    let rotated =
+        server.post(&w.ann.key, &format!("/api/cities/{}/invite/rotate", w.city), json!({})).await;
     assert_ok(&rotated);
     let new_code = code_of(&rotated.body["invite_url"]);
     assert_not_found(&server.use_link(&w.code, &eve.key, json!({ "accept_rules": true })).await);
-    assert_not_found(&server.use_link(&w.code, "", json!({ "your_name": "Eve again", "accept_rules": true })).await);
+    assert_not_found(
+        &server
+            .use_link(&w.code, "", json!({ "your_name": "Eve again", "accept_rules": true }))
+            .await,
+    );
     assert_eq!(server.me(&eve.key).await["waiting"], json!([]));
-    assert_eq!(server.get("", &format!("/api/city-invites/{}", w.code)).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get("", &format!("/api/city-invites/{}", w.code)).await.status,
+        StatusCode::NOT_FOUND
+    );
     assert_ok(&server.get("", &format!("/api/city-invites/{new_code}")).await);
 }
 
 // T17
 #[tokio::test]
-async fn only_the_keeper_clears_the_whole_gate_at_once_and_every_vouch_for_those_waiting_goes_with_it() {
+async fn only_the_keeper_clears_the_whole_gate_at_once_and_every_vouch_for_those_waiting_goes_with_it(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let cy = server.join_city(&w.code, "Cy").await;
@@ -2186,17 +2634,29 @@ async fn only_the_keeper_clears_the_whole_gate_at_once_and_every_vouch_for_those
         assert_not_found(&server.city_view(&person.key, &w.city).await);
     }
     for person in [&eve, &fay] {
-        assert_eq!(server.state.db.vouch_count(&w.city, &person.id).unwrap(), 0, "the vouches are gone, not just hidden");
+        assert_eq!(
+            server.state.db.vouch_count(&w.city, &person.id).unwrap(),
+            0,
+            "the vouches are gone, not just hidden"
+        );
     }
     // The people in the city are where they were, with the vouch given to one of them.
     assert_ok(&server.city_view(&w.bo.key, &w.city).await);
     assert_eq!(server.stand(&w.ann.key, &w.city, &w.bo.id).await["vouches"], json!(["Ann"]));
     // With nobody waiting there is nothing to clear, and it says so.
-    assert_eq!(server.clear_gate(&w.ann.key, &w.city).await.body, json!({ "ok": true, "cleared": 0 }));
+    assert_eq!(
+        server.clear_gate(&w.ann.key, &w.city).await.body,
+        json!({ "ok": true, "cleared": 0 })
+    );
 
     // Turned away isn't banned: Eve can ask again with the link, from nothing.
     let back = server.use_link(&w.code, &eve.key, json!({ "accept_rules": true })).await;
-    assert_eq!((back.body["waiting"].as_bool(), back.body["vouches"].as_i64()), (Some(true), Some(0)), "{}", back.body);
+    assert_eq!(
+        (back.body["waiting"].as_bool(), back.body["vouches"].as_i64()),
+        (Some(true), Some(0)),
+        "{}",
+        back.body
+    );
 }
 
 // T17
@@ -2209,10 +2669,15 @@ async fn once_the_keeper_has_left_any_member_can_clear_the_gate() {
     server.at_the_gate(&w.code, "Eve").await;
     assert_forbidden(&server.clear_gate(&w.bo.key, &w.city).await);
     // Ann leaves her house (Pat stays) and then the city, so the link is every member's to look after.
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     assert_ok(&server.post(&w.ann.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
     assert_not_found(&server.clear_gate(&w.ann.key, &w.city).await);
-    assert_eq!(server.clear_gate(&w.bo.key, &w.city).await.body, json!({ "ok": true, "cleared": 1 }));
+    assert_eq!(
+        server.clear_gate(&w.bo.key, &w.city).await.body,
+        json!({ "ok": true, "cleared": 1 })
+    );
 }
 
 // T17
@@ -2301,13 +2766,18 @@ async fn the_gate_holds_fifty_and_a_lapsed_place_does_not_count_against_that() {
 
     // The fifty-first is told to try later, and no account is made for them.
     let people = server.state.db.person_count().unwrap();
-    let full = server.use_link(&w.code, "", json!({ "your_name": "One too many", "accept_rules": true })).await;
+    let full = server
+        .use_link(&w.code, "", json!({ "your_name": "One too many", "accept_rules": true }))
+        .await;
     assert_status(&full, StatusCode::CONFLICT);
     assert!(full.body["error"].as_str().unwrap().contains("full"), "{}", full.body);
     assert_eq!(server.state.db.person_count().unwrap(), people);
     // The same for someone who has an account already.
     let cy = server.key_person("Cy").await;
-    assert_status(&server.use_link(&w.code, &cy.key, json!({ "accept_rules": true })).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.use_link(&w.code, &cy.key, json!({ "accept_rules": true })).await,
+        StatusCode::CONFLICT,
+    );
     assert_eq!(server.me(&cy.key).await["waiting"], json!([]));
     assert_eq!(server.gate(&w.ann.key, &w.city).await.len(), 50);
     // People already there can still use the link without being turned away.
@@ -2316,7 +2786,10 @@ async fn the_gate_holds_fifty_and_a_lapsed_place_does_not_count_against_that() {
     // Turning one away, or letting one in, makes room for exactly one.
     assert_ok(&server.decline(&w.ann.key, &w.city, &waiting[0].id).await);
     assert_ok(&server.use_link(&w.code, &cy.key, json!({ "accept_rules": true })).await);
-    assert_status(&server.use_link(&w.code, &waiting[0].key, json!({ "accept_rules": true })).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.use_link(&w.code, &waiting[0].key, json!({ "accept_rules": true })).await,
+        StatusCode::CONFLICT,
+    );
     assert_eq!(server.vouch(&w.ann.key, &w.city, &waiting[1].id).await.body["let_in"], true);
     assert_ok(&server.use_link(&w.code, &waiting[0].key, json!({ "accept_rules": true })).await);
     assert_eq!(server.gate(&w.ann.key, &w.city).await.len(), 50);
@@ -2333,13 +2806,18 @@ async fn moving_into_a_house_through_its_link_skips_the_gate_and_the_city_link_a
 
     // The city link again, however many times, still leaves her at the gate.
     for _ in 0..3 {
-        assert_eq!(server.use_link(&w.code, &eve.key, json!({ "accept_rules": true })).await.body["waiting"], true);
+        assert_eq!(
+            server.use_link(&w.code, &eve.key, json!({ "accept_rules": true })).await.body
+                ["waiting"],
+            true
+        );
     }
     assert_not_found(&server.city_view(&eve.key, &w.city).await);
 
     // A house link is a resident's yes, so it skips the gate and ends the wait.
     let first_link = server.house_code(&w.bo_home);
-    let joined = server.post(&eve.key, &format!("/api/house-invites/{first_link}/join"), json!({})).await;
+    let joined =
+        server.post(&eve.key, &format!("/api/house-invites/{first_link}/join"), json!({})).await;
     assert_ok(&joined);
     assert_eq!(joined.body["city_id"], w.city.as_str());
     assert_ok(&server.city_view(&eve.key, &w.city).await);
@@ -2350,12 +2828,14 @@ async fn moving_into_a_house_through_its_link_skips_the_gate_and_the_city_link_a
     assert_eq!(gate[0]["name"], "Fay");
     // Fay is untouched, and no house link the house didn't give her works.
     assert_not_found(&server.city_view(&fay.key, &w.city).await);
-    let old_link = server.post(&fay.key, &format!("/api/house-invites/{NO_SUCH_THING}/join"), json!({})).await;
+    let old_link =
+        server.post(&fay.key, &format!("/api/house-invites/{NO_SUCH_THING}/join"), json!({})).await;
     assert_not_found(&old_link);
     assert_eq!(server.me(&fay.key).await["waiting"][0]["city_id"], w.city.as_str());
 
     // A house link works once: it changed when Eve moved in, so the one Eve used lets nobody else in.
-    let used = server.post(&fay.key, &format!("/api/house-invites/{first_link}/join"), json!({})).await;
+    let used =
+        server.post(&fay.key, &format!("/api/house-invites/{first_link}/join"), json!({})).await;
     assert_not_found(&used);
     assert_not_found(&server.city_view(&fay.key, &w.city).await);
     // Someone brand new with a house link is simply in, with an account made on the spot.
@@ -2366,7 +2846,13 @@ async fn moving_into_a_house_through_its_link_skips_the_gate_and_the_city_link_a
     assert_ok(&server.decline(&w.ann.key, &w.city, &fay.id).await);
     let fresh = server.at_the_gate(&w.code, "Gus").await;
     assert_ok(&server.decline(&w.ann.key, &w.city, &fresh.id).await);
-    let moved = server.post(&fresh.key, &format!("/api/house-invites/{}/join", server.house_code(&w.bo_home)), json!({})).await;
+    let moved = server
+        .post(
+            &fresh.key,
+            &format!("/api/house-invites/{}/join", server.house_code(&w.bo_home)),
+            json!({}),
+        )
+        .await;
     assert_ok(&moved);
 }
 
@@ -2376,15 +2862,28 @@ async fn someone_at_the_gate_sees_only_their_own_count_in_me_and_nothing_else_of
     let server = Server::start().await;
     let w = server.world().await;
     let cy = server.join_city(&w.code, "Cy").await;
-    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 3, "rules_text": "Secret handshake." })).await);
+    assert_ok(
+        &server
+            .set_city_rules(
+                &w.ann.key,
+                &w.city,
+                json!({ "min_vouches": 3, "rules_text": "Secret handshake." }),
+            )
+            .await,
+    );
     let eve = server.at_the_gate(&w.code, "Eve").await;
 
     let me = server.me(&eve.key).await;
     assert_eq!(me["waiting"].as_array().unwrap().len(), 1);
     let place = &me["waiting"][0];
     assert_eq!(keys_of(place), ["city_id", "name", "vouches", "vouches_needed"]);
-    assert_eq!((place["name"].as_str(), place["vouches"].as_i64(), place["vouches_needed"].as_i64()), (Some("Elm"), Some(0), Some(3)));
-    for secret in ["Ann", "Bo", "Cy", "Secret handshake", w.square.as_str(), "Ann House", "Bo House", "Scout"] {
+    assert_eq!(
+        (place["name"].as_str(), place["vouches"].as_i64(), place["vouches_needed"].as_i64()),
+        (Some("Elm"), Some(0), Some(3))
+    );
+    for secret in
+        ["Ann", "Bo", "Cy", "Secret handshake", w.square.as_str(), "Ann House", "Bo House", "Scout"]
+    {
         assert!(!has(&me["waiting"], secret), "{secret} in {}", me["waiting"]);
     }
     assert!(!has(&me, "Secret handshake") && !has(&me, w.square.as_str()), "{me}");
@@ -2394,10 +2893,17 @@ async fn someone_at_the_gate_sees_only_their_own_count_in_me_and_nothing_else_of
     assert_ok(&server.vouch(&cy.key, &w.city, &eve.id).await);
     assert_eq!(server.me(&eve.key).await["waiting"][0]["vouches"], 2);
     // It's a person's: a bot of Eve's sees no `waiting`, nor does anyone's passkeys list leak it.
-    let room = text(&server.post(&eve.key, "/api/hangouts", json!({ "name": "Eve's own" })).await.body["hangout"]["id"]);
+    let room = text(
+        &server.post(&eve.key, "/api/hangouts", json!({ "name": "Eve's own" })).await.body
+            ["hangout"]["id"],
+    );
     let bot = server.bot(&eve, &room, "EveBot").await;
     let bot_me = server.get(&bot.token, "/api/me").await;
-    assert!(bot_me.body.get("waiting").is_none() && bot_me.body["cities"] == json!([]), "{}", bot_me.body);
+    assert!(
+        bot_me.body.get("waiting").is_none() && bot_me.body["cities"] == json!([]),
+        "{}",
+        bot_me.body
+    );
     // Two gates are two entries, each with its own count.
     let (oak, _, oak_code, oak_keeper) = server.new_city("Oak", "Gus").await;
     server.require_vouches(&oak_keeper, &oak, 1).await;
@@ -2455,7 +2961,11 @@ async fn lowering_the_vouches_asked_for_lets_in_everyone_who_now_has_enough_and_
     // Each was announced once in the Town Square.
     let lines = server.town_square_says(&w.ann.key, &w.square).await;
     for name in ["None", "One", "Two"] {
-        assert_eq!(lines.iter().filter(|l| l.as_str() == format!("{name} joined Elm.")).count(), 1, "{lines:?}");
+        assert_eq!(
+            lines.iter().filter(|l| l.as_str() == format!("{name} joined Elm.")).count(),
+            1,
+            "{lines:?}"
+        );
     }
     let _ = (cy, dan);
 }
@@ -2466,14 +2976,18 @@ async fn lowering_the_vouches_asked_for_lets_in_everyone_who_now_has_enough_and_
 
 // R1 T15
 #[tokio::test]
-async fn someone_at_the_gate_and_their_bot_can_tell_nothing_in_the_city_from_a_place_that_is_not_there() {
+async fn someone_at_the_gate_and_their_bot_can_tell_nothing_in_the_city_from_a_place_that_is_not_there(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let (real, fake) = server.ids(&w).await;
     server.require_vouches(&w.ann, &w.city, 1).await;
     let eve = server.at_the_gate(&w.code, "Eve").await;
     // Eve has an own room and a bot, made while she waits.
-    let room = text(&server.post(&eve.key, "/api/hangouts", json!({ "name": "Eve's own" })).await.body["hangout"]["id"]);
+    let room = text(
+        &server.post(&eve.key, "/api/hangouts", json!({ "name": "Eve's own" })).await.body
+            ["hangout"]["id"],
+    );
     let bot = server.bot(&eve, &room, "EveBot").await;
     assert_eq!(server.me(&eve.key).await["waiting"][0]["vouches"], 0);
 
@@ -2486,7 +3000,8 @@ async fn someone_at_the_gate_and_their_bot_can_tell_nothing_in_the_city_from_a_p
 
 // R1 A13
 #[tokio::test]
-async fn a_brand_new_passkey_account_with_no_invite_can_tell_nothing_from_a_place_that_is_not_there() {
+async fn a_brand_new_passkey_account_with_no_invite_can_tell_nothing_from_a_place_that_is_not_there(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let (real, fake) = server.ids(&w).await;
@@ -2500,11 +3015,16 @@ async fn a_brand_new_passkey_account_with_no_invite_can_tell_nothing_from_a_plac
 
     // What they can see is their own.
     let me = server.me(&newbie.who.key).await;
-    assert_eq!((me["cities"].clone(), me["houses"].clone(), me["hangouts"].clone()), (json!([]), json!([]), json!([])));
+    assert_eq!(
+        (me["cities"].clone(), me["houses"].clone(), me["hangouts"].clone()),
+        (json!([]), json!([]), json!([]))
+    );
     assert_eq!(me["waiting"], json!([]));
     assert_eq!(me["bots"], json!([]));
     // The home page and the join pages are public, and hold only the app.
-    for path in ["/", "/c/anything", "/house/anything", "/join-city/anything", "/join-house/anything"] {
+    for path in
+        ["/", "/c/anything", "/house/anything", "/join-city/anything", "/join-house/anything"]
+    {
         assert_eq!(server.get(&newbie.who.key, path).await.status, StatusCode::OK, "{path}");
     }
 }
@@ -2531,7 +3051,13 @@ async fn a_new_passkey_account_cannot_start_a_hangout_or_a_city_without_the_serv
     assert_eq!(server.state.db.person_count().unwrap(), 1, "refusals made no one new");
     // Not a number or the wrong type either.
     for code in [json!(5), json!(true), json!(["letmein"]), json!(null)] {
-        let reply = server.post(&newbie.who.key, "/api/cities", json!({ "name": "Mine", "create_code": code.clone() })).await;
+        let reply = server
+            .post(
+                &newbie.who.key,
+                "/api/cities",
+                json!({ "name": "Mine", "create_code": code.clone() }),
+            )
+            .await;
         assert_denied(&reply);
     }
 
@@ -2547,12 +3073,24 @@ async fn a_new_passkey_account_cannot_start_a_hangout_or_a_city_without_the_serv
     let anyone = server.use_link(&code, "", json!({ "your_name": "Anyone" })).await;
     assert_ok(&anyone);
     // And a bot of theirs can't start anything with or without the code.
-    let room = server.post(&newbie.who.key, "/api/hangouts", json!({ "name": "Room", "create_code": "letmein" })).await;
+    let room = server
+        .post(&newbie.who.key, "/api/hangouts", json!({ "name": "Room", "create_code": "letmein" }))
+        .await;
     let room = text(&room.body["hangout"]["id"]);
-    let made_bot = server.post(&newbie.who.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Bot" })).await;
+    let made_bot = server
+        .post(&newbie.who.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Bot" }))
+        .await;
     let bot = text(&made_bot.body["token"]);
-    assert_forbidden(&server.post(&bot, "/api/cities", json!({ "name": "Bots", "create_code": "letmein" })).await);
-    assert_forbidden(&server.post(&bot, "/api/hangouts", json!({ "name": "Bots", "create_code": "letmein" })).await);
+    assert_forbidden(
+        &server
+            .post(&bot, "/api/cities", json!({ "name": "Bots", "create_code": "letmein" }))
+            .await,
+    );
+    assert_forbidden(
+        &server
+            .post(&bot, "/api/hangouts", json!({ "name": "Bots", "create_code": "letmein" }))
+            .await,
+    );
 }
 
 // A11 T15
@@ -2574,13 +3112,29 @@ async fn a_new_account_with_no_invite_reaches_a_city_only_through_its_link_or_a_
     assert_ok(&server.city_view(&newbie.who.key, &w.city).await);
     // In the city, a passkey account still has no house, no resident rights, no say in anyone's.
     assert_not_found(&server.house_view(&newbie.who.key, &w.ann_home.id).await);
-    assert_not_found(&server.set_house_rules(&newbie.who.key, &w.ann_home.id, json!({ "min_gatherings": 1 })).await);
-    assert_forbidden(&server.set_city_rules(&newbie.who.key, &w.city, json!({ "min_vouches": 1 })).await);
+    assert_not_found(
+        &server
+            .set_house_rules(&newbie.who.key, &w.ann_home.id, json!({ "min_gatherings": 1 }))
+            .await,
+    );
+    assert_forbidden(
+        &server.set_city_rules(&newbie.who.key, &w.city, json!({ "min_vouches": 1 })).await,
+    );
     assert_forbidden(&server.decline(&newbie.who.key, &w.city, &w.bo.id).await);
     // And no standing that passkeys could have given them (A13).
     let standing = server.stand(&w.ann.key, &w.city, &newbie.who.id).await;
-    assert_eq!((standing["gatherings"].as_i64(), standing["good_trips"].as_i64(), standing["sent_home"].as_i64()), (Some(0), Some(0), Some(0)));
-    assert_eq!((standing["member_days"].as_i64(), standing["vouches"].clone()), (Some(0), json!([])));
+    assert_eq!(
+        (
+            standing["gatherings"].as_i64(),
+            standing["good_trips"].as_i64(),
+            standing["sent_home"].as_i64()
+        ),
+        (Some(0), Some(0), Some(0))
+    );
+    assert_eq!(
+        (standing["member_days"].as_i64(), standing["vouches"].clone()),
+        (Some(0), json!([]))
+    );
 }
 
 // R24 T6 T10
@@ -2592,16 +3146,44 @@ async fn a_house_bots_world_stays_three_tools_and_every_trust_route_refuses_its_
     server.require(&w.ann, &w.ann_home, json!({ "min_gatherings": 1 })).await;
 
     let listed = server.mcp(&casa.token, "tools/list", json!({})).await;
-    let mut names: Vec<String> = listed.body["result"]["tools"].as_array().unwrap().iter().map(|t| text(&t["name"])).collect();
+    let mut names: Vec<String> = listed.body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| text(&t["name"]))
+        .collect();
     names.sort();
     assert_eq!(names, ["finish_request", "house_queue", "set_house_status"]);
     // Every other name, the new ones and invented ones among them, is refused with nothing in it.
     for name in [
-        "list_city", "ask_for_trip", "go_home", "read_room", "say", "inbox", "list_calendar", "vouch", "unvouch",
-        "standing", "get_standing", "decline", "set_house_rules", "set_city_rules", "requirements", "gate", "list_gate",
-        "register_passkey", "sign_in", "rotate_owner_key",
+        "list_city",
+        "ask_for_trip",
+        "go_home",
+        "read_room",
+        "say",
+        "inbox",
+        "list_calendar",
+        "vouch",
+        "unvouch",
+        "standing",
+        "get_standing",
+        "decline",
+        "set_house_rules",
+        "set_city_rules",
+        "requirements",
+        "gate",
+        "list_gate",
+        "register_passkey",
+        "sign_in",
+        "rotate_owner_key",
     ] {
-        let result = server.tool(&casa.token, name, json!({ "house_id": w.ann_home.id, "city_id": w.city, "person_id": w.bo.id })).await;
+        let result = server
+            .tool(
+                &casa.token,
+                name,
+                json!({ "house_id": w.ann_home.id, "city_id": w.city, "person_id": w.bo.id }),
+            )
+            .await;
         assert_eq!(result["isError"], true, "{name}: {result}");
         assert!(!has(&result, "min_gatherings") && !has(&result, "Ann House"), "{name}: {result}");
     }
@@ -2612,7 +3194,11 @@ async fn a_house_bots_world_stays_three_tools_and_every_trust_route_refuses_its_
         (Method::DELETE, format!("/api/cities/{}/people/{}/vouch", w.city, w.bo.id), None),
         (Method::POST, format!("/api/cities/{}/gate/{}/decline", w.city, w.bo.id), Some(json!({}))),
         (Method::PUT, format!("/api/cities/{}/rules", w.city), Some(json!({ "min_vouches": 0 }))),
-        (Method::PUT, format!("/api/houses/{}/rules", w.ann_home.id), Some(json!({ "min_gatherings": 0 }))),
+        (
+            Method::PUT,
+            format!("/api/houses/{}/rules", w.ann_home.id),
+            Some(json!({ "min_gatherings": 0 })),
+        ),
         (Method::GET, "/api/passkeys".into(), None),
         (Method::GET, "/api/passkeys/available".into(), None),
         (Method::POST, "/api/passkeys/register/start".into(), Some(json!({ "your_name": "Casa" }))),
@@ -2622,7 +3208,11 @@ async fn a_house_bots_world_stays_three_tools_and_every_trust_route_refuses_its_
         (Method::DELETE, "/api/passkeys/anything".into(), None),
         (Method::POST, "/api/key/rotate".into(), Some(json!({}))),
         (Method::POST, format!("/api/city-invites/{}/join", w.code), Some(json!({}))),
-        (Method::POST, "/api/trips".into(), Some(json!({ "house_id": w.ann_home.id, "kind": "call" }))),
+        (
+            Method::POST,
+            "/api/trips".into(),
+            Some(json!({ "house_id": w.ann_home.id, "kind": "call" })),
+        ),
     ];
     for (method, path, body) in routes {
         let reply = server.request(&casa.token, method.clone(), &path, body).await;
@@ -2634,15 +3224,33 @@ async fn a_house_bots_world_stays_three_tools_and_every_trust_route_refuses_its_
 
 // T3 T16 T20
 #[tokio::test]
-async fn an_ordinary_bot_has_no_trust_tools_and_every_trust_route_that_changes_something_refuses_it() {
+async fn an_ordinary_bot_has_no_trust_tools_and_every_trust_route_that_changes_something_refuses_it(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let listed = server.mcp(&w.scout.token, "tools/list", json!({})).await;
-    let names: Vec<String> = listed.body["result"]["tools"].as_array().unwrap().iter().map(|t| text(&t["name"])).collect();
-    for banned in ["vouch", "standing", "gate", "rules", "decline", "passkey", "session", "owner_key", "requirement_set"] {
+    let names: Vec<String> = listed.body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| text(&t["name"]))
+        .collect();
+    for banned in [
+        "vouch",
+        "standing",
+        "gate",
+        "rules",
+        "decline",
+        "passkey",
+        "session",
+        "owner_key",
+        "requirement_set",
+    ] {
         assert!(names.iter().all(|name| !name.contains(banned)), "{banned} among {names:?}");
     }
-    assert!(names.contains(&"list_city".to_string()) && names.contains(&"ask_for_trip".to_string()));
+    assert!(
+        names.contains(&"list_city".to_string()) && names.contains(&"ask_for_trip".to_string())
+    );
     server.require_vouches(&w.ann, &w.city, 1).await;
     let eve = server.at_the_gate(&w.code, "Eve").await;
     for (method, path, body) in [
@@ -2650,7 +3258,11 @@ async fn an_ordinary_bot_has_no_trust_tools_and_every_trust_route_that_changes_s
         (Method::DELETE, format!("/api/cities/{}/people/{}/vouch", w.city, eve.id), None),
         (Method::POST, format!("/api/cities/{}/gate/{}/decline", w.city, eve.id), Some(json!({}))),
         (Method::PUT, format!("/api/cities/{}/rules", w.city), Some(json!({ "min_vouches": 0 }))),
-        (Method::PUT, format!("/api/houses/{}/rules", w.bo_home.id), Some(json!({ "min_gatherings": 0 }))),
+        (
+            Method::PUT,
+            format!("/api/houses/{}/rules", w.bo_home.id),
+            Some(json!({ "min_gatherings": 0 })),
+        ),
         (Method::POST, format!("/api/city-invites/{}/join", w.code), Some(json!({}))),
     ] {
         assert_forbidden(&server.request(&w.scout.token, method, &path, body).await);
@@ -2659,7 +3271,9 @@ async fn an_ordinary_bot_has_no_trust_tools_and_every_trust_route_that_changes_s
     // It may read standing (T5) and the map; the map holds the requirements but no gate.
     assert_ok(&server.standing(&w.scout.token, &w.city, &eve.id).await);
     let city = server.city_view(&w.scout.token, &w.city).await;
-    assert!(city.body["houses"][0].get("requirements").is_some() && city.body.get("gate").is_none());
+    assert!(
+        city.body["houses"][0].get("requirements").is_some() && city.body.get("gate").is_none()
+    );
 }
 
 // T7 T9
@@ -2672,14 +3286,25 @@ async fn over_mcp_list_city_shows_what_each_house_asks_and_ask_for_trip_returns_
     let houses = listed["structuredContent"]["houses"].as_array().unwrap().clone();
     let ann = houses.iter().find(|h| h["name"] == "Ann House").unwrap();
     let bo = houses.iter().find(|h| h["name"] == "Bo House").unwrap();
-    assert_eq!(ann["requirements"], json!({ "min_member_days": 3, "min_gatherings": 2, "min_good_trips": 0, "min_vouches": 0 }));
-    assert_eq!(bo["requirements"], json!({ "min_member_days": 0, "min_gatherings": 0, "min_good_trips": 0, "min_vouches": 0 }));
+    assert_eq!(
+        ann["requirements"],
+        json!({ "min_member_days": 3, "min_gatherings": 2, "min_good_trips": 0, "min_vouches": 0 })
+    );
+    assert_eq!(
+        bo["requirements"],
+        json!({ "min_member_days": 0, "min_gatherings": 0, "min_good_trips": 0, "min_vouches": 0 })
+    );
     assert!(listed["structuredContent"].get("gate").is_none());
 
-    let refused = server.tool(&w.scout.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" })).await;
+    let refused = server
+        .tool(&w.scout.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" }))
+        .await;
     assert_eq!(refused["isError"], true);
     let said = text(&refused["content"][0]["text"]);
-    assert!(said.contains("2 gatherings (Bo has 0)") && said.contains("3 days in the city (Bo has 0)"), "{said}");
+    assert!(
+        said.contains("2 gatherings (Bo has 0)") && said.contains("3 days in the city (Bo has 0)"),
+        "{said}"
+    );
     // A resident's invitation goes through MCP-free, and the bot then answers nothing: its owner does.
     let invited = server.ask_trip(&w.ann.key, Some(&w.scout.id), &w.ann_home.id, None).await;
     assert_ok(&invited);
@@ -2721,10 +3346,18 @@ async fn many_vouches_at_once_let_someone_in_exactly_once() {
     }
     assert_eq!(let_in, 1, "exactly one vouch is the one that lets her in");
     assert_ok(&server.city_view(&eve.key, &w.city).await);
-    let lines: Vec<_> = server.town_square_says(&w.ann.key, &w.square).await.into_iter().filter(|l| l.contains("Eve")).collect();
+    let lines: Vec<_> = server
+        .town_square_says(&w.ann.key, &w.square)
+        .await
+        .into_iter()
+        .filter(|l| l.contains("Eve"))
+        .collect();
     assert_eq!(lines, ["Eve joined Elm."], "told the Town Square once");
     assert_eq!(expect_notices(&eve_pings, "city.let_in", 1).await.len(), 1, "pinged once");
-    assert_eq!(server.stand(&w.ann.key, &w.city, &eve.id).await["vouches"].as_array().unwrap().len(), 11);
+    assert_eq!(
+        server.stand(&w.ann.key, &w.city, &eve.id).await["vouches"].as_array().unwrap().len(),
+        11
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2742,7 +3375,12 @@ async fn a_vouch_and_a_lowering_of_the_bar_at_the_same_moment_let_someone_in_onc
         assert_ok(&vouched);
         assert_ok(&lowered);
         assert_ok(&server.city_view(&eve.key, &w.city).await);
-        let lines: Vec<_> = server.town_square_says(&w.ann.key, &w.square).await.into_iter().filter(|l| l.contains("Eve")).collect();
+        let lines: Vec<_> = server
+            .town_square_says(&w.ann.key, &w.square)
+            .await
+            .into_iter()
+            .filter(|l| l.contains("Eve"))
+            .collect();
         assert_eq!(lines, ["Eve joined Elm."]);
     }
 }
@@ -2757,7 +3395,13 @@ async fn sixty_people_arriving_at_once_fill_the_gate_to_fifty_and_no_further() {
             let server = server.clone();
             let code = code.clone();
             tokio::spawn(async move {
-                server.use_link(&code, "", json!({ "your_name": format!("Visitor {n}"), "accept_rules": true })).await
+                server
+                    .use_link(
+                        &code,
+                        "",
+                        json!({ "your_name": format!("Visitor {n}"), "accept_rules": true }),
+                    )
+                    .await
             })
         })
         .collect();
@@ -2774,7 +3418,10 @@ async fn sixty_people_arriving_at_once_fill_the_gate_to_fifty_and_no_further() {
     assert_eq!(server.gate(&ann.key, &city).await.len(), 50, "never over fifty");
     // Whether the ten were made accounts before being turned away is for the report to say.
     let people = server.state.db.person_count().unwrap();
-    eprintln!("accounts after the race: {people} (1 keeper + 50 waiting + {} left behind)", people - 51);
+    eprintln!(
+        "accounts after the race: {people} (1 keeper + 50 waiting + {} left behind)",
+        people - 51
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2789,7 +3436,9 @@ async fn the_same_person_using_the_link_twenty_times_at_once_takes_one_place_and
             let server = server.clone();
             let code = w.code.clone();
             let key = eve.key.clone();
-            tokio::spawn(async move { server.use_link(&code, &key, json!({ "accept_rules": true })).await })
+            tokio::spawn(async move {
+                server.use_link(&code, &key, json!({ "accept_rules": true })).await
+            })
         })
         .collect();
     for task in tasks {
@@ -2817,7 +3466,10 @@ async fn the_same_vouch_sent_twenty_times_at_once_is_one_vouch() {
     for task in tasks {
         let reply = task.await.unwrap();
         assert_ok(&reply);
-        assert_eq!((reply.body["vouches"].as_i64(), reply.body["let_in"].as_bool()), (Some(1), Some(false)));
+        assert_eq!(
+            (reply.body["vouches"].as_i64(), reply.body["let_in"].as_bool()),
+            (Some(1), Some(false))
+        );
     }
     assert_not_found(&server.city_view(&eve.key, &w.city).await);
 }
@@ -2839,8 +3491,19 @@ async fn no_notification_from_the_gate_or_the_rules_carries_standing_requirement
         all
     };
     server.require(&w.ann, &w.ann_home, json!({ "min_gatherings": 3, "min_vouches": 2 })).await;
-    assert_status(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
-    assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 2, "rules_text": "Rules-text-9921" })).await);
+    assert_status(
+        &server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
+    assert_ok(
+        &server
+            .set_city_rules(
+                &w.ann.key,
+                &w.city,
+                json!({ "min_vouches": 2, "rules_text": "Rules-text-9921" }),
+            )
+            .await,
+    );
     let eve = server.at_the_gate(&w.code, "Eve").await;
     let fay = server.at_the_gate(&w.code, "Fay").await;
     let eve_pings = server.notify_to(&eve).await;
@@ -2860,8 +3523,21 @@ async fn no_notification_from_the_gate_or_the_rules_carries_standing_requirement
     for notice in &everything {
         let said = text(&notice["text"]);
         for forbidden in [
-            "min_", "requirement", "standing", "gatherings", "good_trips", "sent_home", "Rules-text-9921", "asks for",
-            "ah_owner_", "ah_sess_", "ah_bot_", "owner_key", PLAN_TITLE, TRIP_GOAL, "Fay",
+            "min_",
+            "requirement",
+            "standing",
+            "gatherings",
+            "good_trips",
+            "sent_home",
+            "Rules-text-9921",
+            "asks for",
+            "ah_owner_",
+            "ah_sess_",
+            "ah_bot_",
+            "owner_key",
+            PLAN_TITLE,
+            TRIP_GOAL,
+            "Fay",
         ] {
             // Fay is named to her keeper when she arrives, and to no one else.
             if forbidden == "Fay" && notice["event"] == "city.gate" {
@@ -2869,7 +3545,11 @@ async fn no_notification_from_the_gate_or_the_rules_carries_standing_requirement
             }
             assert!(!said.contains(forbidden), "{forbidden} in {said}");
         }
-        assert!(["city.gate", "city.let_in", "house.joined", "trip.asked"].contains(&notice["event"].as_str().unwrap()), "{notice}");
+        assert!(
+            ["city.gate", "city.let_in", "house.joined", "trip.asked"]
+                .contains(&notice["event"].as_str().unwrap()),
+            "{notice}"
+        );
     }
     // Only the keeper heard of the gate.
     for (name, received) in ["Ann", "Bo", "Cy"].into_iter().zip(&pings) {
@@ -2895,7 +3575,16 @@ fn no_log_line_or_print_in_the_server_holds_a_token_a_key_a_cookie_or_a_hash() {
         let source = std::fs::read_to_string(&path).unwrap();
         // Everything from the first test module on is test code.
         let source = source.split("#[cfg(test)]").next().unwrap();
-        for marker in ["tracing::error!(", "tracing::warn!(", "tracing::info!(", "tracing::debug!(", "tracing::trace!(", "println!(", "eprintln!(", "dbg!("] {
+        for marker in [
+            "tracing::error!(",
+            "tracing::warn!(",
+            "tracing::info!(",
+            "tracing::debug!(",
+            "tracing::trace!(",
+            "println!(",
+            "eprintln!(",
+            "dbg!(",
+        ] {
             let mut rest = source;
             while let Some(at) = rest.find(marker) {
                 rest = &rest[at + marker.len()..];
@@ -2926,8 +3615,22 @@ fn no_log_line_or_print_in_the_server_holds_a_token_a_key_a_cookie_or_a_hash() {
                     }
                 }
                 calls += 1;
-                for banned in ["token", "secret", "cookie", "owner_key", "key_hash", "hash", "credential", "password", "session"] {
-                    assert!(!args.contains(banned), "{}: {marker} logs {banned}: {args}", path.display());
+                for banned in [
+                    "token",
+                    "secret",
+                    "cookie",
+                    "owner_key",
+                    "key_hash",
+                    "hash",
+                    "credential",
+                    "password",
+                    "session",
+                ] {
+                    assert!(
+                        !args.contains(banned),
+                        "{}: {marker} logs {banned}: {args}",
+                        path.display()
+                    );
                 }
             }
         }
@@ -2943,7 +3646,11 @@ impl Server {
     /// The status of a request with these exact bytes as its JSON body, or 0 if the connection was
     /// closed on it, as a server may when it refuses a body that is too big.
     async fn raw_status(&self, token: &str, method: Method, path: &str, body: Vec<u8>) -> u16 {
-        let mut request = self.client.request(method, format!("{}{path}", self.base)).header(header::CONTENT_TYPE, "application/json").body(body);
+        let mut request = self
+            .client
+            .request(method, format!("{}{path}", self.base))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body);
         if !token.is_empty() {
             request = request.bearer_auth(token);
         }
@@ -2973,15 +3680,33 @@ impl Server {
 
 fn extreme_numbers() -> Vec<Value> {
     vec![
-        json!(i64::MAX), json!(i64::MIN), json!(i64::MAX - 1), json!(i64::MIN + 1), json!(u64::MAX), json!(i32::MAX), json!(i32::MIN),
-        json!(u32::MAX), json!(-1), json!(0), json!(1), json!(9_007_199_254_740_993i64), json!(1e300), json!(-1e300), json!(0.5),
-        json!(f64::MAX), json!("9223372036854775807"), json!(null), json!(true), json!([9223372036854775807i64]),
+        json!(i64::MAX),
+        json!(i64::MIN),
+        json!(i64::MAX - 1),
+        json!(i64::MIN + 1),
+        json!(u64::MAX),
+        json!(i32::MAX),
+        json!(i32::MIN),
+        json!(u32::MAX),
+        json!(-1),
+        json!(0),
+        json!(1),
+        json!(9_007_199_254_740_993i64),
+        json!(1e300),
+        json!(-1e300),
+        json!(0.5),
+        json!(f64::MAX),
+        json!("9223372036854775807"),
+        json!(null),
+        json!(true),
+        json!([9223372036854775807i64]),
     ]
 }
 
 // T6 T13 (Limits)
 #[tokio::test]
-async fn extreme_numbers_in_every_numeric_field_are_refused_or_clamped_and_never_crash_the_server() {
+async fn extreme_numbers_in_every_numeric_field_are_refused_or_clamped_and_never_crash_the_server()
+{
     let server = Server::start().await;
     let w = server.world().await;
     let trip = server.arrive(&w.scout, &w.bo, &w.ann, &w.ann_home.id).await;
@@ -2992,18 +3717,35 @@ async fn extreme_numbers_in_every_numeric_field_are_refused_or_clamped_and_never
     for value in extreme_numbers() {
         // The new fields, one at a time and then all of them together.
         for field in ["min_member_days", "min_gatherings", "min_good_trips", "min_vouches"] {
-            let status = server.status_of(&w.ann.key, Method::PUT, &format!("/api/houses/{}/rules", w.ann_home.id), Some(json!({ field: value }))).await;
+            let status = server
+                .status_of(
+                    &w.ann.key,
+                    Method::PUT,
+                    &format!("/api/houses/{}/rules", w.ann_home.id),
+                    Some(json!({ field: value })),
+                )
+                .await;
             if !(200..500).contains(&status) {
                 problems.push(format!("house {field} = {value}: {status}"));
             }
-            let status = server.status_of(&w.ann.key, Method::PUT, &format!("/api/cities/{}/rules", w.city), Some(json!({ field: value }))).await;
+            let status = server
+                .status_of(
+                    &w.ann.key,
+                    Method::PUT,
+                    &format!("/api/cities/{}/rules", w.city),
+                    Some(json!({ field: value })),
+                )
+                .await;
             if !(200..500).contains(&status) {
                 problems.push(format!("city {field} = {value}: {status}"));
             }
             tried += 2;
         }
         let all = json!({ "min_member_days": value, "min_gatherings": value, "min_good_trips": value, "min_vouches": value, "rules_text": value });
-        for (path, who) in [(format!("/api/houses/{}/rules", w.ann_home.id), &w.ann), (format!("/api/cities/{}/rules", w.city), &w.ann)] {
+        for (path, who) in [
+            (format!("/api/houses/{}/rules", w.ann_home.id), &w.ann),
+            (format!("/api/cities/{}/rules", w.city), &w.ann),
+        ] {
             let status = server.status_of(&who.key, Method::PUT, &path, Some(all.clone())).await;
             if !(200..500).contains(&status) {
                 problems.push(format!("{path} = {value}: {status}"));
@@ -3011,30 +3753,84 @@ async fn extreme_numbers_in_every_numeric_field_are_refused_or_clamped_and_never
         }
         // The numbers that were already there and were never tried so hard.
         let routes: Vec<(Method, String, Value, &Who)> = vec![
-            (Method::POST, "/api/trips".into(), json!({ "agent_id": pip.id, "house_id": w.ann_home.id, "kind": "call", "minutes": value }), &cy),
-            (Method::POST, "/api/trips".into(), json!({ "house_id": w.ann_home.id, "kind": "visit", "minutes": value }), &cy),
-            (Method::POST, format!("/api/trips/{trip}/extend"), json!({ "minutes": value }), &w.ann),
-            (Method::POST, format!("/api/houses/{}/passes", w.ann_home.id), json!({ "agent_id": w.scout.id, "max_minutes": value }), &w.ann),
-            (Method::POST, format!("/api/hangouts/{}/events", w.square), json!({ "title": "T", "starts_at": "2030-01-01T10:00:00Z", "duration_minutes": value }), &w.ann),
-            (Method::POST, format!("/api/hangouts/{}/events", w.square), json!({ "title": "T", "starts_at": "2030-01-01T10:00:00Z", "min_yes": value }), &w.ann),
-            (Method::POST, format!("/api/hangouts/{}/check-ins", w.square), json!({ "about": "a", "expires_minutes": value }), &w.ann),
+            (
+                Method::POST,
+                "/api/trips".into(),
+                json!({ "agent_id": pip.id, "house_id": w.ann_home.id, "kind": "call", "minutes": value }),
+                &cy,
+            ),
+            (
+                Method::POST,
+                "/api/trips".into(),
+                json!({ "house_id": w.ann_home.id, "kind": "visit", "minutes": value }),
+                &cy,
+            ),
+            (
+                Method::POST,
+                format!("/api/trips/{trip}/extend"),
+                json!({ "minutes": value }),
+                &w.ann,
+            ),
+            (
+                Method::POST,
+                format!("/api/houses/{}/passes", w.ann_home.id),
+                json!({ "agent_id": w.scout.id, "max_minutes": value }),
+                &w.ann,
+            ),
+            (
+                Method::POST,
+                format!("/api/hangouts/{}/events", w.square),
+                json!({ "title": "T", "starts_at": "2030-01-01T10:00:00Z", "duration_minutes": value }),
+                &w.ann,
+            ),
+            (
+                Method::POST,
+                format!("/api/hangouts/{}/events", w.square),
+                json!({ "title": "T", "starts_at": "2030-01-01T10:00:00Z", "min_yes": value }),
+                &w.ann,
+            ),
+            (
+                Method::POST,
+                format!("/api/hangouts/{}/check-ins", w.square),
+                json!({ "about": "a", "expires_minutes": value }),
+                &w.ann,
+            ),
         ];
         for (method, path, body, who) in routes {
             let status = server.status_of(&who.key, method.clone(), &path, Some(body)).await;
             if !(200..500).contains(&status) {
-                problems.push(format!("{method} {path} with {value}: {status} (0 means the connection was dropped)"));
+                problems.push(format!(
+                    "{method} {path} with {value}: {status} (0 means the connection was dropped)"
+                ));
             }
             tried += 1;
         }
-        for query in [format!("after={value}"), format!("limit={value}"), format!("after={value}&limit={value}")] {
-            let status = server.status_of(&w.ann.key, Method::GET, &format!("/api/hangouts/{}/messages?{query}", w.square), None).await;
+        for query in [
+            format!("after={value}"),
+            format!("limit={value}"),
+            format!("after={value}&limit={value}"),
+        ] {
+            let status = server
+                .status_of(
+                    &w.ann.key,
+                    Method::GET,
+                    &format!("/api/hangouts/{}/messages?{query}", w.square),
+                    None,
+                )
+                .await;
             if !(200..500).contains(&status) {
                 problems.push(format!("messages?{query}: {status}"));
             }
             tried += 1;
         }
         // Over MCP, where a number is read with as_i64 and a bad one is simply missing.
-        let result = server.tool(&pip.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call", "minutes": value })).await;
+        let result = server
+            .tool(
+                &pip.token,
+                "ask_for_trip",
+                json!({ "house_id": w.ann_home.id, "kind": "call", "minutes": value }),
+            )
+            .await;
         if !result.is_object() {
             problems.push(format!("ask_for_trip with {value}: {result}"));
         }
@@ -3049,13 +3845,29 @@ async fn extreme_numbers_in_every_numeric_field_are_refused_or_clamped_and_never
     assert!(tried > 300);
     problems.sort();
     problems.dedup();
-    assert!(problems.is_empty(), "{} problems:
-{}", problems.len(), problems.join("
-"));
+    assert!(
+        problems.is_empty(),
+        "{} problems:
+{}",
+        problems.len(),
+        problems.join(
+            "
+"
+        )
+    );
     // Nothing above left the rules at a number outside the limits.
     for house in [&w.ann_home.id, &w.bo_home.id] {
-        let rules = server.house_view(if house == &w.ann_home.id { &w.ann.key } else { &w.bo.key }, house).await.body["rules"].clone();
-        for (field, largest) in [("min_member_days", 365), ("min_gatherings", 100), ("min_good_trips", 100), ("min_vouches", 5)] {
+        let rules = server
+            .house_view(if house == &w.ann_home.id { &w.ann.key } else { &w.bo.key }, house)
+            .await
+            .body["rules"]
+            .clone();
+        for (field, largest) in [
+            ("min_member_days", 365),
+            ("min_gatherings", 100),
+            ("min_good_trips", 100),
+            ("min_vouches", 5),
+        ] {
             let set = rules[field].as_i64().unwrap();
             assert!((0..=largest).contains(&set), "{field} = {set}");
         }
@@ -3073,9 +3885,22 @@ async fn ids_and_bodies_that_are_hostile_in_the_new_routes_are_refused_without_a
     server.require_vouches(&w.ann, &w.city, 1).await;
     let eve = server.at_the_gate(&w.code, "Eve").await;
     let hostile_ids = [
-        "".to_string(), " ".to_string(), "%00".to_string(), "..".to_string(), "../x".to_string(), "%2e%2e%2f".to_string(), "a b".to_string(),
-        "é".to_string(), "🙂".to_string(), "x".repeat(10_000), "'; DROP TABLE vouches;--".to_string(), "%".to_string(), "\\".to_string(),
-        "{{BASE_URL}}".to_string(), "null".to_string(), "-1".to_string(),
+        "".to_string(),
+        " ".to_string(),
+        "%00".to_string(),
+        "..".to_string(),
+        "../x".to_string(),
+        "%2e%2e%2f".to_string(),
+        "a b".to_string(),
+        "é".to_string(),
+        "🙂".to_string(),
+        "x".repeat(10_000),
+        "'; DROP TABLE vouches;--".to_string(),
+        "%".to_string(),
+        "\\".to_string(),
+        "{{BASE_URL}}".to_string(),
+        "null".to_string(),
+        "-1".to_string(),
     ];
     for id in &hostile_ids {
         for (method, template) in [
@@ -3085,7 +3910,14 @@ async fn ids_and_bodies_that_are_hostile_in_the_new_routes_are_refused_without_a
             (Method::POST, "/api/cities/{city}/gate/{id}/decline"),
         ] {
             let path = template.replace("{city}", &w.city).replace("{id}", id);
-            let status = server.status_of(&w.ann.key, method.clone(), &path, if method == Method::POST { Some(json!({})) } else { None }).await;
+            let status = server
+                .status_of(
+                    &w.ann.key,
+                    method.clone(),
+                    &path,
+                    if method == Method::POST { Some(json!({})) } else { None },
+                )
+                .await;
             assert!(status != 0 && status < 500, "{method} {path:.80}: {status}");
         }
         for (method, template) in [
@@ -3107,8 +3939,12 @@ async fn ids_and_bodies_that_are_hostile_in_the_new_routes_are_refused_without_a
     let deep = format!("{}{}", "[".repeat(50_000), "]".repeat(50_000));
     let big = format!("{{\"rules_text\":\"{}\"}}", "x".repeat(100_000));
     for body in [deep, big, "{\"min_vouches\":".to_string(), String::new(), "null".to_string()] {
-        for path in [format!("/api/cities/{}/rules", w.city), format!("/api/houses/{}/rules", w.ann_home.id)] {
-            let status = server.raw_status(&w.ann.key, Method::PUT, &path, body.clone().into_bytes()).await;
+        for path in [
+            format!("/api/cities/{}/rules", w.city),
+            format!("/api/houses/{}/rules", w.ann_home.id),
+        ] {
+            let status =
+                server.raw_status(&w.ann.key, Method::PUT, &path, body.clone().into_bytes()).await;
             assert!(status == 0 || (400..500).contains(&status), "{path}: {status}");
         }
     }
@@ -3134,7 +3970,12 @@ async fn a_second_account_is_the_one_way_to_vouch_for_yourself_and_a_second_logi
     for credential in [&first.who.key, &session, &first.owner_key] {
         let vouched = server.vouch(credential, &w.city, &second.who.id).await;
         assert_ok(&vouched);
-        assert_eq!((vouched.body["vouches"].as_i64(), vouched.body["let_in"].as_bool()), (Some(1), Some(false)), "{}", vouched.body);
+        assert_eq!(
+            (vouched.body["vouches"].as_i64(), vouched.body["let_in"].as_bool()),
+            (Some(1), Some(false)),
+            "{}",
+            vouched.body
+        );
     }
     // The new account can't vouch for itself or for anyone while it waits.
     assert_not_found(&server.vouch(&second.who.key, &w.city, &second.who.id).await);
@@ -3143,13 +3984,17 @@ async fn a_second_account_is_the_one_way_to_vouch_for_yourself_and_a_second_logi
     // So with two asked for, one person is stuck at one. With one asked for, the sock puppet is enough,
     // as the doc says it is: their name is on the vouch, and that is all there is to check.
     assert_ok(&server.set_city_rules(&w.ann.key, &w.city, json!({ "min_vouches": 1 })).await);
-    assert_eq!(server.stand(&w.ann.key, &w.city, &second.who.id).await["vouches"], json!(["Mallory"]));
+    assert_eq!(
+        server.stand(&w.ann.key, &w.city, &second.who.id).await["vouches"],
+        json!(["Mallory"])
+    );
     assert_ok(&server.city_view(&second.who.key, &w.city).await);
 }
 
 // T4 T11
 #[tokio::test]
-async fn a_house_counts_once_a_day_however_many_short_trips_a_bot_loops_and_each_house_counts_on_its_own() {
+async fn a_house_counts_once_a_day_however_many_short_trips_a_bot_loops_and_each_house_counts_on_its_own(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let (cy, cy_home) = server.neighbour(&w, "Cy").await;
@@ -3163,7 +4008,11 @@ async fn a_house_counts_once_a_day_however_many_short_trips_a_bot_loops_and_each
         assert_ok(&server.end_trip(&w.scout.token, &text(&trip.body["id"])).await);
     }
     assert_ok(&server.delete(&w.ann.key, &format!("/api/passes/{pass}")).await);
-    assert_eq!(server.stand(&w.ann.key, &w.city, &w.bo.id).await["good_trips"], 1, "seven trips to one house in a day");
+    assert_eq!(
+        server.stand(&w.ann.key, &w.city, &w.bo.id).await["good_trips"],
+        1,
+        "seven trips to one house in a day"
+    );
     // Another house is another count, and a third person's house too.
     let second = server.arrive(&w.scout, &w.bo, &cy, &cy_home.id).await;
     assert_ok(&server.end_trip(&w.scout.token, &second).await);
@@ -3174,7 +4023,10 @@ async fn a_house_counts_once_a_day_however_many_short_trips_a_bot_loops_and_each
     let dee_bot = server.bot(&dee, &dee_home.living, "Dash").await;
     let only = server.arrive(&dee_bot, &dee, &cy, &cy_home.id).await;
     assert_ok(&server.end_trip(&dee_bot.token, &only).await);
-    assert_status(&server.ask_trip(&dee_bot.token, None, &w.ann_home.id, None).await, StatusCode::CONFLICT);
+    assert_status(
+        &server.ask_trip(&dee_bot.token, None, &w.ann_home.id, None).await,
+        StatusCode::CONFLICT,
+    );
     assert_ok(&server.ask_trip(&w.scout.token, None, &w.ann_home.id, None).await);
 }
 
@@ -3188,26 +4040,70 @@ async fn the_city_page_holds_the_rules_and_requirements_but_nothing_private_to_a
     let eve = server.at_the_gate(&w.code, "Eve").await;
 
     let view = server.city_view(&w.bo.key, &w.city).await.body;
-    assert_eq!(keys_of(&view), ["bot_looks", "bots", "city", "gate", "growth", "houses", "people", "rules", "vouches_needed", "you", "your_passes"]);
+    assert_eq!(
+        keys_of(&view),
+        [
+            "bot_looks",
+            "bots",
+            "city",
+            "gate",
+            "growth",
+            "houses",
+            "people",
+            "rules",
+            "vouches_needed",
+            "you",
+            "your_passes"
+        ]
+    );
     // C13: what each bot on the map is wearing, and only that.
-    assert_eq!(view["bot_looks"].as_object().unwrap().len(), view["bots"].as_array().unwrap().len());
+    assert_eq!(
+        view["bot_looks"].as_object().unwrap().len(),
+        view["bots"].as_array().unwrap().len()
+    );
     // H21: only passes of Bo's own bots, and he has none here.
     assert_eq!(view["your_passes"], json!([]));
     assert_eq!(keys_of(&view["rules"]), ["min_vouches", "rules_text"]);
     for house in view["houses"].as_array().unwrap() {
         assert_eq!(keys_of(house), ["id", "name", "requirements", "residents"]);
-        assert_eq!(keys_of(&house["requirements"]), ["min_gatherings", "min_good_trips", "min_member_days", "min_vouches"]);
+        assert_eq!(
+            keys_of(&house["requirements"]),
+            ["min_gatherings", "min_good_trips", "min_member_days", "min_vouches"]
+        );
     }
     for person in view["people"].as_array().unwrap() {
         assert_eq!(keys_of(person), ["color", "id", "name"]);
     }
-    for secret in [w.ann_home.living.as_str(), w.ann_home.porch.as_str(), w.bo_home.living.as_str(), w.bo_home.porch.as_str(), TRIP_GOAL, "owner_key", "invite_code", &eve.key] {
+    for secret in [
+        w.ann_home.living.as_str(),
+        w.ann_home.porch.as_str(),
+        w.bo_home.living.as_str(),
+        w.bo_home.porch.as_str(),
+        TRIP_GOAL,
+        "owner_key",
+        "invite_code",
+        &eve.key,
+    ] {
         assert!(!has(&view, secret), "{secret} in the city page");
     }
     // The gate shows Eve to the people in the city, and the bot's page has neither the gate nor her.
     assert_eq!(view["gate"][0]["name"], "Eve");
     let by_bot = server.city_view(&w.scout.token, &w.city).await.body;
-    assert_eq!(keys_of(&by_bot), ["bot_looks", "bots", "city", "growth", "houses", "people", "rules", "vouches_needed", "you", "your_passes"]);
+    assert_eq!(
+        keys_of(&by_bot),
+        [
+            "bot_looks",
+            "bots",
+            "city",
+            "growth",
+            "houses",
+            "people",
+            "rules",
+            "vouches_needed",
+            "you",
+            "your_passes"
+        ]
+    );
     assert_eq!(by_bot["bot_looks"], json!({}), "a bot has nothing to draw");
     assert_eq!(by_bot["your_passes"], json!([]));
 }
@@ -3219,9 +4115,17 @@ async fn an_expired_session_is_a_401_on_every_kind_of_route_and_is_never_a_bot()
     let w = server.world().await;
     // Sessions that ended a second ago, and at this very second, for a person who is in a city.
     let token = auth::new_session_token();
-    server.state.db.create_session(&auth::hash_secret(&token), &w.ann.id, now() - 1, now() - 100).unwrap();
+    server
+        .state
+        .db
+        .create_session(&auth::hash_secret(&token), &w.ann.id, now() - 1, now() - 100)
+        .unwrap();
     let edge = auth::new_session_token();
-    server.state.db.create_session(&auth::hash_secret(&edge), &w.ann.id, now(), now() - 100).unwrap();
+    server
+        .state
+        .db
+        .create_session(&auth::hash_secret(&edge), &w.ann.id, now(), now() - 100)
+        .unwrap();
     let routes: Vec<(Method, String, Option<Value>)> = vec![
         (Method::GET, "/api/me".into(), None),
         (Method::GET, "/api/inbox".into(), None),
@@ -3232,16 +4136,29 @@ async fn an_expired_session_is_a_401_on_every_kind_of_route_and_is_never_a_bot()
         (Method::GET, format!("/api/cities/{}/stream", w.city), None),
         (Method::GET, format!("/api/hangouts/{}/stream", w.square), None),
         (Method::GET, format!("/api/houses/{}", w.ann_home.id), None),
-        (Method::PUT, format!("/api/houses/{}/rules", w.ann_home.id), Some(json!({ "min_gatherings": 1 }))),
+        (
+            Method::PUT,
+            format!("/api/houses/{}/rules", w.ann_home.id),
+            Some(json!({ "min_gatherings": 1 })),
+        ),
         (Method::PUT, format!("/api/cities/{}/rules", w.city), Some(json!({ "min_vouches": 1 }))),
         (Method::POST, format!("/api/cities/{}/people/{}/vouch", w.city, w.bo.id), Some(json!({}))),
-        (Method::POST, "/mcp".into(), Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))),
+        (
+            Method::POST,
+            "/mcp".into(),
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })),
+        ),
     ];
     for session in [&token, &edge] {
         for (method, path, body) in &routes {
             for carrier in [format!("cookie:{session}"), session.to_string()] {
                 let reply = server.request(&carrier, method.clone(), path, body.clone()).await;
-                assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {path}: {}", reply.show());
+                assert_eq!(
+                    reply.status,
+                    StatusCode::UNAUTHORIZED,
+                    "{method} {path}: {}",
+                    reply.show()
+                );
             }
         }
     }
@@ -3260,15 +4177,25 @@ async fn a_passkey_cannot_be_added_to_another_account_by_a_cookie_a_ceremony_id_
 
     // Ann starts adding one. Eve, with nothing, with Bo's session, with Bo's key, and naming Bo in the
     // body, can't finish it, and trying spends it so not even Ann can finish it afterwards.
-    for (who, why) in [("", "nobody"), (bo.who.key.as_str(), "Bo's session"), (bo.owner_key.as_str(), "Bo's key")] {
-        let started = server.post(&ann.who.key, "/api/passkeys/register/start", json!({ "label": "Mine" })).await;
+    for (who, why) in
+        [("", "nobody"), (bo.who.key.as_str(), "Bo's session"), (bo.owner_key.as_str(), "Bo's key")]
+    {
+        let started = server
+            .post(&ann.who.key, "/api/passkeys/register/start", json!({ "label": "Mine" }))
+            .await;
         assert_ok(&started);
         let id = text(&started.body["ceremony_id"]);
         let credential = eve_key.register(&started.body["options"]);
         let body = json!({ "ceremony_id": id, "credential": credential, "person_id": bo.who.id, "user_handle": "x", "owner_key": bo.owner_key });
         let reply = server.post(who, "/api/passkeys/register/finish", body).await;
         assert!(reply.status.is_client_error(), "{why}: {}", reply.show());
-        let late = server.post(&ann.who.key, "/api/passkeys/register/finish", json!({ "ceremony_id": id, "credential": credential })).await;
+        let late = server
+            .post(
+                &ann.who.key,
+                "/api/passkeys/register/finish",
+                json!({ "ceremony_id": id, "credential": credential }),
+            )
+            .await;
         assert_status(&late, StatusCode::BAD_REQUEST);
     }
     // Nothing was added anywhere, and Eve's passkey signs nobody in.
@@ -3277,7 +4204,13 @@ async fn a_passkey_cannot_be_added_to_another_account_by_a_cookie_a_ceremony_id_
     }
     let login = server.post("", "/api/passkeys/login/start", json!({})).await;
     let answer = eve_key.sign_in(&login.body["options"]);
-    let reply = server.post("", "/api/passkeys/login/finish", json!({ "ceremony_id": login.body["ceremony_id"], "credential": answer })).await;
+    let reply = server
+        .post(
+            "",
+            "/api/passkeys/login/finish",
+            json!({ "ceremony_id": login.body["ceremony_id"], "credential": answer }),
+        )
+        .await;
     assert_status(&reply, StatusCode::UNAUTHORIZED);
 }
 
@@ -3286,7 +4219,8 @@ async fn a_passkey_cannot_be_added_to_another_account_by_a_cookie_a_ceremony_id_
 // Replacing the link stops more coming but doesn't clear them, so the keeper clears the gate, and then
 // real newcomers with the new link can reach it.
 #[tokio::test]
-async fn replacing_the_link_after_a_leak_lets_real_newcomers_through_a_gate_that_strangers_filled() {
+async fn replacing_the_link_after_a_leak_lets_real_newcomers_through_a_gate_that_strangers_filled()
+{
     let server = Server::start().await;
     let (city, _, code, ann) = server.new_city("Elm", "Ann").await;
     server.join_city(&code, "Bo").await;
@@ -3296,7 +4230,8 @@ async fn replacing_the_link_after_a_leak_lets_real_newcomers_through_a_gate_that
     }
     assert_eq!(server.gate(&ann.key, &city).await.len(), 50);
 
-    let rotated = server.post(&ann.key, &format!("/api/cities/{city}/invite/rotate"), json!({})).await;
+    let rotated =
+        server.post(&ann.key, &format!("/api/cities/{city}/invite/rotate"), json!({})).await;
     assert_ok(&rotated);
     let new_code = code_of(&rotated.body["invite_url"]);
     let friend = json!({ "your_name": "A real friend", "accept_rules": true });
@@ -3315,5 +4250,8 @@ async fn replacing_the_link_after_a_leak_lets_real_newcomers_through_a_gate_that
     assert_ok(&arrived);
     assert_eq!(arrived.body["waiting"], true, "{}", arrived.body);
     let waiting = server.gate(&ann.key, &city).await;
-    assert_eq!(waiting.iter().map(|entry| text(&entry["name"])).collect::<Vec<_>>(), ["A real friend"]);
+    assert_eq!(
+        waiting.iter().map(|entry| text(&entry["name"])).collect::<Vec<_>>(),
+        ["A real friend"]
+    );
 }

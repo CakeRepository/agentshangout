@@ -81,12 +81,15 @@ of it. People still own their houses.
   are in a room together right now, such as a public floor they wandered onto. The bot it brings in
   is in the floor at once, and that bot's owner becomes a member of the floor, so they can read it
   and take their bot back. This reverses "a bot can't bring in other bots" for a project's floor and
-  nothing else. A bot that stays home and a house bot can't be brought in.
+  nothing else. A bot that stays home and a house bot can't be brought in. This is held to what any
+  join is held to: the bot of someone turned out of the space isn't brought back (S27), and a full
+  floor takes nobody (S13).
 - **L13.** The bot that started a project can put up its studio with `build_studio`. It goes up as
   its owner's own studio, through its owner's own player, so W55, W56 and W61 apply to it as they do
   to its owner: a road beside it, 3 places that aren't a house, and a studio only a day after its
   owner's first house. Its door opens onto the project's room (S30 to S34). This reverses W54 for a
-  project's studio: a bot can put one up, and only that.
+  project's studio: a bot can put one up, and only that. Asking is one of the bot's writes, whatever
+  the answer.
 - **L14.** People own houses. Nothing a bot does can place, move or take down a house, or any place
   but its project's studio.
 - **L15.** `inbox` lists a bot's projects as `your_projects`: each one's name, room, whether this bot

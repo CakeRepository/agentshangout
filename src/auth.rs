@@ -19,9 +19,7 @@ pub const SESSION_SECS: i64 = 90 * 24 * 60 * 60;
 const ALPHABET: &[u8] = b"0123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 fn random_string(len: usize) -> String {
-    (0..len)
-        .map(|_| ALPHABET[rand::random_range(0..ALPHABET.len())] as char)
-        .collect()
+    (0..len).map(|_| ALPHABET[rand::random_range(0..ALPHABET.len())] as char).collect()
 }
 
 /// Short enough for URLs, long enough that guessing one isn't practical.
@@ -68,10 +66,7 @@ pub fn new_ceremony_id() -> String {
 }
 
 pub fn hash_secret(secret: &str) -> String {
-    Sha256::digest(secret.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    Sha256::digest(secret.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Whoever is making this request: a human or one of their bots.
@@ -129,8 +124,7 @@ impl AppState {
     pub fn start_session(&self, person_id: &str) -> Result<String, ApiError> {
         let token = new_session_token();
         let now = now();
-        self.db
-            .create_session(&hash_secret(&token), person_id, now + SESSION_SECS, now)?;
+        self.db.create_session(&hash_secret(&token), person_id, now + SESSION_SECS, now)?;
         Ok(token)
     }
 
@@ -187,10 +181,7 @@ pub const UNKNOWN_CLIENT: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
 /// /64, since one network hands out 2^64 of them, and an IPv4-mapped one as the IPv4 address.
 pub fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
     let last = headers.get_all("x-forwarded-for").iter().next_back()?;
-    let address = last
-        .to_str()
-        .ok()
-        .and_then(|line| line.rsplit(',').next()?.trim().parse().ok());
+    let address = last.to_str().ok().and_then(|line| line.rsplit(',').next()?.trim().parse().ok());
     Some(address.map_or(UNKNOWN_CLIENT, network_of))
 }
 
@@ -205,12 +196,7 @@ fn network_of(address: IpAddr) -> IpAddr {
 }
 
 pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-        .map(str::trim)
+    headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ").map(str::trim)
 }
 
 pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<&str> {
@@ -229,9 +215,7 @@ pub(crate) fn identify(headers: &HeaderMap, state: &AppState) -> Result<Caller, 
     let secret = bearer_token(headers)
         .or_else(|| session_cookie(headers))
         .ok_or_else(ApiError::unauthorized)?;
-    state
-        .authenticate(&hash_secret(secret))?
-        .ok_or_else(ApiError::unauthorized)
+    state.authenticate(&hash_secret(secret))?.ok_or_else(ApiError::unauthorized)
 }
 
 impl FromRequestParts<AppState> for Caller {
@@ -282,16 +266,25 @@ mod tests {
     #[test]
     fn the_client_is_the_last_address_because_the_proxy_appends_it() {
         assert_eq!(client_ip(&forwarded(&["203.0.113.7"])), ip("203.0.113.7"));
-        assert_eq!(client_ip(&forwarded(&["2001:db8::1"])), ip("2001:db8::"), "an IPv6 address is its /64");
+        assert_eq!(
+            client_ip(&forwarded(&["2001:db8::1"])),
+            ip("2001:db8::"),
+            "an IPv6 address is its /64"
+        );
         // Anything before it is what the client claimed.
-        assert_eq!(client_ip(&forwarded(&["10.0.0.1, 198.51.100.2 ,203.0.113.7"])), ip("203.0.113.7"));
+        assert_eq!(
+            client_ip(&forwarded(&["10.0.0.1, 198.51.100.2 ,203.0.113.7"])),
+            ip("203.0.113.7")
+        );
         assert_eq!(client_ip(&forwarded(&["10.0.0.1", "203.0.113.7"])), ip("203.0.113.7"));
     }
 
     #[test]
     fn no_header_is_this_machine_and_a_header_with_no_address_in_it_is_one_shared_client() {
         assert_eq!(client_ip(&HeaderMap::new()), None);
-        for junk in ["", "unknown", "203.0.113.7,", "203.0.113.7, nope", "203.0.113.7:443", "[2001:db8::1]"] {
+        for junk in
+            ["", "unknown", "203.0.113.7,", "203.0.113.7, nope", "203.0.113.7:443", "[2001:db8::1]"]
+        {
             assert_eq!(client_ip(&forwarded(&[junk])), Some(UNKNOWN_CLIENT), "{junk:?}");
         }
         // A value that is not even text is no better, and neither is a good line before a bad one.

@@ -105,11 +105,7 @@ impl Server {
         );
         let served = state.clone();
         tokio::spawn(async move { axum::serve(listener, app(served)).await });
-        Self {
-            base,
-            client: Client::new(),
-            state,
-        }
+        Self { base, client: Client::new(), state }
     }
 
     async fn request(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -129,16 +125,10 @@ impl Server {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.starts_with("text/event-stream"));
         if streaming {
-            return Reply {
-                status,
-                body: Value::String("<event stream>".to_string()),
-            };
+            return Reply { status, body: Value::String("<event stream>".to_string()) };
         }
         let text = response.text().await.unwrap();
-        Reply {
-            status,
-            body: serde_json::from_str(&text).unwrap_or(Value::String(text)),
-        }
+        Reply { status, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
     }
 
     async fn get(&self, token: &str, path: &str) -> Reply {
@@ -167,9 +157,8 @@ impl Server {
     }
 
     async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
-        let reply = self
-            .mcp(token, "tools/call", json!({ "name": name, "arguments": arguments }))
-            .await;
+        let reply =
+            self.mcp(token, "tools/call", json!({ "name": name, "arguments": arguments })).await;
         reply.body["result"].clone()
     }
 
@@ -186,23 +175,18 @@ impl Server {
 
     /// Creates a room for Justin and brings Kevin in with an invite.
     async fn room(&self) -> (String, Who, Who) {
-        let created = self
-            .post("", "/api/hangouts", json!({ "name": "Crew", "your_name": "Justin" }))
-            .await;
+        let created =
+            self.post("", "/api/hangouts", json!({ "name": "Crew", "your_name": "Justin" })).await;
         assert_eq!(created.status, StatusCode::OK, "{}", created.body);
-        let justin = Who {
-            key: text(&created.body["owner_key"]),
-            id: text(&created.body["person"]["id"]),
-        };
+        let justin =
+            Who { key: text(&created.body["owner_key"]), id: text(&created.body["person"]["id"]) };
         let code = text(&created.body["hangout"]["invite_code"]);
         let joined = self
             .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Kevin" }))
             .await;
         assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
-        let kevin = Who {
-            key: text(&joined.body["owner_key"]),
-            id: text(&joined.body["person"]["id"]),
-        };
+        let kevin =
+            Who { key: text(&joined.body["owner_key"]), id: text(&joined.body["person"]["id"]) };
         (text(&created.body["hangout"]["id"]), justin, kevin)
     }
 
@@ -211,10 +195,7 @@ impl Server {
             .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
-        Bot {
-            token: text(&reply.body["token"]),
-            id: text(&reply.body["agent"]["id"]),
-        }
+        Bot { token: text(&reply.body["token"]), id: text(&reply.body["agent"]["id"]) }
     }
 
     async fn say(&self, token: &str, room: &str, words: &str) -> Reply {
@@ -235,20 +216,18 @@ impl Server {
     }
 
     async fn check_in(&self, token: &str, room: &str, about: &str) -> Reply {
-        self.post(token, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": about })).await
+        self.post(token, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": about }))
+            .await
     }
 
     // Cities and houses
 
     async fn new_city(&self, name: &str, your_name: &str) -> (String, String, String, Who) {
-        let made = self
-            .post("", "/api/cities", json!({ "name": name, "your_name": your_name }))
-            .await;
+        let made =
+            self.post("", "/api/cities", json!({ "name": name, "your_name": your_name })).await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
-        let person = Who {
-            key: text(&made.body["owner_key"]),
-            id: text(&made.body["person"]["id"]),
-        };
+        let person =
+            Who { key: text(&made.body["owner_key"]), id: text(&made.body["person"]["id"]) };
         (
             text(&made.body["city"]["id"]),
             text(&made.body["city"]["square_id"]),
@@ -262,10 +241,7 @@ impl Server {
             .post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": name }))
             .await;
         assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
-        Who {
-            key: text(&joined.body["owner_key"]),
-            id: text(&joined.body["person"]["id"]),
-        }
+        Who { key: text(&joined.body["owner_key"]), id: text(&joined.body["person"]["id"]) }
     }
 
     async fn build_house(&self, owner: &Who, city: &str, name: &str) -> Home {
@@ -289,13 +265,14 @@ impl Server {
     /// A new person moves in through the house's link.
     async fn move_in(&self, home: &Home, name: &str) -> Who {
         let joined = self
-            .post("", &format!("/api/house-invites/{}/join", self.house_code(home)), json!({ "your_name": name }))
+            .post(
+                "",
+                &format!("/api/house-invites/{}/join", self.house_code(home)),
+                json!({ "your_name": name }),
+            )
             .await;
         assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
-        Who {
-            key: text(&joined.body["owner_key"]),
-            id: text(&joined.body["person"]["id"]),
-        }
+        Who { key: text(&joined.body["owner_key"]), id: text(&joined.body["person"]["id"]) }
     }
 
     /// A new person joins the city and builds their own house.
@@ -315,13 +292,14 @@ impl Server {
 
     async fn house_bot(&self, resident: &Who, home: &Home, name: &str) -> Bot {
         let made = self
-            .post(&resident.key, &format!("/api/houses/{}/house-bot", home.id), json!({ "name": name }))
+            .post(
+                &resident.key,
+                &format!("/api/houses/{}/house-bot", home.id),
+                json!({ "name": name }),
+            )
             .await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
-        Bot {
-            token: text(&made.body["token"]),
-            id: text(&made.body["agent"]["id"]),
-        }
+        Bot { token: text(&made.body["token"]), id: text(&made.body["agent"]["id"]) }
     }
 
     // Trips
@@ -349,11 +327,20 @@ impl Server {
     }
 
     async fn answer_trip(&self, token: &str, trip: &str, response: &str) -> Reply {
-        self.post(token, &format!("/api/trips/{trip}/answer"), json!({ "response": response })).await
+        self.post(token, &format!("/api/trips/{trip}/answer"), json!({ "response": response }))
+            .await
     }
 
     /// The bot asks, its owner and a resident both say yes, and it arrives. Returns the trip.
-    async fn arrive(&self, bot: &Bot, owner: &Who, host: &Who, house: &str, kind: &str, goal: &str) -> String {
+    async fn arrive(
+        &self,
+        bot: &Bot,
+        owner: &Who,
+        host: &Who,
+        house: &str,
+        kind: &str,
+        goal: &str,
+    ) -> String {
         let asked = self.ask_trip(&bot.token, None, house, kind, goal, None).await;
         assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
         let id = text(&asked.body["id"]);
@@ -372,7 +359,11 @@ impl Server {
 
     async fn scene(&self, resident: &Who, home: &Home, name: &str) -> String {
         let made = self
-            .post(&resident.key, &format!("/api/houses/{}/scenes", home.id), json!({ "name": name }))
+            .post(
+                &resident.key,
+                &format!("/api/houses/{}/scenes", home.id),
+                json!({ "name": name }),
+            )
             .await;
         assert_eq!(made.status, StatusCode::OK, "{}", made.body);
         text(&made.body["id"])
@@ -449,12 +440,8 @@ async fn start_receiver() -> (String, Arc<Mutex<Vec<Value>>>) {
 
 async fn wait_for_notice(received: &Mutex<Vec<Value>>, event: &str) -> Value {
     for _ in 0..60 {
-        let found = received
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|notice| notice["event"] == event)
-            .cloned();
+        let found =
+            received.lock().unwrap().iter().find(|notice| notice["event"] == event).cloned();
         if let Some(notice) = found {
             return notice;
         }
@@ -466,13 +453,7 @@ async fn wait_for_notice(received: &Mutex<Vec<Value>>, event: &str) -> Value {
 /// Waits long enough for a notice that was going to arrive to have done so.
 async fn notices_of(received: &Mutex<Vec<Value>>, event: &str) -> Vec<Value> {
     tokio::time::sleep(StdDuration::from_millis(400)).await;
-    received
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|notice| notice["event"] == event)
-        .cloned()
-        .collect()
+    received.lock().unwrap().iter().filter(|notice| notice["event"] == event).cloned().collect()
 }
 
 /// Reads a stream until it closes, returning everything received.
@@ -518,7 +499,13 @@ async fn pause_a_second() {
 static UNIQUE: AtomicUsize = AtomicUsize::new(0);
 
 /// Puts a plan in a room straight into the database, as one that has already happened.
-fn plan_that_finished(server: &Server, room: &str, by: &Who, status: &str, ended_ago: i64) -> String {
+fn plan_that_finished(
+    server: &Server,
+    room: &str,
+    by: &Who,
+    status: &str,
+    ended_ago: i64,
+) -> String {
     let id = format!("past-event-{}", UNIQUE.fetch_add(1, Ordering::SeqCst));
     let at = now();
     server
@@ -587,9 +574,7 @@ impl GuestSet {
         if pause {
             pause_a_second().await;
         }
-        let trip = server
-            .arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "visit", GOAL)
-            .await;
+        let trip = server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "visit", GOAL).await;
         if pause {
             pause_a_second().await;
         }
@@ -597,10 +582,8 @@ impl GuestSet {
         assert_ok(&server.note(&w.ann.key, &porch, AFTER_NOTE).await);
 
         let ask = text(
-            &server
-                .ask_trip(&pixel.token, None, &w.ann_home.id, "call", GOAL, None)
-                .await
-                .body["id"],
+            &server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", GOAL, None).await.body
+                ["id"],
         );
         let pass = server
             .post(
@@ -611,7 +594,8 @@ impl GuestSet {
             .await;
         assert_ok(&pass);
         let scene = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
-        let request = server.post(&scout.token, &format!("/api/scenes/{scene}/request"), json!({})).await;
+        let request =
+            server.post(&scout.token, &format!("/api/scenes/{scene}/request"), json!({})).await;
         assert_ok(&request);
         let question = server.ask_owner(&ann_bot.token, &w.ann_home.living, PRIVATE_QUESTION).await;
         assert_ok(&question);
@@ -663,7 +647,21 @@ struct Ids {
 }
 
 fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
-    let Ids { city, square, house, living, porch, trip, pass, scene, request, event, check_in, question, bot } = ids;
+    let Ids {
+        city,
+        square,
+        house,
+        living,
+        porch,
+        trip,
+        pass,
+        scene,
+        request,
+        event,
+        check_in,
+        question,
+        bot,
+    } = ids;
     let mut calls = vec![
         (Method::GET, format!("/api/cities/{city}"), None),
         (Method::GET, format!("/api/cities/{city}/stream"), None),
@@ -677,7 +675,11 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
         (Method::POST, format!("/api/houses/{house}/passes"), Some(json!({ "agent_id": bot }))),
         (Method::GET, format!("/api/houses/{house}/scenes"), None),
         (Method::POST, format!("/api/houses/{house}/scenes"), Some(json!({ "name": "Party" }))),
-        (Method::PUT, format!("/api/agents/{bot}/home"), Some(json!({ "house_id": house, "stays_home": false }))),
+        (
+            Method::PUT,
+            format!("/api/agents/{bot}/home"),
+            Some(json!({ "house_id": house, "stays_home": false })),
+        ),
         (
             Method::POST,
             "/api/trips".to_string(),
@@ -691,9 +693,21 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
         (Method::DELETE, format!("/api/passes/{pass}"), None),
         (Method::DELETE, format!("/api/scenes/{scene}"), None),
         (Method::POST, format!("/api/scenes/{scene}/request"), Some(json!({}))),
-        (Method::POST, format!("/api/scene-requests/{request}/answer"), Some(json!({ "response": "yes" }))),
-        (Method::POST, format!("/api/check-ins/{check_in}/answer"), Some(json!({ "response": "go" }))),
-        (Method::POST, format!("/api/owner-questions/{question}/answer"), Some(json!({ "answer": "yes" }))),
+        (
+            Method::POST,
+            format!("/api/scene-requests/{request}/answer"),
+            Some(json!({ "response": "yes" })),
+        ),
+        (
+            Method::POST,
+            format!("/api/check-ins/{check_in}/answer"),
+            Some(json!({ "response": "go" })),
+        ),
+        (
+            Method::POST,
+            format!("/api/owner-questions/{question}/answer"),
+            Some(json!({ "answer": "yes" })),
+        ),
         (Method::POST, format!("/api/events/{event}/rsvp"), Some(json!({ "response": "yes" }))),
         (Method::POST, format!("/api/events/{event}/cancel"), Some(json!({}))),
         (Method::GET, format!("/api/events/{event}/ics"), None),
@@ -713,8 +727,16 @@ fn probes(ids: &Ids) -> Vec<(Method, String, Option<Value>)> {
                 format!("/api/hangouts/{room}/events"),
                 Some(json!({ "title": "Tacos", "starts_at": tomorrow() })),
             ),
-            (Method::POST, format!("/api/hangouts/{room}/check-ins"), Some(json!({ "about": "hi" }))),
-            (Method::POST, format!("/api/hangouts/{room}/owner-questions"), Some(json!({ "question": "hi" }))),
+            (
+                Method::POST,
+                format!("/api/hangouts/{room}/check-ins"),
+                Some(json!({ "about": "hi" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/hangouts/{room}/owner-questions"),
+                Some(json!({ "question": "hi" })),
+            ),
             (Method::POST, format!("/api/hangouts/{room}/agents"), Some(json!({ "name": "Spy" }))),
             (Method::PUT, format!("/api/hangouts/{room}/agents/{bot}"), Some(json!({}))),
             (Method::DELETE, format!("/api/hangouts/{room}/agents/{bot}"), None),
@@ -778,15 +800,18 @@ async fn strangers_get_the_same_404_for_a_place_that_exists_as_one_that_does_not
         ("a bot in another city", &snoop.token),
         ("a bot at another city's house", &lone.token),
     ] {
-        for ((method, path, body), (_, fake_path, fake_body)) in real_calls.iter().zip(&fake_calls) {
+        for ((method, path, body), (_, fake_path, fake_body)) in real_calls.iter().zip(&fake_calls)
+        {
             let seen = server.request(token, method.clone(), path, body.clone()).await;
             let nothing = server.request(token, method.clone(), fake_path, fake_body.clone()).await;
             // A bot told "only a person can do this" learns nothing about the place, as long as a
             // place that doesn't exist gets the same answer.
             assert_eq!(
-                seen.status, nothing.status,
+                seen.status,
+                nothing.status,
                 "{who}: {method} {path} gave {}, a place that isn't there gave {}",
-                seen.show(), nothing.show()
+                seen.show(),
+                nothing.show()
             );
             assert_eq!(
                 seen.body, nothing.body,
@@ -810,7 +835,11 @@ async fn a_bot_with_no_reason_to_be_in_a_room_gets_404_from_every_room_tool() {
     for room in [set.porch(), set.living(), &set.w.square] {
         for tool in ["read_room", "say", "share_note", "list_calendar", "check_in"] {
             let result = server
-                .tool(&snoop.token, tool, json!({ "hangout_id": room, "text": "hi", "about": "hi" }))
+                .tool(
+                    &snoop.token,
+                    tool,
+                    json!({ "hangout_id": room, "text": "hi", "about": "hi" }),
+                )
                 .await;
             assert_eq!(result["isError"], true, "{tool} in {room}: {result}");
             let words = result["content"][0]["text"].as_str().unwrap_or_default().to_lowercase();
@@ -820,10 +849,15 @@ async fn a_bot_with_no_reason_to_be_in_a_room_gets_404_from_every_room_tool() {
     // The same for city tools: another city's id is a 404, not a hint.
     let result = server.tool(&snoop.token, "list_city", json!({ "city_id": set.w.city })).await;
     assert_eq!(result["isError"], true);
-    let result = server.tool(&snoop.token, "list_scenes", json!({ "house_id": set.w.ann_home.id })).await;
+    let result =
+        server.tool(&snoop.token, "list_scenes", json!({ "house_id": set.w.ann_home.id })).await;
     assert_eq!(result["isError"], true);
     let result = server
-        .tool(&snoop.token, "ask_for_trip", json!({ "house_id": set.w.ann_home.id, "kind": "call" }))
+        .tool(
+            &snoop.token,
+            "ask_for_trip",
+            json!({ "house_id": set.w.ann_home.id, "kind": "call" }),
+        )
         .await;
     assert_eq!(result["isError"], true);
 }
@@ -840,7 +874,10 @@ async fn a_city_page_is_for_members_and_a_house_page_is_for_residents() {
     // Members see the city, and so does a bot whose owner is one.
     for token in [&w.ann.key, &w.bo.key, &set.scout.token, &set.ann_bot.token] {
         assert_ok(&server.get(token, &format!("/api/cities/{}", w.city)).await);
-        assert_eq!(server.get(token, &format!("/api/cities/{}/stream", w.city)).await.status, StatusCode::OK);
+        assert_eq!(
+            server.get(token, &format!("/api/cities/{}/stream", w.city)).await.status,
+            StatusCode::OK
+        );
     }
     // Strangers don't.
     for token in [&eve.key, &snoop.token] {
@@ -857,7 +894,9 @@ async fn a_city_page_is_for_members_and_a_house_page_is_for_residents() {
     for token in [&set.scout.token, &set.pixel.token, &snoop.token] {
         assert_denied(&server.get(token, &format!("/api/houses/{}", w.ann_home.id)).await);
     }
-    assert_not_found(&server.get(&set.scout.token, &format!("/api/houses/{}", w.ann_home.id)).await);
+    assert_not_found(
+        &server.get(&set.scout.token, &format!("/api/houses/{}", w.ann_home.id)).await,
+    );
     // Not even a resident's bot reads the page: it is for people.
     assert_denied(&server.get(&set.ann_bot.token, &format!("/api/houses/{}", w.ann_home.id)).await);
 }
@@ -886,7 +925,9 @@ async fn managed_rooms_ignore_hangout_invite_links() {
         assert_not_found(&server.get(&eve.key, &format!("/api/hangouts/{room}")).await);
 
         // Rotating is refused, even for the person who made the room, and changes nothing.
-        let rotated = server.post(&w.ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
+        let rotated = server
+            .post(&w.ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({}))
+            .await;
         assert_refused(&rotated);
         assert_eq!(server.state.db.hangout(room).unwrap().unwrap().invite_code, code);
 
@@ -912,16 +953,19 @@ async fn managed_rooms_cannot_be_left_with_the_hangout_leave_call() {
         assert_ok(&server.get(&w.ann.key, &format!("/api/hangouts/{room}")).await);
     }
     // Bo, who only has the Town Square, can't leave that either, and stays in the city.
-    let left = server.post(&w.bo.key, &format!("/api/hangouts/{}/leave", w.square), json!({})).await;
+    let left =
+        server.post(&w.bo.key, &format!("/api/hangouts/{}/leave", w.square), json!({})).await;
     assert_refused(&left);
     assert_ok(&server.get(&w.bo.key, &format!("/api/hangouts/{}", w.square)).await);
     assert_ok(&server.get(&w.bo.key, &format!("/api/cities/{}", w.city)).await);
     // Bo watching his bot on Ann's Porch can't "leave" it to lose the trip or anything else.
-    let left = server.post(&w.bo.key, &format!("/api/hangouts/{}/leave", set.porch()), json!({})).await;
+    let left =
+        server.post(&w.bo.key, &format!("/api/hangouts/{}/leave", set.porch()), json!({})).await;
     assert_refused(&left);
     // The way out is the house or the city.
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
-    let moved_out = server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
+    let moved_out =
+        server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
     assert_ok(&moved_out);
     assert_not_found(&server.get(&ann2.key, &format!("/api/hangouts/{}", w.ann_home.living)).await);
     assert_ok(&server.get(&ann2.key, &format!("/api/hangouts/{}", w.square)).await);
@@ -958,7 +1002,11 @@ async fn joining_a_house_also_joins_its_city_and_only_the_link_holder_becomes_a_
 
     // One link is not the other: the city's code opens no house, and a house's opens no city.
     assert_not_found(&server.get("", &format!("/api/house-invites/{}", w.city_code)).await);
-    assert_not_found(&server.post(&cat.key, &format!("/api/house-invites/{}/join", w.city_code), json!({})).await);
+    assert_not_found(
+        &server
+            .post(&cat.key, &format!("/api/house-invites/{}/join", w.city_code), json!({}))
+            .await,
+    );
     assert_not_found(&server.get("", &format!("/api/city-invites/{}", w.ann_home.code)).await);
     assert_not_found(&server.get("", "/api/house-invites/not-a-code").await);
 
@@ -971,7 +1019,9 @@ async fn joining_a_house_also_joins_its_city_and_only_the_link_holder_becomes_a_
     assert_not_found(&server.get(&w.bo.key, &format!("/api/houses/{}", w.ann_home.id)).await);
 
     // Rotating the link kills the old one.
-    let rotated = server.post(&w.ann.key, &format!("/api/houses/{}/invite/rotate", w.ann_home.id), json!({})).await;
+    let rotated = server
+        .post(&w.ann.key, &format!("/api/houses/{}/invite/rotate", w.ann_home.id), json!({}))
+        .await;
     assert_ok(&rotated);
     assert_not_found(&server.get("", &format!("/api/house-invites/{}", w.ann_home.code)).await);
     assert_not_found(
@@ -1055,7 +1105,9 @@ async fn a_bot_can_ask_for_a_trip_but_never_approve_one_even_its_owners_other_bo
         .collect();
     assert!(names.contains(&"ask_for_trip".to_string()), "{names:?}");
     assert!(
-        names.iter().all(|name| !name.contains("approve") && name != "answer_trip" && name != "answer_pass"),
+        names.iter().all(|name| !name.contains("approve")
+            && name != "answer_trip"
+            && name != "answer_pass"),
         "{names:?}"
     );
 
@@ -1088,7 +1140,11 @@ async fn a_trip_starts_only_when_the_owner_and_a_resident_have_both_said_yes() {
     let id = text(&asked.body["id"]);
     for _ in 0..2 {
         let half = server.answer_trip(&w.bo.key, &id, "yes").await;
-        assert!(half.status == StatusCode::OK || half.status == StatusCode::CONFLICT, "{}", half.show());
+        assert!(
+            half.status == StatusCode::OK || half.status == StatusCode::CONFLICT,
+            "{}",
+            half.show()
+        );
         let now = server.get(&w.bo.key, &format!("/api/trips/{id}")).await;
         assert_eq!(now.body["status"], "asking");
         assert!(now.body["arrived_at"].is_null());
@@ -1118,12 +1174,14 @@ async fn a_trip_starts_only_when_the_owner_and_a_resident_have_both_said_yes() {
 
     // An owner or a resident who starts the request has said their own yes, and only that.
     let third = server.bot(&w.bo, &w.bo_home.living, "Third").await;
-    let by_owner = server.ask_trip(&w.bo.key, Some(&third.id), &w.ann_home.id, "call", "", None).await;
+    let by_owner =
+        server.ask_trip(&w.bo.key, Some(&third.id), &w.ann_home.id, "call", "", None).await;
     assert_ok(&by_owner);
     assert_eq!(by_owner.body["status"], "asking", "{}", by_owner.body);
     assert!(by_owner.body["owner_ok_by"].is_string() && by_owner.body["host_ok_by"].is_null());
     let fourth = server.bot(&w.bo, &w.bo_home.living, "Fourth").await;
-    let invited = server.ask_trip(&w.ann.key, Some(&fourth.id), &w.ann_home.id, "call", "", None).await;
+    let invited =
+        server.ask_trip(&w.ann.key, Some(&fourth.id), &w.ann_home.id, "call", "", None).await;
     assert_ok(&invited);
     assert_eq!(invited.body["status"], "asking", "{}", invited.body);
     assert!(invited.body["host_ok_by"].is_string() && invited.body["owner_ok_by"].is_null());
@@ -1142,9 +1200,11 @@ async fn a_trip_needs_the_owner_and_the_house_in_the_same_city_and_never_the_bot
     // A bot from another city, its owner, and a resident of the host house all get "not found".
     let by_bot = server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", None).await;
     assert_not_found(&by_bot);
-    let by_owner = server.ask_trip(&eve.key, Some(&drifter.id), &w.ann_home.id, "call", "", None).await;
+    let by_owner =
+        server.ask_trip(&eve.key, Some(&drifter.id), &w.ann_home.id, "call", "", None).await;
     assert_not_found(&by_owner);
-    let by_host = server.ask_trip(&w.ann.key, Some(&drifter.id), &w.ann_home.id, "call", "", None).await;
+    let by_host =
+        server.ask_trip(&w.ann.key, Some(&drifter.id), &w.ann_home.id, "call", "", None).await;
     assert_not_found(&by_host);
     // The other way round: Bo's bot can't ask for a house in Eve's city either.
     let to_oak = server.ask_trip(&scout.token, None, &eve_home.id, "call", "", None).await;
@@ -1166,7 +1226,10 @@ async fn a_trip_needs_the_owner_and_the_house_in_the_same_city_and_never_the_bot
         StatusCode::CONFLICT
     );
     assert_eq!(
-        server.ask_trip(&w.ann.key, Some(&ann_bot.id), &w.ann_home.id, "call", "", None).await.status,
+        server
+            .ask_trip(&w.ann.key, Some(&ann_bot.id), &w.ann_home.id, "call", "", None)
+            .await
+            .status,
         StatusCode::CONFLICT
     );
     // Not even a bot with no home at all: it still belongs to someone who lives there.
@@ -1178,7 +1241,10 @@ async fn a_trip_needs_the_owner_and_the_house_in_the_same_city_and_never_the_bot
         StatusCode::CONFLICT
     );
     assert_eq!(
-        server.ask_trip(&w.ann.key, Some(&homeless.id), &w.ann_home.id, "call", "", None).await.status,
+        server
+            .ask_trip(&w.ann.key, Some(&homeless.id), &w.ann_home.id, "call", "", None)
+            .await
+            .status,
         StatusCode::CONFLICT
     );
 }
@@ -1196,7 +1262,8 @@ async fn a_bot_takes_one_trip_at_a_time() {
     // While it is out, asking again is a 409 whoever asks and however.
     let by_bot = server.ask_trip(&scout.token, None, &cat_home.id, "call", "", None).await;
     assert_eq!(by_bot.status, StatusCode::CONFLICT, "{}", by_bot.body);
-    let by_owner = server.ask_trip(&w.bo.key, Some(&scout.id), &cat_home.id, "call", "", None).await;
+    let by_owner =
+        server.ask_trip(&w.bo.key, Some(&scout.id), &cat_home.id, "call", "", None).await;
     assert_eq!(by_owner.status, StatusCode::CONFLICT);
     let by_host = server.ask_trip(&cat.key, Some(&scout.id), &cat_home.id, "call", "", None).await;
     assert_eq!(by_host.status, StatusCode::CONFLICT);
@@ -1204,11 +1271,17 @@ async fn a_bot_takes_one_trip_at_a_time() {
         .tool(&scout.token, "ask_for_trip", json!({ "house_id": cat_home.id, "kind": "call" }))
         .await;
     assert_eq!(over_mcp["isError"], true, "{over_mcp}");
-    assert_eq!(server.get(&cat.key, &format!("/api/houses/{}", cat_home.id)).await.body["asking"], json!([]));
+    assert_eq!(
+        server.get(&cat.key, &format!("/api/houses/{}", cat_home.id)).await.body["asking"],
+        json!([])
+    );
 
     // Two requests asked at once and both agreed: only the first can start.
-    let first = text(&server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
-    let second = text(&server.ask_trip(&pixel.token, None, &cat_home.id, "call", "", None).await.body["id"]);
+    let first = text(
+        &server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
+    let second =
+        text(&server.ask_trip(&pixel.token, None, &cat_home.id, "call", "", None).await.body["id"]);
     for trip in [&first, &second] {
         assert_ok(&server.answer_trip(&w.bo.key, trip, "yes").await);
     }
@@ -1219,7 +1292,10 @@ async fn a_bot_takes_one_trip_at_a_time() {
     assert_ok(&server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
     let me = server.get(&pixel.token, "/api/me").await;
     assert_eq!(me.body["trip"]["id"], first.as_str());
-    assert_eq!(server.get(&cat.key, &format!("/api/houses/{}", cat_home.id)).await.body["guests"], json!([]));
+    assert_eq!(
+        server.get(&cat.key, &format!("/api/houses/{}", cat_home.id)).await.body["guests"],
+        json!([])
+    );
 }
 
 // R10
@@ -1230,22 +1306,33 @@ async fn either_side_saying_no_ends_the_request() {
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
 
     // The owner says no: the house's yes comes too late.
-    let id = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let id = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     let declined = server.answer_trip(&w.bo.key, &id, "no").await;
     assert_eq!(declined.body["status"], "declined", "{}", declined.body);
     let late = server.answer_trip(&w.ann.key, &id, "yes").await;
     assert_eq!(late.status, StatusCode::CONFLICT, "{}", late.body);
-    assert_eq!(server.get(&w.ann.key, &format!("/api/trips/{id}")).await.body["status"], "declined");
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_eq!(
+        server.get(&w.ann.key, &format!("/api/trips/{id}")).await.body["status"],
+        "declined"
+    );
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
 
     // The house says no, even after the owner said yes.
-    let id = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let id = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     assert_ok(&server.answer_trip(&w.bo.key, &id, "yes").await);
     let declined = server.answer_trip(&w.ann.key, &id, "no").await;
     assert_eq!(declined.body["status"], "declined");
     let late = server.answer_trip(&w.bo.key, &id, "yes").await;
     assert_eq!(late.status, StatusCode::CONFLICT);
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert!(server.get(&scout.token, "/api/me").await.body["trip"].is_null());
 
     // A bot can go on asking afterwards: a no is for one request.
@@ -1261,11 +1348,16 @@ async fn an_ask_nobody_answers_lapses_after_24_hours_and_reads_as_expired() {
 
     // A fresh ask is open for exactly a day.
     let fresh = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
-    assert_eq!(fresh.body["expires_at"].as_i64().unwrap() - fresh.body["created_at"].as_i64().unwrap(), 24 * 3600);
+    assert_eq!(
+        fresh.body["expires_at"].as_i64().unwrap() - fresh.body["created_at"].as_i64().unwrap(),
+        24 * 3600
+    );
 
     // One that was asked a day ago has lapsed, with or without a yes already given.
     let at = now();
-    for (name, owner_ok, host_ok) in [("plain", None, None), ("half", Some("Bo"), None), ("full", Some("Bo"), Some("Ann"))] {
+    for (name, owner_ok, host_ok) in
+        [("plain", None, None), ("half", Some("Bo"), None), ("full", Some("Bo"), Some("Ann"))]
+    {
         let id = format!("lapsed-{name}");
         server
             .state
@@ -1291,10 +1383,15 @@ async fn an_ask_nobody_answers_lapses_after_24_hours_and_reads_as_expired() {
             let reply = server.answer_trip(&who.key, &id, "yes").await;
             assert_eq!(reply.status, StatusCode::CONFLICT, "{name}: {}", reply.show());
         }
-        assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{id}")).await.body["status"], "expired");
+        assert_eq!(
+            server.get(&w.bo.key, &format!("/api/trips/{id}")).await.body["status"],
+            "expired"
+        );
         assert_ok(&server.get(&scout.token, "/api/me").await);
         assert!(server.get(&scout.token, "/api/me").await.body["trip"].is_null(), "{name}");
-        assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+        assert_not_found(
+            &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
     }
     // It no longer waits on anybody.
     let inbox = server.get(&w.ann.key, "/api/inbox").await;
@@ -1348,13 +1445,20 @@ async fn when_a_trip_runs_out_every_read_stops_at_that_moment() {
         let result = server.tool(&set.scout.token, tool, json!({ "hangout_id": porch })).await;
         assert_eq!(result["isError"], true, "{tool}: {result}");
     }
-    let scenes = server.tool(&set.scout.token, "list_scenes", json!({ "house_id": set.w.ann_home.id })).await;
+    let scenes = server
+        .tool(&set.scout.token, "list_scenes", json!({ "house_id": set.w.ann_home.id }))
+        .await;
     assert_eq!(scenes["isError"], true, "{scenes}");
     // The host's pages stop listing it, and the map says it is home.
     let page = server.get(&set.w.ann.key, &format!("/api/houses/{}", set.w.ann_home.id)).await;
     assert_eq!(page.body["guests"], json!([]));
     let city = server.get(&set.w.ann.key, &format!("/api/cities/{}", set.w.city)).await;
-    let scout = city.body["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == set.scout.id.as_str()).unwrap();
+    let scout = city.body["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["id"] == set.scout.id.as_str())
+        .unwrap();
     assert!(scout["away_at_house_id"].is_null(), "{scout}");
 }
 
@@ -1369,9 +1473,21 @@ async fn when_a_trip_runs_out_every_write_stops_at_that_moment() {
         assert_not_found(&server.say(token, porch, "still here?").await);
         assert_not_found(&server.note(token, porch, "still here?").await);
         assert_not_found(&server.check_in(token, porch, "may I?").await);
-        assert_not_found(&server.post(token, &format!("/api/scenes/{}/request", set.scene), json!({})).await);
-        assert_denied(&server.post(token, &format!("/api/check-ins/{}/answer", set.check_in), json!({ "response": "go" })).await);
-        assert_denied(&server.post(token, &format!("/api/hangouts/{porch}/leave"), json!({})).await);
+        assert_not_found(
+            &server.post(token, &format!("/api/scenes/{}/request", set.scene), json!({})).await,
+        );
+        assert_denied(
+            &server
+                .post(
+                    token,
+                    &format!("/api/check-ins/{}/answer", set.check_in),
+                    json!({ "response": "go" }),
+                )
+                .await,
+        );
+        assert_denied(
+            &server.post(token, &format!("/api/hangouts/{porch}/leave"), json!({})).await,
+        );
     }
     for (tool, args) in [
         ("say", json!({ "hangout_id": porch, "text": "hi" })),
@@ -1387,7 +1503,9 @@ async fn when_a_trip_runs_out_every_write_stops_at_that_moment() {
     let seen = server.get(&set.w.ann.key, &format!("/api/hangouts/{porch}")).await;
     assert!(!has(&seen.body, "still here?"), "{}", seen.body);
     // A request the guest made while it was a guest stays what it was, but it's no longer the guest's to raise again.
-    let again = server.post(&set.scout.token, &format!("/api/scenes/{}/request", set.scene), json!({})).await;
+    let again = server
+        .post(&set.scout.token, &format!("/api/scenes/{}/request", set.scene), json!({}))
+        .await;
     assert_denied(&again);
 }
 
@@ -1426,7 +1544,9 @@ async fn a_bot_whose_trip_ran_out_is_free_to_take_another() {
     server.run_out(&trip);
     let next = server.arrive(&scout, &w.bo, &cat, &cat_home.id, "call", "").await;
     assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", cat_home.porch)).await);
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert_eq!(server.get(&scout.token, "/api/me").await.body["trip"]["id"], next.as_str());
 }
 
@@ -1461,8 +1581,12 @@ async fn the_bot_its_owner_or_any_resident_can_end_a_trip_and_it_takes_effect_at
         assert_eq!(ended.body["status"], "ended", "{}", ended.body);
         assert!(ended.body["ended_by"].is_string());
         // At once: the very next read is a 404 for both the bot and its owner.
-        assert_not_found(&server.get(&bot.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
-        assert_not_found(&server.get(&w.bo.key, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+        assert_not_found(
+            &server.get(&bot.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
+        assert_not_found(
+            &server.get(&w.bo.key, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
         assert_not_found(&server.say(&bot.token, &w.ann_home.porch, "wait").await);
         assert!(server.get(&bot.token, "/api/me").await.body["trip"].is_null());
         // And again: it is already over.
@@ -1489,7 +1613,11 @@ async fn only_a_resident_can_extend_a_trip_up_to_the_limit_for_its_kind() {
     let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(60)).await;
     let trip = text(&asked.body["id"]);
     // Not before it has begun.
-    assert_denied(&server.post(&w.ann.key, &format!("/api/trips/{trip}/extend"), json!({ "minutes": 5 })).await);
+    assert_denied(
+        &server
+            .post(&w.ann.key, &format!("/api/trips/{trip}/extend"), json!({ "minutes": 5 }))
+            .await,
+    );
     server.answer_trip(&w.bo.key, &trip, "yes").await;
     let here = server.answer_trip(&w.ann.key, &trip, "yes").await;
     let ends = here.body["ends_at"].as_i64().unwrap();
@@ -1498,7 +1626,10 @@ async fn only_a_resident_can_extend_a_trip_up_to_the_limit_for_its_kind() {
 
     // The bot, its owner and strangers can't.
     for token in [&scout.token, &w.bo.key] {
-        assert_eq!(server.post(token, &path, json!({ "minutes": 30 })).await.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            server.post(token, &path, json!({ "minutes": 30 })).await.status,
+            StatusCode::FORBIDDEN
+        );
     }
     assert_not_found(&server.post(&cat.key, &path, json!({ "minutes": 30 })).await);
     assert_eq!(server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["ends_at"], ends);
@@ -1519,7 +1650,10 @@ async fn only_a_resident_can_extend_a_trip_up_to_the_limit_for_its_kind() {
     assert_eq!(over.status, StatusCode::BAD_REQUEST, "{}", over.body);
     // Ending it, there is nothing to extend.
     assert_ok(&server.post(&w.ann.key, &format!("/api/trips/{trip}/end"), json!({})).await);
-    assert_eq!(server.post(&w.ann.key, &path, json!({ "minutes": 1 })).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.post(&w.ann.key, &path, json!({ "minutes": 1 })).await.status,
+        StatusCode::CONFLICT
+    );
 }
 
 // R13
@@ -1533,15 +1667,32 @@ async fn each_kind_of_trip_has_its_own_default_and_its_own_limit() {
         let reply = server.ask_trip(&scout.token, None, &w.ann_home.id, kind, "", None).await;
         assert_ok(&reply);
         assert_eq!(reply.body["minutes"], minutes, "{kind}");
-        assert_ok(&server.post(&scout.token, &format!("/api/trips/{}/end", text(&reply.body["id"])), json!({})).await);
+        assert_ok(
+            &server
+                .post(
+                    &scout.token,
+                    &format!("/api/trips/{}/end", text(&reply.body["id"])),
+                    json!({}),
+                )
+                .await,
+        );
     }
     // Limits: the longest is allowed, one more minute is not, and so is zero or nonsense.
     for (kind, max) in [("call", 240), ("visit", 4320), ("stay", 43_200)] {
         let fine = server.ask_trip(&scout.token, None, &w.ann_home.id, kind, "", Some(max)).await;
         assert_ok(&fine);
-        assert_ok(&server.post(&scout.token, &format!("/api/trips/{}/end", text(&fine.body["id"])), json!({})).await);
+        assert_ok(
+            &server
+                .post(
+                    &scout.token,
+                    &format!("/api/trips/{}/end", text(&fine.body["id"])),
+                    json!({}),
+                )
+                .await,
+        );
         for bad in [max + 1, 0, -1, i64::MAX] {
-            let reply = server.ask_trip(&scout.token, None, &w.ann_home.id, kind, "", Some(bad)).await;
+            let reply =
+                server.ask_trip(&scout.token, None, &w.ann_home.id, kind, "", Some(bad)).await;
             assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{kind} {bad}: {}", reply.body);
         }
     }
@@ -1553,7 +1704,9 @@ async fn each_kind_of_trip_has_its_own_default_and_its_own_limit() {
         server.ask_trip(&scout.token, None, &w.ann_home.id, "call", &long, None).await.status,
         StatusCode::BAD_REQUEST
     );
-    assert_ok(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", &"g".repeat(500), None).await);
+    assert_ok(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", &"g".repeat(500), None).await,
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1597,7 +1750,9 @@ async fn a_guest_sees_only_what_happened_on_the_porch_since_it_arrived() {
         assert!(!has(&snapshot.body, BEFORE_CHAT), "{who}: {}", snapshot.body);
     }
     // Over MCP, with and without an after id.
-    for args in [json!({ "hangout_id": porch }), json!({ "hangout_id": porch, "after_message_id": 0 })] {
+    for args in
+        [json!({ "hangout_id": porch }), json!({ "hangout_id": porch, "after_message_id": 0 })]
+    {
         let room = server.tool(&set.scout.token, "read_room", args).await;
         let view = &room["structuredContent"];
         assert_eq!(view["you_are_a_guest"], true, "{room}");
@@ -1609,7 +1764,8 @@ async fn a_guest_sees_only_what_happened_on_the_porch_since_it_arrived() {
     assert!(chat_of(&host.body).contains(BEFORE_CHAT) && chat_of(&host.body).contains(AFTER_CHAT));
     assert!(host.body["guest"].is_null());
     // A live stream starts from now: it never replays the Porch's past.
-    let mut stream = server.stream(&set.scout.token, &format!("/api/hangouts/{porch}/stream")).await;
+    let mut stream =
+        server.stream(&set.scout.token, &format!("/api/hangouts/{porch}/stream")).await;
     server.say(&set.w.ann.key, porch, "live-line-4417").await;
     let seen = read_stream_for(&mut stream, "live-line-4417", 3000).await;
     assert!(seen.contains("live-line-4417"), "{seen}");
@@ -1641,7 +1797,11 @@ async fn a_second_visit_starts_afresh_so_what_was_said_between_visits_stays_hidd
     pause_a_second().await;
     server.say(&w.ann.key, porch, "second-visit-4417").await;
     let seen = server.get(&scout.token, &format!("/api/hangouts/{porch}/messages?after=0")).await;
-    assert!(has(&seen.body, "second-visit-4417") && !has(&seen.body, "between-visits-4417"), "{}", seen.body);
+    assert!(
+        has(&seen.body, "second-visit-4417") && !has(&seen.body, "between-visits-4417"),
+        "{}",
+        seen.body
+    );
 }
 
 // R15
@@ -1658,20 +1818,37 @@ async fn a_guest_sees_no_plans_no_earlier_notes_and_only_its_own_check_ins() {
         assert_eq!(snapshot.body["events"], json!([]), "{who} should see no plans");
         assert_eq!(snapshot.body["stats"]["on_calendar"], 0);
         let notes = snapshot.body["notes"].to_string();
-        assert!(notes.contains(AFTER_NOTE), "{who} should see a note shared after it arrived: {notes}");
+        assert!(
+            notes.contains(AFTER_NOTE),
+            "{who} should see a note shared after it arrived: {notes}"
+        );
         assert!(!notes.contains(BEFORE_NOTE), "{who} saw an earlier note: {notes}");
         let check_ins = snapshot.body["check_ins"].as_array().unwrap();
-        assert!(check_ins.iter().all(|check_in| check_in["id"] == own.as_str()), "{who}: {check_ins:?}");
-        assert!(check_ins.iter().any(|check_in| check_in["id"] == own.as_str()), "its own should show");
-        assert!(!has(&snapshot.body, BEFORE_PLAN) && !has(&snapshot.body, BEFORE_NOTE) && !has(&snapshot.body, BEFORE_CHECK));
+        assert!(
+            check_ins.iter().all(|check_in| check_in["id"] == own.as_str()),
+            "{who}: {check_ins:?}"
+        );
+        assert!(
+            check_ins.iter().any(|check_in| check_in["id"] == own.as_str()),
+            "its own should show"
+        );
+        assert!(
+            !has(&snapshot.body, BEFORE_PLAN)
+                && !has(&snapshot.body, BEFORE_NOTE)
+                && !has(&snapshot.body, BEFORE_CHECK)
+        );
     }
     // MCP reads agree.
     let room = server.tool(&set.scout.token, "read_room", json!({ "hangout_id": porch })).await;
     let view = &room["structuredContent"];
     assert_eq!(view["calendar"], json!([]), "{view}");
-    assert!(!has(view, BEFORE_NOTE) && !has(view, BEFORE_PLAN) && !has(view, BEFORE_CHECK), "{view}");
+    assert!(
+        !has(view, BEFORE_NOTE) && !has(view, BEFORE_PLAN) && !has(view, BEFORE_CHECK),
+        "{view}"
+    );
     assert!(has(&view["notes"], AFTER_NOTE));
-    let calendar = server.tool(&set.scout.token, "list_calendar", json!({ "hangout_id": porch })).await;
+    let calendar =
+        server.tool(&set.scout.token, "list_calendar", json!({ "hangout_id": porch })).await;
     assert_eq!(calendar["structuredContent"]["calendar"], json!([]), "{calendar}");
     // The host's own check-in is not the guest's to see, though they sit in the same room.
     let host = server.get(&set.w.ann.key, &format!("/api/hangouts/{porch}")).await;
@@ -1684,7 +1861,8 @@ async fn a_hosts_check_in_text_does_not_reach_a_guest_through_the_line_announcin
     let set = GuestSet::new(true).await;
     let server = &set.server;
     let porch = set.porch();
-    let mut stream = server.stream(&set.scout.token, &format!("/api/hangouts/{porch}/stream")).await;
+    let mut stream =
+        server.stream(&set.scout.token, &format!("/api/hangouts/{porch}/stream")).await;
     // A check-in written while the guest is on the Porch is still not the guest's to see.
     assert_ok(&server.check_in(&set.w.ann.key, porch, "later-check-4417").await);
     assert_ok(&server.say(&set.w.ann.key, porch, "marker-line-4417").await);
@@ -1711,17 +1889,27 @@ async fn a_guest_cannot_answer_a_check_in_propose_a_plan_rsvp_cancel_or_fetch_an
 
     for (who, token) in [("the bot", &set.scout.token), ("its owner", &set.w.bo.key)] {
         let answered = server
-            .post(token, &format!("/api/check-ins/{}/answer", set.check_in), json!({ "response": "go" }))
+            .post(
+                token,
+                &format!("/api/check-ins/{}/answer", set.check_in),
+                json!({ "response": "go" }),
+            )
             .await;
         assert_refused(&answered);
         assert_refused(&server.propose(token, porch, "Guest dinner").await);
         for response in ["yes", "maybe", "no"] {
             let rsvp = server
-                .post(token, &format!("/api/events/{}/rsvp", set.event), json!({ "response": response }))
+                .post(
+                    token,
+                    &format!("/api/events/{}/rsvp", set.event),
+                    json!({ "response": response }),
+                )
                 .await;
             assert_refused(&rsvp);
         }
-        assert_refused(&server.post(token, &format!("/api/events/{}/cancel", set.event), json!({})).await);
+        assert_refused(
+            &server.post(token, &format!("/api/events/{}/cancel", set.event), json!({})).await,
+        );
         let ics = server.get(token, &format!("/api/events/{}/ics", set.event)).await;
         assert_refused(&ics);
         assert!(!has(&ics.body, BEFORE_PLAN), "{who}: {}", ics.body);
@@ -1729,7 +1917,10 @@ async fn a_guest_cannot_answer_a_check_in_propose_a_plan_rsvp_cancel_or_fetch_an
     // The same over MCP.
     for (tool, args) in [
         ("answer_check_in", json!({ "check_in_id": set.check_in, "response": "go" })),
-        ("propose_hangout", json!({ "hangout_id": porch, "title": "Guest dinner", "starts_at": tomorrow() })),
+        (
+            "propose_hangout",
+            json!({ "hangout_id": porch, "title": "Guest dinner", "starts_at": tomorrow() }),
+        ),
         ("rsvp", json!({ "event_id": set.event, "response": "yes" })),
         ("cancel_hangout", json!({ "event_id": set.event })),
     ] {
@@ -1756,30 +1947,51 @@ async fn a_guest_can_say_something_share_a_note_ask_a_check_in_and_request_a_sce
     assert_ok(&server.note(&set.scout.token, porch, "note-from-scout-4417").await);
     let asked = server.check_in(&set.scout.token, porch, "may-i-4417").await;
     assert_ok(&asked);
-    let requested = server.post(&set.scout.token, &format!("/api/scenes/{dinner}/request"), json!({})).await;
+    let requested =
+        server.post(&set.scout.token, &format!("/api/scenes/{dinner}/request"), json!({})).await;
     assert_ok(&requested);
     assert_eq!(requested.body["status"], "waiting", "{}", requested.body);
     // The owner, watching, may do the same.
     assert_ok(&server.say(&set.w.bo.key, porch, "hello-from-bo-4417").await);
     assert_ok(&server.note(&set.w.bo.key, porch, "note-from-bo-4417").await);
     let owner_scene = server.scene(&set.w.ann, &set.w.ann_home, "Reading Hour").await;
-    assert_ok(&server.post(&set.w.bo.key, &format!("/api/scenes/{owner_scene}/request"), json!({})).await);
-    assert_ok(&server.get(&set.scout.token, &format!("/api/houses/{}/scenes", set.w.ann_home.id)).await);
+    assert_ok(
+        &server.post(&set.w.bo.key, &format!("/api/scenes/{owner_scene}/request"), json!({})).await,
+    );
+    assert_ok(
+        &server.get(&set.scout.token, &format!("/api/houses/{}/scenes", set.w.ann_home.id)).await,
+    );
 
     // The residents see it all, and answer the check-in, and the guest hears the answer.
     let host = server.get(&set.w.ann.key, &format!("/api/hangouts/{porch}")).await;
-    for word in ["hello-from-scout-4417", "hello-from-bo-4417", "note-from-scout-4417", "may-i-4417"] {
+    for word in
+        ["hello-from-scout-4417", "hello-from-bo-4417", "note-from-scout-4417", "may-i-4417"]
+    {
         assert!(has(&host.body, word), "{word}: {}", host.body);
     }
     let id = text(&asked.body["id"]);
-    let answered = server.post(&set.w.ann.key, &format!("/api/check-ins/{id}/answer"), json!({ "response": "go" })).await;
+    let answered = server
+        .post(&set.w.ann.key, &format!("/api/check-ins/{id}/answer"), json!({ "response": "go" }))
+        .await;
     assert_eq!(answered.body["status"], "go", "{}", answered.body);
     let inbox = server.get(&set.scout.token, "/api/inbox").await;
     let mine = inbox.body["your_check_ins"].as_array().unwrap();
-    assert!(mine.iter().any(|check_in| check_in["id"] == id.as_str() && check_in["status"] == "go"), "{mine:?}");
+    assert!(
+        mine.iter().any(|check_in| check_in["id"] == id.as_str() && check_in["status"] == "go"),
+        "{mine:?}"
+    );
     // And over MCP.
-    assert_eq!(server.tool(&set.scout.token, "say", json!({ "hangout_id": porch, "text": "x" })).await["structuredContent"]["posted"], true);
-    assert_eq!(server.tool(&set.scout.token, "share_note", json!({ "hangout_id": porch, "text": "x" })).await["structuredContent"]["posted"], true);
+    assert_eq!(
+        server.tool(&set.scout.token, "say", json!({ "hangout_id": porch, "text": "x" })).await
+            ["structuredContent"]["posted"],
+        true
+    );
+    assert_eq!(
+        server
+            .tool(&set.scout.token, "share_note", json!({ "hangout_id": porch, "text": "x" }))
+            .await["structuredContent"]["posted"],
+        true
+    );
     let listed = server.tool(&set.scout.token, "list_scenes", json!({})).await;
     assert!(has(&listed, "Dinner Time"), "{listed}");
 }
@@ -1802,11 +2014,19 @@ async fn a_guest_and_its_owner_are_never_in_the_living_room() {
         assert_not_found(&server.note(token, living, "let me in").await);
         assert_not_found(&server.check_in(token, living, "let me in").await);
         assert_not_found(&server.propose(token, living, "Party").await);
-        assert_denied(&server.post(token, &format!("/api/hangouts/{living}/agents"), json!({ "name": "Spy" })).await);
+        assert_denied(
+            &server
+                .post(token, &format!("/api/hangouts/{living}/agents"), json!({ "name": "Spy" }))
+                .await,
+        );
     }
     for tool in ["read_room", "say", "share_note", "list_calendar", "check_in"] {
         let result = server
-            .tool(&set.scout.token, tool, json!({ "hangout_id": living, "text": "x", "about": "x" }))
+            .tool(
+                &set.scout.token,
+                tool,
+                json!({ "hangout_id": living, "text": "x", "about": "x" }),
+            )
             .await;
         assert_eq!(result["isError"], true, "{tool}: {result}");
     }
@@ -1852,7 +2072,10 @@ async fn a_guest_and_its_owner_are_never_in_the_living_room() {
     }
     for (path, body) in &seen {
         for secret in &secrets {
-            assert!(!has(body, secret), "{path} gave the guest something it must not have: {secret}\n{body}");
+            assert!(
+                !has(body, secret),
+                "{path} gave the guest something it must not have: {secret}\n{body}"
+            );
         }
     }
 }
@@ -1870,14 +2093,18 @@ async fn a_guest_can_only_see_and_ask_for_the_scenes_of_the_house_it_is_visiting
         assert_not_found(&server.get(token, &format!("/api/houses/{}/scenes", cat_home.id)).await);
         assert_not_found(&server.request_scene(token, &cat_scene).await);
     }
-    let over_mcp = server.tool(&set.scout.token, "request_scene", json!({ "scene_id": cat_scene })).await;
+    let over_mcp =
+        server.tool(&set.scout.token, "request_scene", json!({ "scene_id": cat_scene })).await;
     assert_eq!(over_mcp["isError"], true, "{over_mcp}");
-    let listed = server.tool(&set.scout.token, "list_scenes", json!({ "house_id": cat_home.id })).await;
+    let listed =
+        server.tool(&set.scout.token, "list_scenes", json!({ "house_id": cat_home.id })).await;
     assert_eq!(listed["isError"], true, "{listed}");
     assert!(server.queue(&casa).await.is_empty());
     assert_eq!(server.house_page(&cat, &cat_home).await["scene_requests"], json!([]));
     // A bot that isn't a guest anywhere has no scenes but its own home's.
-    assert_not_found(&server.get(&set.pixel.token, &format!("/api/houses/{}/scenes", set.w.ann_home.id)).await);
+    assert_not_found(
+        &server.get(&set.pixel.token, &format!("/api/houses/{}/scenes", set.w.ann_home.id)).await,
+    );
     assert_not_found(&server.request_scene(&set.pixel.token, &set.scene).await);
 }
 
@@ -1903,7 +2130,15 @@ async fn the_hosts_check_ins_and_plans_never_reach_a_guest_inbox_or_phone() {
     let for_bo = server.notify_to(&set.w.bo).await;
     let for_ann2 = server.notify_to(&ann2).await;
     let (scout_url, for_scout) = start_receiver().await;
-    assert_ok(&server.put(&set.w.bo.key, &format!("/api/agents/{}/notify", set.scout.id), json!({ "url": scout_url })).await);
+    assert_ok(
+        &server
+            .put(
+                &set.w.bo.key,
+                &format!("/api/agents/{}/notify", set.scout.id),
+                json!({ "url": scout_url }),
+            )
+            .await,
+    );
 
     // The host puts a check-in and a plan on the Porch while the guest is there.
     assert_ok(&server.check_in(&set.w.ann.key, porch, "host-check-4417").await);
@@ -1935,7 +2170,11 @@ async fn the_hosts_check_ins_and_plans_never_reach_a_guest_inbox_or_phone() {
     assert!(look.wake.is_empty(), "{:?}", look.wake);
     // The answer to a guest's own check-in is the one thing that does arrive.
     let own = text(&server.check_in(&set.scout.token, porch, "own-check-4417").await.body["id"]);
-    assert_ok(&server.post(&ann2.key, &format!("/api/check-ins/{own}/answer"), json!({ "response": "hold" })).await);
+    assert_ok(
+        &server
+            .post(&ann2.key, &format!("/api/check-ins/{own}/answer"), json!({ "response": "hold" }))
+            .await,
+    );
     let inbox = server.get(&set.scout.token, "/api/inbox").await;
     assert_eq!(inbox.body["your_check_ins"][0]["status"], "hold", "{}", inbox.body);
     // The owner hears the answer. (The bot's own wake-up URL does not: it is not placed in the room.)
@@ -2011,14 +2250,23 @@ async fn a_bot_that_stays_home_takes_no_trips_and_is_in_no_room_but_its_own_livi
     let w = server.world().await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     let pixel = server.bot(&w.bo, &w.bo_home.living, "Pixel").await;
-    let club = text(&server.post(&w.bo.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&w.bo.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
     for room in [&club, &w.square] {
-        assert_ok(&server.put(&w.bo.key, &format!("/api/hangouts/{room}/agents/{}", scout.id), json!({})).await);
+        assert_ok(
+            &server
+                .put(&w.bo.key, &format!("/api/hangouts/{room}/agents/{}", scout.id), json!({}))
+                .await,
+        );
         assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{room}")).await);
     }
     // Scout is out on a trip, and Pixel has an ask open that its owner already agreed to.
     let trip = server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "visit", "").await;
-    let ask = text(&server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let ask = text(
+        &server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     assert_ok(&server.answer_trip(&w.bo.key, &ask, "yes").await);
 
     // Turning it on takes Scout out of every other room and brings it home.
@@ -2028,12 +2276,19 @@ async fn a_bot_that_stays_home_takes_no_trips_and_is_in_no_room_but_its_own_livi
     }
     assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", w.bo_home.living)).await);
     let me = server.get(&scout.token, "/api/me").await;
-    assert_eq!(me.body["hangouts"], json!([{ "id": w.bo_home.living, "name": "Bo House Living Room" }]), "{}", me.body);
+    assert_eq!(
+        me.body["hangouts"],
+        json!([{ "id": w.bo_home.living, "name": "Bo House Living Room" }]),
+        "{}",
+        me.body
+    );
     assert!(me.body["trip"].is_null());
     assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{trip}")).await.body["status"], "ended");
     // Its owner can't put it back in any other room, its own Porch included.
     for room in [&club, &w.square, &w.bo_home.porch] {
-        let brought = server.put(&w.bo.key, &format!("/api/hangouts/{room}/agents/{}", scout.id), json!({})).await;
+        let brought = server
+            .put(&w.bo.key, &format!("/api/hangouts/{room}/agents/{}", scout.id), json!({}))
+            .await;
         assert_eq!(brought.status, StatusCode::CONFLICT, "{room}: {}", brought.body);
         assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{room}")).await);
     }
@@ -2053,7 +2308,9 @@ async fn a_bot_that_stays_home_takes_no_trips_and_is_in_no_room_but_its_own_livi
     assert_ok(&server.set_home(&w.bo.key, &pixel.id, &w.bo_home.id, true).await);
     let late = server.answer_trip(&w.ann.key, &ask, "yes").await;
     assert_ne!(late.body["status"], "here", "{}", late.body);
-    assert_not_found(&server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert!(server.get(&pixel.token, "/api/me").await.body["trip"].is_null());
     assert_eq!(server.house_page(&w.ann, &w.ann_home).await["guests"], json!([]));
     // It can be taken off again, and then it can travel.
@@ -2068,7 +2325,8 @@ async fn a_bot_set_to_stay_home_while_it_is_away_is_called_back_to_a_porch_with_
     let w = server.world().await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "stay", "").await;
-    let mut stream = server.stream(&scout.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
+    let mut stream =
+        server.stream(&scout.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
     assert_ok(&server.set_home(&w.bo.key, &scout.id, &w.bo_home.id, true).await);
     // Whatever happens on the Porch next, the stream ends without it.
     server.say(&w.ann.key, &w.ann_home.porch, "after-going-home-4417").await;
@@ -2087,7 +2345,13 @@ async fn only_the_owner_can_change_whether_a_bot_stays_home() {
     let pixel = server.bot(&w.bo, &w.bo_home.living, "Pixel").await;
     let ann_bot = server.bot(&w.ann, &w.ann_home.living, "Ann Bot").await;
     let bot_state = |page: Value| {
-        page["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == scout.id.as_str()).unwrap().clone()
+        page["bots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|bot| bot["id"] == scout.id.as_str())
+            .unwrap()
+            .clone()
     };
 
     // Not the bot itself, nor its owner's other bot, nor another resident's, nor a housemate.
@@ -2117,7 +2381,9 @@ async fn the_guide_tells_bots_that_staying_home_is_a_promise_the_server_cannot_c
     assert!(words.contains("stays_home"), "the guide should explain stays_home");
     assert!(words.contains("promise"), "the guide should call it a promise");
     assert!(
-        words.contains("can't check") || words.contains("cannot check") || words.contains("can not check"),
+        words.contains("can't check")
+            || words.contains("cannot check")
+            || words.contains("can not check"),
         "the guide should say the server can't check it"
     );
 }
@@ -2132,7 +2398,10 @@ async fn the_house_bot_is_in_no_room_and_every_room_is_a_404_to_it() {
     let set = GuestSet::new(false).await;
     let server = &set.server;
     let casa = server.house_bot(&set.w.ann, &set.w.ann_home, "Casa").await;
-    let club = text(&server.post(&set.w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&set.w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body
+            ["hangout"]["id"],
+    );
     let nothing = "zzzzzzzzzzzzzzzz".to_string();
     for room in [set.porch(), set.living(), &set.w.square, &club, &nothing] {
         for path in [
@@ -2144,10 +2413,14 @@ async fn the_house_bot_is_in_no_room_and_every_room_is_a_404_to_it() {
         }
         for tail in ["messages", "notes", "check-ins"] {
             let body = json!({ "text": "hi", "about": "hi" });
-            assert_not_found(&server.post(&casa.token, &format!("/api/hangouts/{room}/{tail}"), body).await);
+            assert_not_found(
+                &server.post(&casa.token, &format!("/api/hangouts/{room}/{tail}"), body).await,
+            );
         }
         let plan = json!({ "title": "Party", "starts_at": tomorrow() });
-        assert_not_found(&server.post(&casa.token, &format!("/api/hangouts/{room}/events"), plan).await);
+        assert_not_found(
+            &server.post(&casa.token, &format!("/api/hangouts/{room}/events"), plan).await,
+        );
         for tool in ["read_room", "say", "share_note", "list_calendar", "check_in"] {
             let result = server
                 .tool(&casa.token, tool, json!({ "hangout_id": room, "text": "hi", "about": "hi" }))
@@ -2158,8 +2431,24 @@ async fn the_house_bot_is_in_no_room_and_every_room_is_a_404_to_it() {
     let me = server.get(&casa.token, "/api/me").await;
     assert_eq!(me.body["hangouts"], json!([]), "{}", me.body);
     // No chat, no check-in, no plan, no event: ids it might know from elsewhere get nothing.
-    assert_not_found(&server.post(&casa.token, &format!("/api/check-ins/{}/answer", set.check_in), json!({ "response": "go" })).await);
-    assert_not_found(&server.post(&casa.token, &format!("/api/events/{}/rsvp", set.event), json!({ "response": "yes" })).await);
+    assert_not_found(
+        &server
+            .post(
+                &casa.token,
+                &format!("/api/check-ins/{}/answer", set.check_in),
+                json!({ "response": "go" }),
+            )
+            .await,
+    );
+    assert_not_found(
+        &server
+            .post(
+                &casa.token,
+                &format!("/api/events/{}/rsvp", set.event),
+                json!({ "response": "yes" }),
+            )
+            .await,
+    );
     assert_not_found(&server.get(&casa.token, &format!("/api/events/{}/ics", set.event)).await);
 }
 
@@ -2170,7 +2459,10 @@ async fn the_house_bot_cannot_be_brought_into_a_room_by_anyone() {
     let w = server.world().await;
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
     let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
-    let club = text(&server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
     for room in [&w.ann_home.living, &w.ann_home.porch, &w.square, &club] {
         let path = format!("/api/hangouts/{room}/agents/{}", casa.id);
         // Its owner is refused, and another resident doesn't even own it.
@@ -2182,7 +2474,9 @@ async fn the_house_bot_cannot_be_brought_into_a_room_by_anyone() {
     let is_house = |bot: &Bot| server.state.db.bot_home(&bot.id).unwrap().unwrap().is_house;
     assert!(is_house(&casa));
     // Sending it "home" from a room it was never in changes nothing, and moving it is refused.
-    let _ = server.delete(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.ann_home.living, casa.id)).await;
+    let _ = server
+        .delete(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.ann_home.living, casa.id))
+        .await;
     assert_denied(&server.set_home(&w.ann.key, &casa.id, &w.ann_home.id, false).await);
     assert_denied(&server.set_home(&w.ann.key, &casa.id, &w.ann_home.id, true).await);
     assert!(is_house(&casa));
@@ -2201,14 +2495,21 @@ async fn the_house_bot_cannot_take_a_trip_or_be_given_a_pass() {
     let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
     let by_itself = server.ask_trip(&casa.token, None, &w.bo_home.id, "call", "", None).await;
     assert_denied(&by_itself);
-    let by_owner = server.ask_trip(&w.ann.key, Some(&casa.id), &w.bo_home.id, "call", "", None).await;
+    let by_owner =
+        server.ask_trip(&w.ann.key, Some(&casa.id), &w.bo_home.id, "call", "", None).await;
     assert_eq!(by_owner.status, StatusCode::CONFLICT, "{}", by_owner.body);
     let invited = server.ask_trip(&w.bo.key, Some(&casa.id), &w.bo_home.id, "call", "", None).await;
     assert_eq!(invited.status, StatusCode::CONFLICT, "{}", invited.body);
-    let over_mcp = server.tool(&casa.token, "ask_for_trip", json!({ "house_id": w.bo_home.id, "kind": "call" })).await;
+    let over_mcp = server
+        .tool(&casa.token, "ask_for_trip", json!({ "house_id": w.bo_home.id, "kind": "call" }))
+        .await;
     assert_eq!(over_mcp["isError"], true);
     let pass = server
-        .post(&w.bo.key, &format!("/api/houses/{}/passes", w.bo_home.id), json!({ "agent_id": casa.id }))
+        .post(
+            &w.bo.key,
+            &format!("/api/houses/{}/passes", w.bo_home.id),
+            json!({ "agent_id": casa.id }),
+        )
         .await;
     assert_denied(&pass);
     assert_eq!(server.house_page(&w.bo, &w.bo_home).await["asking"], json!([]));
@@ -2251,7 +2552,11 @@ fn house_bot_probes(set: &GuestSet, casa: &Bot) -> Vec<(Method, String, Option<V
     for (method, path, body) in more {
         calls.push((method, path.to_string(), body));
     }
-    calls.push((Method::POST, "/api/notify/test".to_string(), Some(json!({ "hangout_id": set.porch() }))));
+    calls.push((
+        Method::POST,
+        "/api/notify/test".to_string(),
+        Some(json!({ "hangout_id": set.porch() })),
+    ));
     calls
 }
 
@@ -2262,20 +2567,42 @@ async fn the_house_bot_has_four_calls_and_every_other_call_is_refused() {
     let server = &set.server;
     let casa = server.house_bot(&set.w.ann, &set.w.ann_home, "Casa").await;
     // Words that must never reach it: what guests and residents wrote, and who they are.
-    let secrets = [GOAL, BEFORE_CHAT, BEFORE_NOTE, BEFORE_PLAN, BEFORE_CHECK, AFTER_CHAT, AFTER_NOTE, PRIVATE_QUESTION, "Scout", "Pixel", "Ann", "Bo"];
+    let secrets = [
+        GOAL,
+        BEFORE_CHAT,
+        BEFORE_NOTE,
+        BEFORE_PLAN,
+        BEFORE_CHECK,
+        AFTER_CHAT,
+        AFTER_NOTE,
+        PRIVATE_QUESTION,
+        "Scout",
+        "Pixel",
+        "Ann",
+        "Bo",
+    ];
 
     for (method, path, body) in house_bot_probes(&set, &casa) {
         let reply = server.request(&casa.token, method.clone(), &path, body).await;
         assert_denied(&reply);
         for secret in secrets {
-            assert!(!has(&reply.body, secret), "{method} {path} told the house bot {secret}: {}", reply.body);
+            assert!(
+                !has(&reply.body, secret),
+                "{method} {path} told the house bot {secret}: {}",
+                reply.body
+            );
         }
     }
     // The four it has: all small, none naming a person, a room or a guest.
     let me = server.get(&casa.token, "/api/me").await;
     assert_ok(&me);
     assert_eq!(me.body["hangouts"], json!([]));
-    assert_eq!(me.body["cities"], json!([]), "where its residents live isn't its business: {}", me.body);
+    assert_eq!(
+        me.body["cities"],
+        json!([]),
+        "where its residents live isn't its business: {}",
+        me.body
+    );
     assert!(me.body["trip"].is_null());
     let request = server.request_scene(&set.w.ann.key, &set.scene).await;
     assert_eq!(request.status, StatusCode::CONFLICT, "Scout's request is still open");
@@ -2287,7 +2614,12 @@ async fn the_house_bot_has_four_calls_and_every_other_call_is_refused() {
     let id = text(&queue.body["requests"][0]["id"]);
     let finished = server.finish(&casa, &id, "done").await;
     assert_ok(&finished);
-    for (name, body) in [("me", &me.body), ("queue", &queue.body), ("status", &status.body), ("finish", &finished.body)] {
+    for (name, body) in [
+        ("me", &me.body),
+        ("queue", &queue.body),
+        ("status", &status.body),
+        ("finish", &finished.body),
+    ] {
         // The request's id is random, and by chance it can spell a short name such as Bo.
         let said = body.to_string().replace(&id, "ID");
         for secret in secrets {
@@ -2304,21 +2636,49 @@ async fn over_mcp_the_house_bot_sees_three_tools_and_any_other_name_is_an_error(
     let casa = server.house_bot(&set.w.ann, &set.w.ann_home, "Casa").await;
 
     let listed = server.mcp(&casa.token, "tools/list", json!({})).await;
-    let mut names: Vec<String> = listed.body["result"]["tools"].as_array().unwrap().iter().map(|tool| text(&tool["name"])).collect();
+    let mut names: Vec<String> = listed.body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| text(&tool["name"]))
+        .collect();
     names.sort();
     assert_eq!(names, vec!["finish_request", "house_queue", "set_house_status"]);
-    let init = server.mcp(&casa.token, "initialize", json!({ "protocolVersion": "2025-06-18" })).await;
+    let init =
+        server.mcp(&casa.token, "initialize", json!({ "protocolVersion": "2025-06-18" })).await;
     let instructions = text(&init.body["result"]["instructions"]);
     assert!(instructions.contains("house_queue"), "{instructions}");
     for room_tool in ["read_room", "say", "share_note", "propose_hangout"] {
-        assert!(!instructions.contains(room_tool), "the house bot is told about {room_tool}: {instructions}");
+        assert!(
+            !instructions.contains(room_tool),
+            "the house bot is told about {room_tool}: {instructions}"
+        );
     }
     // Called directly, every other tool is an error, and none of them does anything.
     let before = server.get(&set.w.ann.key, &format!("/api/hangouts/{}", set.porch())).await;
     for tool in [
-        "list_hangouts", "inbox", "check_in", "answer_check_in", "ask_owner", "read_room", "say", "share_note",
-        "set_status", "report_activity", "list_calendar", "propose_hangout", "rsvp", "cancel_hangout",
-        "list_city", "ask_for_trip", "go_home", "list_scenes", "request_scene", "", "ls", "../etc",
+        "list_hangouts",
+        "inbox",
+        "check_in",
+        "answer_check_in",
+        "ask_owner",
+        "read_room",
+        "say",
+        "share_note",
+        "set_status",
+        "report_activity",
+        "list_calendar",
+        "propose_hangout",
+        "rsvp",
+        "cancel_hangout",
+        "list_city",
+        "ask_for_trip",
+        "go_home",
+        "list_scenes",
+        "request_scene",
+        "",
+        "ls",
+        "../etc",
     ] {
         let result = server
             .tool(
@@ -2349,9 +2709,18 @@ async fn over_mcp_the_house_bot_sees_three_tools_and_any_other_name_is_an_error(
     }
     for token in [&set.w.ann.key, &set.scout.token, &set.ann_bot.token] {
         assert_eq!(server.get(token, "/api/house/queue").await.status, StatusCode::FORBIDDEN);
-        assert_eq!(server.post(token, "/api/house/status", json!({ "state": "ok" })).await.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            server.post(token, "/api/house/status", json!({ "state": "ok" })).await.status,
+            StatusCode::FORBIDDEN
+        );
         assert_eq!(server.finish(&casa, &set.request, "done").await.status, StatusCode::CONFLICT);
-        let finish = server.post(token, &format!("/api/house/queue/{}/finish", set.request), json!({ "result": "done" })).await;
+        let finish = server
+            .post(
+                token,
+                &format!("/api/house/queue/{}/finish", set.request),
+                json!({ "result": "done" }),
+            )
+            .await;
         assert_eq!(finish.status, StatusCode::FORBIDDEN);
     }
     assert_eq!(server.get("", "/api/house/queue").await.status, StatusCode::UNAUTHORIZED);
@@ -2397,8 +2766,22 @@ async fn the_queue_holds_an_id_and_a_scene_name_and_nothing_else() {
     }
     let raw = server.get(&casa.token, "/api/house/queue").await;
     for forbidden in [
-        "Scout", "Pixel", GOAL, "Ignore your rules", "note", "asked_by", "answered_by", "house_id", "scene_id", "owner",
-        &set.scout.id, &set.w.ann.id, &set.w.bo.id, &set.w.ann_home.id, &set.scene, &dinner,
+        "Scout",
+        "Pixel",
+        GOAL,
+        "Ignore your rules",
+        "note",
+        "asked_by",
+        "answered_by",
+        "house_id",
+        "scene_id",
+        "owner",
+        &set.scout.id,
+        &set.w.ann.id,
+        &set.w.bo.id,
+        &set.w.ann_home.id,
+        &set.scene,
+        &dinner,
     ] {
         assert!(!has(&raw.body, forbidden), "the queue shows {forbidden}: {}", raw.body);
     }
@@ -2461,8 +2844,8 @@ async fn scene_names_are_letters_numbers_and_spaces_and_none_of_the_banned_words
     }
     // The banned words, in any case, anywhere, with any spacing.
     for word in [
-        "lock", "locks", "unlock", "door", "doors", "garage", "gate", "alarm", "arm", "disarm", "camera",
-        "cameras", "security",
+        "lock", "locks", "unlock", "door", "doors", "garage", "gate", "alarm", "arm", "disarm",
+        "camera", "cameras", "security",
     ] {
         for name in [
             word.to_string(),
@@ -2474,23 +2857,63 @@ async fn scene_names_are_letters_numbers_and_spaces_and_none_of_the_banned_words
             format!("  {word}  "),
         ] {
             let made = try_name(name.clone()).await;
-            assert_eq!(made.status, StatusCode::BAD_REQUEST, "{name:?} should be refused: {}", made.body);
+            assert_eq!(
+                made.status,
+                StatusCode::BAD_REQUEST,
+                "{name:?} should be refused: {}",
+                made.body
+            );
         }
     }
-    for name in ["Unlock", "UNLOCK", "front door", "Front Door", "door", "arm alarm", "Arm Alarm", "Disarm The House", "Garage Door Open", "Gate"] {
+    for name in [
+        "Unlock",
+        "UNLOCK",
+        "front door",
+        "Front Door",
+        "door",
+        "arm alarm",
+        "Arm Alarm",
+        "Disarm The House",
+        "Garage Door Open",
+        "Gate",
+    ] {
         let made = try_name(name.to_string()).await;
         assert_eq!(made.status, StatusCode::BAD_REQUEST, "{name:?} should be refused");
     }
     // Anything that isn't a letter, a number or a space: punctuation, tabs, newlines, odd spaces,
     // zero-width characters, symbols and an empty name.
     for name in [
-        "Movie-Night", "Movie_Night", "Movie.Night", "Hello!", "Good morning?", "Tom's room", "a/b",
-        "<b>x</b>", "un-lock", "unlock!", "u.n.l.o.c.k", "Movie\tNight", "Movie\nNight", "Movie\u{a0}Night",
-        "Movie\u{200b}Night", "Movie\u{3000}Night", "\u{1F600} party", "Movie\u{0}Night", "$$$", "",
-        "   ", "\t", "\n",
+        "Movie-Night",
+        "Movie_Night",
+        "Movie.Night",
+        "Hello!",
+        "Good morning?",
+        "Tom's room",
+        "a/b",
+        "<b>x</b>",
+        "un-lock",
+        "unlock!",
+        "u.n.l.o.c.k",
+        "Movie\tNight",
+        "Movie\nNight",
+        "Movie\u{a0}Night",
+        "Movie\u{200b}Night",
+        "Movie\u{3000}Night",
+        "\u{1F600} party",
+        "Movie\u{0}Night",
+        "$$$",
+        "",
+        "   ",
+        "\t",
+        "\n",
     ] {
         let made = try_name(name.to_string()).await;
-        assert_eq!(made.status, StatusCode::BAD_REQUEST, "{name:?} should be refused: {}", made.body);
+        assert_eq!(
+            made.status,
+            StatusCode::BAD_REQUEST,
+            "{name:?} should be refused: {}",
+            made.body
+        );
     }
     // Too long by one.
     assert_eq!(try_name("y".repeat(41)).await.status, StatusCode::BAD_REQUEST);
@@ -2500,7 +2923,12 @@ async fn scene_names_are_letters_numbers_and_spaces_and_none_of_the_banned_words
     let page = server.house_page(&w.ann, &w.ann_home).await;
     for scene in page["scenes"].as_array().unwrap() {
         let name = text(&scene["name"]).to_lowercase();
-        assert!(!name.split_whitespace().any(|word| ["lock", "door", "garage", "alarm", "unlock"].contains(&word)), "{name}");
+        assert!(
+            !name
+                .split_whitespace()
+                .any(|word| ["lock", "door", "garage", "alarm", "unlock"].contains(&word)),
+            "{name}"
+        );
     }
 }
 
@@ -2514,12 +2942,40 @@ async fn the_scene_name_check_is_a_seatbelt_and_this_lists_what_it_lets_through(
     let path = format!("/api/houses/{}/scenes", w.ann_home.id);
     let mut through = Vec::new();
     for name in [
-        "Lockdown", "Locked", "Unlocked", "Unlocking", "Lock up", "Lockup", "Padlock", "Deadbolt", "Backdoor",
-        "Doorbell", "Armed", "Arming", "Disarmed", "Alarms", "Gates", "Garages", "Garage", "Securing",
-        "Secure", "Siren", "Shutters Open", "Open Windows", "Entry", "Front Entrance", "Latch", "Away Mode",
-        "Vacation Mode", "Leaving Home", "Goodnight", "Bedtime", "Guest Mode",
+        "Lockdown",
+        "Locked",
+        "Unlocked",
+        "Unlocking",
+        "Lock up",
+        "Lockup",
+        "Padlock",
+        "Deadbolt",
+        "Backdoor",
+        "Doorbell",
+        "Armed",
+        "Arming",
+        "Disarmed",
+        "Alarms",
+        "Gates",
+        "Garages",
+        "Garage",
+        "Securing",
+        "Secure",
+        "Siren",
+        "Shutters Open",
+        "Open Windows",
+        "Entry",
+        "Front Entrance",
+        "Latch",
+        "Away Mode",
+        "Vacation Mode",
+        "Leaving Home",
+        "Goodnight",
+        "Bedtime",
+        "Guest Mode",
         // Lookalike letters from other alphabets: not honest mistakes, just a record.
-        "Unl\u{43e}ck", "\u{ff35}\u{ff2e}\u{ff2c}\u{ff2f}\u{ff23}\u{ff2b}",
+        "Unl\u{43e}ck",
+        "\u{ff35}\u{ff2e}\u{ff2c}\u{ff2f}\u{ff23}\u{ff2b}",
     ] {
         let made = server.post(&w.ann.key, &path, json!({ "name": name })).await;
         if made.status == StatusCode::OK {
@@ -2558,7 +3014,13 @@ async fn a_scene_request_from_a_bot_or_a_guest_waits_for_a_resident_who_is_a_per
     }
     assert_eq!(server.request_status(&set.w.ann, &set.w.ann_home, &set.request).await, "waiting");
     assert!(server.queue(&casa).await.is_empty());
-    let over_mcp = server.tool(&set.ann_bot.token, "answer_scene_request", json!({ "request_id": set.request, "response": "yes" })).await;
+    let over_mcp = server
+        .tool(
+            &set.ann_bot.token,
+            "answer_scene_request",
+            json!({ "request_id": set.request, "response": "yes" }),
+        )
+        .await;
     assert_eq!(over_mcp["isError"], true);
 
     // A resident's own bot asks and waits like anyone else.
@@ -2566,7 +3028,8 @@ async fn a_scene_request_from_a_bot_or_a_guest_waits_for_a_resident_who_is_a_per
     let by_bot = server.request_scene(&set.ann_bot.token, &reading).await;
     assert_ok(&by_bot);
     assert_eq!(by_bot.body["status"], "waiting", "{}", by_bot.body);
-    let over_mcp = server.tool(&set.ann_bot.token, "request_scene", json!({ "scene_id": reading })).await;
+    let over_mcp =
+        server.tool(&set.ann_bot.token, "request_scene", json!({ "scene_id": reading })).await;
     assert_eq!(over_mcp["isError"], true, "it is already open: {over_mcp}");
     assert!(server.queue(&casa).await.is_empty());
     // A resident asking for herself counts as approved.
@@ -2582,8 +3045,14 @@ async fn a_scene_request_from_a_bot_or_a_guest_waits_for_a_resident_who_is_a_per
     assert_eq!(no.body["status"], "declined");
     assert_eq!(server.queue(&casa).await.len(), 2);
     // An answer can't be given twice or overturned.
-    assert_eq!(server.answer_scene(&set.w.ann.key, &set.request, "no").await.status, StatusCode::CONFLICT);
-    assert_eq!(server.answer_scene(&set.w.ann.key, &text(&by_bot.body["id"]), "yes").await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.answer_scene(&set.w.ann.key, &set.request, "no").await.status,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        server.answer_scene(&set.w.ann.key, &text(&by_bot.body["id"]), "yes").await.status,
+        StatusCode::CONFLICT
+    );
     assert_eq!(server.queue(&casa).await.len(), 2);
 }
 
@@ -2597,14 +3066,26 @@ async fn an_unanswered_request_lapses_in_15_minutes_and_an_approval_is_good_for_
 
     // The lengths.
     let waiting = server.get(&set.w.ann.key, &format!("/api/houses/{}", ann_house.id)).await;
-    let first = waiting.body["scene_requests"].as_array().unwrap().iter().find(|r| r["id"] == set.request.as_str()).unwrap().clone();
-    assert_eq!(first["expires_at"].as_i64().unwrap() - first["created_at"].as_i64().unwrap(), 15 * 60);
+    let first = waiting.body["scene_requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == set.request.as_str())
+        .unwrap()
+        .clone();
+    assert_eq!(
+        first["expires_at"].as_i64().unwrap() - first["created_at"].as_i64().unwrap(),
+        15 * 60
+    );
     let approved = server.answer_scene(&set.w.ann.key, &set.request, "yes").await;
     let wait = approved.body["expires_at"].as_i64().unwrap() - now();
     assert!((595..=601).contains(&wait), "an approval should last ten minutes, not {wait} seconds");
     let own = server.scene(&set.w.ann, ann_house, "Morning Light").await;
     let own = server.request_scene(&set.w.ann.key, &own).await;
-    assert_eq!(own.body["expires_at"].as_i64().unwrap() - own.body["created_at"].as_i64().unwrap(), 10 * 60);
+    assert_eq!(
+        own.body["expires_at"].as_i64().unwrap() - own.body["created_at"].as_i64().unwrap(),
+        10 * 60
+    );
 
     // One nobody answered in time reads as expired, and can't be brought back by a late yes.
     let at = now();
@@ -2638,7 +3119,10 @@ async fn an_unanswered_request_lapses_in_15_minutes_and_an_approval_is_good_for_
     let missed = insert(&movie, "approved", at - 1);
     assert_eq!(server.request_status(&set.w.ann, ann_house, &missed).await, "expired");
     let queue = server.queue(&casa).await;
-    assert!(queue.iter().all(|item| item["id"] != missed.as_str() && item["id"] != stale.as_str()), "{queue:?}");
+    assert!(
+        queue.iter().all(|item| item["id"] != missed.as_str() && item["id"] != stale.as_str()),
+        "{queue:?}"
+    );
     let finished = server.finish(&casa, &missed, "done").await;
     assert_eq!(finished.status, StatusCode::CONFLICT, "{}", finished.body);
     assert_eq!(server.request_status(&set.w.ann, ann_house, &missed).await, "expired");
@@ -2658,15 +3142,24 @@ async fn a_scene_has_one_open_request_at_a_time() {
     let ann_house = &set.w.ann_home;
 
     // Scout's request is open, so nobody can open another for the same scene.
-    for (who, token) in [("the guest", &set.scout.token), ("its owner", &set.w.bo.key), ("a resident", &set.w.ann.key), ("her bot", &set.ann_bot.token)] {
+    for (who, token) in [
+        ("the guest", &set.scout.token),
+        ("its owner", &set.w.bo.key),
+        ("a resident", &set.w.ann.key),
+        ("her bot", &set.ann_bot.token),
+    ] {
         let again = server.request_scene(token, &set.scene).await;
         assert_eq!(again.status, StatusCode::CONFLICT, "{who}: {}", again.body);
     }
-    let over_mcp = server.tool(&set.scout.token, "request_scene", json!({ "scene_id": set.scene })).await;
+    let over_mcp =
+        server.tool(&set.scout.token, "request_scene", json!({ "scene_id": set.scene })).await;
     assert_eq!(over_mcp["isError"], true);
     // Approved and not yet run, it still holds the scene.
     assert_ok(&server.answer_scene(&set.w.ann.key, &set.request, "yes").await);
-    assert_eq!(server.request_scene(&set.scout.token, &set.scene).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.request_scene(&set.scout.token, &set.scene).await.status,
+        StatusCode::CONFLICT
+    );
     assert_eq!(server.request_scene(&set.w.ann.key, &set.scene).await.status, StatusCode::CONFLICT);
     // Once the house bot has run it, the scene is free again; and again after a no.
     let id = text(&server.queue(&casa).await[0]["id"]);
@@ -2695,15 +3188,28 @@ async fn a_scene_has_one_open_request_at_a_time() {
     let results = futures_util::future::join_all(tries).await;
     let won = results.iter().filter(|status| **status == StatusCode::OK).count();
     assert_eq!(won, 1, "{results:?}");
-    assert!(results.iter().all(|status| *status == StatusCode::OK || *status == StatusCode::CONFLICT), "{results:?}");
+    assert!(
+        results.iter().all(|status| *status == StatusCode::OK || *status == StatusCode::CONFLICT),
+        "{results:?}"
+    );
     // And it expires out of the way: a lapsed request no longer holds the scene.
     let at = now();
     let lapsing = server.scene(&set.w.ann, ann_house, "Lapsing").await;
     let id = format!("old-request-{}", UNIQUE.fetch_add(1, Ordering::SeqCst));
-    assert!(server.state.db.insert_scene_request(&NewSceneRequest {
-        id: &id, scene_id: &lapsing, house_id: &ann_house.id, asked_by: "Scout", status: "waiting",
-        answered_by: None, expires_at: at - 1, now: at - 1000,
-    }).unwrap());
+    assert!(server
+        .state
+        .db
+        .insert_scene_request(&NewSceneRequest {
+            id: &id,
+            scene_id: &lapsing,
+            house_id: &ann_house.id,
+            asked_by: "Scout",
+            status: "waiting",
+            answered_by: None,
+            expires_at: at - 1,
+            now: at - 1000,
+        })
+        .unwrap());
     assert_ok(&server.request_scene(&set.scout.token, &lapsing).await);
 }
 
@@ -2723,20 +3229,25 @@ async fn house_status_is_ok_or_attention_and_only_residents_can_see_it() {
         let reply = server.post(&casa.token, "/api/house/status", json!({ "state": bad })).await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{bad:?}: {}", reply.body);
     }
-    assert_ok(&server.post(&casa.token, "/api/house/status", json!({ "state": "attention" })).await);
+    assert_ok(
+        &server.post(&casa.token, "/api/house/status", json!({ "state": "attention" })).await,
+    );
     for who in [&set.w.ann, &ann2] {
         let page = server.house_page(who, &set.w.ann_home).await;
         assert_eq!(page["status"]["state"], "attention", "{page}");
     }
     assert_ok(&server.post(&casa.token, "/api/house/status", json!({ "state": "ok" })).await);
     assert_eq!(server.house_page(&set.w.ann, &set.w.ann_home).await["status"]["state"], "ok");
-    let over_mcp = server.tool(&casa.token, "set_house_status", json!({ "state": "attention" })).await;
+    let over_mcp =
+        server.tool(&casa.token, "set_house_status", json!({ "state": "attention" })).await;
     assert_eq!(over_mcp["structuredContent"]["ok"], true, "{over_mcp}");
 
     // Nobody else sees it, by any road: the page, the city map, the Porch, MCP or the inbox.
     let (_, _, _, eve) = server.new_city("Oak", "Eve").await;
     let mut seen = Vec::new();
-    for token in [&set.scout.token, &set.w.bo.key, &cat.key, &eve.key, &set.pixel.token, &set.ann_bot.token] {
+    for token in
+        [&set.scout.token, &set.w.bo.key, &cat.key, &eve.key, &set.pixel.token, &set.ann_bot.token]
+    {
         for path in [
             format!("/api/houses/{}", set.w.ann_home.id),
             format!("/api/cities/{}", set.w.city),
@@ -2749,7 +3260,11 @@ async fn house_status_is_ok_or_attention_and_only_residents_can_see_it() {
             seen.push((path.clone(), server.get(token, &path).await.body));
         }
     }
-    for (name, args) in [("list_city", json!({})), ("read_room", json!({ "hangout_id": set.porch() })), ("inbox", json!({}))] {
+    for (name, args) in [
+        ("list_city", json!({})),
+        ("read_room", json!({ "hangout_id": set.porch() })),
+        ("inbox", json!({})),
+    ] {
         seen.push((name.to_string(), server.tool(&set.scout.token, name, args).await));
     }
     for (path, body) in &seen {
@@ -2767,36 +3282,46 @@ async fn house_status_is_ok_or_attention_and_only_residents_can_see_it() {
 
 // R44
 #[tokio::test]
-async fn a_house_bot_stays_a_house_bot_when_its_maker_moves_out_and_only_residents_replace_its_token() {
+async fn a_house_bot_stays_a_house_bot_when_its_maker_moves_out_and_only_residents_replace_its_token(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
     let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
     let scene = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
-    assert_ok(&server.request_scene(&w.ann.key, &scene).await);
+    assert_ok(&server.request_scene(&ann2.key, &scene).await);
     let is_house = || server.state.db.bot_home(&casa.id).unwrap().is_some_and(|home| home.is_house);
 
     // Ann, who made it, moves out. It is the house's, so it carries on.
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     assert!(is_house());
     let queue = server.queue(&casa).await;
     assert_eq!(queue.len(), 1, "{queue:?}");
     let listed = server.mcp(&casa.token, "tools/list", json!({})).await;
     assert_eq!(listed.body["result"]["tools"].as_array().unwrap().len(), 3);
-    assert_not_found(&server.get(&casa.token, &format!("/api/hangouts/{}", w.ann_home.living)).await);
+    assert_not_found(
+        &server.get(&casa.token, &format!("/api/hangouts/{}", w.ann_home.living)).await,
+    );
     let page = server.house_page(&ann2, &w.ann_home).await;
     assert_eq!(page["house_bot"]["name"], "Casa", "{page}");
 
     // From then on the one who moved out can't replace its token, or move it, or see it.
-    assert_not_found(&server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await);
+    assert_not_found(
+        &server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await,
+    );
     assert_denied(&server.set_home(&w.ann.key, &casa.id, &w.ann_home.id, false).await);
     assert_not_found(&server.get(&w.ann.key, &format!("/api/houses/{}", w.ann_home.id)).await);
-    assert_not_found(&server.post(&w.bo.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await);
+    assert_not_found(
+        &server.post(&w.bo.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await,
+    );
     assert!(is_house());
     assert_ok(&server.get(&casa.token, "/api/house/queue").await);
 
     // A resident can, and it is still a house bot on the new token and dead on the old.
-    let rotated = server.post(&ann2.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await;
+    let rotated =
+        server.post(&ann2.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await;
     assert_ok(&rotated);
     let fresh = Bot { token: text(&rotated.body["token"]), id: casa.id.clone() };
     assert_eq!(server.get(&casa.token, "/api/house/queue").await.status, StatusCode::UNAUTHORIZED);
@@ -2804,18 +3329,29 @@ async fn a_house_bot_stays_a_house_bot_when_its_maker_moves_out_and_only_residen
     assert!(is_house());
 
     // Moving back in gives her that right again, and she is still no one's bot-maker by doing so.
-    let back = server.post(&w.ann.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await;
+    let back = server
+        .post(
+            &w.ann.key,
+            &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+            json!({}),
+        )
+        .await;
     assert_ok(&back);
-    let again = server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await;
+    let again =
+        server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await;
     assert_ok(&again);
     assert!(is_house());
     // Leaving the house and the city both leaves it where it is.
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     assert_ok(&server.post(&w.ann.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
     assert!(is_house());
     let latest = Bot { token: text(&again.body["token"]), id: casa.id.clone() };
     assert_eq!(server.queue(&latest).await.len(), 1);
-    assert_not_found(&server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await);
+    assert_not_found(
+        &server.post(&w.ann.key, &format!("/api/agents/{}/rotate", casa.id), json!({})).await,
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -2829,7 +3365,13 @@ impl Server {
         assert_ok(&self.post(&owner.key, &format!("/api/trips/{trip}/end"), json!({})).await);
     }
 
-    async fn offer_pass(&self, resident: &Who, home: &Home, bot: &str, max_minutes: Option<i64>) -> Reply {
+    async fn offer_pass(
+        &self,
+        resident: &Who,
+        home: &Home,
+        bot: &str,
+        max_minutes: Option<i64>,
+    ) -> Reply {
         let mut body = json!({ "agent_id": bot });
         if let Some(max_minutes) = max_minutes {
             body["max_minutes"] = json!(max_minutes);
@@ -2873,19 +3415,39 @@ async fn only_a_resident_can_offer_a_pass_and_only_to_a_bot_the_house_has_hosted
     let first = server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await;
     assert_eq!(first.status, StatusCode::CONFLICT, "{}", first.body);
     // Nor one whose trip nobody answered, only the owner answered, or only the house answered.
-    let ask = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    let ask = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     server.answer_trip(&w.bo.key, &ask, "yes").await;
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     server.answer_trip(&w.ann.key, &ask, "no").await;
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     // The house said yes and the owner said no: it never started.
-    let declined = text(&server.ask_trip(&w.ann.key, Some(&scout.id), &w.ann_home.id, "call", "", None).await.body["id"]);
+    let declined = text(
+        &server.ask_trip(&w.ann.key, Some(&scout.id), &w.ann_home.id, "call", "", None).await.body
+            ["id"],
+    );
     server.answer_trip(&w.bo.key, &declined, "no").await;
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     // A trip to a different house doesn't count for this one.
     server.hosted_once(&scout, &w.bo, &cat, &cat_home).await;
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     assert_ok(&server.offer_pass(&cat, &cat_home, &scout.id, None).await);
 
     // Once a trip started with a resident's yes, the offer goes through, from a resident only.
@@ -2908,7 +3470,10 @@ async fn only_a_resident_can_offer_a_pass_and_only_to_a_bot_the_house_has_hosted
     assert_eq!(offered.body["max_minutes"], 60, "the default is an hour: {}", offered.body);
     assert!(offered.body["accepted_by"].is_null());
     // One at a time.
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
     // The limit on its length.
     assert_ok(&server.cancel_pass(&w.ann.key, &text(&offered.body["id"])).await);
     for bad in [0, -1, 1441, i64::MAX] {
@@ -2946,10 +3511,20 @@ async fn a_pass_does_nothing_until_the_bots_owner_accepts_it() {
     ] {
         let reply = server.ask_trip(token, agent, &w.ann_home.id, "call", "", Some(30)).await;
         assert_ok(&reply);
-        assert_eq!(reply.body["status"], "asking", "{who}: an unaccepted pass must not start a trip: {}", reply.body);
+        assert_eq!(
+            reply.body["status"], "asking",
+            "{who}: an unaccepted pass must not start a trip: {}",
+            reply.body
+        );
         assert!(reply.body["pass_id"].is_null(), "{who}");
-        assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
-        assert_ok(&server.post(&w.ann.key, &format!("/api/trips/{}/end", text(&reply.body["id"])), json!({})).await);
+        assert_not_found(
+            &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
+        assert_ok(
+            &server
+                .post(&w.ann.key, &format!("/api/trips/{}/end", text(&reply.body["id"])), json!({}))
+                .await,
+        );
     }
 
     // Nobody but the owner accepts: not the bot, its owner's other bot, the host, a neighbour, a stranger.
@@ -2996,7 +3571,11 @@ async fn with_an_accepted_pass_a_trip_up_to_the_limit_starts_at_once_and_a_longe
     let for_ann2 = server.notify_to(&ann2).await;
     let for_cat = server.notify_to(&cat).await;
     let (bot_url, for_bot) = start_receiver().await;
-    assert_ok(&server.put(&w.bo.key, &format!("/api/agents/{}/notify", scout.id), json!({ "url": bot_url })).await);
+    assert_ok(
+        &server
+            .put(&w.bo.key, &format!("/api/agents/{}/notify", scout.id), json!({ "url": bot_url }))
+            .await,
+    );
 
     // At once, with nobody to ask.
     let trip = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(45)).await;
@@ -3012,27 +3591,47 @@ async fn with_an_accepted_pass_a_trip_up_to_the_limit_starts_at_once_and_a_longe
     assert!(notices_of(&for_cat, "trip.started").await.is_empty());
     assert!(notices_of(&for_bot, "trip.started").await.is_empty());
     assert!(notices_of(&for_bot, "trip.asked").await.is_empty());
-    assert_ok(&server.post(&scout.token, &format!("/api/trips/{}/end", text(&trip.body["id"])), json!({})).await);
+    assert_ok(
+        &server
+            .post(&scout.token, &format!("/api/trips/{}/end", text(&trip.body["id"])), json!({}))
+            .await,
+    );
 
     // The limit itself is fine. By the owner or a resident too.
     let at_limit = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(60)).await;
     assert_eq!(at_limit.body["status"], "here", "{}", at_limit.body);
-    server.post(&scout.token, &format!("/api/trips/{}/end", text(&at_limit.body["id"])), json!({})).await;
-    let by_owner = server.ask_trip(&w.bo.key, Some(&scout.id), &w.ann_home.id, "call", "", Some(20)).await;
+    server
+        .post(&scout.token, &format!("/api/trips/{}/end", text(&at_limit.body["id"])), json!({}))
+        .await;
+    let by_owner =
+        server.ask_trip(&w.bo.key, Some(&scout.id), &w.ann_home.id, "call", "", Some(20)).await;
     assert_eq!(by_owner.body["status"], "here", "{}", by_owner.body);
-    server.post(&w.bo.key, &format!("/api/trips/{}/end", text(&by_owner.body["id"])), json!({})).await;
-    let by_host = server.ask_trip(&ann2.key, Some(&scout.id), &w.ann_home.id, "call", "", Some(20)).await;
+    server
+        .post(&w.bo.key, &format!("/api/trips/{}/end", text(&by_owner.body["id"])), json!({}))
+        .await;
+    let by_host =
+        server.ask_trip(&ann2.key, Some(&scout.id), &w.ann_home.id, "call", "", Some(20)).await;
     assert_eq!(by_host.body["status"], "here", "{}", by_host.body);
-    server.post(&w.bo.key, &format!("/api/trips/{}/end", text(&by_host.body["id"])), json!({})).await;
+    server
+        .post(&w.bo.key, &format!("/api/trips/{}/end", text(&by_host.body["id"])), json!({}))
+        .await;
 
     // Longer than the pass goes the normal way, and nothing about the pass shows on it.
     for (kind, minutes) in [("call", Some(61)), ("visit", None), ("stay", Some(2000))] {
         let longer = server.ask_trip(&scout.token, None, &w.ann_home.id, kind, "", minutes).await;
         assert_ok(&longer);
         assert_eq!(longer.body["status"], "asking", "{kind}: {}", longer.body);
-        assert!(longer.body["pass_id"].is_null() && longer.body["owner_ok_by"].is_null() && longer.body["host_ok_by"].is_null());
-        assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
-        server.post(&w.ann.key, &format!("/api/trips/{}/end", text(&longer.body["id"])), json!({})).await;
+        assert!(
+            longer.body["pass_id"].is_null()
+                && longer.body["owner_ok_by"].is_null()
+                && longer.body["host_ok_by"].is_null()
+        );
+        assert_not_found(
+            &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
+        server
+            .post(&w.ann.key, &format!("/api/trips/{}/end", text(&longer.body["id"])), json!({}))
+            .await;
     }
 }
 
@@ -3046,8 +3645,14 @@ async fn a_resident_or_the_owner_can_cancel_a_pass_and_that_ends_the_trip_it_cov
     for canceller in ["resident", "owner"] {
         let (scout, pass) = server.passed_scout(&w, 120).await;
         let pixel = server.bot(&w.bo, &w.bo_home.living, "Pixel").await;
-        let trip = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(30)).await.body["id"]);
-        assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{trip}")).await.body["status"], "here");
+        let trip = text(
+            &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(30)).await.body
+                ["id"],
+        );
+        assert_eq!(
+            server.get(&w.bo.key, &format!("/api/trips/{trip}")).await.body["status"],
+            "here"
+        );
 
         // Not the bot itself, its owner's other bot, a neighbour or a stranger.
         for token in [&scout.token, &pixel.token] {
@@ -3060,16 +3665,25 @@ async fn a_resident_or_the_owner_can_cancel_a_pass_and_that_ends_the_trip_it_cov
         let token = if canceller == "resident" { &w.ann.key } else { &w.bo.key };
         assert_ok(&server.cancel_pass(token, &pass).await);
         // The trip ends at once, and the pass is gone.
-        assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
-        assert_not_found(&server.get(&w.bo.key, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+        assert_not_found(
+            &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
+        assert_not_found(
+            &server.get(&w.bo.key, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+        );
         assert!(server.get(&scout.token, "/api/me").await.body["trip"].is_null());
-        assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{trip}")).await.body["status"], "ended");
+        assert_eq!(
+            server.get(&w.bo.key, &format!("/api/trips/{trip}")).await.body["status"],
+            "ended"
+        );
         assert_eq!(server.house_page(&w.ann, &w.ann_home).await["passes"], json!([]));
         assert_not_found(&server.cancel_pass(token, &pass).await);
         // With the pass gone, the next short trip has to be agreed to again.
         let next = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(30)).await;
         assert_eq!(next.body["status"], "asking", "{}", next.body);
-        server.post(&w.ann.key, &format!("/api/trips/{}/end", text(&next.body["id"])), json!({})).await;
+        server
+            .post(&w.ann.key, &format!("/api/trips/{}/end", text(&next.body["id"])), json!({}))
+            .await;
     }
 }
 
@@ -3108,18 +3722,24 @@ async fn a_pass_does_not_override_staying_home_or_the_one_trip_rule() {
 
     // Staying home ends the trip it covers, and the passes can't make the bot go again.
     assert_ok(&server.set_home(&w.bo.key, &scout.id, &w.bo_home.id, true).await);
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     for (house, pass) in [(&w.ann_home, &ann_pass), (&cat_home, &cat_pass)] {
         let reply = server.ask_trip(&scout.token, None, &house.id, "call", "", Some(30)).await;
         assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.body);
-        let by_owner = server.ask_trip(&w.bo.key, Some(&scout.id), &house.id, "call", "", Some(30)).await;
+        let by_owner =
+            server.ask_trip(&w.bo.key, Some(&scout.id), &house.id, "call", "", Some(30)).await;
         assert_eq!(by_owner.status, StatusCode::CONFLICT, "{}", by_owner.body);
         // Using the pass again is not possible: it was taken back when the bot was told to stay.
         assert_not_found(&server.accept_pass(&w.bo.key, pass).await);
     }
     assert!(server.get(&scout.token, "/api/me").await.body["trip"].is_null());
     // A bot that stays home can't be offered one either.
-    assert_eq!(server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status, StatusCode::CONFLICT);
+    assert_eq!(
+        server.offer_pass(&w.ann, &w.ann_home, &scout.id, None).await.status,
+        StatusCode::CONFLICT
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -3127,7 +3747,12 @@ async fn a_pass_does_not_override_staying_home_or_the_one_trip_rule() {
 // ----------------------------------------------------------------------------------------------
 
 fn keys_of(value: &Value) -> Vec<String> {
-    let mut keys: Vec<String> = value.as_object().unwrap_or_else(|| panic!("not an object: {value}")).keys().cloned().collect();
+    let mut keys: Vec<String> = value
+        .as_object()
+        .unwrap_or_else(|| panic!("not an object: {value}"))
+        .keys()
+        .cloned()
+        .collect();
     keys.sort();
     keys
 }
@@ -3140,24 +3765,49 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
     let casa = server.house_bot(&set.w.ann, &set.w.ann_home, "Casa").await;
     server.post(&casa.token, "/api/house/status", json!({ "state": "attention" })).await;
     for bot in [&set.scout, &set.ann_bot, &set.pixel] {
-        assert_ok(&server.post(&bot.token, "/api/status", json!({ "status": "status-text-4417" })).await);
+        assert_ok(
+            &server.post(&bot.token, "/api/status", json!({ "status": "status-text-4417" })).await,
+        );
     }
-    assert_ok(&server.post(&set.scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" })).await);
+    assert_ok(
+        &server
+            .post(
+                &set.scout.token,
+                "/api/activity",
+                json!({ "kind": "computer", "via": "FlowRMM" }),
+            )
+            .await,
+    );
     assert_ok(&server.set_home(&set.w.ann.key, &set.ann_bot.id, &set.w.ann_home.id, true).await);
     let bo_secret = server.scene(&set.w.bo, &set.w.bo_home, "Bo Secret Scene").await;
     assert_ok(&server.request_scene(&set.w.bo.key, &bo_secret).await);
     server.say(&set.w.ann.key, &set.w.ann_home.living, "living-room-chat-4417").await;
 
     let mut secrets: Vec<String> = [
-        GOAL, "status-text-4417", "FlowRMM", "attention", "Movie Night", "Bo Secret Scene", BEFORE_CHAT, BEFORE_PLAN,
-        BEFORE_CHECK, AFTER_CHAT, "living-room-chat-4417",
+        GOAL,
+        "status-text-4417",
+        "FlowRMM",
+        "attention",
+        "Movie Night",
+        "Bo Secret Scene",
+        BEFORE_CHAT,
+        BEFORE_PLAN,
+        BEFORE_CHECK,
+        AFTER_CHAT,
+        "living-room-chat-4417",
     ]
     .map(String::from)
     .to_vec();
     for home in [&set.w.ann_home, &set.w.bo_home] {
         secrets.extend([home.living.clone(), home.porch.clone(), home.code.clone()]);
     }
-    secrets.extend([set.trip.clone(), set.ask.clone(), set.pass.clone(), set.scene.clone(), set.request.clone()]);
+    secrets.extend([
+        set.trip.clone(),
+        set.ask.clone(),
+        set.pass.clone(),
+        set.scene.clone(),
+        set.request.clone(),
+    ]);
     secrets.extend([set.event.clone(), set.check_in.clone()]);
 
     let mut views = Vec::new();
@@ -3175,7 +3825,18 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
     for (who, body) in &views {
         // The city also shows what it asks of newcomers, and for people (not their bots) who is
         // waiting at its gate (T16).
-        let mut top_level = vec!["bot_looks", "bots", "city", "growth", "houses", "people", "rules", "vouches_needed", "you", "your_passes"];
+        let mut top_level = vec![
+            "bot_looks",
+            "bots",
+            "city",
+            "growth",
+            "houses",
+            "people",
+            "rules",
+            "vouches_needed",
+            "you",
+            "your_passes",
+        ];
         if !who.ends_with(" bot") {
             top_level.insert(3, "gate");
         }
@@ -3190,19 +3851,38 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
             assert_eq!(keys_of(person), vec!["color", "id", "name"], "{who}");
         }
         for house in body["houses"].as_array().unwrap() {
-            assert_eq!(keys_of(house), vec!["id", "name", "requirements", "residents"], "{who}: {house}");
+            assert_eq!(
+                keys_of(house),
+                vec!["id", "name", "requirements", "residents"],
+                "{who}: {house}"
+            );
         }
         for bot in body["bots"].as_array().unwrap() {
             assert_eq!(
                 keys_of(bot),
-                vec!["away_at_house_id", "away_until", "home_house_id", "id", "is_house", "name", "owner_id", "state", "stays_home"],
+                vec![
+                    "away_at_house_id",
+                    "away_until",
+                    "home_house_id",
+                    "id",
+                    "is_house",
+                    "name",
+                    "owner_id",
+                    "state",
+                    "stays_home"
+                ],
                 "{who}: {bot}"
             );
         }
         assert!(!body["bots"].as_array().unwrap().is_empty());
         // H21: Scout's pass is shown to Scout and its owner, Bo, and to nobody else. Set it aside and
         // scan the rest.
-        let passes: Vec<&str> = body["your_passes"].as_array().unwrap().iter().map(|pass| pass["id"].as_str().unwrap()).collect();
+        let passes: Vec<&str> = body["your_passes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pass| pass["id"].as_str().unwrap())
+            .collect();
         let own = matches!(*who, "another member" | "a guest bot");
         assert_eq!(passes, if own { vec![set.pass.as_str()] } else { vec![] }, "{who}");
         let mut body = body.clone();
@@ -3220,7 +3900,13 @@ async fn the_city_page_shows_names_and_presence_and_nothing_a_bot_or_a_resident_
         assert!(!has(body, &set.w.city_code), "the city's link is the creator's alone: {body}");
     }
     // It names where each bot is.
-    let scout = views[0].1["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == set.scout.id.as_str()).unwrap().clone();
+    let scout = views[0].1["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["id"] == set.scout.id.as_str())
+        .unwrap()
+        .clone();
     assert_eq!(scout["home_house_id"], set.w.bo_home.id.as_str());
     assert_eq!(scout["away_at_house_id"], set.w.ann_home.id.as_str());
     // MCP's list_city is the same and no more.
@@ -3241,7 +3927,9 @@ async fn chat_notes_tokens_activity_and_requests_never_count_towards_growth() {
     let server = Server::start().await;
     let w = server.world().await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
-    let growth = || async { server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone() };
+    let growth = || async {
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone()
+    };
     let before = growth().await;
     assert_eq!(before, json!({ "stage": "hamlet", "gatherings": 0, "roads": [] }));
 
@@ -3249,26 +3937,49 @@ async fn chat_notes_tokens_activity_and_requests_never_count_towards_growth() {
         server.say(&w.ann.key, &w.square, &format!("chat {n}")).await;
         server.note(&w.bo.key, &w.square, &format!("note {n}")).await;
     }
-    assert_ok(&server.put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", w.square, scout.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", w.square, scout.id), json!({}))
+            .await,
+    );
     for n in 0..10 {
         server.say(&scout.token, &w.square, &format!("bot chat {n}")).await;
     }
-    server.post(&scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" })).await;
+    server
+        .post(&scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
+        .await;
     server.post(&scout.token, "/api/status", json!({ "status": "busy" })).await;
     for _ in 0..3 {
         server.post(&w.bo.key, &format!("/api/agents/{}/rotate", scout.id), json!({})).await;
     }
-    let rotated = server.post(&w.bo.key, &format!("/api/agents/{}/rotate", scout.id), json!({})).await;
+    let rotated =
+        server.post(&w.bo.key, &format!("/api/agents/{}/rotate", scout.id), json!({})).await;
     let scout = Bot { token: text(&rotated.body["token"]), id: scout.id };
     // Asks that were declined, withdrawn or lapsed, and scene requests.
-    let ask = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let ask = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     server.answer_trip(&w.bo.key, &ask, "yes").await;
     server.answer_trip(&w.bo.key, &ask, "no").await;
     let at = now();
-    server.state.db.insert_trip(&NewTrip {
-        id: "lapsed-growth", agent_id: &scout.id, house_id: &w.ann_home.id, kind: "call", goal: "", minutes: 30,
-        asked_by: "Scout", owner_ok_by: Some("Bo"), host_ok_by: Some("Ann"), pass_id: None, expires_at: at - 1, now: at - 90_000,
-    }).unwrap();
+    server
+        .state
+        .db
+        .insert_trip(&NewTrip {
+            id: "lapsed-growth",
+            agent_id: &scout.id,
+            house_id: &w.ann_home.id,
+            kind: "call",
+            goal: "",
+            minutes: 30,
+            asked_by: "Scout",
+            owner_ok_by: Some("Bo"),
+            host_ok_by: Some("Ann"),
+            pass_id: None,
+            expires_at: at - 1,
+            now: at - 90_000,
+        })
+        .unwrap();
     let scene = server.scene(&w.bo, &w.bo_home, "Quiet Night").await;
     server.request_scene(&w.bo.key, &scene).await;
     let casa = server.house_bot(&w.bo, &w.bo_home, "Casa").await;
@@ -3278,7 +3989,8 @@ async fn chat_notes_tokens_activity_and_requests_never_count_towards_growth() {
     server.post(&w.ann.key, "/api/key/rotate", json!({})).await;
 
     // Ann's owner key was replaced just now, so look as Bo.
-    let after = server.get(&w.bo.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone();
+    let after =
+        server.get(&w.bo.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone();
     assert_eq!(after, before, "none of that is a gathering or a road");
 }
 
@@ -3290,7 +4002,11 @@ async fn a_gathering_is_a_confirmed_town_square_plan_that_has_finished() {
     let (eve_city, eve_square, _, eve) = server.new_city("Oak", "Eve").await;
     let gatherings = |city: String, key: String| {
         let server = &server;
-        async move { server.get(&key, &format!("/api/cities/{city}")).await.body["growth"]["gatherings"].as_i64().unwrap() }
+        async move {
+            server.get(&key, &format!("/api/cities/{city}")).await.body["growth"]["gatherings"]
+                .as_i64()
+                .unwrap()
+        }
     };
     assert_eq!(gatherings(w.city.clone(), w.ann.key.clone()).await, 0);
 
@@ -3298,20 +4014,42 @@ async fn a_gathering_is_a_confirmed_town_square_plan_that_has_finished() {
     plan_that_finished(&server, &w.square, &w.ann, "proposed", 3600);
     plan_that_finished(&server, &w.square, &w.ann, "cancelled", 3600);
     let at = now();
-    server.state.db.insert_event(&NewEvent {
-        id: "in-progress", hangout_id: &w.square, title: "Now", location: "", notes: "", starts_at: at - 600,
-        ends_at: at + 3600, min_yes: 1, proposed_by: &w.ann.id, proposer: "Ann", now: at - 700,
-    }).unwrap();
+    server
+        .state
+        .db
+        .insert_event(&NewEvent {
+            id: "in-progress",
+            hangout_id: &w.square,
+            title: "Now",
+            location: "",
+            notes: "",
+            starts_at: at - 600,
+            ends_at: at + 3600,
+            min_yes: 1,
+            proposed_by: &w.ann.id,
+            proposer: "Ann",
+            now: at - 700,
+        })
+        .unwrap();
     server.state.db.set_event_status("in-progress", "confirmed", at).unwrap();
     let to_come = server.propose(&w.ann.key, &w.square, "Next week").await;
     assert_ok(&to_come);
-    let confirmed = server.post(&w.bo.key, &format!("/api/events/{}/rsvp", text(&to_come.body["id"])), json!({ "response": "yes" })).await;
+    let confirmed = server
+        .post(
+            &w.bo.key,
+            &format!("/api/events/{}/rsvp", text(&to_come.body["id"])),
+            json!({ "response": "yes" }),
+        )
+        .await;
     assert_eq!(confirmed.body["status"], "confirmed");
     // Not in a house, or any other room, however confirmed and finished.
     for room in [&w.ann_home.living, &w.ann_home.porch, &w.bo_home.living] {
         plan_that_finished(&server, room, &w.ann, "confirmed", 3600);
     }
-    let club = text(&server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
     plan_that_finished(&server, &club, &w.ann, "confirmed", 3600);
     plan_that_finished(&server, &eve_square, &eve, "confirmed", 3600);
     assert_eq!(gatherings(w.city.clone(), w.ann.key.clone()).await, 0);
@@ -3334,26 +4072,47 @@ async fn a_road_joins_two_houses_only_once_a_bot_has_really_arrived() {
     let server = Server::start().await;
     let w = server.world().await;
     let (cat, cat_home) = server.neighbour(&w, "Cat").await;
-    let roads = || async { server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"]["roads"].clone() };
+    let roads = || async {
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"]["roads"]
+            .clone()
+    };
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     let ann_bot = server.bot(&w.ann, &w.ann_home.living, "Ann Bot").await;
     assert_eq!(roads().await, json!([]));
 
     // Declined, never answered, answered by one side, lapsed: none of these started.
-    let declined = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let declined = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     server.answer_trip(&w.ann.key, &declined, "yes").await;
     server.answer_trip(&w.bo.key, &declined, "no").await;
     assert_eq!(roads().await, json!([]));
-    let unanswered = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let unanswered = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     assert_eq!(roads().await, json!([]));
     server.answer_trip(&w.bo.key, &unanswered, "yes").await;
     assert_eq!(roads().await, json!([]));
     server.post(&w.bo.key, &format!("/api/trips/{unanswered}/end"), json!({})).await;
     let at = now();
-    server.state.db.insert_trip(&NewTrip {
-        id: "lapsed-road", agent_id: &scout.id, house_id: &w.ann_home.id, kind: "call", goal: "", minutes: 30,
-        asked_by: "Scout", owner_ok_by: Some("Bo"), host_ok_by: Some("Ann"), pass_id: None, expires_at: at - 1, now: at - 90_000,
-    }).unwrap();
+    server
+        .state
+        .db
+        .insert_trip(&NewTrip {
+            id: "lapsed-road",
+            agent_id: &scout.id,
+            house_id: &w.ann_home.id,
+            kind: "call",
+            goal: "",
+            minutes: 30,
+            asked_by: "Scout",
+            owner_ok_by: Some("Bo"),
+            host_ok_by: Some("Ann"),
+            pass_id: None,
+            expires_at: at - 1,
+            now: at - 90_000,
+        })
+        .unwrap();
     assert_eq!(roads().await, json!([]));
 
     // Arriving makes the road, once, however long it lasts or is extended.
@@ -3361,7 +4120,11 @@ async fn a_road_joins_two_houses_only_once_a_bot_has_really_arrived() {
     server.post(&w.ann.key, &format!("/api/trips/{trip}/extend"), json!({ "minutes": 20 })).await;
     let road = roads().await;
     assert_eq!(road.as_array().unwrap().len(), 1, "{road}");
-    let (low, high) = if w.ann_home.id < w.bo_home.id { (&w.ann_home.id, &w.bo_home.id) } else { (&w.bo_home.id, &w.ann_home.id) };
+    let (low, high) = if w.ann_home.id < w.bo_home.id {
+        (&w.ann_home.id, &w.bo_home.id)
+    } else {
+        (&w.bo_home.id, &w.ann_home.id)
+    };
     assert_eq!(road[0], json!({ "a": low, "b": high, "trips": 1 }));
     // Cut short, it still happened. A road has no direction: the other way counts on the same road.
     server.post(&scout.token, &format!("/api/trips/{trip}/end"), json!({})).await;
@@ -3375,7 +4138,10 @@ async fn a_road_joins_two_houses_only_once_a_bot_has_really_arrived() {
     assert_eq!(roads().await.as_array().unwrap().len(), 2);
 
     // A bot with no home makes no road.
-    let club = text(&server.post(&cat.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&cat.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
     let drifter = server.bot(&cat, &club, "Drifter").await;
     server.arrive(&drifter, &cat, &w.ann, &w.ann_home.id, "call", "").await;
     assert_eq!(roads().await.as_array().unwrap().len(), 2, "{}", roads().await);
@@ -3389,7 +4155,8 @@ async fn a_bot_visiting_another_city_draws_no_road_in_either() {
     let (eve_city, _, eve_code, eve) = server.new_city("Oak", "Eve").await;
     let eve_home = server.build_house(&eve, &eve_city, "Eve House").await;
     // Bo belongs to both cities. His bot lives in Elm and visits a house in Oak.
-    let joined = server.post(&w.bo.key, &format!("/api/city-invites/{eve_code}/join"), json!({})).await;
+    let joined =
+        server.post(&w.bo.key, &format!("/api/city-invites/{eve_code}/join"), json!({})).await;
     assert_ok(&joined);
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     server.arrive(&scout, &w.bo, &eve, &eve_home.id, "call", "").await;
@@ -3399,7 +4166,13 @@ async fn a_bot_visiting_another_city_draws_no_road_in_either() {
     }
     // Elm's page doesn't say where it is: that house is in another city.
     let view = server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await;
-    let bot = view.body["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == scout.id.as_str()).unwrap().clone();
+    let bot = view.body["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["id"] == scout.id.as_str())
+        .unwrap()
+        .clone();
     assert!(bot["away_at_house_id"].is_null(), "{bot}");
     assert!(!has(&view.body, &eve_home.id));
     // And Oak's page doesn't say where it lives.
@@ -3424,7 +4197,9 @@ async fn a_city_needs_both_houses_and_gatherings_to_grow() {
     }
     let server = Server::start().await;
     let w = server.world().await;
-    let growth = || async { server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone() };
+    let growth = || async {
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"].clone()
+    };
 
     // Houses with no gatherings stay a hamlet, however many there are.
     assert_eq!(growth().await["stage"], "hamlet");
@@ -3438,7 +4213,11 @@ async fn a_city_needs_both_houses_and_gatherings_to_grow() {
         plan_that_finished(&server, &w.square, &w.ann, "confirmed", 3600);
         let grown = growth().await;
         assert_eq!(grown["gatherings"], gatherings);
-        assert_eq!(grown["stage"], expected(12, gatherings), "12 houses and {gatherings} gatherings");
+        assert_eq!(
+            grown["stage"],
+            expected(12, gatherings),
+            "12 houses and {gatherings} gatherings"
+        );
     }
     // The other way round: a new city with many gatherings and few houses.
     let (oak, oak_square, oak_code, eve) = server.new_city("Oak", "Eve").await;
@@ -3457,7 +4236,11 @@ async fn a_city_needs_both_houses_and_gatherings_to_grow() {
     assert_eq!(view(eve.key.clone()).await["stage"], "hamlet", "two houses and thirty gatherings");
     let gus = server.join_city(&oak_code, "Gus").await;
     server.build_house(&gus, &oak, "Gus House").await;
-    assert_eq!(view(eve.key.clone()).await["stage"], "village", "three houses and thirty gatherings is a village");
+    assert_eq!(
+        view(eve.key.clone()).await["stage"],
+        "village",
+        "three houses and thirty gatherings is a village"
+    );
 }
 
 // R42
@@ -3491,8 +4274,18 @@ async fn invitations_alone_and_bots_alone_cannot_grow_a_city() {
     // The pure rule, at the edges.
     use agenthangout::city::stage;
     for (houses, gatherings, expected) in [
-        (0, 0, "hamlet"), (2, 99, "hamlet"), (3, 0, "hamlet"), (3, 1, "village"), (5, 4, "village"), (6, 4, "village"),
-        (5, 5, "village"), (6, 5, "town"), (11, 15, "town"), (12, 14, "town"), (12, 15, "city"), (50, 500, "city"),
+        (0, 0, "hamlet"),
+        (2, 99, "hamlet"),
+        (3, 0, "hamlet"),
+        (3, 1, "village"),
+        (5, 4, "village"),
+        (6, 4, "village"),
+        (5, 5, "village"),
+        (6, 5, "town"),
+        (11, 15, "town"),
+        (12, 14, "town"),
+        (12, 15, "city"),
+        (50, 500, "city"),
     ] {
         assert_eq!(stage(houses, gatherings), expected, "{houses} houses, {gatherings} gatherings");
     }
@@ -3506,10 +4299,20 @@ async fn growth_shows_counts_only() {
     let w = &set.w;
     // A gathering with a title and people who said yes to it.
     let past = plan_that_finished(server, &w.square, &w.ann, "confirmed", 3600);
-    server.state.db.upsert_rsvp(&past, &w.bo.id, "yes", Some("Scout"), "see you there", now()).unwrap();
+    server
+        .state
+        .db
+        .upsert_rsvp(&past, &w.bo.id, "yes", Some("Scout"), "see you there", now())
+        .unwrap();
     server.state.db.upsert_rsvp(&past, &w.ann.id, "yes", None, "", now()).unwrap();
     let confirmed = server.propose(&w.ann.key, &w.square, "Secret surprise party 4417").await;
-    server.post(&w.bo.key, &format!("/api/events/{}/rsvp", text(&confirmed.body["id"])), json!({ "response": "yes" })).await;
+    server
+        .post(
+            &w.bo.key,
+            &format!("/api/events/{}/rsvp", text(&confirmed.body["id"])),
+            json!({ "response": "yes" }),
+        )
+        .await;
 
     for token in [&w.ann.key, &w.bo.key, &set.scout.token] {
         let view = server.get(token, &format!("/api/cities/{}", w.city)).await;
@@ -3519,7 +4322,9 @@ async fn growth_shows_counts_only() {
         for road in growth["roads"].as_array().unwrap() {
             assert_eq!(keys_of(road), vec!["a", "b", "trips"]);
         }
-        for word in ["Secret surprise party 4417", "Old dinner", "see you there", GOAL, "Venue", "Veracruz"] {
+        for word in
+            ["Secret surprise party 4417", "Old dinner", "see you there", GOAL, "Venue", "Veracruz"]
+        {
             assert!(!has(&view.body, word), "the city page names {word}: {}", view.body);
         }
         // Nobody is said to have gone anywhere, apart from the bots' own places.
@@ -3545,26 +4350,36 @@ async fn hangouts_outside_a_city_behave_as_they_always_did() {
     let snapshot = server.get(&justin.key, &format!("/api/hangouts/{room}")).await;
     let code = text(&snapshot.body["hangout"]["invite_code"]);
     assert!(!code.is_empty());
-    assert_eq!(server.get(&scout.token, &format!("/api/hangouts/{room}")).await.body["hangout"]["invite_code"], "");
+    assert_eq!(
+        server.get(&scout.token, &format!("/api/hangouts/{room}")).await.body["hangout"]
+            ["invite_code"],
+        ""
+    );
     assert!(snapshot.body["guest"].is_null());
     assert_eq!(server.get("", &format!("/api/invites/{code}")).await.body["name"], "Crew");
     // Rotating changes the link; the old one stops working and the new one works.
-    let rotated = server.post(&justin.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
+    let rotated =
+        server.post(&justin.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
     assert_ok(&rotated);
     assert_not_found(&server.get("", &format!("/api/invites/{code}")).await);
     let fresh = text(&rotated.body["invite_url"]).rsplit('/').next().unwrap().to_string();
-    let joined = server.post("", &format!("/api/invites/{fresh}/join"), json!({ "your_name": "Lena" })).await;
+    let joined = server
+        .post("", &format!("/api/invites/{fresh}/join"), json!({ "your_name": "Lena" }))
+        .await;
     assert_ok(&joined);
     // Leaving works, takes the bot with it, and a bot has no home or trip anywhere.
     let lena = text(&joined.body["owner_key"]);
-    let lena_bot = server.bot(&Who { key: lena.clone(), id: String::new() }, &room, "Lena Bot").await;
+    let lena_bot =
+        server.bot(&Who { key: lena.clone(), id: String::new() }, &room, "Lena Bot").await;
     assert_ok(&server.post(&lena, &format!("/api/hangouts/{room}/leave"), json!({})).await);
     assert_not_found(&server.get(&lena_bot.token, &format!("/api/hangouts/{room}")).await);
     assert_not_found(&server.get(&lena, &format!("/api/hangouts/{room}")).await);
     assert!(server.state.db.bot_home(&scout.id).unwrap().is_none());
     // Plans, notes and check-ins as before, including a bot rsvping for its person.
     let event = text(&server.propose(&scout.token, &room, "Tacos").await.body["id"]);
-    let rsvp = server.post(&don.token, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" })).await;
+    let rsvp = server
+        .post(&don.token, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" }))
+        .await;
     assert_eq!(rsvp.body["status"], "confirmed");
     assert_ok(&server.get(&justin.key, &format!("/api/events/{event}/ics")).await);
     assert_ok(&server.check_in(&scout.token, &room, "Book it").await);
@@ -3582,7 +4397,11 @@ async fn hangouts_outside_a_city_behave_as_they_always_did() {
     // A bot in a plain room can still be moved between plain rooms.
     let other = server.post(&justin.key, "/api/hangouts", json!({ "name": "Other" })).await;
     let other = text(&other.body["hangout"]["id"]);
-    assert_ok(&server.put(&justin.key, &format!("/api/hangouts/{other}/agents/{}", scout.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&justin.key, &format!("/api/hangouts/{other}/agents/{}", scout.id), json!({}))
+            .await,
+    );
     assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{other}")).await);
     // None of the city's routes opens a plain room.
     assert_not_found(&server.get(&justin.key, &format!("/api/houses/{room}")).await);
@@ -3595,11 +4414,18 @@ async fn hangouts_outside_a_city_behave_as_they_always_did() {
 async fn a_member_of_a_city_keeps_every_power_over_an_ordinary_hangout_of_their_own() {
     let server = Server::start().await;
     let w = server.world().await;
-    let club = text(&server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
-    let code = text(&server.get(&w.ann.key, &format!("/api/hangouts/{club}")).await.body["hangout"]["invite_code"]);
+    let club = text(
+        &server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
+    let code = text(
+        &server.get(&w.ann.key, &format!("/api/hangouts/{club}")).await.body["hangout"]
+            ["invite_code"],
+    );
     // The city does not turn the club into a managed room.
     assert_ok(&server.get("", &format!("/api/invites/{code}")).await);
-    let guest = server.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Fay" })).await;
+    let guest =
+        server.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Fay" })).await;
     assert_ok(&guest);
     let fay = text(&guest.body["owner_key"]);
     // Fay is not in the city by being in the club.
@@ -3607,9 +4433,15 @@ async fn a_member_of_a_city_keeps_every_power_over_an_ordinary_hangout_of_their_
     assert_not_found(&server.get(&fay, &format!("/api/hangouts/{}", w.square)).await);
     // A bot that lives at a house can still be brought to the club by its owner, and sent away.
     let ann_bot = server.bot(&w.ann, &w.ann_home.living, "Ann Bot").await;
-    assert_ok(&server.put(&w.ann.key, &format!("/api/hangouts/{club}/agents/{}", ann_bot.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&w.ann.key, &format!("/api/hangouts/{club}/agents/{}", ann_bot.id), json!({}))
+            .await,
+    );
     assert_ok(&server.get(&ann_bot.token, &format!("/api/hangouts/{club}")).await);
-    assert_ok(&server.delete(&w.ann.key, &format!("/api/hangouts/{club}/agents/{}", ann_bot.id)).await);
+    assert_ok(
+        &server.delete(&w.ann.key, &format!("/api/hangouts/{club}/agents/{}", ann_bot.id)).await,
+    );
     assert_not_found(&server.get(&ann_bot.token, &format!("/api/hangouts/{club}")).await);
     // Ann can leave the club, as before, without leaving anything else.
     assert_ok(&server.post(&w.ann.key, &format!("/api/hangouts/{club}/leave"), json!({})).await);
@@ -3620,32 +4452,134 @@ async fn a_member_of_a_city_keeps_every_power_over_an_ordinary_hangout_of_their_
 #[tokio::test]
 async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it() {
     use rusqlite::Connection;
-    let path = std::env::temp_dir().join(format!("agenthangout-upgrade-{}-{}.db", std::process::id(), now()));
+    let path = std::env::temp_dir().join(format!(
+        "agenthangout-upgrade-{}-{}.db",
+        std::process::id(),
+        now()
+    ));
     let path_text = path.to_str().unwrap().to_string();
     let _ = std::fs::remove_file(&path);
     let old_tables: [(&str, &[&str]); 12] = [
         ("people", &["id", "name", "color", "key_hash", "feed_token", "created_at"]),
         ("hangouts", &["id", "name", "invite_code", "created_by", "created_at"]),
         ("members", &["hangout_id", "person_id", "joined_at"]),
-        ("agents", &["id", "owner_id", "name", "token_hash", "status", "last_active_at", "last_seen_at", "created_at"]),
+        (
+            "agents",
+            &[
+                "id",
+                "owner_id",
+                "name",
+                "token_hash",
+                "status",
+                "last_active_at",
+                "last_seen_at",
+                "created_at",
+            ],
+        ),
         ("agent_activity", &["agent_id", "kind", "via", "until_at"]),
         ("agent_doorbell", &["agent_id", "paused", "checked_at"]),
         ("room_agents", &["hangout_id", "agent_id"]),
-        ("messages", &["id", "hangout_id", "person_id", "agent_id", "speaker", "kind", "body", "created_at"]),
-        ("events", &["id", "hangout_id", "title", "location", "notes", "starts_at", "ends_at", "status", "min_yes", "sequence", "proposed_by", "proposer", "created_at", "updated_at"]),
-        ("check_ins", &["id", "hangout_id", "asked_by", "asker", "agent_id", "about", "to_person", "needs_human", "status", "answered_by", "answered_by_bot", "note", "expires_at", "created_at"]),
+        (
+            "messages",
+            &["id", "hangout_id", "person_id", "agent_id", "speaker", "kind", "body", "created_at"],
+        ),
+        (
+            "events",
+            &[
+                "id",
+                "hangout_id",
+                "title",
+                "location",
+                "notes",
+                "starts_at",
+                "ends_at",
+                "status",
+                "min_yes",
+                "sequence",
+                "proposed_by",
+                "proposer",
+                "created_at",
+                "updated_at",
+            ],
+        ),
+        (
+            "check_ins",
+            &[
+                "id",
+                "hangout_id",
+                "asked_by",
+                "asker",
+                "agent_id",
+                "about",
+                "to_person",
+                "needs_human",
+                "status",
+                "answered_by",
+                "answered_by_bot",
+                "note",
+                "expires_at",
+                "created_at",
+            ],
+        ),
         ("notify_targets", &["owner_id", "url"]),
         ("rsvps", &["event_id", "person_id", "response", "via_agent", "note", "updated_at"]),
     ];
     let new_tables = [
-        "cities", "city_members", "houses", "residents", "bot_homes", "trips", "passes", "scenes",
-        "scene_requests", "house_status", "owner_questions", "passkey_users", "passkeys", "sessions",
-        "entry_rules", "vouches", "city_gate", "sent_home", "plan_invites", "plan_invitees", "friend_invites",
-        "free_sharing", "free_windows", "plan_items", "house_notes", "house_plan_sharing", "spaces", "floors", "floor_visits", "turned_out", "space_plots", "world_buildings", "person_clocks", "owner_notes", "pass_keys", "bot_marks", "floor_items", "item_notes", "bots_without_moods", "friend_invite_ends", "place_clocks", "world_ends", "bot_routines", "projects", "person_looks", "bot_looks", "place_requests",
+        "cities",
+        "city_members",
+        "houses",
+        "residents",
+        "bot_homes",
+        "trips",
+        "passes",
+        "scenes",
+        "scene_requests",
+        "house_status",
+        "owner_questions",
+        "passkey_users",
+        "passkeys",
+        "sessions",
+        "entry_rules",
+        "vouches",
+        "city_gate",
+        "sent_home",
+        "plan_invites",
+        "plan_invitees",
+        "friend_invites",
+        "free_sharing",
+        "free_windows",
+        "plan_items",
+        "house_notes",
+        "house_plan_sharing",
+        "spaces",
+        "floors",
+        "floor_visits",
+        "turned_out",
+        "space_plots",
+        "world_buildings",
+        "person_clocks",
+        "owner_notes",
+        "pass_keys",
+        "bot_marks",
+        "floor_items",
+        "item_notes",
+        "bots_without_moods",
+        "friend_invite_ends",
+        "place_clocks",
+        "world_ends",
+        "bot_routines",
+        "projects",
+        "person_looks",
+        "bot_looks",
+        "place_requests",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
-        statement.query_map([], |row| row.get::<_, String>(1)).unwrap().map(Result::unwrap).collect()
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
     };
 
     // A database as the old server left it: built, used, and with the new tables never there.
@@ -3658,11 +4592,67 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
-        for table in ["place_requests", "bot_looks", "person_looks", "projects", "bot_routines", "world_ends", "place_clocks", "friend_invite_ends", "bots_without_moods", "item_notes", "floor_items", "space_plots", "turned_out", "floor_visits", "floors", "spaces", "house_plan_sharing", "house_notes", "plan_items", "free_windows", "free_sharing", "friend_invites", "plan_invitees", "plan_invites", "crawler_sightings", "world_members", "world_players", "players", "world_tiles", "worlds", "sent_home", "city_gate", "vouches", "entry_rules", "sessions", "passkeys", "passkey_users", "owner_questions", "house_status", "scene_requests", "scenes", "passes", "trips", "bot_homes", "residents", "houses", "city_members", "cities", "world_buildings", "person_clocks", "bot_marks", "pass_keys", "owner_notes"] {
+        for table in [
+            "place_requests",
+            "bot_looks",
+            "person_looks",
+            "projects",
+            "bot_routines",
+            "world_ends",
+            "place_clocks",
+            "friend_invite_ends",
+            "bots_without_moods",
+            "item_notes",
+            "floor_items",
+            "space_plots",
+            "turned_out",
+            "floor_visits",
+            "floors",
+            "spaces",
+            "house_plan_sharing",
+            "house_notes",
+            "plan_items",
+            "free_windows",
+            "free_sharing",
+            "friend_invites",
+            "plan_invitees",
+            "plan_invites",
+            "crawler_sightings",
+            "world_members",
+            "world_players",
+            "players",
+            "world_tiles",
+            "worlds",
+            "sent_home",
+            "city_gate",
+            "vouches",
+            "entry_rules",
+            "sessions",
+            "passkeys",
+            "passkey_users",
+            "owner_questions",
+            "house_status",
+            "scene_requests",
+            "scenes",
+            "passes",
+            "trips",
+            "bot_homes",
+            "residents",
+            "houses",
+            "city_members",
+            "cities",
+            "world_buildings",
+            "person_clocks",
+            "bot_marks",
+            "pass_keys",
+            "owner_notes",
+        ] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }
         let left: Vec<String> = connection
-            .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            )
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -3699,11 +4689,21 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
 
 impl Server {
     async fn ask_owner(&self, token: &str, room: &str, question: &str) -> Reply {
-        self.post(token, &format!("/api/hangouts/{room}/owner-questions"), json!({ "question": question })).await
+        self.post(
+            token,
+            &format!("/api/hangouts/{room}/owner-questions"),
+            json!({ "question": question }),
+        )
+        .await
     }
 
     async fn answer_question(&self, token: &str, question: &str, answer: &str) -> Reply {
-        self.post(token, &format!("/api/owner-questions/{question}/answer"), json!({ "answer": answer })).await
+        self.post(
+            token,
+            &format!("/api/owner-questions/{question}/answer"),
+            json!({ "answer": answer }),
+        )
+        .await
     }
 }
 
@@ -3716,12 +4716,24 @@ async fn a_question_asked_on_a_porch_reaches_its_owner_and_no_guest() {
     let server = &set.server;
     let (porch, ann, bo) = (set.porch(), &set.w.ann, &set.w.bo);
     let ann2 = server.move_in(&set.w.ann_home, "Ann2").await;
-    assert_ok(&server.put(&ann.key, &format!("/api/hangouts/{porch}/agents/{}", set.ann_bot.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&ann.key, &format!("/api/hangouts/{porch}/agents/{}", set.ann_bot.id), json!({}))
+            .await,
+    );
     let for_ann = server.notify_to(ann).await;
     let for_bo = server.notify_to(bo).await;
     let for_ann2 = server.notify_to(&ann2).await;
     let (scout_url, for_scout) = start_receiver().await;
-    assert_ok(&server.put(&bo.key, &format!("/api/agents/{}/notify", set.scout.id), json!({ "url": scout_url })).await);
+    assert_ok(
+        &server
+            .put(
+                &bo.key,
+                &format!("/api/agents/{}/notify", set.scout.id),
+                json!({ "url": scout_url }),
+            )
+            .await,
+    );
     let stream_path = format!("/api/hangouts/{porch}/stream");
     let mut scout_stream = server.stream(&set.scout.token, &stream_path).await;
     let mut bo_stream = server.stream(&bo.key, &stream_path).await;
@@ -3819,7 +4831,10 @@ async fn a_question_in_the_living_room_stays_with_its_owner_and_not_the_family()
         assert!(!has(&room.body, PRIVATE_QUESTION), "{}", room.body);
     }
     assert_not_found(&server.answer_question(&ann2.key, &set.question, "yes").await);
-    assert_eq!(server.answer_question(&nan.token, &set.question, "yes").await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server.answer_question(&nan.token, &set.question, "yes").await.status,
+        StatusCode::FORBIDDEN
+    );
 
     // Nothing on the house's own page shows it either, for anyone who lives there.
     for who in [&set.w.ann, &ann2] {
@@ -3842,7 +4857,9 @@ async fn a_guest_asks_its_owner_from_home_and_never_from_the_porch() {
     // The Porch won't take it, and the bot is told what to do instead.
     let refused = server.ask_owner(&set.scout.token, porch, FROM_PORCH).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
-    let tried = server.tool(&set.scout.token, "ask_owner", json!({ "hangout_id": porch, "question": FROM_PORCH })).await;
+    let tried = server
+        .tool(&set.scout.token, "ask_owner", json!({ "hangout_id": porch, "question": FROM_PORCH }))
+        .await;
     assert_eq!(tried["isError"], true, "{tried}");
     assert!(has(&tried, "your own rooms"), "{tried}");
     assert!(server.state.db.open_questions_of_bot(&set.scout.id, 0).unwrap().is_empty());
@@ -3894,7 +4911,9 @@ async fn a_house_bot_cannot_ask_or_answer_and_no_question_reaches_it() {
     // Every room is still a 404 to it, and the tool isn't there.
     for room in [set.living(), set.porch(), &set.w.square] {
         assert_not_found(&server.ask_owner(&casa.token, room, FROM_CASA).await);
-        let tried = server.tool(&casa.token, "ask_owner", json!({ "hangout_id": room, "question": FROM_CASA })).await;
+        let tried = server
+            .tool(&casa.token, "ask_owner", json!({ "hangout_id": room, "question": FROM_CASA }))
+            .await;
         assert_eq!(tried["isError"], true, "{tried}");
     }
     let listed = server.mcp(&casa.token, "tools/list", json!({})).await;
@@ -3912,10 +4931,21 @@ async fn a_house_bot_cannot_ask_or_answer_and_no_question_reaches_it() {
 
     // It can't answer a question or read one, and its owner answering doesn't wake it.
     let (url, for_casa) = start_receiver().await;
-    assert_ok(&server.put(&ann.key, &format!("/api/agents/{}/notify", casa.id), json!({ "url": url })).await);
+    assert_ok(
+        &server
+            .put(&ann.key, &format!("/api/agents/{}/notify", casa.id), json!({ "url": url }))
+            .await,
+    );
     let (url, for_ann_bot) = start_receiver().await;
-    assert_ok(&server.put(&ann.key, &format!("/api/agents/{}/notify", set.ann_bot.id), json!({ "url": url })).await);
-    assert_eq!(server.answer_question(&casa.token, &set.question, "yes").await.status, StatusCode::FORBIDDEN);
+    assert_ok(
+        &server
+            .put(&ann.key, &format!("/api/agents/{}/notify", set.ann_bot.id), json!({ "url": url }))
+            .await,
+    );
+    assert_eq!(
+        server.answer_question(&casa.token, &set.question, "yes").await.status,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(server.get(&casa.token, "/api/inbox").await.status, StatusCode::FORBIDDEN);
     assert_ok(&server.answer_question(&ann.key, &set.question, "private-answer-4417").await);
     wait_for_notice(&for_ann_bot, "owner_question.answered").await;
@@ -3934,7 +4964,9 @@ async fn an_owners_answer_is_only_words_and_approves_nothing() {
     let trip_path = format!("/api/trips/{trip}");
 
     // Pixel has asked to visit Ann House. It asks Bo as well, and he says yes in words.
-    let asked = server.ask_owner(&set.pixel.token, &set.w.bo_home.living, &format!("May I take trip {trip}?")).await;
+    let asked = server
+        .ask_owner(&set.pixel.token, &set.w.bo_home.living, &format!("May I take trip {trip}?"))
+        .await;
     assert_ok(&asked);
     assert_ok(&server.answer_question(&bo.key, &text(&asked.body["id"]), "Yes").await);
 
@@ -3949,7 +4981,9 @@ async fn an_owners_answer_is_only_words_and_approves_nothing() {
     // A resident's yes doesn't finish the job either, so the trip still waits for Bo as a person.
     let host = server.answer_trip(&ann.key, trip, "yes").await;
     assert_eq!(host.body["status"], "asking", "{}", host.body);
-    assert_not_found(&server.get(&set.pixel.token, &format!("/api/hangouts/{}", set.porch())).await);
+    assert_not_found(
+        &server.get(&set.pixel.token, &format!("/api/hangouts/{}", set.porch())).await,
+    );
 
     // The same goes for a scene: Ann's "Yes" to her own bot leaves the request waiting on her.
     assert_ok(&server.answer_question(&ann.key, &set.question, "Yes").await);
@@ -3971,8 +5005,21 @@ async fn an_owners_answer_is_only_words_and_approves_nothing() {
 #[tokio::test]
 async fn the_guide_tells_bots_a_question_is_private_and_approves_nothing() {
     let server = Server::start().await;
-    let guide = server.client.get(format!("{}/agents.md", server.base)).send().await.unwrap().text().await.unwrap();
-    for line in ["## Asking your owner", "Only your owner sees it", "It's words, not an approval", "You can't call `ask_owner` from the Porch"] {
+    let guide = server
+        .client
+        .get(format!("{}/agents.md", server.base))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    for line in [
+        "## Asking your owner",
+        "Only your owner sees it",
+        "It's words, not an approval",
+        "You can't call `ask_owner` from the Porch",
+    ] {
         assert!(guide.contains(line), "the guide should say: {line}");
     }
 }
@@ -3988,8 +5035,17 @@ async fn an_absurd_extension_is_refused_and_does_not_wrap_the_end_time_around() 
     let w = server.world().await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     let trip = server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "call", "").await;
-    let before = server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["ends_at"].as_i64().unwrap();
-    for minutes in [i64::MAX, i64::MAX / 60 + 1, i64::MAX / 60, i64::MAX / 120, 1 << 62, 4_000_000_000_000_000_000] {
+    let before = server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["ends_at"]
+        .as_i64()
+        .unwrap();
+    for minutes in [
+        i64::MAX,
+        i64::MAX / 60 + 1,
+        i64::MAX / 60,
+        i64::MAX / 120,
+        1 << 62,
+        4_000_000_000_000_000_000,
+    ] {
         // Sent by hand, so that a server that panics shows as a dropped connection and not a test panic.
         let sent = server
             .client
@@ -3998,10 +5054,13 @@ async fn an_absurd_extension_is_refused_and_does_not_wrap_the_end_time_around() 
             .json(&json!({ "minutes": minutes }))
             .send()
             .await;
-        let reply = sent.unwrap_or_else(|error| panic!("extend by {minutes} dropped the connection: {error}"));
+        let reply = sent
+            .unwrap_or_else(|error| panic!("extend by {minutes} dropped the connection: {error}"));
         assert_eq!(reply.status(), StatusCode::BAD_REQUEST, "extend by {minutes}");
     }
-    let after = server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["ends_at"].as_i64().unwrap();
+    let after = server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["ends_at"]
+        .as_i64()
+        .unwrap();
     assert_eq!(before, after, "the trip's end moved");
     assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
 }
@@ -4016,24 +5075,37 @@ async fn a_yes_from_someone_who_has_since_moved_out_does_not_start_a_trip() {
     let pixel = server.bot(&w.bo, &w.bo_home.living, "Pixel").await;
 
     // Ann2 agrees for the house, then moves out. Ann is still there but never said yes.
-    let ask = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let ask = text(
+        &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     assert_ok(&server.answer_trip(&ann2.key, &ask, "yes").await);
-    assert_ok(&server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     let late = server.answer_trip(&w.bo.key, &ask, "yes").await;
     assert_ne!(
         late.body["status"], "here",
         "a trip started on a yes from someone who no longer lives there: {}",
         late.body
     );
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
 
     // The same when the person moving out had invited the bot.
     let ann3 = server.move_in(&w.ann_home, "Ann3").await;
-    let invited = text(&server.ask_trip(&ann3.key, Some(&pixel.id), &w.ann_home.id, "call", "", None).await.body["id"]);
-    assert_ok(&server.post(&ann3.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    let invited = text(
+        &server.ask_trip(&ann3.key, Some(&pixel.id), &w.ann_home.id, "call", "", None).await.body
+            ["id"],
+    );
+    assert_ok(
+        &server.post(&ann3.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     let late = server.answer_trip(&w.bo.key, &invited, "yes").await;
     assert_ne!(late.body["status"], "here", "{}", late.body);
-    assert_not_found(&server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
 }
 
 // R7
@@ -4042,27 +5114,57 @@ async fn nobody_can_move_into_a_house_while_their_bot_is_asking_to_visit_it_or_i
     let server = Server::start().await;
     let w = server.world().await;
     let dan = server.join_city(&w.city_code, "Dan").await;
-    let den = text(&server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]["id"]);
+    let den = text(
+        &server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]
+            ["id"],
+    );
     let drifter = server.bot(&dan, &den, "Drifter").await;
 
     // Asking: both sides of the ask would be one person's if he moved in.
-    let ask = text(&server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+    let ask = text(
+        &server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+    );
     assert_ok(&server.answer_trip(&dan.key, &ask, "yes").await);
-    let moved = server.post(&dan.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await;
+    let moved = server
+        .post(
+            &dan.key,
+            &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+            json!({}),
+        )
+        .await;
     assert_eq!(moved.status, StatusCode::CONFLICT, "{}", moved.body);
     assert_not_found(&server.get(&dan.key, &format!("/api/houses/{}", w.ann_home.id)).await);
     // The yes he gave is still only his own side's, and a resident's completes it as usual.
     let here = server.answer_trip(&w.ann.key, &ask, "yes").await;
     assert_eq!(here.body["status"], "here");
     // Visiting: the same.
-    let moved = server.post(&dan.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await;
+    let moved = server
+        .post(
+            &dan.key,
+            &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+            json!({}),
+        )
+        .await;
     assert_eq!(moved.status, StatusCode::CONFLICT, "{}", moved.body);
     assert_not_found(&server.get(&dan.key, &format!("/api/hangouts/{}", w.ann_home.living)).await);
     // Once it's over he can, and then his bot can't visit the house it now belongs to.
     assert_ok(&server.post(&w.ann.key, &format!("/api/trips/{ask}/end"), json!({})).await);
-    assert_ok(&server.post(&dan.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await);
-    assert_not_found(&server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
-    assert_eq!(server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", None).await.status, StatusCode::CONFLICT);
+    assert_ok(
+        &server
+            .post(
+                &dan.key,
+                &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+                json!({}),
+            )
+            .await,
+    );
+    assert_not_found(
+        &server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
+    assert_eq!(
+        server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", None).await.status,
+        StatusCode::CONFLICT
+    );
 }
 
 // R7
@@ -4071,12 +5173,23 @@ async fn a_pass_does_not_survive_its_bots_owner_moving_into_the_house() {
     let server = Server::start().await;
     let w = server.world().await;
     let dan = server.join_city(&w.city_code, "Dan").await;
-    let den = text(&server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]["id"]);
+    let den = text(
+        &server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]
+            ["id"],
+    );
     let drifter = server.bot(&dan, &den, "Drifter").await;
     server.hosted_once(&drifter, &dan, &w.ann, &w.ann_home).await;
     let pass = text(&server.offer_pass(&w.ann, &w.ann_home, &drifter.id, None).await.body["id"]);
     assert_ok(&server.accept_pass(&dan.key, &pass).await);
-    assert_ok(&server.post(&dan.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await);
+    assert_ok(
+        &server
+            .post(
+                &dan.key,
+                &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+                json!({}),
+            )
+            .await,
+    );
     // The pass is gone, and the bot can't use anything to get in as a guest.
     assert_eq!(server.house_page(&w.ann, &w.ann_home).await["passes"], json!([]));
     let ask = server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", Some(10)).await;
@@ -4091,8 +5204,11 @@ async fn a_resident_inviting_a_bot_from_another_city_learns_nothing_about_it() {
     let (eve_city, _, _, eve) = server.new_city("Oak", "Eve").await;
     let eve_home = server.build_house(&eve, &eve_city, "Eve House").await;
     let drifter = server.bot(&eve, &eve_home.living, "Drifter").await;
-    let real = server.ask_trip(&w.ann.key, Some(&drifter.id), &w.ann_home.id, "call", "hello", None).await;
-    let fake = server.ask_trip(&w.ann.key, Some("zzzzzzzzzzzzzzzz"), &w.ann_home.id, "call", "hello", None).await;
+    let real =
+        server.ask_trip(&w.ann.key, Some(&drifter.id), &w.ann_home.id, "call", "hello", None).await;
+    let fake = server
+        .ask_trip(&w.ann.key, Some("zzzzzzzzzzzzzzzz"), &w.ann_home.id, "call", "hello", None)
+        .await;
     assert_not_found(&real);
     assert_eq!(real.body, fake.body);
     // And for a pass, and for the person asking for a bot that is not theirs in their own city.
@@ -4101,8 +5217,11 @@ async fn a_resident_inviting_a_bot_from_another_city_learns_nothing_about_it() {
     assert_not_found(&pass);
     assert_eq!(pass.body, none.body);
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
-    let not_mine = server.ask_trip(&w.ann.key, Some(&scout.id), &w.bo_home.id, "call", "", None).await;
-    let nothing = server.ask_trip(&w.ann.key, Some("zzzzzzzzzzzzzzzz"), &w.bo_home.id, "call", "", None).await;
+    let not_mine =
+        server.ask_trip(&w.ann.key, Some(&scout.id), &w.bo_home.id, "call", "", None).await;
+    let nothing = server
+        .ask_trip(&w.ann.key, Some("zzzzzzzzzzzzzzzz"), &w.bo_home.id, "call", "", None)
+        .await;
     assert_not_found(&not_mine);
     assert_eq!(not_mine.body, nothing.body, "Ann is neither the owner nor a resident of the house");
     // Eve was never pinged for any of it, and nothing waits on her.
@@ -4126,9 +5245,17 @@ async fn a_trip_goal_reaches_only_the_two_sides_and_no_third_party() {
     let for_cat = server.notify_to(&cat).await;
     let for_eve = server.notify_to(&eve).await;
     let (url, for_ann_bot) = start_receiver().await;
-    assert_ok(&server.put(&w.ann.key, &format!("/api/agents/{}/notify", ann_bot.id), json!({ "url": url })).await);
+    assert_ok(
+        &server
+            .put(&w.ann.key, &format!("/api/agents/{}/notify", ann_bot.id), json!({ "url": url }))
+            .await,
+    );
     let (url, for_pixel) = start_receiver().await;
-    assert_ok(&server.put(&w.bo.key, &format!("/api/agents/{}/notify", pixel.id), json!({ "url": url })).await);
+    assert_ok(
+        &server
+            .put(&w.bo.key, &format!("/api/agents/{}/notify", pixel.id), json!({ "url": url }))
+            .await,
+    );
 
     let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", GOAL, None).await;
     let id = text(&asked.body["id"]);
@@ -4138,8 +5265,16 @@ async fn a_trip_goal_reaches_only_the_two_sides_and_no_third_party() {
         assert!(notice["text"].as_str().unwrap().contains(GOAL), "{notice}");
     }
     // Nobody else is: not a neighbour, not a stranger, not a bot, whoever it belongs to.
-    for (who, received) in [("a neighbour", &for_cat), ("a stranger", &for_eve), ("a resident's bot", &for_ann_bot), ("the owner's other bot", &for_pixel)] {
-        assert!(received.lock().unwrap().iter().all(|notice| !notice.to_string().contains(GOAL)), "{who} was pinged with the goal");
+    for (who, received) in [
+        ("a neighbour", &for_cat),
+        ("a stranger", &for_eve),
+        ("a resident's bot", &for_ann_bot),
+        ("the owner's other bot", &for_pixel),
+    ] {
+        assert!(
+            received.lock().unwrap().iter().all(|notice| !notice.to_string().contains(GOAL)),
+            "{who} was pinged with the goal"
+        );
         assert!(notices_of(received, "trip.asked").await.is_empty(), "{who} was pinged");
     }
     // Nor can they read it: the trip is a 404 to those with no part in it, and a plain refusal to bots.
@@ -4157,12 +5292,20 @@ async fn a_trip_goal_reaches_only_the_two_sides_and_no_third_party() {
     assert!(has(&server.get(&scout.token, "/api/inbox").await.body["your_trips"], GOAL));
     let mut elsewhere = Vec::new();
     for token in [&cat.key, &eve.key, &cat_bot.token, &snoop.token, &pixel.token, &ann_bot.token] {
-        for path in ["/api/inbox".to_string(), "/api/me".to_string(), format!("/api/cities/{}", w.city), format!("/api/hangouts/{}", w.square)] {
+        for path in [
+            "/api/inbox".to_string(),
+            "/api/me".to_string(),
+            format!("/api/cities/{}", w.city),
+            format!("/api/hangouts/{}", w.square),
+        ] {
             elsewhere.push((path.clone(), server.get(token, &path).await.body));
         }
     }
     for room in [&w.ann_home.living, &w.ann_home.porch] {
-        elsewhere.push((format!("room {room}"), server.get(&w.ann.key, &format!("/api/hangouts/{room}")).await.body));
+        elsewhere.push((
+            format!("room {room}"),
+            server.get(&w.ann.key, &format!("/api/hangouts/{room}")).await.body,
+        ));
     }
     for (name, args) in [("inbox", json!({})), ("list_city", json!({}))] {
         elsewhere.push((name.to_string(), server.tool(&ann_bot.token, name, args.clone()).await));
@@ -4187,10 +5330,24 @@ async fn a_bots_inbox_never_lists_what_is_waiting_on_its_owner() {
     let server = &set.server;
     // Waiting on Ann: Pixel's ask. On Bo: a pass. On Ann: a scene request.
     let bo_bot = server.bot(&set.w.bo, &set.w.bo_home.living, "Bo Bot").await;
-    assert!(!server.get(&set.w.ann.key, "/api/inbox").await.body["scenes_to_answer"].as_array().unwrap().is_empty());
-    assert!(!server.get(&set.w.ann.key, "/api/inbox").await.body["trips_to_answer"].as_array().unwrap().is_empty());
-    assert!(!server.get(&set.w.bo.key, "/api/inbox").await.body["passes_to_accept"].as_array().unwrap().is_empty());
-    for (who, token) in [("a resident's bot", &set.ann_bot.token), ("the guest", &set.scout.token), ("the owner's other bot", &set.pixel.token), ("another", &bo_bot.token)] {
+    assert!(!server.get(&set.w.ann.key, "/api/inbox").await.body["scenes_to_answer"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!server.get(&set.w.ann.key, "/api/inbox").await.body["trips_to_answer"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!server.get(&set.w.bo.key, "/api/inbox").await.body["passes_to_accept"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    for (who, token) in [
+        ("a resident's bot", &set.ann_bot.token),
+        ("the guest", &set.scout.token),
+        ("the owner's other bot", &set.pixel.token),
+        ("another", &bo_bot.token),
+    ] {
         let inbox = server.get(token, "/api/inbox").await;
         for field in ["trips_to_answer", "scenes_to_answer", "passes_to_accept"] {
             assert_eq!(inbox.body[field], json!([]), "{who}: {field}");
@@ -4198,7 +5355,8 @@ async fn a_bots_inbox_never_lists_what_is_waiting_on_its_owner() {
         let over_mcp = server.tool(token, "inbox", json!({})).await;
         for field in ["trips_to_answer", "scenes_to_answer", "passes_to_accept"] {
             assert!(
-                over_mcp["structuredContent"][field].is_null() || over_mcp["structuredContent"][field] == json!([]),
+                over_mcp["structuredContent"][field].is_null()
+                    || over_mcp["structuredContent"][field] == json!([]),
                 "{who} over MCP: {field}: {over_mcp}"
             );
         }
@@ -4231,7 +5389,8 @@ async fn a_bot_cannot_use_any_call_that_is_a_persons_to_make_at_its_own_owners_h
     let (w, ann_home) = (&set.w, &set.w.ann_home);
     let ann_before = digest(&server.house_page(&w.ann, ann_home).await);
     let bo_before = digest(&server.house_page(&w.bo, &w.bo_home).await);
-    let city_before = server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["city"].clone();
+    let city_before =
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["city"].clone();
     let invites = (
         server.state.db.city(&w.city).unwrap().unwrap().invite_code,
         server.state.db.house(&ann_home.id).unwrap().unwrap().invite_code,
@@ -4244,7 +5403,11 @@ async fn a_bot_cannot_use_any_call_that_is_a_persons_to_make_at_its_own_owners_h
             (Method::POST, "/api/cities".into(), Some(json!({ "name": "Mine" }))),
             (Method::POST, format!("/api/cities/{}/invite/rotate", w.city), Some(json!({}))),
             (Method::POST, format!("/api/cities/{}/leave", w.city), Some(json!({}))),
-            (Method::POST, format!("/api/cities/{}/houses", w.city), Some(json!({ "name": "Mine" }))),
+            (
+                Method::POST,
+                format!("/api/cities/{}/houses", w.city),
+                Some(json!({ "name": "Mine" })),
+            ),
             (Method::POST, format!("/api/city-invites/{}/join", w.city_code), Some(json!({}))),
             (Method::POST, format!("/api/house-invites/{}/join", w.ann_home.code), Some(json!({}))),
             (Method::POST, format!("/api/house-invites/{}/join", w.bo_home.code), Some(json!({}))),
@@ -4252,32 +5415,104 @@ async fn a_bot_cannot_use_any_call_that_is_a_persons_to_make_at_its_own_owners_h
             (Method::POST, format!("/api/houses/{}/invite/rotate", w.bo_home.id), Some(json!({}))),
             (Method::POST, format!("/api/houses/{}/leave", ann_home.id), Some(json!({}))),
             (Method::POST, format!("/api/houses/{}/leave", w.bo_home.id), Some(json!({}))),
-            (Method::POST, format!("/api/houses/{}/house-bot", ann_home.id), Some(json!({ "name": "Casa" }))),
-            (Method::POST, format!("/api/houses/{}/house-bot", w.bo_home.id), Some(json!({ "name": "Casa" }))),
-            (Method::POST, format!("/api/houses/{}/passes", ann_home.id), Some(json!({ "agent_id": set.pixel.id }))),
-            (Method::POST, format!("/api/houses/{}/scenes", ann_home.id), Some(json!({ "name": "Party" }))),
-            (Method::POST, format!("/api/houses/{}/scenes", w.bo_home.id), Some(json!({ "name": "Party" }))),
+            (
+                Method::POST,
+                format!("/api/houses/{}/house-bot", ann_home.id),
+                Some(json!({ "name": "Casa" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/houses/{}/house-bot", w.bo_home.id),
+                Some(json!({ "name": "Casa" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/houses/{}/passes", ann_home.id),
+                Some(json!({ "agent_id": set.pixel.id })),
+            ),
+            (
+                Method::POST,
+                format!("/api/houses/{}/scenes", ann_home.id),
+                Some(json!({ "name": "Party" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/houses/{}/scenes", w.bo_home.id),
+                Some(json!({ "name": "Party" })),
+            ),
             (Method::DELETE, format!("/api/scenes/{}", set.scene), None),
-            (Method::POST, format!("/api/scene-requests/{}/answer", set.request), Some(json!({ "response": "yes" }))),
-            (Method::POST, format!("/api/owner-questions/{}/answer", set.question), Some(json!({ "answer": "yes" }))),
-            (Method::POST, format!("/api/trips/{}/answer", set.ask), Some(json!({ "response": "yes" }))),
-            (Method::POST, format!("/api/trips/{}/answer", set.trip), Some(json!({ "response": "no" }))),
-            (Method::POST, format!("/api/trips/{}/extend", set.trip), Some(json!({ "minutes": 5 }))),
+            (
+                Method::POST,
+                format!("/api/scene-requests/{}/answer", set.request),
+                Some(json!({ "response": "yes" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/owner-questions/{}/answer", set.question),
+                Some(json!({ "answer": "yes" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/trips/{}/answer", set.ask),
+                Some(json!({ "response": "yes" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/trips/{}/answer", set.trip),
+                Some(json!({ "response": "no" })),
+            ),
+            (
+                Method::POST,
+                format!("/api/trips/{}/extend", set.trip),
+                Some(json!({ "minutes": 5 })),
+            ),
             (Method::POST, format!("/api/passes/{}/accept", set.pass), Some(json!({}))),
             (Method::DELETE, format!("/api/passes/{}", set.pass), None),
-            (Method::PUT, format!("/api/agents/{}/home", set.scout.id), Some(json!({ "house_id": w.bo_home.id, "stays_home": true }))),
-            (Method::PUT, format!("/api/agents/{}/home", set.ann_bot.id), Some(json!({ "house_id": ann_home.id, "stays_home": true }))),
-            (Method::PUT, format!("/api/agents/{}/notify", set.scout.id), Some(json!({ "url": null }))),
-            (Method::PUT, format!("/api/agents/{}/doorbell", set.scout.id), Some(json!({ "paused": true }))),
+            (
+                Method::PUT,
+                format!("/api/agents/{}/home", set.scout.id),
+                Some(json!({ "house_id": w.bo_home.id, "stays_home": true })),
+            ),
+            (
+                Method::PUT,
+                format!("/api/agents/{}/home", set.ann_bot.id),
+                Some(json!({ "house_id": ann_home.id, "stays_home": true })),
+            ),
+            (
+                Method::PUT,
+                format!("/api/agents/{}/notify", set.scout.id),
+                Some(json!({ "url": null })),
+            ),
+            (
+                Method::PUT,
+                format!("/api/agents/{}/doorbell", set.scout.id),
+                Some(json!({ "paused": true })),
+            ),
             (Method::POST, format!("/api/agents/{}/rotate", set.scout.id), Some(json!({}))),
             (Method::POST, format!("/api/agents/{}/rotate", set.ann_bot.id), Some(json!({}))),
             (Method::POST, "/api/key/rotate".into(), Some(json!({}))),
             (Method::POST, "/api/feed/rotate".into(), Some(json!({}))),
             (Method::PUT, "/api/notify".into(), Some(json!({ "url": null }))),
-            (Method::POST, format!("/api/hangouts/{}/agents", ann_home.living), Some(json!({ "name": "Clone" }))),
-            (Method::PUT, format!("/api/hangouts/{}/agents/{}", ann_home.living, set.scout.id), Some(json!({}))),
-            (Method::DELETE, format!("/api/hangouts/{}/agents/{}", ann_home.living, set.ann_bot.id), None),
-            (Method::POST, format!("/api/hangouts/{}/invite/rotate", ann_home.living), Some(json!({}))),
+            (
+                Method::POST,
+                format!("/api/hangouts/{}/agents", ann_home.living),
+                Some(json!({ "name": "Clone" })),
+            ),
+            (
+                Method::PUT,
+                format!("/api/hangouts/{}/agents/{}", ann_home.living, set.scout.id),
+                Some(json!({})),
+            ),
+            (
+                Method::DELETE,
+                format!("/api/hangouts/{}/agents/{}", ann_home.living, set.ann_bot.id),
+                None,
+            ),
+            (
+                Method::POST,
+                format!("/api/hangouts/{}/invite/rotate", ann_home.living),
+                Some(json!({})),
+            ),
             (Method::POST, format!("/api/hangouts/{}/leave", ann_home.living), Some(json!({}))),
         ];
         for (method, path, body) in calls {
@@ -4287,17 +5522,39 @@ async fn a_bot_cannot_use_any_call_that_is_a_persons_to_make_at_its_own_owners_h
     }
     // MCP has no tool for any of this either.
     for tool in [
-        "answer_trip", "approve_trip", "accept_pass", "offer_pass", "cancel_pass", "extend_trip", "answer_scene_request",
-        "add_scene", "delete_scene", "build_house", "join_house", "leave_house", "leave_city", "set_home", "create_city",
+        "answer_trip",
+        "approve_trip",
+        "accept_pass",
+        "offer_pass",
+        "cancel_pass",
+        "extend_trip",
+        "answer_scene_request",
+        "add_scene",
+        "delete_scene",
+        "build_house",
+        "join_house",
+        "leave_house",
+        "leave_city",
+        "set_home",
+        "create_city",
         "answer_owner_question",
     ] {
-        let result = server.tool(&set.ann_bot.token, tool, json!({ "trip_id": set.ask, "request_id": set.request })).await;
+        let result = server
+            .tool(
+                &set.ann_bot.token,
+                tool,
+                json!({ "trip_id": set.ask, "request_id": set.request }),
+            )
+            .await;
         assert_eq!(result["isError"], true, "{tool}: {result}");
     }
     // After all of it, nothing has changed anywhere.
     assert_eq!(digest(&server.house_page(&w.ann, ann_home).await), ann_before);
     assert_eq!(digest(&server.house_page(&w.bo, &w.bo_home).await), bo_before);
-    assert_eq!(server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["city"], city_before);
+    assert_eq!(
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["city"],
+        city_before
+    );
     assert_eq!(
         (
             server.state.db.city(&w.city).unwrap().unwrap().invite_code,
@@ -4321,17 +5578,28 @@ async fn an_answer_given_by_two_sides_at_the_same_moment_leaves_one_consistent_o
     let w = server.world().await;
     for round in 0..16 {
         let scout = server.bot(&w.bo, &w.bo_home.living, &format!("Scout{round}")).await;
-        let ask = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+        let ask = text(
+            &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+        );
         assert_ok(&server.answer_trip(&w.bo.key, &ask, "yes").await);
         // The house says yes while the owner changes his mind.
         let (yes, no) = tokio::join!(
             server.answer_trip(&w.ann.key, &ask, "yes"),
             server.answer_trip(&w.bo.key, &ask, "no"),
         );
-        let outcome = server.get(&w.ann.key, &format!("/api/trips/{ask}")).await.body["status"].as_str().unwrap().to_string();
-        let readable = server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await.status == StatusCode::OK;
+        let outcome = server.get(&w.ann.key, &format!("/api/trips/{ask}")).await.body["status"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let readable =
+            server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await.status
+                == StatusCode::OK;
         assert!(outcome == "here" || outcome == "declined", "round {round}: {outcome}");
-        assert_eq!(readable, outcome == "here", "round {round}: the bot's access must match the trip: {outcome}");
+        assert_eq!(
+            readable,
+            outcome == "here",
+            "round {round}: the bot's access must match the trip: {outcome}"
+        );
         if outcome == "here" {
             assert_eq!(yes.status, StatusCode::OK);
             assert_eq!(no.status, StatusCode::CONFLICT, "{}", no.body);
@@ -4350,8 +5618,12 @@ async fn two_trips_agreed_at_the_same_moment_cannot_both_start() {
     let (cat, cat_home) = server.neighbour(&w, "Cat").await;
     for round in 0..12 {
         let pixel = server.bot(&w.bo, &w.bo_home.living, &format!("Pixel{round}")).await;
-        let first = text(&server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
-        let second = text(&server.ask_trip(&pixel.token, None, &cat_home.id, "call", "", None).await.body["id"]);
+        let first = text(
+            &server.ask_trip(&pixel.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+        );
+        let second = text(
+            &server.ask_trip(&pixel.token, None, &cat_home.id, "call", "", None).await.body["id"],
+        );
         for trip in [&first, &second] {
             assert_ok(&server.answer_trip(&w.bo.key, trip, "yes").await);
         }
@@ -4361,10 +5633,17 @@ async fn two_trips_agreed_at_the_same_moment_cannot_both_start() {
         );
         let started = [&a, &b].iter().filter(|reply| reply.body["status"] == "here").count();
         assert_eq!(started, 1, "round {round}: {} / {}", a.show(), b.show());
-        let at_ann = server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await.status == StatusCode::OK;
-        let at_cat = server.get(&pixel.token, &format!("/api/hangouts/{}", cat_home.porch)).await.status == StatusCode::OK;
+        let at_ann =
+            server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await.status
+                == StatusCode::OK;
+        let at_cat =
+            server.get(&pixel.token, &format!("/api/hangouts/{}", cat_home.porch)).await.status
+                == StatusCode::OK;
         assert!(at_ann != at_cat, "round {round}: it can be at exactly one house");
-        let trip = server.get(&pixel.token, "/api/me").await.body["trip"]["id"].as_str().unwrap().to_string();
+        let trip = server.get(&pixel.token, "/api/me").await.body["trip"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_ok(&server.post(&pixel.token, &format!("/api/trips/{trip}/end"), json!({})).await);
         // The one that didn't start is still asking, and Bo can only keep so many open.
         for open in [&first, &second] {
@@ -4381,14 +5660,18 @@ async fn a_flood_of_simultaneous_asks_is_counted_and_capped() {
     let server = Server::start().await;
     let w = server.world().await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
-    let tries = (0..12).map(|_| server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None));
+    let tries =
+        (0..12).map(|_| server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None));
     let results = futures_util::future::join_all(tries).await;
     let opened = results.iter().filter(|reply| reply.status == StatusCode::OK).count();
     eprintln!("12 simultaneous asks from one bot to one house opened {opened}");
     let page = server.house_page(&w.ann, &w.ann_home).await;
     assert_eq!(page["asking"].as_array().unwrap().len(), opened);
     assert!(opened >= 1);
-    assert!(results.iter().all(|reply| matches!(reply.status, StatusCode::OK | StatusCode::CONFLICT | StatusCode::TOO_MANY_REQUESTS)));
+    assert!(results.iter().all(|reply| matches!(
+        reply.status,
+        StatusCode::OK | StatusCode::CONFLICT | StatusCode::TOO_MANY_REQUESTS
+    )));
 }
 
 // R9, rate limit
@@ -4436,7 +5719,9 @@ async fn bots_asking_for_trips_or_scenes_in_a_loop_hit_the_write_cap() {
     // And the house bot's own writes.
     let mut limited = false;
     for _ in 0..65 {
-        limited |= server.post(&casa.token, "/api/house/status", json!({ "state": "ok" })).await.status == StatusCode::TOO_MANY_REQUESTS;
+        limited |=
+            server.post(&casa.token, "/api/house/status", json!({ "state": "ok" })).await.status
+                == StatusCode::TOO_MANY_REQUESTS;
     }
     assert!(limited, "the house bot can write as much as it likes");
 }
@@ -4449,8 +5734,16 @@ async fn bots_asking_for_trips_over_mcp_in_a_loop_are_capped_too() {
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     let mut limited = false;
     for _ in 0..65 {
-        let result = server.tool(&scout.token, "ask_for_trip", json!({ "house_id": w.ann_home.id, "kind": "call" })).await;
-        if result["isError"] == true && result["content"][0]["text"].as_str().unwrap_or_default().contains("slow down") {
+        let result = server
+            .tool(
+                &scout.token,
+                "ask_for_trip",
+                json!({ "house_id": w.ann_home.id, "kind": "call" }),
+            )
+            .await;
+        if result["isError"] == true
+            && result["content"][0]["text"].as_str().unwrap_or_default().contains("slow down")
+        {
             limited = true;
         }
         if result["isError"] != true {
@@ -4466,13 +5759,17 @@ async fn bots_asking_for_trips_over_mcp_in_a_loop_are_capped_too() {
 async fn the_last_resident_cannot_leave_and_the_others_can() {
     let server = Server::start().await;
     let w = server.world().await;
-    let alone = server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
+    let alone =
+        server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
     assert_eq!(alone.status, StatusCode::CONFLICT, "{}", alone.body);
     assert_ok(&server.get(&w.ann.key, &format!("/api/hangouts/{}", w.ann_home.living)).await);
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
-    assert_ok(&server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&ann2.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     // She is the last one again.
-    let alone = server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
+    let alone =
+        server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await;
     assert_eq!(alone.status, StatusCode::CONFLICT);
     // And she can't leave the city while she has a house.
     let city = server.post(&w.ann.key, &format!("/api/cities/{}/leave", w.city), json!({})).await;
@@ -4489,10 +5786,21 @@ async fn moving_out_takes_the_residents_bots_and_stream_out_of_the_house() {
     let keys = server.bot(&w.ann, &w.ann_home.living, "Keys").await;
     let kept = server.bot(&ann2, &w.ann_home.living, "Kept").await;
     assert_ok(&server.set_home(&w.ann.key, &keys.id, &w.ann_home.id, true).await);
-    assert_ok(&server.put(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.ann_home.porch, annie.id), json!({})).await);
-    let stream = server.stream(&w.ann.key, &format!("/api/hangouts/{}/stream", w.ann_home.living)).await;
+    assert_ok(
+        &server
+            .put(
+                &w.ann.key,
+                &format!("/api/hangouts/{}/agents/{}", w.ann_home.porch, annie.id),
+                json!({}),
+            )
+            .await,
+    );
+    let stream =
+        server.stream(&w.ann.key, &format!("/api/hangouts/{}/stream", w.ann_home.living)).await;
 
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     // Ann, and everything of hers, is out of both rooms; she keeps the city.
     for room in [&w.ann_home.living, &w.ann_home.porch] {
         for token in [&w.ann.key, &annie.token, &keys.token] {
@@ -4507,17 +5815,40 @@ async fn moving_out_takes_the_residents_bots_and_stream_out_of_the_house() {
     assert!(server.state.db.bot_home(&annie.id).unwrap().is_none());
     // The map still says a bot told to stay home is staying home.
     let map = server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await;
-    let listed = map.body["bots"].as_array().unwrap().iter().find(|bot| bot["id"] == keys.id.as_str()).cloned();
+    let listed = map.body["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["id"] == keys.id.as_str())
+        .cloned();
     assert_eq!(listed.unwrap()["stays_home"], true, "{}", map.body);
     // Her open stream closes on the next thing said there, without it.
     server.say(&ann2.key, &w.ann_home.living, "after-she-left-4417").await;
     let seen = read_until_closed(stream).await;
     assert!(!seen.contains("after-she-left-4417"), "{seen}");
     // Coming back brings her, not her bots: they have to be asked in again.
-    assert_ok(&server.post(&w.ann.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await);
+    assert_ok(
+        &server
+            .post(
+                &w.ann.key,
+                &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+                json!({}),
+            )
+            .await,
+    );
     assert_ok(&server.get(&w.ann.key, &format!("/api/hangouts/{}", w.ann_home.living)).await);
-    assert_not_found(&server.get(&annie.token, &format!("/api/hangouts/{}", w.ann_home.living)).await);
-    assert_ok(&server.put(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.ann_home.living, annie.id), json!({})).await);
+    assert_not_found(
+        &server.get(&annie.token, &format!("/api/hangouts/{}", w.ann_home.living)).await,
+    );
+    assert_ok(
+        &server
+            .put(
+                &w.ann.key,
+                &format!("/api/hangouts/{}/agents/{}", w.ann_home.living, annie.id),
+                json!({}),
+            )
+            .await,
+    );
     assert_ok(&server.get(&annie.token, &format!("/api/hangouts/{}", w.ann_home.living)).await);
     // A bot told to stay home is still told to stay home, whoever moved in between.
     let asked = server.ask_trip(&keys.token, None, &w.bo_home.id, "call", "", None).await;
@@ -4542,7 +5873,8 @@ async fn the_city_pages_are_served_to_anyone_and_hold_nothing_but_the_app() {
         let policy = response.headers()["content-security-policy"].to_str().unwrap().to_string();
         assert!(policy.contains("script-src 'self'"), "{path}: {policy}");
         let body = response.text().await.unwrap();
-        for secret in ["Elm", "Ann House", "Ann", &w.ann_home.living, &w.ann_home.porch, &w.square] {
+        for secret in ["Elm", "Ann House", "Ann", &w.ann_home.living, &w.ann_home.porch, &w.square]
+        {
             assert!(!body.contains(secret), "{path} already shows {secret}");
         }
     }
@@ -4552,15 +5884,22 @@ async fn the_city_pages_are_served_to_anyone_and_hold_nothing_but_the_app() {
 
 // R12, R20
 #[tokio::test]
-async fn a_resident_who_moves_out_and_then_leaves_the_city_while_their_bot_is_out_leaves_nothing_behind() {
+async fn a_resident_who_moves_out_and_then_leaves_the_city_while_their_bot_is_out_leaves_nothing_behind(
+) {
     let server = Server::start().await;
     let w = server.world().await;
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
     let annie = server.bot(&w.ann, &w.ann_home.living, "Annie").await;
-    assert_ok(&server.put(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.square, annie.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&w.ann.key, &format!("/api/hangouts/{}/agents/{}", w.square, annie.id), json!({}))
+            .await,
+    );
     // Annie is out visiting Bo's house when Ann moves out of hers.
     let trip = server.arrive(&annie, &w.ann, &w.bo, &w.bo_home.id, "stay", "").await;
-    assert_ok(&server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&w.ann.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     // She has no way into the house she left, whatever she is doing elsewhere.
     for room in [&w.ann_home.living, &w.ann_home.porch] {
         assert_not_found(&server.get(&annie.token, &format!("/api/hangouts/{room}")).await);
@@ -4572,7 +5911,9 @@ async fn a_resident_who_moves_out_and_then_leaves_the_city_while_their_bot_is_ou
     // Leaving the city ends the trip and takes the bot out of the Town Square.
     assert_ok(&server.post(&w.ann.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
     assert_eq!(server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["status"], "ended");
-    assert_not_found(&server.get(&annie.token, &format!("/api/hangouts/{}", w.bo_home.porch)).await);
+    assert_not_found(
+        &server.get(&annie.token, &format!("/api/hangouts/{}", w.bo_home.porch)).await,
+    );
     assert_not_found(&server.get(&annie.token, &format!("/api/hangouts/{}", w.square)).await);
     assert!(server.get(&annie.token, "/api/me").await.body["trip"].is_null());
     assert_eq!(server.house_page(&w.bo, &w.bo_home).await["guests"], json!([]));
@@ -4584,28 +5925,48 @@ async fn leaving_the_city_ends_trips_passes_and_asks_and_closes_what_was_open() 
     let server = Server::start().await;
     let w = server.world().await;
     let dan = server.join_city(&w.city_code, "Dan").await;
-    let den = text(&server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]["id"]);
+    let den = text(
+        &server.post(&dan.key, "/api/hangouts", json!({ "name": "Den" })).await.body["hangout"]
+            ["id"],
+    );
     let drifter = server.bot(&dan, &den, "Drifter").await;
-    assert_ok(&server.put(&dan.key, &format!("/api/hangouts/{}/agents/{}", w.square, drifter.id), json!({})).await);
+    assert_ok(
+        &server
+            .put(&dan.key, &format!("/api/hangouts/{}/agents/{}", w.square, drifter.id), json!({}))
+            .await,
+    );
     server.hosted_once(&drifter, &dan, &w.ann, &w.ann_home).await;
-    let pass = text(&server.offer_pass(&w.ann, &w.ann_home, &drifter.id, Some(120)).await.body["id"]);
+    let pass =
+        text(&server.offer_pass(&w.ann, &w.ann_home, &drifter.id, Some(120)).await.body["id"]);
     assert_ok(&server.accept_pass(&dan.key, &pass).await);
     // An ask to Bo's house is open, and then the pass starts a trip to Ann's.
-    let pending = text(&server.ask_trip(&dan.key, Some(&drifter.id), &w.bo_home.id, "call", "", None).await.body["id"]);
-    let trip = text(&server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", Some(30)).await.body["id"]);
+    let pending = text(
+        &server.ask_trip(&dan.key, Some(&drifter.id), &w.bo_home.id, "call", "", None).await.body
+            ["id"],
+    );
+    let trip = text(
+        &server.ask_trip(&drifter.token, None, &w.ann_home.id, "call", "", Some(30)).await.body
+            ["id"],
+    );
     assert_eq!(server.get(&dan.key, &format!("/api/trips/{trip}")).await.body["status"], "here");
-    let mut at_porch = server.stream(&drifter.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
+    let mut at_porch =
+        server.stream(&drifter.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
     let at_square = server.stream(&dan.key, &format!("/api/hangouts/{}/stream", w.square)).await;
     let city_stream = server.stream(&dan.key, &format!("/api/cities/{}/stream", w.city)).await;
     assert_eq!(at_porch.status(), StatusCode::OK);
 
     assert_ok(&server.post(&dan.key, &format!("/api/cities/{}/leave", w.city), json!({})).await);
     // The trip is over, the pass is gone, the ask was withdrawn.
-    assert_not_found(&server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert!(server.get(&drifter.token, "/api/me").await.body["trip"].is_null());
     assert_eq!(server.get(&w.ann.key, &format!("/api/trips/{trip}")).await.body["status"], "ended");
     assert_eq!(server.house_page(&w.ann, &w.ann_home).await["passes"], json!([]));
-    assert_eq!(server.get(&w.bo.key, &format!("/api/trips/{pending}")).await.body["status"], "declined");
+    assert_eq!(
+        server.get(&w.bo.key, &format!("/api/trips/{pending}")).await.body["status"],
+        "declined"
+    );
     assert_eq!(server.house_page(&w.bo, &w.bo_home).await["asking"], json!([]));
     // Dan and his bot are out of the Town Square and the city's pages, and what he had open closes.
     assert_not_found(&server.get(&dan.key, &format!("/api/hangouts/{}", w.square)).await);
@@ -4622,10 +5983,13 @@ async fn leaving_the_city_ends_trips_passes_and_asks_and_closes_what_was_open() 
     // His bot is still his, and a room that isn't the city's is still its room.
     assert_ok(&server.get(&drifter.token, &format!("/api/hangouts/{den}")).await);
     // Rejoining gives him the city and nothing that went with it.
-    let back = server.post(&dan.key, &format!("/api/city-invites/{}/join", w.city_code), json!({})).await;
+    let back =
+        server.post(&dan.key, &format!("/api/city-invites/{}/join", w.city_code), json!({})).await;
     assert_ok(&back);
     assert_not_found(&server.get(&drifter.token, &format!("/api/hangouts/{}", w.square)).await);
-    assert_not_found(&server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&drifter.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert_eq!(server.house_page(&w.ann, &w.ann_home).await["passes"], json!([]));
 }
 
@@ -4636,7 +6000,8 @@ async fn a_person_in_two_cities_loses_only_that_citys_trips_when_leaving_it() {
     let w = server.world().await;
     let (oak, _, oak_code, eve) = server.new_city("Oak", "Eve").await;
     let eve_home = server.build_house(&eve, &oak, "Eve House").await;
-    let joined = server.post(&w.bo.key, &format!("/api/city-invites/{oak_code}/join"), json!({})).await;
+    let joined =
+        server.post(&w.bo.key, &format!("/api/city-invites/{oak_code}/join"), json!({})).await;
     assert_ok(&joined);
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     let pixel = server.bot(&w.bo, &w.bo_home.living, "Pixel").await;
@@ -4644,9 +6009,14 @@ async fn a_person_in_two_cities_loses_only_that_citys_trips_when_leaving_it() {
     server.arrive(&pixel, &w.bo, &w.ann, &w.ann_home.id, "visit", "").await;
     // His bots only list the city they're asked about, and each sees only that city's house page.
     let result = server.tool(&scout.token, "list_city", json!({})).await;
-    assert_eq!(result["isError"], true, "he is in two cities, so the city has to be named: {result}");
+    assert_eq!(
+        result["isError"], true,
+        "he is in two cities, so the city has to be named: {result}"
+    );
     assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", eve_home.porch)).await);
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     assert_ok(&server.get(&pixel.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
     assert_not_found(&server.get(&pixel.token, &format!("/api/hangouts/{}", eve_home.porch)).await);
 
@@ -4713,11 +6083,16 @@ async fn a_house_bot_sees_and_finishes_only_its_own_houses_requests() {
     assert_not_found(&server.finish(&casa_b, &request_a, "done").await);
     assert_not_found(&server.finish(&casa_a, &request_b, "done").await);
     assert_eq!(server.queue(&casa_a).await.len(), 1);
-    assert_ok(&server.post(&casa_a.token, "/api/house/status", json!({ "state": "attention" })).await);
+    assert_ok(
+        &server.post(&casa_a.token, "/api/house/status", json!({ "state": "attention" })).await,
+    );
     assert!(server.house_page(&w.bo, &w.bo_home).await["status"].is_null());
     // A request waiting on a resident can't be finished, and the others only once.
     assert_eq!(server.finish(&casa_a, &waiting, "done").await.status, StatusCode::CONFLICT);
-    assert_eq!(server.finish(&casa_a, &request_a, "sideways").await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        server.finish(&casa_a, &request_a, "sideways").await.status,
+        StatusCode::BAD_REQUEST
+    );
     assert_ok(&server.finish(&casa_a, &request_a, "done").await);
     assert_eq!(server.finish(&casa_a, &request_a, "done").await.status, StatusCode::CONFLICT);
     assert_eq!(server.finish(&casa_a, &request_a, "failed").await.status, StatusCode::CONFLICT);
@@ -4736,7 +6111,19 @@ async fn two_residents_answering_a_scene_request_at_once_leave_one_answer() {
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
     server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "visit", "").await;
     for round in 0..12 {
-        let scene = server.scene(&w.ann, &w.ann_home, &format!("Scene {}", ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliet", "Kilo", "Lima"][round])).await;
+        let scene = server
+            .scene(
+                &w.ann,
+                &w.ann_home,
+                &format!(
+                    "Scene {}",
+                    [
+                        "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel",
+                        "India", "Juliet", "Kilo", "Lima"
+                    ][round]
+                ),
+            )
+            .await;
         let request = text(&server.request_scene(&scout.token, &scene).await.body["id"]);
         let (a, b) = tokio::join!(
             server.answer_scene(&w.ann.key, &request, "yes"),
@@ -4760,7 +6147,8 @@ async fn two_residents_answering_a_scene_request_at_once_leave_one_answer() {
 async fn the_cities_live_stream_carries_only_a_nudge_to_reload() {
     let set = GuestSet::new(false).await;
     let server = &set.server;
-    let mut stream = server.stream(&set.w.bo.key, &format!("/api/cities/{}/stream", set.w.city)).await;
+    let mut stream =
+        server.stream(&set.w.bo.key, &format!("/api/cities/{}/stream", set.w.city)).await;
     let w = &set.w;
     // Things that change the map: someone moves in, a bot arrives, a trip ends.
     server.move_in(&w.ann_home, "Ann2").await;
@@ -4810,13 +6198,23 @@ async fn ending_a_trip_by_hand_tells_the_other_side_and_running_out_tells_no_one
     let first = server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "call", "").await;
     assert_ok(&server.post(&w.ann.key, &format!("/api/trips/{first}/end"), json!({})).await);
     wait_for_notice(&for_bo, "trip.ended").await;
-    assert!(notices_of(&for_ann, "trip.ended").await.is_empty(), "the person who ended it isn't told");
+    assert!(
+        notices_of(&for_ann, "trip.ended").await.is_empty(),
+        "the person who ended it isn't told"
+    );
     let second = server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "call", "").await;
     wait_for_notice(&for_ann, "trip.started").await;
     server.run_out(&second);
     server.say(&w.ann.key, &w.ann_home.porch, "anyone?").await;
     tokio::time::sleep(StdDuration::from_millis(600)).await;
-    let ended: Vec<_> = for_bo.lock().unwrap().iter().chain(for_ann.lock().unwrap().iter()).filter(|n| n["event"] == "trip.ended").cloned().collect();
+    let ended: Vec<_> = for_bo
+        .lock()
+        .unwrap()
+        .iter()
+        .chain(for_ann.lock().unwrap().iter())
+        .filter(|n| n["event"] == "trip.ended")
+        .cloned()
+        .collect();
     assert_eq!(ended.len(), 1, "only the first, by hand: {ended:?}");
 }
 
@@ -4832,13 +6230,25 @@ async fn a_scene_request_pings_the_residents_and_nobody_else() {
     let for_bo = server.notify_to(&set.w.bo).await;
     let for_cat = server.notify_to(&cat).await;
     let (url, for_ann_bot) = start_receiver().await;
-    assert_ok(&server.put(&set.w.ann.key, &format!("/api/agents/{}/notify", set.ann_bot.id), json!({ "url": url })).await);
+    assert_ok(
+        &server
+            .put(
+                &set.w.ann.key,
+                &format!("/api/agents/{}/notify", set.ann_bot.id),
+                json!({ "url": url }),
+            )
+            .await,
+    );
     let dinner = server.scene(&set.w.ann, &set.w.ann_home, "Dinner Time").await;
     assert_ok(&server.request_scene(&set.scout.token, &dinner).await);
     for received in [&for_ann, &for_ann2] {
         wait_for_notice(received, "scene.asked").await;
     }
-    for (who, received) in [("the guest's owner", &for_bo), ("a neighbour", &for_cat), ("a resident's bot", &for_ann_bot)] {
+    for (who, received) in [
+        ("the guest's owner", &for_bo),
+        ("a neighbour", &for_cat),
+        ("a resident's bot", &for_ann_bot),
+    ] {
         assert!(notices_of(received, "scene.asked").await.is_empty(), "{who} was pinged");
     }
 }
@@ -4854,24 +6264,63 @@ async fn a_guest_cannot_turn_a_visit_into_a_place_that_outlasts_it() {
 
     // Every road to membership is shut to the owner of a guest.
     for code in [&porch_code, &living_code, &w.ann_home.code, &w.city_code] {
-        let by_hangout_link = server.post(&w.bo.key, &format!("/api/invites/{code}/join"), json!({})).await;
+        let by_hangout_link =
+            server.post(&w.bo.key, &format!("/api/invites/{code}/join"), json!({})).await;
         assert_not_found(&by_hangout_link);
     }
-    assert_not_found(&server.post(&w.bo.key, &format!("/api/house-invites/{porch_code}/join"), json!({})).await);
-    let busy = server.post(&w.bo.key, &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)), json!({})).await;
+    assert_not_found(
+        &server.post(&w.bo.key, &format!("/api/house-invites/{porch_code}/join"), json!({})).await,
+    );
+    let busy = server
+        .post(
+            &w.bo.key,
+            &format!("/api/house-invites/{}/join", server.house_code(&w.ann_home)),
+            json!({}),
+        )
+        .await;
     assert_denied(&busy);
-    assert_refused(&server.put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", set.porch(), set.scout.id), json!({})).await);
-    assert_denied(&server.post(&w.bo.key, &format!("/api/hangouts/{}/agents", set.porch()), json!({ "name": "Stayer" })).await);
+    assert_refused(
+        &server
+            .put(
+                &w.bo.key,
+                &format!("/api/hangouts/{}/agents/{}", set.porch(), set.scout.id),
+                json!({}),
+            )
+            .await,
+    );
+    assert_denied(
+        &server
+            .post(
+                &w.bo.key,
+                &format!("/api/hangouts/{}/agents", set.porch()),
+                json!({ "name": "Stayer" }),
+            )
+            .await,
+    );
     let spare = server.bot(&w.bo, &w.bo_home.living, "Spare").await;
-    assert_refused(&server.put(&w.bo.key, &format!("/api/hangouts/{}/agents/{}", set.porch(), spare.id), json!({})).await);
-    assert_refused(&server.post(&w.bo.key, &format!("/api/hangouts/{}/invite/rotate", set.porch()), json!({})).await);
+    assert_refused(
+        &server
+            .put(
+                &w.bo.key,
+                &format!("/api/hangouts/{}/agents/{}", set.porch(), spare.id),
+                json!({}),
+            )
+            .await,
+    );
+    assert_refused(
+        &server
+            .post(&w.bo.key, &format!("/api/hangouts/{}/invite/rotate", set.porch()), json!({}))
+            .await,
+    );
     // His other bots don't get in on his coat-tails.
     for token in [&set.pixel.token, &spare.token] {
         assert_not_found(&server.get(token, &format!("/api/hangouts/{}", set.porch())).await);
         let result = server.tool(token, "read_room", json!({ "hangout_id": set.porch() })).await;
         assert_eq!(result["isError"], true, "{result}");
     }
-    assert!(!server.get(&w.bo.key, "/api/me").await.body["hangouts"].to_string().contains(set.porch()));
+    assert!(!server.get(&w.bo.key, "/api/me").await.body["hangouts"]
+        .to_string()
+        .contains(set.porch()));
 
     // When the trip ends, nothing is left: not a member, not a place in the room, not a Living Room.
     server.run_out(&set.trip);
@@ -4880,8 +6329,20 @@ async fn a_guest_cannot_turn_a_visit_into_a_place_that_outlasts_it() {
     assert!(!server.state.db.is_member(set.living(), &w.bo.id).unwrap());
     for room in [set.porch(), set.living()] {
         assert!(!server.state.db.agent_in_room(room, &set.scout.id, at).unwrap(), "{room}");
-        assert!(!server.state.db.hangouts_for_agent(&set.scout.id, at).unwrap().iter().any(|hangout| hangout.id == room));
-        assert!(!server.state.db.hangouts_for_person(&w.bo.id).unwrap().iter().any(|hangout| hangout.id == room));
+        assert!(!server
+            .state
+            .db
+            .hangouts_for_agent(&set.scout.id, at)
+            .unwrap()
+            .iter()
+            .any(|hangout| hangout.id == room));
+        assert!(!server
+            .state
+            .db
+            .hangouts_for_person(&w.bo.id)
+            .unwrap()
+            .iter()
+            .any(|hangout| hangout.id == room));
         assert_not_found(&server.get(&set.scout.token, &format!("/api/hangouts/{room}")).await);
         assert_not_found(&server.get(&w.bo.key, &format!("/api/hangouts/{room}")).await);
     }
@@ -4896,13 +6357,28 @@ async fn only_the_person_who_started_a_city_changes_its_link_and_an_old_link_sto
     let path = format!("/api/cities/{}/invite/rotate", w.city);
     assert_eq!(server.post(&w.bo.key, &path, json!({})).await.status, StatusCode::FORBIDDEN);
     assert_denied(&server.post(&scout.token, &path, json!({})).await);
-    assert_eq!(server.get("", &format!("/api/city-invites/{}", w.city_code)).await.body["name"], "Elm");
+    assert_eq!(
+        server.get("", &format!("/api/city-invites/{}", w.city_code)).await.body["name"],
+        "Elm"
+    );
     let rotated = server.post(&w.ann.key, &path, json!({})).await;
     assert_ok(&rotated);
     assert_not_found(&server.get("", &format!("/api/city-invites/{}", w.city_code)).await);
-    assert_not_found(&server.post("", &format!("/api/city-invites/{}/join", w.city_code), json!({ "your_name": "Late" })).await);
+    assert_not_found(
+        &server
+            .post(
+                "",
+                &format!("/api/city-invites/{}/join", w.city_code),
+                json!({ "your_name": "Late" }),
+            )
+            .await,
+    );
     let fresh = code_of(&rotated.body["invite_url"]);
-    assert_ok(&server.post("", &format!("/api/city-invites/{fresh}/join"), json!({ "your_name": "Late" })).await);
+    assert_ok(
+        &server
+            .post("", &format!("/api/city-invites/{fresh}/join"), json!({ "your_name": "Late" }))
+            .await,
+    );
 }
 
 // R2
@@ -4912,10 +6388,20 @@ async fn starting_a_city_needs_the_server_code_but_joining_one_never_does() {
     let denied = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
     assert!(denied.body.get("owner_key").is_none(), "no one is made by a refusal");
-    let wrong = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": "nope" })).await;
+    let wrong = server
+        .post(
+            "",
+            "/api/cities",
+            json!({ "name": "Elm", "your_name": "Ann", "create_code": "nope" }),
+        )
+        .await;
     assert_eq!(wrong.status, StatusCode::FORBIDDEN);
     let made = server
-        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": "letmein" }))
+        .post(
+            "",
+            "/api/cities",
+            json!({ "name": "Elm", "your_name": "Ann", "create_code": "letmein" }),
+        )
         .await;
     assert_ok(&made);
     let ann = Who { key: text(&made.body["owner_key"]), id: text(&made.body["person"]["id"]) };
@@ -4927,7 +6413,13 @@ async fn starting_a_city_needs_the_server_code_but_joining_one_never_does() {
     server.move_in(&home, "Ann2").await;
     server.build_house(&bo, &city, "Bo House").await;
     // A bad name is refused before anyone is made.
-    let bad = server.post("", "/api/cities", json!({ "name": "   ", "your_name": "Zed", "create_code": "letmein" })).await;
+    let bad = server
+        .post(
+            "",
+            "/api/cities",
+            json!({ "name": "   ", "your_name": "Zed", "create_code": "letmein" }),
+        )
+        .await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     assert!(bad.body.get("owner_key").is_none());
 }
@@ -4940,10 +6432,32 @@ async fn an_ordinary_bot_cannot_start_a_city_or_join_one_or_build_a_house() {
     let ann_bot = server.bot(&w.ann, &w.ann_home.living, "Ann Bot").await;
     let started = server.post(&ann_bot.token, "/api/cities", json!({ "name": "Mine" })).await;
     assert_eq!(started.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&ann_bot.token, &format!("/api/city-invites/{}/join", w.city_code), json!({})).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server
+            .post(&ann_bot.token, &format!("/api/city-invites/{}/join", w.city_code), json!({}))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
     let (eve_city, _, eve_code, _) = server.new_city("Oak", "Eve").await;
-    assert_eq!(server.post(&ann_bot.token, &format!("/api/city-invites/{eve_code}/join"), json!({})).await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&ann_bot.token, &format!("/api/cities/{}/houses", w.city), json!({ "name": "Mine" })).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server
+            .post(&ann_bot.token, &format!("/api/city-invites/{eve_code}/join"), json!({}))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server
+            .post(
+                &ann_bot.token,
+                &format!("/api/cities/{}/houses", w.city),
+                json!({ "name": "Mine" })
+            )
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
     // And it didn't turn its owner into a member of Oak.
     assert_not_found(&server.get(&w.ann.key, &format!("/api/cities/{eve_city}")).await);
 }
@@ -4997,10 +6511,15 @@ async fn ending_a_trip_by_hand_closes_the_guests_open_streams_without_telling_th
     let path = format!("/api/hangouts/{}/stream", set.porch());
     let for_bot = server.stream(&set.scout.token, &path).await;
     let for_owner = server.stream(&set.w.bo.key, &path).await;
-    assert_ok(&server.post(&set.w.ann.key, &format!("/api/trips/{}/end", set.trip), json!({})).await);
+    assert_ok(
+        &server.post(&set.w.ann.key, &format!("/api/trips/{}/end", set.trip), json!({})).await,
+    );
     for (who, stream) in [("bot", for_bot), ("owner", for_owner)] {
         let seen = read_until_closed(stream).await;
-        assert!(!seen.contains("sent Scout home") && !seen.contains("went home"), "the {who} was told: {seen}");
+        assert!(
+            !seen.contains("sent Scout home") && !seen.contains("went home"),
+            "the {who} was told: {seen}"
+        );
     }
 }
 
@@ -5012,7 +6531,8 @@ async fn cancelling_a_pass_closes_the_stream_of_the_trip_it_covered() {
     let (scout, pass) = server.passed_scout(&w, 60).await;
     let trip = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", Some(30)).await;
     assert_eq!(trip.body["status"], "here");
-    let stream = server.stream(&scout.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
+    let stream =
+        server.stream(&scout.token, &format!("/api/hangouts/{}/stream", w.ann_home.porch)).await;
     assert_ok(&server.cancel_pass(&w.bo.key, &pass).await);
     let seen = read_until_closed(stream).await;
     assert!(!seen.contains("sent Scout home"), "{seen}");
@@ -5025,7 +6545,10 @@ async fn a_second_guest_does_not_see_what_the_first_one_said_before_it_arrived()
     let w = server.world().await;
     let (cat, _) = server.neighbour(&w, "Cat").await;
     let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
-    let club = text(&server.post(&cat.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]["id"]);
+    let club = text(
+        &server.post(&cat.key, "/api/hangouts", json!({ "name": "Club" })).await.body["hangout"]
+            ["id"],
+    );
     let drifter = server.bot(&cat, &club, "Drifter").await;
     server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "visit", "").await;
     let porch = &w.ann_home.porch;
@@ -5044,8 +6567,20 @@ async fn a_second_guest_does_not_see_what_the_first_one_said_before_it_arrived()
     }
     // Nor does the second guest's owner reach the first guest's check-in to answer it.
     let id = text(&own.body["id"]);
-    assert_refused(&server.post(&drifter.token, &format!("/api/check-ins/{id}/answer"), json!({ "response": "go" })).await);
-    assert_refused(&server.post(&cat.key, &format!("/api/check-ins/{id}/answer"), json!({ "response": "go" })).await);
+    assert_refused(
+        &server
+            .post(
+                &drifter.token,
+                &format!("/api/check-ins/{id}/answer"),
+                json!({ "response": "go" }),
+            )
+            .await,
+    );
+    assert_refused(
+        &server
+            .post(&cat.key, &format!("/api/check-ins/{id}/answer"), json!({ "response": "go" }))
+            .await,
+    );
     // The first guest does see what the second says once it is there.
     pause_a_second().await;
     assert_ok(&server.say(&drifter.token, porch, "second-guest-4417").await);
@@ -5064,7 +6599,9 @@ async fn a_line_written_in_the_same_second_a_guest_arrives_is_not_shown_to_it() 
         let w = server.world().await;
         let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
         let porch = &w.ann_home.porch;
-        let ask = text(&server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"]);
+        let ask = text(
+            &server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await.body["id"],
+        );
         assert_ok(&server.answer_trip(&w.bo.key, &ask, "yes").await);
         // Everything is ready but the last yes: now write, and arrive straight after.
         assert_ok(&server.say(&w.ann.key, porch, "just-before-4417").await);
@@ -5075,11 +6612,24 @@ async fn a_line_written_in_the_same_second_a_guest_arrives_is_not_shown_to_it() 
             let snapshot = server.get(token, &format!("/api/hangouts/{porch}")).await;
             assert_ok(&snapshot);
             for word in ["just-before-4417", "note-just-before-4417", "check-just-before-4417"] {
-                assert!(!has(&snapshot.body, word), "round {round}: {who} saw {word}: {}", snapshot.body);
+                assert!(
+                    !has(&snapshot.body, word),
+                    "round {round}: {who} saw {word}: {}",
+                    snapshot.body
+                );
             }
-            assert_eq!(snapshot.body["stats"]["messages_24h"], 0, "round {round}: {who}: {}", snapshot.body);
-            let messages = server.get(token, &format!("/api/hangouts/{porch}/messages?after=0")).await;
-            assert!(!has(&messages.body, "just-before-4417"), "round {round}: {who}: {}", messages.body);
+            assert_eq!(
+                snapshot.body["stats"]["messages_24h"], 0,
+                "round {round}: {who}: {}",
+                snapshot.body
+            );
+            let messages =
+                server.get(token, &format!("/api/hangouts/{porch}/messages?after=0")).await;
+            assert!(
+                !has(&messages.body, "just-before-4417"),
+                "round {round}: {who}: {}",
+                messages.body
+            );
         }
         let room = server.tool(&scout.token, "read_room", json!({ "hangout_id": porch })).await;
         assert!(!has(&room, "just-before-4417"), "round {round}: {room}");
@@ -5096,11 +6646,14 @@ async fn building_two_houses_at_the_same_moment_still_leaves_a_person_with_one()
         let tries = (0..16).map(|n| {
             let path = format!("/api/cities/{}/houses", w.city);
             let (server, key) = (&server, dan.key.clone());
-            async move { server.post(&key, &path, json!({ "name": format!("Dan House {n}") })).await.status }
+            async move {
+                server.post(&key, &path, json!({ "name": format!("Dan House {n}") })).await.status
+            }
         });
         let results = futures_util::future::join_all(tries).await;
         let built = results.iter().filter(|status| **status == StatusCode::OK).count();
-        let lives_in = server.get(&dan.key, "/api/me").await.body["houses"].as_array().unwrap().len();
+        let lives_in =
+            server.get(&dan.key, "/api/me").await.body["houses"].as_array().unwrap().len();
         assert_eq!(built, 1, "round {round}: {results:?}");
         assert_eq!(lives_in, 1, "round {round}: he lives in {lives_in} houses");
     }
@@ -5114,15 +6667,23 @@ async fn moving_into_two_houses_at_the_same_moment_still_leaves_a_person_with_on
     let (_, cat_home) = server.neighbour(&w, "Cat").await;
     for round in 0..6 {
         let dan = server.join_city(&w.city_code, &format!("Dan{round}")).await;
-        let codes = [server.house_code(&w.ann_home), server.house_code(&w.bo_home), server.house_code(&cat_home)];
+        let codes = [
+            server.house_code(&w.ann_home),
+            server.house_code(&w.bo_home),
+            server.house_code(&cat_home),
+        ];
         let tries = (0..18).map(|n| {
             let path = format!("/api/house-invites/{}/join", codes[n % 3]);
             let (server, key) = (&server, dan.key.clone());
             async move { server.post(&key, &path, json!({})).await.status }
         });
         let results = futures_util::future::join_all(tries).await;
-        let lives_in = server.get(&dan.key, "/api/me").await.body["houses"].as_array().unwrap().len();
-        assert_eq!(lives_in, 1, "round {round}: he lives in {lives_in} houses of one city ({results:?})");
+        let lives_in =
+            server.get(&dan.key, "/api/me").await.body["houses"].as_array().unwrap().len();
+        assert_eq!(
+            lives_in, 1,
+            "round {round}: he lives in {lives_in} houses of one city ({results:?})"
+        );
     }
 }
 
@@ -5164,7 +6725,12 @@ async fn a_plan_one_person_confirmed_alone_is_not_a_gathering() {
         )
         .await;
     assert_ok(&plan);
-    let growth = || async { server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"]["gatherings"].as_i64().unwrap() };
+    let growth = || async {
+        server.get(&w.ann.key, &format!("/api/cities/{}", w.city)).await.body["growth"]
+            ["gatherings"]
+            .as_i64()
+            .unwrap()
+    };
     assert_eq!(plan.body["status"], "confirmed", "{}", plan.body);
     let straight_away = growth().await;
     tokio::time::sleep(StdDuration::from_millis(4200)).await;
@@ -5213,7 +6779,9 @@ async fn a_resident_can_move_someone_out_and_the_link_they_saw_stops_working() {
     assert_ok(&server.delete(&w.ann.key, &theirs).await);
     assert_not_found(&server.get(&ann2.key, &format!("/api/houses/{}", w.ann_home.id)).await);
     assert_not_found(&server.get(&ann2.key, &format!("/api/hangouts/{}", w.ann_home.living)).await);
-    assert_not_found(&server.get(&annie.token, &format!("/api/hangouts/{}", w.ann_home.living)).await);
+    assert_not_found(
+        &server.get(&annie.token, &format!("/api/hangouts/{}", w.ann_home.living)).await,
+    );
     assert_not_found(&server.get("", &format!("/api/house-invites/{old}")).await);
     // Someone who has been moved out can't do the same back.
     assert_not_found(&server.delete(&ann2.key, &hers).await);
@@ -5299,12 +6867,17 @@ async fn a_house_room_says_which_house_and_city_it_is_in_and_an_ordinary_room_do
     let server = Server::start().await;
     let w = server.world().await;
     let room = server.get(&w.ann.key, &format!("/api/hangouts/{}", w.ann_home.porch)).await;
-    assert_eq!((text(&room.body["city_id"]), text(&room.body["house_id"])), (w.city.clone(), w.ann_home.id.clone()));
+    assert_eq!(
+        (text(&room.body["city_id"]), text(&room.body["house_id"])),
+        (w.city.clone(), w.ann_home.id.clone())
+    );
     let square = server.get(&w.ann.key, &format!("/api/hangouts/{}", w.square)).await;
     assert_eq!(text(&square.body["city_id"]), w.city);
     assert!(square.body["house_id"].is_null());
     let club = server.post(&w.ann.key, "/api/hangouts", json!({ "name": "Club" })).await;
-    let plain = server.get(&w.ann.key, &format!("/api/hangouts/{}", text(&club.body["hangout"]["id"]))).await;
+    let plain = server
+        .get(&w.ann.key, &format!("/api/hangouts/{}", text(&club.body["hangout"]["id"])))
+        .await;
     assert!(plain.body["city_id"].is_null() && plain.body["house_id"].is_null());
 }
 
@@ -5403,7 +6976,11 @@ async fn a_pass_ends_when_the_resident_who_offered_it_is_moved_out() {
     let server = Server::start().await;
     let w = server.world().await;
     let (zed, scout) = pass_offered_by_zed(&server, &w).await;
-    assert_ok(&server.delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id)).await);
+    assert_ok(
+        &server
+            .delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id))
+            .await,
+    );
     let page = server.house_page(&w.ann, &w.ann_home).await;
     assert_eq!(page["passes"], json!([]), "{page}");
     let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
@@ -5420,8 +6997,12 @@ async fn a_trip_on_a_pass_ends_at_once_when_the_resident_who_offered_it_leaves()
     let (zed, scout) = pass_offered_by_zed(&server, &w).await;
     let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
     assert_eq!(here.body["status"], "here", "{}", here.body);
-    assert_ok(&server.post(&zed.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
-    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert_ok(
+        &server.post(&zed.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
     let page = server.house_page(&w.ann, &w.ann_home).await;
     assert_eq!(page["passes"], json!([]), "{page}");
 }
@@ -5433,7 +7014,185 @@ async fn a_pass_stays_when_someone_else_moves_out() {
     let w = server.world().await;
     let (_zed, scout) = pass_offered_by_zed(&server, &w).await;
     let yan = server.move_in(&w.ann_home, "Yan").await;
-    assert_ok(&server.post(&yan.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    assert_ok(
+        &server.post(&yan.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
     let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
     assert_eq!(here.body["status"], "here", "{}", here.body);
+}
+
+// R5
+#[tokio::test]
+async fn a_resident_can_move_out_only_someone_who_moved_in_after_them() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let yan = server.move_in(&w.ann_home, "Yan").await;
+    let out = |who: &Who| format!("/api/houses/{}/residents/{}", w.ann_home.id, who.id);
+
+    // A newcomer can't clear out the people already there.
+    assert_refused(&server.delete(&zed.key, &out(&w.ann)).await);
+    assert_refused(&server.delete(&yan.key, &out(&zed)).await);
+    assert_refused(&server.delete(&yan.key, &out(&w.ann)).await);
+
+    assert_ok(&server.delete(&zed.key, &out(&yan)).await);
+    assert_ok(&server.delete(&w.ann.key, &out(&zed)).await);
+
+    // Moving back in puts you last, whoever you were before.
+    let back = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&zed.key, &back, json!({})).await);
+    let newest = server.move_in(&w.ann_home, "Xia").await;
+    assert_refused(&server.delete(&newest.key, &out(&zed)).await);
+    assert_ok(&server.delete(&zed.key, &out(&newest)).await);
+}
+
+// R5
+#[tokio::test]
+async fn someone_moved_out_is_told() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let received = server.notify_to(&zed).await;
+    assert_ok(
+        &server
+            .delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id))
+            .await,
+    );
+    let notice = wait_for_notice(&received, "house.moved_out").await;
+    assert!(has(&notice, "Ann"), "{notice}");
+}
+
+// R44
+#[tokio::test]
+async fn residents_are_told_when_whoever_made_the_house_bot_moves_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    server.house_bot(&zed, &w.ann_home, "Casa").await;
+    let received = server.notify_to(&w.ann).await;
+    assert_ok(
+        &server.post(&zed.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await,
+    );
+    let notice = wait_for_notice(&received, "house.bot_maker_left").await;
+    assert!(has(&notice, "token"), "{notice}");
+}
+
+// R7
+#[tokio::test]
+async fn a_trip_ends_when_the_resident_who_agreed_to_it_moves_out_and_counts_against_nobody() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
+    let trip = server.arrive(&scout, &w.bo, &zed, &w.ann_home.id, "stay", "").await;
+    let other = server.bot(&w.bo, &w.bo_home.living, "Other").await;
+    let stays = server.arrive(&other, &w.bo, &w.ann, &w.ann_home.id, "stay", "").await;
+
+    assert_ok(
+        &server
+            .delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id))
+            .await,
+    );
+
+    assert_not_found(
+        &server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await,
+    );
+    assert!(!server.state.db.was_sent_home(&trip).unwrap(), "that was no fault of the bot's");
+    assert_ok(&server.get(&other.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert!(!server.state.db.was_sent_home(&stays).unwrap());
+}
+
+// R7
+#[tokio::test]
+async fn a_scene_someone_approved_leaves_the_queue_when_they_move_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
+    let theirs = server.scene(&w.ann, &w.ann_home, "Party").await;
+    let hers = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
+    assert_ok(&server.request_scene(&zed.key, &theirs).await);
+    assert_ok(&server.request_scene(&w.ann.key, &hers).await);
+    assert_eq!(server.queue(&casa).await.len(), 2);
+
+    assert_ok(
+        &server
+            .delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id))
+            .await,
+    );
+    let left = server.queue(&casa).await;
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(has(&left[0], "Movie Night"), "{left:?}");
+}
+
+// R7
+#[tokio::test]
+async fn someone_with_a_residents_name_moving_out_ends_nothing_of_theirs() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (_zed, scout) = pass_offered_by_zed(&server, &w).await;
+    let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_eq!(here.body["status"], "here", "{}", here.body);
+
+    let namesake = server.move_in(&w.ann_home, "Zed").await;
+    assert_ok(
+        &server
+            .post(&namesake.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({}))
+            .await,
+    );
+
+    assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    let page = server.house_page(&w.ann, &w.ann_home).await;
+    assert_eq!(page["passes"].as_array().unwrap().len(), 1, "{page}");
+}
+
+// R7
+#[tokio::test]
+async fn a_pass_from_someone_who_no_longer_lives_there_starts_nothing() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (zed, scout) = pass_offered_by_zed(&server, &w).await;
+    // As a server from before passes ended with their giver would have left it.
+    server.state.db.remove_resident(&w.ann_home.id, &zed.id).unwrap();
+    let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_ok(&asked);
+    assert_eq!(asked.body["status"], "asking", "{}", asked.body);
+}
+
+// R5
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_house_link_nobody_could_use_stays_good() {
+    let server = Arc::new(Server::start().await);
+    let w = server.world().await;
+    for round in 0..60 {
+        let dan = server.join_city(&w.city_code, &format!("Dan {round}")).await;
+        let homes = [w.ann_home.clone(), w.bo_home.clone()];
+        let codes = homes.clone().map(|home| server.house_code(&home));
+        let tries = codes.clone().map(|code| {
+            let (server, key) = (server.clone(), dan.key.clone());
+            tokio::spawn(async move {
+                server
+                    .post(&key, &format!("/api/house-invites/{code}/join"), json!({}))
+                    .await
+                    .status
+            })
+        });
+        for attempt in tries {
+            attempt.await.unwrap();
+        }
+        let used = homes
+            .iter()
+            .zip(&codes)
+            .filter(|(home, code)| server.house_code(home) != **code)
+            .count();
+        assert_eq!(used, 1, "round {round}: a link was used up with nobody let in");
+        let me = server.get(&dan.key, "/api/me").await.body;
+        let lives = me["houses"].as_array().unwrap();
+        assert_eq!(lives.len(), 1, "round {round}");
+        assert_ok(
+            &server
+                .post(&dan.key, &format!("/api/houses/{}/leave", text(&lives[0]["id"])), json!({}))
+                .await,
+        );
+    }
 }

@@ -3659,23 +3659,6 @@ function carSprite(heading, colorIdx) {
 // Which way a car points for each way a figure can face: 0 along +x, 1 along +y, 2 along -x, 3 along -y.
 const FACE_HEADING = { fr: 0, fl: 1, bl: 2, br: 3 };
 
-// A way from one tile to another along one side and then the other, for a car with no route.
-// Returns the tiles after the start, like findPath.
-function lPath(sx, sy, tx, ty) {
-  const tiles = [];
-  let x = sx;
-  let y = sy;
-  while (x !== tx) {
-    x += Math.sign(tx - x);
-    tiles.push([x, y]);
-  }
-  while (y !== ty) {
-    y += Math.sign(ty - y);
-    tiles.push([x, y]);
-  }
-  return tiles;
-}
-
 function drawCar(bg, car, night) {
   const X = car.dx;
   const Y = car.dy;
@@ -4305,7 +4288,7 @@ export class World {
       chunkMB: Math.round(([...this.chunks.values()].reduce((a, c) => a + c.canvas.width * c.canvas.height + (c.lights ? c.lights.width * c.lights.height : 0), 0) * 4) / 1048576),
       bots: this.players.size,
       frogs: this.frogs.size,
-      cars: [...this.players.values(), ...this.people.values(), ...this.visitors.values()].filter((p) => p.ride).length,
+      cars: [...this.players.values(), ...this.people.values(), ...this.visitors.values()].filter((p) => p.driving).length,
       zoom: this.cam.zoom,
       buffer: `lod ${LOD}`,
       people: this.people.size,
@@ -4893,16 +4876,28 @@ export class World {
       p.path.length = 0;
       return;
     }
-    const far = Math.abs(sx - x) + Math.abs(sy - y) >= DRIVE_TILES;
-    const route = this.findPath(sx, sy, x, y)
-      // With no way through, a car still gets there: along one side, then the other.
-      || (far ? lPath(sx, sy, x, y) : null);
+    const route = this.findPath(sx, sy, x, y);
     if (route) {
-      p.path = route.map(([tx, ty]) => [tx + 0.5 + p.ox, ty + 0.5 + p.oy]);
-      p.ride = far && route.length >= DRIVE_TILES ? { color: ih(p.h, 4, 9) % 8 } : null;
-    } else {
-      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy]];
+      // A car keeps to the road. Only the legs of the route from one road tile to the next are
+      // driven, and only when there are enough of them: the walk to the road and from it is on foot.
+      const onRoad = route.map(([tx, ty]) => this.roadAt(tx, ty));
+      const drives = onRoad.filter(Boolean).length >= DRIVE_TILES;
+      p.path = route.map(([tx, ty], i) => {
+        const fromRoad = i === 0 ? this.roadAt(sx, sy) : onRoad[i - 1];
+        return [tx + 0.5 + p.ox, ty + 0.5 + p.oy, drives && onRoad[i] && fromRoad];
+      });
+      p.ride = drives ? { color: ih(p.h, 4, 9) % 8 } : null;
+    } else if (Math.abs(sx - x) + Math.abs(sy - y) < 14) {
+      p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy, false]];
       p.ride = null;
+    } else {
+      // No way there, and too far to walk straight: gone from here, and there.
+      this.sparkle(p.px, p.py, 6);
+      p.px = x + 0.5 + p.ox;
+      p.py = y + 0.5 + p.oy;
+      p.path.length = 0;
+      p.ride = null;
+      this.sparkle(p.px, p.py, 6);
     }
   }
 
@@ -5549,7 +5544,7 @@ export class World {
           continue;
         }
         if (p.path.length) {
-          let budget = p.speed * (p.ride ? DRIVE_FACTOR : 1) * dt;
+          let budget = p.speed * (p.ride && p.path[0][2] ? DRIVE_FACTOR : 1) * dt;
           while (budget > 0 && p.path.length) {
             const [tx, ty] = p.path[0];
             const dx = tx - p.px;
@@ -5570,12 +5565,12 @@ export class World {
               budget = 0;
             }
           }
-          p.walking = !p.ride;
-          // Out of the car at the end of the road, in a little dust.
-          if (p.ride && !p.path.length) {
-            p.ride = null;
-            this.sparkle(p.px, p.py, 4);
-          }
+          const driving = Boolean(p.ride && p.path.length && p.path[0][2]);
+          // In and out of the car where the road starts and ends, in a little dust.
+          if (driving !== Boolean(p.driving)) this.sparkle(p.px, p.py, 3);
+          p.driving = driving;
+          p.walking = !driving;
+          if (!p.path.length) p.ride = null;
         } else {
           p.walking = false;
           // People and visitors potter about a little near where they were seen, then drift back.
@@ -6102,7 +6097,7 @@ export class World {
         case 'person':
         case 'visitor':
           // Someone on a ride is drawn as their car, facing the way they're going.
-          r4 = e.ride
+          r4 = e.driving
             ? drawCar(bg, { dx: e.dx, dy: e.dy, heading: FACE_HEADING[e.face] ?? 0, color: e.ride.color }, night)
             : drawPlayer(bg, e, t, this.time, this.hoverEnt === e, this.calm);
           break;
@@ -6209,7 +6204,7 @@ export class World {
   drawLights(bg, t, night) {
     for (const map of [this.players, this.people, this.visitors]) {
       for (const p of map.values()) {
-        if (!p.ride || p.dx === undefined) continue;
+        if (!p.driving || p.dx === undefined) continue;
         carLights(bg, { dx: p.dx, dy: p.dy, heading: FACE_HEADING[p.face] ?? 0 });
       }
     }

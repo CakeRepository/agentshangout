@@ -173,7 +173,12 @@ pub const BOT_PARTS: [Part; 5] = [
     Part {
         part: "chest",
         label: "Chest",
-        choices: &[word("plain", "Lights"), word("heart", "Heart"), word("star", "Star"), word("bolt", "Bolt")],
+        choices: &[
+            word("plain", "Lights"),
+            word("heart", "Heart"),
+            word("star", "Star"),
+            word("bolt", "Bolt"),
+        ],
     },
     Part { part: "hat", label: "Hat", choices: HATS },
 ];
@@ -228,12 +233,20 @@ pub fn person_wears(name: &str, color: &str, chosen: &Look) -> Look {
 /// C4, C16: everything a bot has on. Its eyes follow its shell unless someone chose others.
 pub fn bot_wears(name: &str, owner_color: &str, chosen: &Look) -> Look {
     const HEADS: [&str; 3] = ["antenna", "twin", "wide"];
-    let parts = [("head", HEADS[name_hash(name) as usize % HEADS.len()]), ("chest", "plain"), ("hat", "none")];
+    let parts = [
+        ("head", HEADS[name_hash(name) as usize % HEADS.len()]),
+        ("chest", "plain"),
+        ("hat", "none"),
+    ];
     dressed(&parts, fabric_of(owner_color).map(|fabric| ("shell", fabric)), chosen)
 }
 
 fn dressed(parts: &[(&str, &str)], colour: Option<(&str, &str)>, chosen: &Look) -> Look {
-    let mut worn: Look = parts.iter().chain(&colour).map(|(part, word)| (part.to_string(), word.to_string())).collect();
+    let mut worn: Look = parts
+        .iter()
+        .chain(&colour)
+        .map(|(part, word)| (part.to_string(), word.to_string()))
+        .collect();
     worn.extend(chosen.clone());
     worn
 }
@@ -265,7 +278,11 @@ pub fn worn_by_person(state: &AppState, person_id: &str) -> ApiResult<Look> {
 }
 
 /// C4, C6: what's chosen for each of these, by id, with anyone who chose nothing left out.
-pub fn looks_of(state: &AppState, wearer: Wearer, ids: &[String]) -> ApiResult<BTreeMap<String, Look>> {
+pub fn looks_of(
+    state: &AppState,
+    wearer: Wearer,
+    ids: &[String],
+) -> ApiResult<BTreeMap<String, Look>> {
     let mut looks = state.db.looks(wearer, ids)?;
     for look in looks.values_mut() {
         look.retain(|part, choice| in_wardrobe(wearer, part, choice));
@@ -282,16 +299,28 @@ pub struct Looks {
 }
 
 /// C11, C16: for the people with this floor open and the room's bots. A bot has nothing to draw.
-pub fn in_room(state: &AppState, caller: &Caller, present: &[String], agents: &[Agent]) -> ApiResult<Looks> {
+pub fn in_room(
+    state: &AppState,
+    caller: &Caller,
+    present: &[String],
+    agents: &[Agent],
+) -> ApiResult<Looks> {
     if caller.is_agent() {
         return Ok(Looks::default());
     }
     let bots: Vec<String> = agents.iter().map(|agent| agent.id.clone()).collect();
-    Ok(Looks { people: worn(state, Wearer::Person, present)?, bots: worn(state, Wearer::Bot, &bots)? })
+    Ok(Looks {
+        people: worn(state, Wearer::Person, present)?,
+        bots: worn(state, Wearer::Bot, &bots)?,
+    })
 }
 
 /// C13, C16: for the bots on a city's map. A bot has nothing to draw.
-pub fn on_map(state: &AppState, caller: &Caller, bots: &[String]) -> ApiResult<BTreeMap<String, Look>> {
+pub fn on_map(
+    state: &AppState,
+    caller: &Caller,
+    bots: &[String],
+) -> ApiResult<BTreeMap<String, Look>> {
     if caller.is_agent() {
         return Ok(BTreeMap::new());
     }
@@ -320,12 +349,7 @@ pub fn on_players(state: &AppState, players: &[WorldPlayer]) -> ApiResult<BTreeM
 }
 
 /// C1, C2, C5: all of a change is checked before any of it is kept.
-fn change_look(
-    state: &AppState,
-    wearer: Wearer,
-    id: &str,
-    change: &Change,
-) -> ApiResult<Value> {
+fn change_look(state: &AppState, wearer: Wearer, id: &str, change: &Change) -> ApiResult<Value> {
     for (part, choice) in change {
         let known = match choice {
             Some(choice) => in_wardrobe(wearer, part, choice),
@@ -372,7 +396,9 @@ fn slow_down(state: &AppState, caller: &Caller) -> ApiResult<()> {
     if state.allow_writes(&format!("look:{}", caller.person_id), MAX_CHANGES_PER_MINUTE) {
         return Ok(());
     }
-    Err(ApiError::too_many_requests(format!("slow down: {MAX_CHANGES_PER_MINUTE} changes a minute")))
+    Err(ApiError::too_many_requests(format!(
+        "slow down: {MAX_CHANGES_PER_MINUTE} changes a minute"
+    )))
 }
 
 // Routes

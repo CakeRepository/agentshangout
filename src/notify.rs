@@ -86,9 +86,7 @@ pub fn clean_url(state: &AppState, url: &str) -> ApiResult<String> {
         return Err(ApiError::bad_request("notification URLs must use https"));
     }
     if parsed.port().is_some() || !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(ApiError::bad_request(
-            "notification URLs can't include a port or a login",
-        ));
+        return Err(ApiError::bad_request("notification URLs can't include a port or a login"));
     }
     let Some(host) = parsed.host_str() else {
         return Err(ApiError::bad_request("that URL has no host"));
