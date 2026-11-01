@@ -4666,6 +4666,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "floors_left",
         "wake_settings",
         "wake_rings",
+        "trusted_bot_wakes",
+        "bot_wake_rings",
+        "bot_wake_owner_chat",
         "project_sites",
         "meet_calls",
         "world_more_places",
@@ -4692,6 +4695,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         connection.execute("DROP VIEW world_every_place", []).unwrap();
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "trusted_bot_wakes",
+            "bot_wake_rings",
+            "bot_wake_owner_chat",
             "world_more_places",
             "meet_calls",
             "project_sites",

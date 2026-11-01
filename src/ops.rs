@@ -281,6 +281,9 @@ pub fn post_message(
         body: &body,
         now: now(),
     })?;
+    if caller.agent_id.is_none() && message.kind == "chat" {
+        state.db.note_bot_wake_owner_chat(message.id)?;
+    }
     note_mentions(state, &message)?;
     // I62: a chat line in this room clears thinking here. A note doesn't.
     if kind == "chat" {
@@ -310,7 +313,10 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
         }
         if crate::doorbell::mentions(&message.body, &bot.name) {
             // Asked before adding this one, which would otherwise be what it's waiting to read.
-            let rings = rings_for_mention(state, message, bot, belongs)?;
+            let home_bot_ring = message.agent_id.is_some()
+                && state.db.note_bot_wake_ring(&bot.id, message.id, message.created_at)?;
+            // Keep the separately authorized L30 public-social path and its own limits intact.
+            let rings = home_bot_ring || rings_for_mention(state, message, bot, belongs)?;
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
             if rings {
                 let notice = notify::Notice {
@@ -319,7 +325,11 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
                     text: "Someone mentioned you. Call inbox. To reply in a room, call say."
                         .to_string(),
                 };
-                notify::send(state, std::slice::from_ref(&bot.id), &notice);
+                if home_bot_ring {
+                    notify::send_once(state, &bot.id, &notice);
+                } else {
+                    notify::send(state, std::slice::from_ref(&bot.id), &notice);
+                }
             }
         }
     }
@@ -1169,11 +1179,34 @@ pub fn set_agent_notify(
     url: NotifyAuth<'_>,
     auth: NotifyAuth<'_>,
     only_me: Option<bool>,
+    trusted_bots: Option<&[String]>,
 ) -> ApiResult<()> {
-    own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
+    let target = own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
     // Everything is checked before anything is written, so a save that's refused changes nothing.
     if let NotifyAuth::Set(secret) = &auth {
         notify::auth_header(secret)?;
+    }
+    if let Some(bots) = trusted_bots {
+        if bots.len() > 20 {
+            return Err(ApiError::bad_request("choose at most 20 bots allowed to wake this bot"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for sender_id in bots {
+            let sender = state.db.agent(sender_id, now())?;
+            let is_house = state.db.bot_home(sender_id)?.is_some_and(|home| home.is_house);
+            if sender_id == agent_id
+                || !seen.insert(sender_id)
+                || sender.is_none_or(|sender| sender.owner_id != target.owner_id)
+                || is_house
+            {
+                return Err(ApiError::bad_request(
+                    "choose distinct ordinary bots of your own, other than this bot",
+                ));
+            }
+        }
+        if !bots.is_empty() && state.db.bot_home(agent_id)?.is_some_and(|home| home.is_house) {
+            return Err(ApiError::bad_request("a house bot cannot receive bot mention wakes"));
+        }
     }
     // Leaving the URL out keeps the one already saved. An empty one removes the ping and the key.
     let url = match url {
@@ -1188,20 +1221,16 @@ pub fn set_agent_notify(
             }
         }
     };
-    if let Some(only_me) = only_me {
-        state.db.set_wakes_only_for_owner(agent_id, only_me)?;
-    }
-    if url.is_none() {
-        state.db.set_notify_url(agent_id, None)?;
-        state.db.set_notify_auth(agent_id, None)?;
-        return Ok(());
-    }
-    state.db.set_notify_url(agent_id, url.as_deref())?;
-    match auth {
-        NotifyAuth::Keep => {}
-        NotifyAuth::Clear => state.db.set_notify_auth(agent_id, None)?,
-        NotifyAuth::Set(secret) => state.db.set_notify_auth(agent_id, Some(secret.trim()))?,
-    }
+    let auth = if url.is_none() {
+        None
+    } else {
+        match auth {
+            NotifyAuth::Keep => state.db.notify_auth(agent_id)?,
+            NotifyAuth::Clear => None,
+            NotifyAuth::Set(secret) => Some(secret.trim().to_string()),
+        }
+    };
+    state.db.save_agent_notify(agent_id, url.as_deref(), auth.as_deref(), only_me, trusted_bots)?;
     Ok(())
 }
 
@@ -1228,7 +1257,18 @@ pub fn agent_notify(
     let url = state.db.notify_url(agent_id)?;
     let auth = state.db.notify_auth(agent_id)?.is_some();
     let only_me = state.db.wakes_only_for_owner(agent_id)?;
-    Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me }))
+    let trusted_bots = state.db.trusted_bots(agent_id)?;
+    let mut available_bots = Vec::new();
+    if !state.db.bot_home(agent_id)?.is_some_and(|home| home.is_house) {
+        for bot in state.db.agents_of(&caller.person_id, now())? {
+            if bot.id != agent_id && !state.db.bot_home(&bot.id)?.is_some_and(|home| home.is_house)
+            {
+                available_bots.push(serde_json::json!({ "id": bot.id, "name": bot.name }));
+            }
+        }
+    }
+    Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me,
+        "trusted_bots": trusted_bots, "available_bots": available_bots }))
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {

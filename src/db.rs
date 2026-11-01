@@ -724,6 +724,29 @@ CREATE TABLE IF NOT EXISTS wake_rings (
     PRIMARY KEY (message_id, agent_id)
 );
 CREATE INDEX IF NOT EXISTS wake_rings_by_bot ON wake_rings (agent_id, rung_at);
+-- E26: explicit sender-specific wake permission. It confers no authority on message content.
+CREATE TABLE IF NOT EXISTS trusted_bot_wakes (
+    agent_id   TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    sender_id  TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    PRIMARY KEY (agent_id, sender_id),
+    CHECK (agent_id != sender_id)
+);
+-- E27: durable reservations, separate from human rings and never pruned by the daily social cap.
+-- Message ids are tombstones, not foreign keys: deleting a floor's history must not refund rings.
+CREATE TABLE IF NOT EXISTS bot_wake_rings (
+    message_id  INTEGER NOT NULL,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS bot_wake_rings_by_bot ON bot_wake_rings (agent_id, rung_at);
+-- A deleted bot's messages lose agent_id, so only chat authenticated as human can reset E27.
+-- Keep the marker even if that owner's chat/floor is later deleted.
+CREATE TABLE IF NOT EXISTS bot_wake_owner_chat (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL
+);
 -- I58: a bot working on a reply in a room. waiting is derived from unread mentions.
 CREATE TABLE IF NOT EXISTS bot_thinking (
     agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -5248,6 +5271,111 @@ impl Db {
             params![agent_id, only_me],
         )?;
         Ok(())
+    }
+
+    pub fn trusted_bots(&self, agent_id: &str) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut query = conn.prepare(
+            "SELECT sender_id FROM trusted_bot_wakes WHERE agent_id = ? ORDER BY sender_id",
+        )?;
+        let rows = query.query_map([agent_id], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Everything has been validated by the owner operation; save all wake settings together.
+    pub fn save_agent_notify(
+        &self,
+        agent_id: &str,
+        url: Option<&str>,
+        auth: Option<&str>,
+        only_me: Option<bool>,
+        trusted_bots: Option<&[String]>,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (table, column, value) in
+            [("notify_targets", "url", url), ("notify_auth", "secret", auth)]
+        {
+            match value {
+                Some(value) => tx.execute(
+                    &format!(
+                        "INSERT INTO {table} (owner_id, {column}) VALUES (?1, ?2)
+                              ON CONFLICT (owner_id) DO UPDATE SET {column} = excluded.{column}"
+                    ),
+                    params![agent_id, value],
+                )?,
+                None => {
+                    tx.execute(&format!("DELETE FROM {table} WHERE owner_id = ?"), [agent_id])?
+                }
+            };
+        }
+        if let Some(only_me) = only_me {
+            tx.execute(
+                "INSERT INTO wake_settings (agent_id, only_me) VALUES (?, ?)
+                 ON CONFLICT (agent_id) DO UPDATE SET only_me = excluded.only_me",
+                params![agent_id, only_me],
+            )?;
+        }
+        if let Some(bots) = trusted_bots {
+            tx.execute("DELETE FROM trusted_bot_wakes WHERE agent_id = ?", [agent_id])?;
+            for sender in bots {
+                tx.execute(
+                    "INSERT INTO trusted_bot_wakes (agent_id, sender_id) VALUES (?, ?)",
+                    params![agent_id, sender],
+                )?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Called only for fresh chat authenticated as a human in post_message, never for bot chat.
+    pub fn note_bot_wake_owner_chat(&self, message_id: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_wake_owner_chat (space_id, message_id)
+             SELECT s.id, m.id FROM messages m
+             JOIN floors f ON f.hangout_id = m.hangout_id
+             JOIN spaces s ON s.id = f.space_id
+             WHERE m.id = ? AND m.kind = 'chat' AND m.agent_id IS NULL
+               AND s.kind = 'house' AND s.owner_id = m.person_id
+             ON CONFLICT (space_id) DO UPDATE SET message_id = MAX(message_id, excluded.message_id)",
+            [message_id],
+        )?;
+        Ok(())
+    }
+
+    /// E26-E27: atomically check live permission and reserve one bot ring. No human ring is used.
+    pub fn note_bot_wake_ring(
+        &self,
+        agent_id: &str,
+        message_id: i64,
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let rung = self.conn().execute(
+            "INSERT OR IGNORE INTO bot_wake_rings (message_id, agent_id, space_id, rung_at)
+             SELECT m.id, target.id, s.id, ?3 FROM messages m
+             JOIN agents sender ON sender.id = m.agent_id
+             JOIN agents target ON target.id = ?1 AND target.owner_id = sender.owner_id
+             JOIN trusted_bot_wakes grant_ ON grant_.agent_id = target.id AND grant_.sender_id = sender.id
+             JOIN room_agents sr ON sr.agent_id = sender.id AND sr.hangout_id = m.hangout_id
+             JOIN room_agents tr ON tr.agent_id = target.id AND tr.hangout_id = m.hangout_id
+             JOIN floors f ON f.hangout_id = m.hangout_id
+             JOIN spaces s ON s.id = f.space_id AND s.kind = 'house' AND s.owner_id = target.owner_id
+             LEFT JOIN bot_wake_owner_chat owner_chat ON owner_chat.space_id = s.id
+             WHERE m.id = ?2 AND m.kind = 'chat' AND m.person_id = sender.owner_id
+               AND sender.id != target.id
+               AND NOT EXISTS (SELECT 1 FROM bot_homes WHERE agent_id IN (sender.id, target.id) AND is_house = 1)
+               AND EXISTS (SELECT 1 FROM notify_targets WHERE owner_id = target.id)
+               AND NOT EXISTS (SELECT 1 FROM agent_doorbell WHERE agent_id = target.id AND paused = 1)
+               AND NOT EXISTS (SELECT 1 FROM wake_settings WHERE agent_id = target.id AND only_me = 1)
+               AND m.id > COALESCE(owner_chat.message_id, 0)
+               AND NOT EXISTS (SELECT 1 FROM bot_wake_rings WHERE agent_id = target.id
+                               AND (rung_at > ?3 - 180 OR message_id >= m.id))
+               AND (SELECT COUNT(*) FROM bot_wake_rings
+                    WHERE agent_id = target.id AND space_id = s.id
+                      AND message_id > COALESCE(owner_chat.message_id, 0)) < 5",
+            params![agent_id, message_id, now],
+        )?;
+        Ok(rung > 0)
     }
 
     pub fn unread_mentions(&self, agent_id: &str) -> rusqlite::Result<Vec<Mention>> {
