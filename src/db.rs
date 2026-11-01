@@ -7988,6 +7988,34 @@ mod tests {
         assert_eq!(db.roads("nowhere").unwrap(), []);
     }
 
+    // R41
+    #[test]
+    fn roads_go_by_where_a_bot_lives_now() {
+        let db = Db::open(":memory:").unwrap();
+        two_houses(&db);
+        db.create_person("p3", "Cy", "key3", "feed3", 0).unwrap();
+        db.add_city_member("c1", "p3", 0).unwrap();
+        house(&db, "hb", "c1", "p3", 30);
+        bot(&db, "b3", "p2");
+        let road = |a: &str, b: &str, trips| Road { a: a.to_string(), b: b.to_string(), trips };
+
+        // A bot with no home arrives, and that draws nothing.
+        start_trip(&db, "t1", "b3", "hz", 60, 1000);
+        assert_eq!(db.roads("c1").unwrap(), []);
+
+        // Given a home, its arrival draws a road from there.
+        db.set_bot_home("b3", "ha", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 1)]);
+
+        // Moved, the road moves with it.
+        db.set_bot_home("b3", "hb", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("hb", "hz", 1)]);
+
+        // With no home again, the road goes.
+        db.conn().execute("DELETE FROM bot_homes WHERE agent_id = 'b3'", []).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), []);
+    }
+
     #[test]
     fn building_a_house_makes_its_rooms() {
         let db = Db::open(":memory:").unwrap();

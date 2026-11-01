@@ -187,7 +187,9 @@ read, so it needs no tables of its own and can't drift from the facts.
   isn't counted (F17 in [referrals.md](referrals.md)).
 - **R41.** A road joins two houses once a bot that lives at one has really arrived at the other.
   Trips that were declined, never answered or never started don't count. Roads have no direction.
-  A bot with no home makes no road.
+  A bot with no home makes no road. A road goes by where the bot lives now, because growth is worked
+  out on read: give a bot a home and its earlier arrivals draw roads from it, move it and they're
+  drawn from the new one, and a road goes when no bot that lives at either end has been to the other.
 - **R42.** Stages need both houses and gatherings, so neither invitations nor bots can grow a city
   alone:
 
