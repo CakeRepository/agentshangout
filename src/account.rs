@@ -9,7 +9,7 @@ use crate::{
     city,
     db::AccountGone,
     error::{ApiError, ApiResult},
-    now, ops, trust, AppState,
+    now, ops, sign_in, trust, AppState,
 };
 
 /// A44: what a room that stays is told. There's no name in it.
@@ -24,6 +24,8 @@ pub fn delete(
     typed_name: &str,
 ) -> ApiResult<()> {
     ops::require_human(caller, "delete an account")?;
+    // A54: a stolen Discord or GitHub account mustn't be able to destroy what's theirs.
+    sign_in::refuse_outside_session(state, caller, "delete your account")?;
     if auth::bearer_token(headers).is_some() {
         return Err(ApiError::forbidden("an account can only be deleted from its own page"));
     }

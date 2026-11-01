@@ -857,6 +857,40 @@ async fn a_session_a_site_started_cant_change_how_the_account_is_signed_in_to() 
     }
 }
 
+// A54, A31
+#[tokio::test]
+async fn a_session_a_site_started_cant_delete_the_account_and_the_link_goes_with_it() {
+    for site in Site::ALL {
+        let server = Server::start().await;
+        let (_, ann, _) = server.someone("Ann").await;
+        server.link(&ann, site, "ann").await;
+        let through_a_site = server.session(site, "ann").await;
+        let delete = |cookie: String| {
+            let body = json!({ "name": "Ann" });
+            let server = &server;
+            async move {
+                server.send("", Some(&cookie), Method::POST, "/api/me/delete", Some(body)).await
+            }
+        };
+        delete(format!("ah_session={through_a_site}")).await.refused(StatusCode::FORBIDDEN);
+        assert_eq!(server.get(&ann.key, "/api/me").await.ok()["name"], "Ann");
+
+        // Any other way in can, and the link and what it started go too.
+        delete(format!("ah_session={}", server.other_session(&ann).await)).await.ok();
+        assert_eq!(server.linked_as(&ann, site), None);
+        server.get(&through_a_site, "/api/me").await.refused(StatusCode::UNAUTHORIZED);
+        server.sign_in(site, "ann").await.refused(StatusCode::UNAUTHORIZED);
+
+        // So that account is free for someone else, or for them on a new account.
+        let (_, bo, _) = server.someone("Bo").await;
+        server.link(&bo, site, "ann").await;
+        assert_eq!(
+            server.get(&server.session(site, "ann").await, "/api/me").await.ok()["name"],
+            "Bo"
+        );
+    }
+}
+
 // A54
 #[tokio::test]
 async fn any_other_way_in_can_still_do_those() {
