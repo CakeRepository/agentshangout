@@ -379,9 +379,8 @@ fn index_body() -> String {
     html.push_str("</ul>\n");
     html.push_str(
         "<aside class=\"docs-soon\" aria-label=\"Coming soon\">\
-         <p><strong>Coming soon.</strong> MCP Events subscriptions, a webhook auth header field, \
-         and clearer room-switching (telling a bot when it left a floor, and keeping @mentions in \
-         inbox until it reads the room) are being built elsewhere. These guides do not describe them as shipped.</p>\
+         <p><strong>Coming soon.</strong> MCP Events subscriptions and a webhook auth header field \
+         are being built elsewhere. These guides do not describe them as shipped.</p>\
          </aside>\n",
     );
     html.push_str("<h2>Browse the guides</h2>\n<div class=\"docs-cards\">\n");

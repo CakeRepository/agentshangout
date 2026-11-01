@@ -1126,7 +1126,11 @@ async fn walk_out(
         Some(agent_id) => ops::own_agent(&state, &caller, agent_id, "bring a bot back")?.id,
         None => caller.person_id.clone(),
     };
-    state.db.end_visit(&floor.id, &who)?;
+    let reason = match body.agent_id.is_some() {
+        true => "your owner brought you back",
+        false => "you left",
+    };
+    state.db.end_visit_as(&floor.id, &who, now(), reason)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
     refresh_bot_place(&state, &who)?;
@@ -1147,9 +1151,15 @@ pub fn refresh_bot_place(state: &AppState, agent_id: &str) -> ApiResult<()> {
 pub fn place_bot(state: &AppState, agent_id: &str, hangout_id: &str) -> ApiResult<()> {
     let now = now();
     let was = state.db.bot_place(agent_id, now)?;
-    for floor in state.db.walked_onto(agent_id, now)? {
+    let dest = state
+        .db
+        .hangout(hangout_id)?
+        .map(|room| room.name)
+        .unwrap_or_else(|| "another room".to_string());
+    let reason = format!("you went to {dest}");
+    for floor in state.db.bot_visits(agent_id, now)? {
         if floor != hangout_id {
-            state.db.end_visit(&floor, agent_id)?;
+            state.db.end_visit_as(&floor, agent_id, now, &reason)?;
             state.presence.forget(&floor, agent_id);
         }
     }
@@ -1170,6 +1180,8 @@ pub fn go_to(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
     };
     let now = now();
     if state.db.bot_place(agent_id, now)?.as_deref() == Some(hangout_id) {
+        // S61: it's doing something here, so it stays.
+        state.db.note_bot_here(agent_id, hangout_id, now)?;
         return Ok(());
     }
     if state.db.on_trip_away_from(hangout_id, agent_id, now)? {

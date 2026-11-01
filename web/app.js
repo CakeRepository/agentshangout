@@ -6,8 +6,9 @@ import { planInviteView } from './plan-invite.js';
 
 const app = document.getElementById('app');
 const startingTitle = document.title;
-// Where someone was when they left to link a bot on Discord, for this tab only.
-const DISCORD_WAY_BACK = 'discord-way-back';
+// Where someone was when they left for Discord or GitHub, for this tab only.
+const WAY_BACK = 'way-back';
+const leaving = () => sessionStorage.setItem(WAY_BACK, location.pathname);
 let leaveRoom = () => {};
 
 // Builds DOM with text nodes only. Nothing a bot writes is ever parsed as HTML.
@@ -245,6 +246,7 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
     return h('div', { class: 'card access' },
       h('h2', {}, 'Been here before?'),
       h('p', { class: 'muted note' }, `${NO_PASSKEYS[status.reason]} Sign in with your owner key.`),
+      signInElsewhere(),
       ownerKeyForm(onOwnerKey));
   }
 
@@ -294,10 +296,50 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
         if (person) await onSignedIn(person);
       }),
     }, 'Sign in with a passkey'),
+    signInElsewhere(),
     signInError,
     h('p', { class: 'muted' }, 'New here? ', toggle),
     createForm,
     ownerKeyInstead(onOwnerKey));
+}
+
+// Plain links to this server, which redirects to the site. It stays empty until the server says
+// which sites it has (A58), and someone whose account has no link is told so when they come back.
+function signInElsewhere() {
+  const links = h('div', { class: 'sign-in-elsewhere' });
+  api('/api/sign-in').then(({ sites }) => links.replaceChildren(...sites.map(({ site, name }) => h('a', {
+    class: 'button',
+    href: `/api/sign-in/${site}`,
+    onclick: leaving,
+  }, `Sign in with ${name}`)))).catch(() => {});
+  return links;
+}
+
+// A56: this is the only place a link shows, and only to its own person.
+function signInCard(me) {
+  if (!me.sign_in.length) return null;
+  const error = formError();
+  const row = ({ site, name, linked }) => h('li', { class: 'passkey-row' },
+    h('div', { class: 'passkey-main' },
+      h('strong', {}, name),
+      h('small', { class: 'muted' }, linked ? `Linked to ${linked}` : 'Not linked')),
+    linked ? h('button', {
+      type: 'button',
+      class: 'link danger',
+      onclick: act(error, async () => {
+        if (!confirm(`Unlink ${name}? It will stop signing you in, and anywhere signed in with it gets signed out.`)) return;
+        await api(`/api/sign-in/${encodeURIComponent(site)}`, { method: 'DELETE' });
+        await route();
+      }),
+    }, `Unlink ${name}`) : !me.sign_in_session
+      ? h('a', { class: 'link', href: `/api/sign-in/${site}/link`, onclick: leaving }, `Link ${name}`)
+      : h('small', { class: 'muted' }, 'Sign in with a passkey or your owner key to link this'));
+  return h('section', { class: 'card passkeys', 'aria-label': 'Discord and GitHub' },
+    h('h2', {}, 'Discord and GitHub'),
+    h('p', { class: 'muted' }, 'Link an account and you can sign in with it in one click. Only you see it, and we get its id and username and nothing else. ',
+      h('a', { href: '/privacy', target: '_blank' }, 'Privacy')),
+    error,
+    h('ul', { class: 'passkey-list' }, me.sign_in.map(row)));
 }
 
 // Signed-in people's passkeys: what they have, add another, remove one. `first` is the list the
@@ -523,7 +565,7 @@ async function homeParts(me) {
   return {
     signIn,
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
-    account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
+    account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList), signInCard(me)].filter(Boolean) : [signIn()],
     // Someone signed in starts a third space by building one on the map.
     // S49: on a private server this form is how someone makes their first account.
     rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me || server.asks_for_code ? null : createForm].filter(Boolean),
@@ -3049,7 +3091,7 @@ async function roomView(id) {
       h('div', { class: 'modal-actions' }, h('a', {
         class: 'button primary',
         href: `/api/agents/${agent.id}/discord`,
-        onclick: () => sessionStorage.setItem(DISCORD_WAY_BACK, location.pathname),
+        onclick: leaving,
       }, 'Continue to Discord')));
   }
 
@@ -6166,18 +6208,18 @@ function saveClock() {
   api('/api/clock', { method: 'PUT', body }).then(() => { clockSaved = true; }).catch(() => {});
 }
 
-// A17: Discord sends people back here with a code. The session cookie stayed behind on that
-// redirect, so the server can't tell who this is until this page asks from its own site. Null means
-// it worked, and the page they came from is the address again.
-async function discordLinkedView() {
+// A17, A48: Discord and GitHub send people back here with a code. The session cookie stayed behind
+// on that redirect, so the server can't tell who this is until this page asks from its own site.
+// Null means it worked, and the page they came from is the address again.
+async function backFromElsewhere(finishPath) {
   const query = new URLSearchParams(location.search);
-  const back = sessionStorage.getItem(DISCORD_WAY_BACK) || '/';
-  sessionStorage.removeItem(DISCORD_WAY_BACK);
-  history.replaceState({}, '', '/discord/linked');
-  let problem = 'Nothing was linked, because Discord wasn\'t given a yes.';
+  const back = sessionStorage.getItem(WAY_BACK) || '/';
+  sessionStorage.removeItem(WAY_BACK);
+  history.replaceState({}, '', location.pathname);
+  let problem = 'Nothing changed, because you didn\'t say yes there.';
   if (query.get('code')) {
     try {
-      await api('/api/discord/finish', { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      await api(finishPath, { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
       history.replaceState({}, '', back);
       return null;
     } catch (error) {
@@ -6185,10 +6227,15 @@ async function discordLinkedView() {
     }
   }
   return h('main', { class: 'home' }, h('div', { class: 'card' },
-    h('h2', {}, 'That didn\'t link'),
+    h('h2', {}, 'That didn\'t work'),
     h('p', { class: 'muted' }, problem),
     link(back, 'Go back')));
 }
+
+const COMING_BACK = {
+  '/discord/linked': '/api/discord/finish',
+  '/sign-in/back': '/api/sign-in/finish',
+};
 
 async function route() {
   leaveRoom();
@@ -6220,8 +6267,8 @@ async function route() {
       });
     }
     else if (path === '/worlds') view = await worldsView();
-    else if (path === '/discord/linked') {
-      view = await discordLinkedView();
+    else if (COMING_BACK[path]) {
+      view = await backFromElsewhere(COMING_BACK[path]);
       if (!view) return route();
     }
     else view = await homeView();

@@ -146,7 +146,7 @@ pub fn routine_view(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResu
         public_places: routine.public_places,
         social_now: until.is_some(),
         social_until: until,
-        out_at: state.db.walked_onto(agent_id, now)?.into_iter().next(),
+        out_at: state.db.bot_visits(agent_id, now)?.into_iter().next(),
     })
 }
 
@@ -210,7 +210,7 @@ async fn put_routine(
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     // Turning public places off brings it back from anywhere it went by itself or wandered to.
     if !routine.public_places {
-        come_back_now(&state, &agent.id)?;
+        let _ = come_back_now(&state, &agent.id, "your owner turned public places off")?;
     }
     Ok(Json(routine_view(&state, &agent.id, &agent.owner_id)?))
 }
@@ -252,7 +252,7 @@ fn walk_bot_in(
     if state.db.is_turned_out(&floor.space_id, owner_id)? {
         return Err(ApiError::not_found());
     }
-    let mut left = state.db.walked_onto(agent_id, now)?;
+    let mut left = state.db.bot_visits(agent_id, now)?;
     left.extend(state.db.bot_place(agent_id, now)?);
     let walked = state.db.walk_in(
         &NewVisit {
@@ -285,7 +285,14 @@ pub fn go_out(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Va
     ops::note_agent_write(state, caller)?;
     let until = ends.min(now + WALK_IN_SECS);
     match walk_bot_in(state, agent_id, &caller.person_id, floor_id, until)? {
-        WalkedIn::In => Ok(json!({ "hangout_id": floor_id, "until": ops::iso(until) })),
+        WalkedIn::In => {
+            let name = state.db.hangout(floor_id)?.map(|room| room.name);
+            Ok(json!({
+                "hangout_id": floor_id,
+                "until": ops::iso(until),
+                "you_are_in": { "id": floor_id, "name": name },
+            }))
+        }
         WalkedIn::Full => Err(ApiError::conflict("that floor is full")),
         WalkedIn::TooManyBots => Err(ApiError::conflict(format!(
             "your owner has {MAX_BOTS_WALKED_IN} bots on that floor already"
@@ -294,22 +301,95 @@ pub fn go_out(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Va
     }
 }
 
-fn come_back_now(state: &AppState, agent_id: &str) -> ApiResult<bool> {
-    let floors = state.db.walked_onto(agent_id, now())?;
+fn come_back_now(state: &AppState, agent_id: &str, reason: &str) -> ApiResult<Vec<String>> {
+    let now = now();
+    let floors = state.db.bot_visits(agent_id, now)?;
     for floor in &floors {
-        state.db.end_visit(floor, agent_id)?;
+        state.db.end_visit_as(floor, agent_id, now, reason)?;
         state.presence.forget(floor, agent_id);
         ops::refresh(state, floor);
     }
     crate::spaces::refresh_bot_place(state, agent_id)?;
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
-    Ok(!floors.is_empty())
+    Ok(floors)
 }
 
-/// L8: a bot comes back from wherever it went out to.
-pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
+fn room_json(state: &AppState, hangout_id: Option<&str>) -> ApiResult<Value> {
+    let Some(id) = hangout_id else {
+        return Ok(Value::Null);
+    };
+    let name = state.db.hangout(id)?.map(|room| room.name);
+    Ok(json!({ "id": id, "name": name }))
+}
+
+/// L8: a bot comes back from wherever it went out to. When it isn't out, the answer says where it
+/// is, so a room it belongs to isn't mistaken for a walk-in.
+pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
-    come_back_now(state, agent_id)
+    let left = come_back_now(state, agent_id, "you came back")?;
+    let now = now();
+    let place = state.db.bot_place(agent_id, now)?;
+    let you_are_in = room_json(state, place.as_deref())?;
+    let mut reply = json!({ "ok": true, "was_out": !left.is_empty(), "you_are_in": you_are_in });
+    if left.is_empty() {
+        reply["reason"] = json!(not_out_reason(state, caller, agent_id, place.as_deref())?);
+    } else if place.as_ref().is_some_and(|here| left.contains(here)) {
+        let name = you_are_in["name"].as_str().unwrap_or("this room");
+        reply["reason"] = json!(format!(
+            "the walk-in ended, and you're still in {name} because you belong there. \
+             go_to_room takes you to another room."
+        ));
+    }
+    if let Some(home) = home_room(state, caller, agent_id, place.as_deref())? {
+        reply["home"] = json!({ "id": home.0, "name": home.1 });
+    }
+    Ok(reply)
+}
+
+/// Where come_back would send a bot that is standing in a public floor it belongs to.
+fn home_room(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+    here: Option<&str>,
+) -> ApiResult<Option<(String, String)>> {
+    let now = now();
+    if let Some((id, name)) = state.db.owner_house_floor(&caller.person_id)? {
+        if here != Some(id.as_str()) && state.db.agent_in_room(&id, agent_id, now)? {
+            return Ok(Some((id, name)));
+        }
+    }
+    let rooms = state.db.hangouts_for_agent(agent_id, now)?;
+    Ok(rooms
+        .into_iter()
+        .find(|room| here != Some(room.id.as_str()))
+        .map(|room| (room.id, room.name)))
+}
+
+fn not_out_reason(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+    here: Option<&str>,
+) -> ApiResult<String> {
+    let Some(id) = here else {
+        return Ok("you're not out.".to_string());
+    };
+    let name = state.db.hangout(id)?.map(|room| room.name).unwrap_or_else(|| "this room".into());
+    let public = state.db.floor(id)?.is_some_and(|floor| floor.access == "public");
+    if public {
+        let home = home_room(state, caller, agent_id, Some(id))?;
+        let elsewhere = home.map_or(
+            "go_to_room takes you to another room you belong to.".to_string(),
+            |(home_id, home_name)| {
+                format!("go_to_room to {home_name} ({home_id}) takes you there.")
+            },
+        );
+        return Ok(format!(
+            "you're in {name} because you belong there, not as a walk-in. {elsewhere}"
+        ));
+    }
+    Ok(format!("you're not out. you're in {name}."))
 }
 
 /// L17: who The Commons shows at its places, by name, beside each building's door. A bot is at the
@@ -397,7 +477,7 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     let Ok(ends) = out_until(state, agent_id, owner_id, now)? else {
         return Ok(());
     };
-    if !state.db.walked_onto(agent_id, now)?.is_empty() {
+    if !state.db.bot_visits(agent_id, now)?.is_empty() {
         return Ok(());
     }
     let slot = now.div_euclid(WANDER_SECS);

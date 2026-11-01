@@ -747,8 +747,10 @@ fn place_of(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Plac
     let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
     let space = state.db.space(&floor.space_id)?.ok_or_else(ApiError::not_found)?;
     let runs = spaces::runs(state, caller, &space)?;
-    if !runs && !state.in_room(caller, &floor.id)? {
-        return Err(ApiError::not_found());
+    // S62: someone who left this floor is told when and why. Someone who never entered still
+    // gets the same answer as for a floor that isn't there.
+    if !runs {
+        ops::require_room(state, caller, &floor.id)?;
     }
     Ok(Place { floor, runs })
 }
@@ -1070,9 +1072,7 @@ fn from_your_owner(caller: &Caller, note: &ItemNote) -> bool {
 /// I13, I14: an item's notes, for a page or a bot, with who wrote each and the room's trust note.
 pub fn read_notes(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<Value> {
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     let kind = holder_of(&item)?;
     let place = place_of(state, caller, &item.hangout_id)?;
     let guest = state.guest_visit(caller, &item.hangout_id)?;
@@ -1101,9 +1101,7 @@ pub fn add_note(
     text: &str,
 ) -> ApiResult<ItemNote> {
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     no_quiet(state, caller, &item.hangout_id)?;
     // S19: as a person or a bot. A bot that was sent in writes no more than the person who sent it.
     if state.guest_visit(caller, &item.hangout_id)?.is_some() {
@@ -1194,9 +1192,7 @@ pub fn use_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<V
         return Err(ApiError::forbidden("only bots use items"));
     };
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
-    if !state.in_room(caller, &item.hangout_id)? {
-        return Err(ApiError::not_found());
-    }
+    ops::require_room(state, caller, &item.hangout_id)?;
     let kind = kind_of(&item.kind)
         .filter(|kind| kind.does.is_some())
         .ok_or_else(|| ApiError::conflict("that can't be used"))?;

@@ -45,9 +45,9 @@ impl App {
 
 /// What's read from Discord. Everything else it sends is ignored, so it can't be kept by accident.
 #[derive(Deserialize)]
-struct Account {
-    id: String,
-    username: String,
+pub(crate) struct Account {
+    pub(crate) id: String,
+    pub(crate) username: String,
 }
 
 #[derive(Deserialize)]
@@ -159,20 +159,26 @@ pub fn unlink(state: &AppState, caller: &Caller, agent_id: &str) -> ApiResult<()
     refresh_rooms(state, agent_id)
 }
 
-/// Swaps a code for the account behind it. The token is revoked here, whatever the read found, so
-/// none outlives this. `None` means no account came of it, and nothing here logs a code or a token.
-async fn read_account(state: &AppState, app: &App, code: &str) -> Option<Account> {
-    // Nothing here is a person's URL, but a redirect would still take the secret somewhere else.
-    let client =
-        Client::builder().redirect(redirect::Policy::none()).timeout(TIMEOUT).build().ok()?;
-    let token = client
+// Nothing here is a person's URL, but a redirect would still take the secret somewhere else.
+fn client() -> Option<Client> {
+    Client::builder().redirect(redirect::Policy::none()).timeout(TIMEOUT).build().ok()
+}
+
+/// Swaps a code for a token. `verifier` is for a step that used PKCE.
+async fn swap_code(
+    client: &Client,
+    app: &App,
+    code: &str,
+    return_to: &str,
+    verifier: Option<&str>,
+) -> Option<Token> {
+    let mut form =
+        vec![("grant_type", "authorization_code"), ("code", code), ("redirect_uri", return_to)];
+    form.extend(verifier.map(|verifier| ("code_verifier", verifier)));
+    client
         .post(format!("{}/oauth2/token", app.api_url))
         .basic_auth(&app.client_id, Some(&app.client_secret))
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &return_address(state)),
-        ])
+        .form(&form)
         .send()
         .await
         .ok()?
@@ -180,7 +186,14 @@ async fn read_account(state: &AppState, app: &App, code: &str) -> Option<Account
         .ok()?
         .json::<Token>()
         .await
-        .ok()?;
+        .ok()
+}
+
+/// Swaps a code for the account behind it. The token is revoked here, whatever the read found, so
+/// none outlives this. `None` means no account came of it, and nothing here logs a code or a token.
+async fn read_account(state: &AppState, app: &App, code: &str) -> Option<Account> {
+    let client = client()?;
+    let token = swap_code(&client, app, code, &return_address(state), None).await?;
     let account = fetch_account(&client, app, &token.access_token).await;
     let revoked = client
         .post(format!("{}/oauth2/token/revoke", app.api_url))
@@ -193,6 +206,19 @@ async fn read_account(state: &AppState, app: &App, code: &str) -> Option<Account
         tracing::warn!("a Discord token could not be revoked");
     }
     account
+}
+
+/// The same read for signing in (A47). The token is dropped rather than revoked, because revoking it
+/// would take back the person's yes, and Discord would ask again at every sign-in.
+pub(crate) async fn account_for_sign_in(
+    app: &App,
+    code: &str,
+    return_to: &str,
+    verifier: &str,
+) -> Option<Account> {
+    let client = client()?;
+    let token = swap_code(&client, app, code, return_to, Some(verifier)).await?;
+    fetch_account(&client, app, &token.access_token).await
 }
 
 async fn fetch_account(client: &Client, app: &App, token: &str) -> Option<Account> {

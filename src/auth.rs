@@ -199,15 +199,19 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ").map(str::trim)
 }
 
-pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get(header::COOKIE)?
         .to_str()
         .ok()?
         .split(';')
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == SESSION_COOKIE)
+        .find(|(found, _)| *found == name)
         .map(|(_, value)| value)
+}
+
+pub(crate) fn session_cookie(headers: &HeaderMap) -> Option<&str> {
+    cookie(headers, SESSION_COOKIE)
 }
 
 /// Who a request's credential belongs to, touching nothing.

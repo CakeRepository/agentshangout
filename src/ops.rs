@@ -8,8 +8,9 @@ use crate::{
     auth::{self, Caller},
     city,
     db::{
-        Agent, CheckIn, Event, FeedEvent, Hangout, Message, NewCheckIn, NewEvent, NewMessage,
-        NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip, Visit,
+        Agent, CheckIn, Event, FeedEvent, FloorLeave, Hangout, Mention, Message, NewCheckIn,
+        NewEvent, NewMessage, NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip,
+        Visit,
     },
     error::{ApiError, ApiResult},
     ical, items, looks, notify, now, spaces, AppState, HubEvent,
@@ -178,12 +179,32 @@ fn publish_message(state: &AppState, message: &Message) {
 }
 
 /// The room, if the caller is in it. Anyone else gets the same answer as for a hangout that
-/// doesn't exist. A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
+/// doesn't exist, unless they were on this floor and left: then the answer says when and why
+/// (S62). A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
 pub fn require_room(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Hangout> {
     if !state.in_room(caller, hangout_id)? {
-        return Err(ApiError::not_found());
+        return Err(why_absent(state, caller, hangout_id)?);
     }
     state.db.hangout(hangout_id)?.ok_or_else(ApiError::not_found)
+}
+
+/// S62: a floor this caller walked onto and has since left. A floor they never entered stays
+/// "not found", so the answer doesn't reveal a room.
+fn why_absent(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<ApiError> {
+    let who = caller.agent_id.as_deref().unwrap_or(caller.person_id.as_str());
+    if let Some((at, reason)) = state.db.floor_leave(who, hangout_id)? {
+        return Ok(ApiError::new(
+            axum::http::StatusCode::NOT_FOUND,
+            format!("you left this floor at {}: {reason}", iso(at)),
+        ));
+    }
+    if let Some(until) = state.db.visit_ended(who, hangout_id, now())? {
+        return Ok(ApiError::new(
+            axum::http::StatusCode::NOT_FOUND,
+            format!("your time on this floor ended at {}", iso(until)),
+        ));
+    }
+    Ok(ApiError::not_found())
 }
 
 /// The room, if the caller belongs to it rather than visiting. Guests can watch, talk, share notes,
@@ -255,8 +276,28 @@ pub fn post_message(
         body: &body,
         now: now(),
     })?;
+    note_mentions(state, &message)?;
     publish_message(state, &message);
     Ok(message)
+}
+
+/// B8: an @mention of a bot that's in this room, kept until that bot reads the room.
+fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
+    if message.kind != "chat" {
+        return Ok(());
+    }
+    let mut bots = state.db.agents_in(&message.hangout_id, message.created_at)?;
+    bots.extend(state.db.visitors_in(&message.hangout_id, message.created_at)?);
+    let mut seen = std::collections::HashSet::new();
+    for bot in bots {
+        if message.agent_id.as_deref() == Some(bot.id.as_str()) || !seen.insert(bot.id.clone()) {
+            continue;
+        }
+        if crate::doorbell::mentions(&message.body, &bot.name) {
+            state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn set_status(state: &AppState, caller: &Caller, status: Option<&str>) -> ApiResult<()> {
@@ -735,6 +776,10 @@ pub struct Inbox {
     pub plans_soon: Vec<crate::closeness::PlanSoon>,
     /// S60: the room this bot is in, by id and name. People only ever have nothing here.
     pub you_are_in: Option<serde_json::Value>,
+    /// B8: @mentions of this bot it hasn't read yet. Empty for a person.
+    pub mentions: Vec<Mention>,
+    /// S62, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
+    pub last_left: Option<FloorLeave>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -792,6 +837,12 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         let place = state.db.bot_place(agent_id, now)?;
         let room = place.map(|id| state.db.hangout(&id)).transpose()?.flatten();
         inbox.you_are_in = room.map(|room| serde_json::json!({ "id": room.id, "name": room.name }));
+        // B8: tags in rooms it belongs to or is visiting, until it reads that room.
+        inbox.mentions = state.db.unread_mentions(agent_id)?;
+        // L21: why it isn't on the floor it went out to, while it isn't out.
+        if state.db.bot_visits(agent_id, now)?.is_empty() {
+            inbox.last_left = state.db.latest_floor_leave(agent_id, now - DAY_SECS)?;
+        }
     }
     Ok(inbox)
 }
@@ -1128,6 +1179,11 @@ pub fn create_agent(
         state.db.set_bot_home(&id, &house.id, false, false)?;
         refresh_city(state, &house.city_id);
     }
+    // S59: it starts out in the room it was made in. At home that needs no saying, and a bot that
+    // has only just been made hasn't gone anywhere (L9).
+    if state.db.bot_place(&id, now)?.as_deref() != Some(hangout_id) {
+        state.db.set_bot_place(&id, hangout_id, now)?;
+    }
     announce(state, hangout_id, &format!("{} brought in {name}.", caller.name))?;
     refresh(state, hangout_id);
     let agent = state.db.agent(&id, now)?.ok_or_else(ApiError::not_found)?;
@@ -1231,6 +1287,7 @@ pub fn rotate_agent_token(state: &AppState, caller: &Caller, agent_id: &str) -> 
 /// and has no device still signed in.
 pub fn rotate_owner_key(state: &AppState, caller: &Caller) -> ApiResult<String> {
     require_human(caller, "replace an owner key")?;
+    crate::sign_in::refuse_outside_session(state, caller, "replace your owner key")?;
     let key = auth::new_owner_key();
     state.db.replace_owner_key(&caller.person_id, &auth::hash_secret(&key))?;
     Ok(key)
