@@ -5390,7 +5390,7 @@ export class World {
     }
     if (first && this.ready) this.frameTown();
     this.clampCam();
-    // W71: a canvas that is resized is cleared, and the browser shows that before the next frame comes.
+    // W73: a canvas that is resized is cleared, and the browser shows that before the next frame comes.
     // So it's all painted now, or the sky shows where the map was. The sky is opaque, so with no view
     // yet it still goes on, alone.
     if (wiped && this.ready) this.render();

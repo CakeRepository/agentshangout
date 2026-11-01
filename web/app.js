@@ -340,11 +340,13 @@ function passkeysCard(me, status, first) {
 // (the way in, your account, your rooms and cities, the form that starts a hangout) are panels that
 // open over the map. This builds those sections. It is asked for the first time one of them opens.
 async function homeParts(me) {
-  const [status, passkeyList, spaces, publicFloors] = await Promise.all([
+  const [status, passkeyList, spaces, publicFloors, server] = await Promise.all([
     passkeyStatus(),
     me?.passkeys ? api('/api/passkeys').then((data) => data.passkeys).catch(() => null) : [],
     me ? api('/api/spaces').catch(() => null) : null,
     me ? api('/api/spaces/public').then((data) => data.floors).catch(() => []) : [],
+    // If this can't be read, the page says what a server with a code would.
+    api('/api/server').catch(() => ({ asks_for_code: true })),
   ]);
   const createError = formError();
 
@@ -449,10 +451,15 @@ async function homeParts(me) {
   const citiesCard = (who) => {
     const homes = who?.houses || [];
     const waiting = who?.waiting || [];
+    // R49, S49: a server with a code keeps these to whoever holds it, and anyone else hosts their own.
+    const open = !server.asks_for_code;
     return h('section', { class: 'card cities', 'aria-label': 'Cities' },
       h('div', { class: 'panel-head' },
         h('h2', {}, 'Your cities'),
-        h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city')),
+        open ? h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city') : null),
+      open ? null : h('p', { class: 'muted' }, 'Here, every room is a place on the map. For rooms off the map and cities, run a private server of your own, so they stay with someone you trust. ',
+        h('a', { href: `${REPO_URL}#your-own-private-server`, target: '_blank', rel: 'noopener' }, 'Here\'s how'), '. ',
+        h('button', { type: 'button', class: 'link', onclick: () => startCityDialog(who) }, 'I have a server code')),
       who?.cities?.length
         ? h('ul', { class: 'room-list' }, who.cities.map((city) => {
           const house = homes.find((home) => home.city_id === city.id);
@@ -488,7 +495,8 @@ async function homeParts(me) {
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
     // Someone signed in starts a third space by building one on the map.
-    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me ? null : createForm].filter(Boolean),
+    // S49: on a private server this form is how someone makes their first account.
+    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me || server.asks_for_code ? null : createForm].filter(Boolean),
     stop: () => stop(),
   };
 }
@@ -3776,7 +3784,7 @@ async function cityView(id) {
 
   function renderGate() {
     const entries = view.gate || [];
-    const need = view.rules?.min_vouches || 0;
+    const need = view.vouches_needed || 0;
     const keeper = Boolean(view.city.invite_url);
     gateEl.hidden = !entries.length;
     // For a leaked link that filled the gate with strangers: one button instead of fifty.
@@ -3845,6 +3853,7 @@ async function cityView(id) {
   function renderRules() {
     const keeper = Boolean(view.city.invite_url);
     const { min_vouches: need, rules_text: text } = view.rules || { min_vouches: 0, rules_text: '' };
+    const asked = view.vouches_needed || 0;
     rulesEl.hidden = !(keeper || need || text);
     if (keeper) {
       // Never below what's set now, or an untouched number would stop the rules text from saving.
@@ -3855,7 +3864,7 @@ async function cityView(id) {
       }
     }
     // The form is rebuilt only if what surrounds it changes, so a reload doesn't pull it from under a cursor.
-    const key = keeper ? 'keeper' : JSON.stringify([need, text]);
+    const key = keeper ? 'keeper' : JSON.stringify([asked, text]);
     if (key === rulesKey) return;
     rulesKey = key;
     rulesEl.replaceChildren(
@@ -3864,7 +3873,7 @@ async function cityView(id) {
         h('p', { class: 'muted' }, 'What people have to do to join with your invite link. Nobody already in is asked again.'),
         rulesForm,
       ] : [
-        need ? h('p', {}, `Newcomers wait at the gate until ${need === 1 ? 'someone vouches' : `${need} people vouch`} for them.`) : null,
+        asked ? h('p', {}, `Newcomers wait at the gate until ${asked === 1 ? 'someone vouches' : `${asked} people vouch`} for them.`) : null,
         text ? h('p', { class: 'rules-text' }, text) : null,
       ]));
   }
@@ -5067,13 +5076,16 @@ async function worldView(id, { home = false } = {}) {
     heading: 'h1',
     live: latest.kind === 'public',
   });
-  frame.root.classList.add('wd-game');
+  frame.root.classList.add('wd-game', 'wd-map');
   frame.tools.setAttribute('aria-label', 'Tools');
   frame.message.setAttribute('role', 'status');
   const well = frame.host.parentElement;
   const root = h('main', { class: 'game' }, frame.root);
   const say = (text) => {
-    if (frame.message.textContent !== text) frame.message.textContent = text;
+    if (frame.message.textContent === text) return;
+    frame.message.textContent = text;
+    // W74: the bar is one line, so a sentence that doesn't fit is there when you hover over it.
+    frame.message.title = text;
   };
   const showMoves = () => {
     if (frame.outputs.moves) frame.outputs.moves.textContent = moves === null ? '-' : numberText(moves);
@@ -5104,6 +5116,7 @@ async function worldView(id, { home = false } = {}) {
     townCounts.textContent = `${townCountsText(t)} `;
     townGoal.textContent = `Goal: ${data.goal}`;
     townFull.textContent = townText(data);
+    townEl.title = townFull.textContent;
   };
   async function refreshTown() {
     if (!me) return;

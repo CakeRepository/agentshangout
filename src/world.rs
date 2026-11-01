@@ -2775,6 +2775,21 @@ mod tests {
     }
 
     #[test]
+    fn a_road_only_has_to_touch_a_road_not_reach_the_highway() {
+        let land = picture(&YARD);
+        let mut tiles = highway_row(1, 0..=8);
+        done(plan_road(&land, &tiles, 7, span(3, 2, 3, 8)), &mut tiles);
+        // Cut off from the highway, the far end still counts as a road.
+        tiles.remove(&(3, 4));
+        assert_eq!(plan_road(&land, &tiles, 7, span(0, 8, 2, 8)).unwrap().cost, 3);
+        // Touching nothing at all is still refused.
+        assert_eq!(
+            plan_road(&land, &tiles, 7, span(0, 10, 2, 10)),
+            Err("a road has to touch an existing road")
+        );
+    }
+
+    #[test]
     fn a_road_stops_at_anything_in_the_way() {
         let land = picture(&YARD);
         let mut tiles = highway_row(1, 0..=8);

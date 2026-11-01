@@ -9,8 +9,7 @@ holds.
 The closer your friends are, the more your agents can do together, so bringing a friend in is worth
 it on its own. There are no points and no rewards, because anything counted would be farmed. A plan
 can reach a friend who isn't here yet: a person sends them its link, and they answer with no
-account. Someone a friend invited can start one city of their own with no server code, so an invite
-carries on past the first step. Agents never contact anyone. They tell their own person, and the
+account. Agents never contact anyone. They tell their own person, and the
 person sends the link.
 
 ## Decisions
@@ -19,7 +18,7 @@ person sends the link.
 | --- | --- |
 | Rewards for inviting | None. No points, moves, perks or counts. The one exception is furniture for rooms, worked out from who your friends are (I20 in [rooms.md](rooms.md)) |
 | Who can invite | People. Never bots |
-| Starting a city | The server code, or a friend's invite, which covers one city |
+| Starting a city | The server code, if the server has one, and nothing gets round it (R49 in [city.md](city.md)) |
 | Starting a hangout | Still needs the server code. A new city comes with its own Town Square |
 | What a plan's link shows | The plan's title, time and place, who sent it and how many yeses it has |
 | A friend's yes through a link | Confirms the plan, and never grows a city |
@@ -33,19 +32,11 @@ person sends the link.
 
 ### Starting a city
 
-- **F1.** A person may start a city without the server code if a friend invited them: they belong to
-  a room or a city that someone else started, or they answered a plan through its link. This is
-  worked out on read from what happened, so nothing is stored for it.
-- **F2.** It covers one city. Anyone who has started a city, with or without a code, has used it.
-  Two requests at once can't both use it, and leaving the city doesn't give it back.
-- **F3.** Only a person can use it. A bot's token is refused. Someone waiting at a city's gate (T15)
-  hasn't been let in, so doesn't count until they are.
-- **F4.** It starts a city and nothing else. A hangout still needs the code.
-- **F5.** Someone who doesn't qualify gets the same refusal as a wrong code, which doesn't say why.
-- **F6.** `GET /api/me` gives a person `may_start_city`, true when they need no code, so the page can
-  leave that field out.
-- **F7.** Cities started this way are limited per address and across the server (see Limits). A code
-  isn't limited.
+- **F1 to F5.** Gone. A friend's invite used to cover one city with no server code. Cities are now
+  something you host yourself unless you hold the code (R49 in [city.md](city.md)).
+- **F6.** `GET /api/me` gives a person `may_start_city`, true when the server asks for no code, so the
+  page can offer it. Anywhere else the page points to hosting your own.
+- **F7.** Gone, with F1.
 
 ### Plan links
 
@@ -269,7 +260,6 @@ caller is going to. `POST /api/cities` takes the same body as before. `GET /api/
 | --- | --- |
 | Invitees on a plan | 30 |
 | New accounts from plan links | 10 an hour per address, 120 an hour across the server |
-| Cities started without a code | 3 a day per address, 20 an hour across the server |
 | Free time windows | 60 per person, up to 14 days ahead, stale after 7 days |
 | `find_a_time` | 30 asks an hour per side |
 | A plan's list | 30 items of up to 120 characters |
@@ -278,9 +268,6 @@ caller is going to. `POST /api/cities` takes the same body as before. `GET /api/
 
 ## Abuse we expect
 
-- **A chain of fake friends.** One person can invite a second account of their own, and that one can
-  start a city and invite a third. Nothing here can tell them apart (A13). What it costs them is
-  the limits above, and what they get is an empty city only they can see.
 - **A link gets passed around.** A stranger can answer a plan and appear on it by name. People in the
   room see that (F19) and can replace the link (F9). They learn only what F11 lists. The name they
   typed reaches the room, the same as a name typed at any invite, and bots already treat room text

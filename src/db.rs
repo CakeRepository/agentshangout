@@ -1528,6 +1528,17 @@ const GATHERINGS: &str = "FROM events e JOIN cities c ON c.square_id = e.hangout
 const VOUCHERS_IN_CITY: &str = "FROM vouches v
      JOIN city_members cm ON cm.city_id = v.city_id AND cm.person_id = v.by_person";
 
+/// T13: what a city asks of someone at its gate, as SQL for the city `id`. Only people in the city
+/// can vouch, so it's never more than there are of them. A city that asks for any always asks for
+/// at least one, so the last person leaving doesn't open the gate.
+fn vouches_needed_sql(id: &str) -> String {
+    format!(
+        "COALESCE((SELECT MIN(e.min_vouches, MAX(1, (SELECT COUNT(*) FROM city_members m
+                                                     WHERE m.city_id = e.place_id)))
+                   FROM entry_rules e WHERE e.place_id = {id}), 0)"
+    )
+}
+
 const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
      CASE WHEN r.person_id IS NOT NULL THEN i.claimed_by END,
      CASE WHEN r.person_id IS NOT NULL THEN p.name END,
@@ -4977,20 +4988,6 @@ impl Db {
 
     // Friends and invites
 
-    /// F1, F2: invited by a friend, with no city of their own yet. Worked out from what happened.
-    pub fn invited_with_no_city(&self, person_id: &str) -> rusqlite::Result<bool> {
-        self.conn().query_row(
-            "SELECT NOT EXISTS (SELECT 1 FROM cities WHERE created_by = ?1)
-               AND (EXISTS (SELECT 1 FROM plan_invitees WHERE person_id = ?1)
-                 OR EXISTS (SELECT 1 FROM members m JOIN hangouts h ON h.id = m.hangout_id
-                            WHERE m.person_id = ?1 AND h.created_by != ?1)
-                 OR EXISTS (SELECT 1 FROM city_members cm JOIN cities c ON c.id = cm.city_id
-                            WHERE cm.person_id = ?1 AND c.created_by != ?1))",
-            [person_id],
-            |row| row.get(0),
-        )
-    }
-
     /// The plan's link, which is `code` if it doesn't have one yet.
     pub fn plan_invite_code(
         &self,
@@ -5779,6 +5776,12 @@ impl Db {
         rows.collect()
     }
 
+    /// T13: how many vouches someone at this city's gate needs right now.
+    pub fn vouches_needed(&self, city_id: &str) -> rusqlite::Result<i64> {
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        self.conn().query_row(&sql, [city_id], |row| row.get(0))
+    }
+
     /// The gates this person is waiting at, with their vouches and what each city asks for.
     pub fn gates_of_person(&self, person_id: &str, cutoff: i64) -> rusqlite::Result<Vec<GatePlace>> {
         let conn = self.conn();
@@ -5786,10 +5789,11 @@ impl Db {
             "SELECT c.id, c.name,
                     (SELECT COUNT(*) {VOUCHERS_IN_CITY}
                       WHERE v.city_id = g.city_id AND v.for_person = g.person_id),
-                    COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = c.id), 0)
+                    {}
              FROM city_gate g JOIN cities c ON c.id = g.city_id
              WHERE g.person_id = ?1 AND g.created_at > ?2
-             ORDER BY g.created_at, g.rowid"
+             ORDER BY g.created_at, g.rowid",
+            vouches_needed_sql("c.id")
         ))?;
         let rows = stmt.query_map(params![person_id, cutoff], |row| {
             Ok(GatePlace {
@@ -5821,11 +5825,8 @@ impl Db {
         )? {
             return Ok(false);
         }
-        let needed: i64 = tx.query_row(
-            "SELECT COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = ?), 0)",
-            [city_id],
-            |row| row.get(0),
-        )?;
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        let needed: i64 = tx.query_row(&sql, [city_id], |row| row.get(0))?;
         let have: i64 = tx.query_row(
             &format!("SELECT COUNT(*) {VOUCHERS_IN_CITY} WHERE v.city_id = ? AND v.for_person = ?"),
             params![city_id, person_id],
@@ -8014,6 +8015,34 @@ mod tests {
         assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 3), road("hb", "hz", 1)]);
         assert_eq!(db.roads("c2").unwrap(), []);
         assert_eq!(db.roads("nowhere").unwrap(), []);
+    }
+
+    // R41
+    #[test]
+    fn roads_go_by_where_a_bot_lives_now() {
+        let db = Db::open(":memory:").unwrap();
+        two_houses(&db);
+        db.create_person("p3", "Cy", "key3", "feed3", 0).unwrap();
+        db.add_city_member("c1", "p3", 0).unwrap();
+        house(&db, "hb", "c1", "p3", 30);
+        bot(&db, "b3", "p2");
+        let road = |a: &str, b: &str, trips| Road { a: a.to_string(), b: b.to_string(), trips };
+
+        // A bot with no home arrives, and that draws nothing.
+        start_trip(&db, "t1", "b3", "hz", 60, 1000);
+        assert_eq!(db.roads("c1").unwrap(), []);
+
+        // Given a home, its arrival draws a road from there.
+        db.set_bot_home("b3", "ha", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 1)]);
+
+        // Moved, the road moves with it.
+        db.set_bot_home("b3", "hb", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("hb", "hz", 1)]);
+
+        // With no home again, the road goes.
+        db.conn().execute("DELETE FROM bot_homes WHERE agent_id = 'b3'", []).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), []);
     }
 
     #[test]
