@@ -1150,6 +1150,93 @@ pub fn on_street(hoods: &[Hood], tiles: &Tiles, pos: Pos) -> bool {
     seam || is_reserved(tiles, pos)
 }
 
+/// W93: why a road beside another is refused.
+pub const SIDE_BY_SIDE: &str =
+    "a road can't run right alongside another: that makes a block of road, not a street";
+
+/// W93: whether a road's new tiles finish a 2 by 2 block of road with the roads already there.
+/// `tiles` must reach 1 tile past them.
+pub fn makes_a_block(tiles: &Tiles, fresh: &[Pos]) -> bool {
+    let road = |pos: Pos| {
+        fresh.contains(&pos) || tiles.get(&pos).is_some_and(|tile| tile.kind == Kind::Road)
+    };
+    fresh.iter().any(|&pos| in_a_block(&road, pos))
+}
+
+/// W93: whether `pos` is one corner of a 2 by 2 block that `road` says is all road.
+fn in_a_block(road: &dyn Fn(Pos) -> bool, (x, y): Pos) -> bool {
+    [(0, 0), (1, 0), (0, 1), (1, 1)].iter().any(|&(dx, dy)| {
+        let (Some(left), Some(top)) = (x.checked_sub(dx), y.checked_sub(dy)) else {
+            return false;
+        };
+        let (Some(right), Some(bottom)) = (left.checked_add(1), top.checked_add(1)) else {
+            return false;
+        };
+        [(left, top), (right, top), (left, bottom), (right, bottom)].into_iter().all(road)
+    })
+}
+
+/// W94: how far round a tile `slab_tiles` looks for the way between the roads beside it.
+const SLAB_REACH: i32 = 8;
+
+/// W94: the road tiles to take up so no 2 by 2 block of road is left, off the streets first. Never the
+/// highway, a road beside a place, or a tile the roads beside it need to stay joined. `tiles` must
+/// be every tile in the world.
+pub fn slab_tiles(hoods: &[Hood], tiles: &Tiles) -> Vec<Pos> {
+    let mut roads: std::collections::HashSet<Pos> =
+        tiles.iter().filter(|(_, tile)| tile.kind == Kind::Road).map(|(&pos, _)| pos).collect();
+    let mut slab: Vec<Pos> = tiles
+        .iter()
+        .filter(|(&pos, tile)| tile.player.is_some() && in_a_block(&|at| roads.contains(&at), pos))
+        .map(|(&pos, _)| pos)
+        .collect();
+    if slab.is_empty() {
+        return slab;
+    }
+    slab.sort_by_key(|&pos| (on_street(hoods, tiles, pos), pos.1, pos.0));
+    let beside_a_place = |pos: Pos| {
+        neighbours(pos)
+            .into_iter()
+            .flatten()
+            .any(|at| tiles.get(&at).is_some_and(|tile| tile.kind.is_building()))
+    };
+    let mut gone = Vec::new();
+    for pos in slab {
+        if beside_a_place(pos) || !in_a_block(&|at| roads.contains(&at), pos) {
+            continue;
+        }
+        roads.remove(&pos);
+        if still_joined(&roads, pos) {
+            gone.push(pos);
+        } else {
+            roads.insert(pos);
+        }
+    }
+    gone
+}
+
+/// W94: whether the roads beside `pos` are still joined to each other without it, near it. Joined
+/// near it means joined everywhere, so nothing it served is cut off.
+fn still_joined(roads: &std::collections::HashSet<Pos>, pos: Pos) -> bool {
+    let ends: Vec<Pos> =
+        neighbours(pos).into_iter().flatten().filter(|at| roads.contains(at)).collect();
+    let Some(&start) = ends.first() else { return true };
+    let near = |at: Pos| {
+        (i32::from(at.0) - i32::from(pos.0)).abs() <= SLAB_REACH
+            && (i32::from(at.1) - i32::from(pos.1)).abs() <= SLAB_REACH
+    };
+    let mut seen = std::collections::HashSet::from([start]);
+    let mut queue = vec![start];
+    while let Some(at) = queue.pop() {
+        for next in neighbours(at).into_iter().flatten() {
+            if roads.contains(&next) && near(next) && seen.insert(next) {
+                queue.push(next);
+            }
+        }
+    }
+    ends.iter().all(|end| seen.contains(end))
+}
+
 /// W85: a road's new tiles follow the streets, or it's a lane of 3 tiles or fewer.
 pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(), &'static str> {
     if hoods.is_empty()

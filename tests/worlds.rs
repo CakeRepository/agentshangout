@@ -526,6 +526,21 @@ impl Map {
             .find(|&(x, y)| self.ground(x, y) == Some(ground) && !self.built.contains_key(&(x, y)))
     }
 
+    /// W93: whether these new road tiles finish a 2 by 2 block of road with the roads there.
+    fn makes_a_block(&self, line: &[(i64, i64)]) -> bool {
+        let road = |at: (i64, i64)| {
+            line.contains(&at) || self.built.get(&at).is_some_and(|(kind, _)| kind == "road")
+        };
+        line.iter().any(|&(x, y)| {
+            [(0, 0), (1, 0), (0, 1), (1, 1)].iter().any(|&(dx, dy)| {
+                let (left, top) = (x - dx, y - dy);
+                [(left, top), (left + 1, top), (left, top + 1), (left + 1, top + 1)]
+                    .into_iter()
+                    .all(road)
+            })
+        })
+    }
+
     /// A straight run of `n` open tiles that starts beside a road: (first, last).
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
@@ -535,7 +550,11 @@ impl Map {
                     n <= world::LANE_TILES as i64
                         || self.on_streets.contains(&(rx + dx * i, ry + dy * i))
                 };
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
+                let line: Vec<(i64, i64)> = (1..=n).map(|i| (rx + dx * i, ry + dy * i)).collect();
+                // W93: and it doesn't run right alongside another road.
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i))
+                    && !self.makes_a_block(&line)
+                {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }
@@ -5464,8 +5483,86 @@ async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_an
     let between = server.act(&guest.token, COMMONS, road_move((47, 43), (56, 43))).await;
     assert_eq!(between.status, StatusCode::BAD_REQUEST, "{}", between.show());
     assert!(between.body.to_string().contains("roads follow the streets"), "{}", between.show());
-    // A lane of 3 tiles goes anywhere, as long as it touches a road.
-    server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
+    // A lane of 3 tiles goes anywhere, as long as it touches a road (W85) and doesn't run right
+    // alongside one (W93).
+    let alongside = server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await;
+    assert_eq!(alongside.status, StatusCode::BAD_REQUEST, "{}", alongside.show());
+    assert!(alongside.body.to_string().contains("alongside"), "{}", alongside.show());
+    server.act(&guest.token, COMMONS, road_move((48, 43), (48, 43))).await.ok();
+}
+
+// W94
+#[tokio::test]
+async fn a_step_takes_up_roads_laid_side_by_side_and_leaves_every_road_joined() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    let builder = server
+        .state
+        .db
+        .player_by_token(&agenthangout::auth::hash_secret(&guest.token))
+        .unwrap()
+        .unwrap()
+        .id as u64;
+    // A slab of road, 4 across and 3 down, joined to the highway along one side.
+    let highway: Vec<(u16, u16)> = server
+        .tiles(COMMONS)
+        .into_iter()
+        .filter(|(_, tile)| tile.kind == Kind::Road && tile.player.is_none())
+        .map(|(pos, _)| pos)
+        .collect();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let tiles = server.tiles(COMMONS);
+    let (sx, sy) = highway
+        .iter()
+        .find_map(|&(hx, hy)| {
+            let at = (hx, hy.checked_add(1)?);
+            let slab: Vec<(u16, u16)> =
+                (0..4).flat_map(|dx| (0..3).map(move |dy| (at.0 + dx, at.1 + dy))).collect();
+            let joined = (0..4).all(|dx| highway.contains(&(hx + dx, hy)));
+            let open = slab
+                .iter()
+                .all(|pos| !tiles.contains_key(pos) && land.at(*pos).is_some_and(|g| g.is_open()));
+            (joined && open).then_some(at)
+        })
+        .expect("room for a slab beside the highway");
+    let slab: Vec<Change> = (0..4)
+        .flat_map(|dx| (0..3).map(move |dy| (sx + dx, sy + dy)))
+        .map(|pos| {
+            Change::Set(pos, world::Tile { kind: Kind::Road, level: 0, player: Some(builder) })
+        })
+        .collect();
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &slab, now()))
+        .unwrap();
+
+    worlds::step_world(&server.state, COMMONS, now()).unwrap();
+    let after = server.tiles(COMMONS);
+    let road = |pos: (u16, u16)| after.get(&pos).is_some_and(|tile| tile.kind == Kind::Road);
+    for x in sx.saturating_sub(1)..sx + 4 {
+        for y in sy.saturating_sub(1)..sy + 3 {
+            assert!(
+                ![(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)].into_iter().all(road),
+                "a 2 by 2 block of road is left at ({x}, {y})"
+            );
+        }
+    }
+    assert!(highway.iter().all(|pos| road(*pos)), "the highway stays");
+    // Every road that's left is still joined to the highway.
+    let mut seen: HashSet<(u16, u16)> = highway.iter().copied().collect();
+    let mut todo: Vec<(u16, u16)> = highway.clone();
+    while let Some((x, y)) = todo.pop() {
+        for next in [(x + 1, y), (x.wrapping_sub(1), y), (x, y + 1), (x, y.wrapping_sub(1))] {
+            if road(next) && seen.insert(next) {
+                todo.push(next);
+            }
+        }
+    }
+    let left: Vec<(u16, u16)> =
+        after.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(p, _)| *p).collect();
+    assert!(left.iter().all(|pos| seen.contains(pos)), "a road was cut off");
+    assert!(left.iter().any(|pos| !highway.contains(pos)), "some of the slab stays, as streets");
 }
 
 // W87

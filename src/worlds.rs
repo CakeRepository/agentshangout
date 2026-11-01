@@ -1063,6 +1063,10 @@ fn apply_move(
                 let hoods = world::neighborhoods(world.seed, world.size);
                 world::check_streets(&hoods, &tiles, &fresh).map_err(ApiError::bad_request)?;
             }
+            // W93: and no road lies alongside another, whoever lays it.
+            if world::makes_a_block(&tiles, &fresh) {
+                return Err(ApiError::bad_request(world::SIDE_BY_SIDE));
+            }
             planned
         }
         Parsed::Place(kind, x, y) => {
@@ -2269,7 +2273,13 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
-        let changes = disaster_step(state, tx, &world)?;
+        let mut changes = disaster_step(state, tx, &world)?;
+        // W94: on The Commons, roads laid side by side are thinned out, but not while a disaster strikes.
+        if changes.is_empty() && world.id == COMMONS_ID {
+            let hoods = world::neighborhoods(world.seed, world.size);
+            let slab = world::slab_tiles(&hoods, &tx.all_tiles(&world.id)?);
+            changes.extend(slab.into_iter().map(Change::Remove));
+        }
         tx.write_changes(&world.id, &changes, now)?;
         tx.set_step(&world.id, world.step + 1)?;
         Ok(changes.len())

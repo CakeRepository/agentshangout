@@ -430,7 +430,8 @@ looks grown rather than planned. It's all worked out from the world's seed, so n
   either side of the edge are free for joining them.
 - **W85.** A road's new tiles have to follow the streets: each one is on a street of its
   neighborhood, on a side street (W15), or within 2 tiles of another neighborhood. A road of 3 new
-  tiles or fewer can go anywhere, as a lane, so the town is never quite a grid. Anything else is
+  tiles or fewer can go anywhere, as a lane, so the town is never quite a grid, as long as it doesn't
+  run alongside another road (W93). Anything else is
   refused with a fixed reason and costs nothing. Roads built before this stay. This narrows W15 and
   W16, which let a road go anywhere it touched another.
 - **W86.** A neighborhood's character says what it's for: homes, places to make things, or places to
@@ -483,6 +484,18 @@ set up for it.
   office or a library as a study, and a workshop as a workshop. A club and a studio start as a
   hangout. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
   cafe's room started open.
+
+### Roads side by side
+
+A road is a line, and two roads laid side by side make a paved slab that every car crosses at once.
+
+- **W93.** A road can't finish a 2 by 2 block of road, with the tiles it lays and the roads already
+  there. That holds for everyone, god mode included (it narrows W76), and for a lane too (W85). It's
+  refused with a fixed reason and costs nothing.
+- **W94.** Each step of The Commons takes up the roads that already make a 2 by 2 block, one tile at a
+  time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
+  beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
+  cut off. Worlds people start are left as they are.
 
 ## Starting The Commons again
 

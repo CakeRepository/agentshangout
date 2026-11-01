@@ -787,6 +787,11 @@ fn the_whole_map_says(
                 })
                 .collect();
             world::check_streets(&world::neighborhoods(seed, land.size()), tiles, &fresh)
+                .and_then(|()| match world::makes_a_block(tiles, &fresh) {
+                    // W93: and no road runs right alongside another.
+                    true => Err(world::SIDE_BY_SIDE),
+                    false => Ok(()),
+                })
                 .map(|()| plan)
         }),
         "place" => world::plan_place(
