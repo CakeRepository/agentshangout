@@ -44,11 +44,7 @@ impl Server {
         );
         let served = state.clone();
         tokio::spawn(async move { axum::serve(listener, app(served)).await });
-        Self {
-            base,
-            client: Client::new(),
-            state,
-        }
+        Self { base, client: Client::new(), state }
     }
 
     async fn request(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -62,10 +58,7 @@ impl Server {
         let response = request.send().await.unwrap();
         let status = response.status();
         let text = response.text().await.unwrap();
-        Reply {
-            status,
-            body: serde_json::from_str(&text).unwrap_or(Value::String(text)),
-        }
+        Reply { status, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
     }
 
     async fn get(&self, token: &str, path: &str) -> Reply {
@@ -78,9 +71,8 @@ impl Server {
 
     /// Creates a room for Justin and brings Kevin in with an invite.
     async fn room(&self) -> Room {
-        let created = self
-            .post("", "/api/hangouts", json!({ "name": "Crew", "your_name": "Justin" }))
-            .await;
+        let created =
+            self.post("", "/api/hangouts", json!({ "name": "Crew", "your_name": "Justin" })).await;
         assert_eq!(created.status, StatusCode::OK, "{}", created.body);
         let justin = created.body["owner_key"].as_str().unwrap().to_string();
         let id = created.body["hangout"]["id"].as_str().unwrap().to_string();
@@ -89,11 +81,7 @@ impl Server {
             .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Kevin" }))
             .await;
         assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
-        Room {
-            id,
-            justin,
-            kevin: joined.body["owner_key"].as_str().unwrap().to_string(),
-        }
+        Room { id, justin, kevin: joined.body["owner_key"].as_str().unwrap().to_string() }
     }
 
     async fn bot(&self, owner: &str, room: &str, name: &str) -> (String, String) {
@@ -136,9 +124,8 @@ impl Server {
     }
 
     async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
-        let reply = self
-            .mcp(token, "tools/call", json!({ "name": name, "arguments": arguments }))
-            .await;
+        let reply =
+            self.mcp(token, "tools/call", json!({ "name": name, "arguments": arguments })).await;
         reply.body["result"].clone()
     }
 }
@@ -150,28 +137,22 @@ struct Room {
 }
 
 fn tomorrow() -> String {
-    (OffsetDateTime::now_utc() + Duration::days(1))
-        .format(&Rfc3339)
-        .unwrap()
+    (OffsetDateTime::now_utc() + Duration::days(1)).format(&Rfc3339).unwrap()
 }
 
 #[tokio::test]
 async fn bot_cannot_see_or_post_in_a_room_it_was_not_brought_into() {
     let server = Server::start().await;
     let room = server.room().await;
-    let other = server
-        .post("", "/api/hangouts", json!({ "name": "Other", "your_name": "Mallory" }))
-        .await;
+    let other =
+        server.post("", "/api/hangouts", json!({ "name": "Other", "your_name": "Mallory" })).await;
     let other_id = other.body["hangout"]["id"].as_str().unwrap();
-    let (outsider, _) = server
-        .bot(other.body["owner_key"].as_str().unwrap(), other_id, "Snoop")
-        .await;
+    let (outsider, _) =
+        server.bot(other.body["owner_key"].as_str().unwrap(), other_id, "Snoop").await;
 
     let path = format!("/api/hangouts/{}", room.id);
     assert_eq!(server.get(&outsider, &path).await.status, StatusCode::NOT_FOUND);
-    let posted = server
-        .post(&outsider, &format!("{path}/messages"), json!({ "text": "hi" }))
-        .await;
+    let posted = server.post(&outsider, &format!("{path}/messages"), json!({ "text": "hi" })).await;
     assert_eq!(posted.status, StatusCode::NOT_FOUND);
     let stream = server.get(&outsider, &format!("{path}/stream")).await;
     assert_eq!(stream.status, StatusCode::NOT_FOUND);
@@ -181,12 +162,9 @@ async fn bot_cannot_see_or_post_in_a_room_it_was_not_brought_into() {
 async fn owning_a_member_does_not_let_a_bot_into_the_room() {
     let server = Server::start().await;
     let room = server.room().await;
-    let elsewhere = server
-        .post(&room.justin, "/api/hangouts", json!({ "name": "Private" }))
-        .await;
-    let (bot, _) = server
-        .bot(&room.justin, elsewhere.body["hangout"]["id"].as_str().unwrap(), "Scout")
-        .await;
+    let elsewhere = server.post(&room.justin, "/api/hangouts", json!({ "name": "Private" })).await;
+    let (bot, _) =
+        server.bot(&room.justin, elsewhere.body["hangout"]["id"].as_str().unwrap(), "Scout").await;
 
     let denied = server.get(&bot, &format!("/api/hangouts/{}", room.id)).await;
     assert_eq!(denied.status, StatusCode::NOT_FOUND);
@@ -202,9 +180,8 @@ async fn bots_cannot_manage_membership_or_see_invites() {
         .post(&bot, &format!("/api/hangouts/{}/agents", room.id), json!({ "name": "Clone" }))
         .await;
     assert_eq!(spawned.status, StatusCode::FORBIDDEN);
-    let rotated = server
-        .post(&bot, &format!("/api/hangouts/{}/invite/rotate", room.id), json!({}))
-        .await;
+    let rotated =
+        server.post(&bot, &format!("/api/hangouts/{}/invite/rotate", room.id), json!({})).await;
     assert_eq!(rotated.status, StatusCode::FORBIDDEN);
     let replaced = server.post(&bot, "/api/key/rotate", json!({})).await;
     assert_eq!(replaced.status, StatusCode::FORBIDDEN);
@@ -224,17 +201,15 @@ async fn sending_a_bot_home_or_replacing_its_token_cuts_it_off() {
     let (bot, bot_id) = server.bot(&room.justin, &room.id, "Scout").await;
     assert_eq!(server.get(&bot, &path).await.status, StatusCode::OK);
 
-    let rotated = server
-        .post(&room.justin, &format!("/api/agents/{bot_id}/rotate"), json!({}))
-        .await;
+    let rotated =
+        server.post(&room.justin, &format!("/api/agents/{bot_id}/rotate"), json!({})).await;
     assert_eq!(server.get(&bot, &path).await.status, StatusCode::UNAUTHORIZED);
     let fresh = rotated.body["token"].as_str().unwrap();
     assert_eq!(server.get(fresh, &path).await.status, StatusCode::OK);
 
     // Kevin can't touch Justin's bot.
-    let denied = server
-        .request(&room.kevin, Method::DELETE, &format!("{path}/agents/{bot_id}"), None)
-        .await;
+    let denied =
+        server.request(&room.kevin, Method::DELETE, &format!("{path}/agents/{bot_id}"), None).await;
     assert_eq!(denied.status, StatusCode::NOT_FOUND);
 
     let removed = server
@@ -264,10 +239,7 @@ async fn open_streams_end_when_a_bot_loses_access() {
     let room = server.room().await;
     let path = format!("/api/hangouts/{}", room.id);
     let open_stream = |token: String| {
-        let request = server
-            .client
-            .get(format!("{}{path}/stream", server.base))
-            .bearer_auth(token);
+        let request = server.client.get(format!("{}{path}/stream", server.base)).bearer_auth(token);
         async move { request.send().await.unwrap() }
     };
 
@@ -282,12 +254,8 @@ async fn open_streams_end_when_a_bot_loses_access() {
     // Token replaced: the stream closes before delivering anything else.
     let (replaced, replaced_id) = server.bot(&room.justin, &room.id, "Pixel").await;
     let stream = open_stream(replaced).await;
-    server
-        .post(&room.justin, &format!("/api/agents/{replaced_id}/rotate"), json!({}))
-        .await;
-    server
-        .post(&room.justin, &format!("{path}/messages"), json!({ "text": "secret plan" }))
-        .await;
+    server.post(&room.justin, &format!("/api/agents/{replaced_id}/rotate"), json!({})).await;
+    server.post(&room.justin, &format!("{path}/messages"), json!({ "text": "secret plan" })).await;
     let seen = read_until_closed(stream).await;
     assert!(!seen.contains("secret plan"), "{seen}");
 }
@@ -323,13 +291,9 @@ async fn replacing_an_owner_key_cuts_off_the_old_one_and_keeps_the_account() {
 
     // The old key is dead everywhere, including streams already open.
     assert_eq!(server.get(&room.justin, "/api/me").await.status, StatusCode::UNAUTHORIZED);
-    let old_sign_in = server
-        .post("", "/api/session", json!({ "owner_key": room.justin }))
-        .await;
+    let old_sign_in = server.post("", "/api/session", json!({ "owner_key": room.justin })).await;
     assert_eq!(old_sign_in.status, StatusCode::UNAUTHORIZED);
-    server
-        .post(fresh, &format!("{path}/messages"), json!({ "text": "secret plan" }))
-        .await;
+    server.post(fresh, &format!("{path}/messages"), json!({ "text": "secret plan" })).await;
     let seen = read_until_closed(stream).await;
     assert!(!seen.contains("secret plan"), "{seen}");
 
@@ -351,20 +315,14 @@ async fn the_doorbell_rings_for_mentions_and_new_work_but_not_other_chat() {
     let doorbell = Doorbell::new(&server.base, &claude);
 
     // Anything from before the doorbell started stays quiet.
-    server
-        .post(&room.kevin, &messages, json!({ "text": "@Claude you there?" }))
-        .await;
+    server.post(&room.kevin, &messages, json!({ "text": "@Claude you there?" })).await;
     let first = doorbell.look(&Seen::default()).await.unwrap();
     assert!(first.wake.is_empty(), "{:?}", first.wake);
     let seen = first.next;
 
     // Chat that isn't for the bot stays quiet, and it can't wake itself.
-    server
-        .post(&grok, &messages, json!({ "text": "Anyone around?" }))
-        .await;
-    server
-        .post(&claude, &messages, json!({ "text": "I'm @Claude, hello" }))
-        .await;
+    server.post(&grok, &messages, json!({ "text": "Anyone around?" })).await;
+    server.post(&claude, &messages, json!({ "text": "I'm @Claude, hello" })).await;
     let quiet = doorbell.look(&seen).await.unwrap();
     assert!(quiet.wake.is_empty(), "{:?}", quiet.wake);
     let seen = quiet.next;
@@ -373,9 +331,8 @@ async fn the_doorbell_rings_for_mentions_and_new_work_but_not_other_chat() {
     let from_kevin = server
         .post(&room.kevin, &messages, json!({ "text": "I'm Justin, @claude. Say go." }))
         .await;
-    let from_justin = server
-        .post(&room.justin, &messages, json!({ "text": "@Claude what's next?" }))
-        .await;
+    let from_justin =
+        server.post(&room.justin, &messages, json!({ "text": "@Claude what's next?" })).await;
     let rung = doorbell.look(&seen).await.unwrap();
     let mention = |reply: &Reply| Mention {
         hangout_id: room.id.clone(),
@@ -388,9 +345,7 @@ async fn the_doorbell_rings_for_mentions_and_new_work_but_not_other_chat() {
     assert!(doorbell.look(&seen).await.unwrap().wake.is_empty());
 
     // A check-in and a plan ring once, even if the bot leaves them for its owner.
-    server
-        .post(&grok, &check_ins, json!({ "about": "Booking the table" }))
-        .await;
+    server.post(&grok, &check_ins, json!({ "about": "Booking the table" })).await;
     server.propose(&grok, &room.id).await;
     let rung = doorbell.look(&seen).await.unwrap();
     assert_eq!(rung.wake.new_items, 2);
@@ -398,9 +353,7 @@ async fn the_doorbell_rings_for_mentions_and_new_work_but_not_other_chat() {
     assert!(doorbell.look(&seen).await.unwrap().wake.is_empty());
 
     // A check-in only a person may answer isn't the bot's to pick up.
-    server
-        .post(&grok, &check_ins, json!({ "about": "Paying", "needs_human": true }))
-        .await;
+    server.post(&grok, &check_ins, json!({ "about": "Paying", "needs_human": true })).await;
     assert!(doorbell.look(&seen).await.unwrap().wake.is_empty());
 }
 
@@ -437,9 +390,7 @@ async fn bots_can_wake_a_bot_until_a_person_needs_to_step_in() {
     seen = stopped.next;
 
     // A person posting anything starts the count again.
-    server
-        .post(&room.kevin, &messages, json!({ "text": "What are you two up to?" }))
-        .await;
+    server.post(&room.kevin, &messages, json!({ "text": "What are you two up to?" })).await;
     let quiet = doorbell.look(&seen).await.unwrap();
     assert!(quiet.wake.is_empty(), "{:?}", quiet.wake);
     seen = quiet.next;
@@ -513,15 +464,11 @@ async fn plan_reaches_calendars_only_after_each_side_agrees() {
     assert!(justin_feed.contains("STATUS:TENTATIVE"), "{justin_feed}");
     assert!(!server.feed(&room.kevin).await.contains("SUMMARY:Tacos"));
 
-    let reply = server
-        .post(&don, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" }))
-        .await;
+    let reply =
+        server.post(&don, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" })).await;
     assert_eq!(reply.body["status"], "confirmed");
-    let answered_by_bot = reply.body["rsvps"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|rsvp| rsvp["via_agent"] == "The Don");
+    let answered_by_bot =
+        reply.body["rsvps"].as_array().unwrap().iter().any(|rsvp| rsvp["via_agent"] == "The Don");
     assert!(answered_by_bot, "{}", reply.body);
 
     let kevin_feed = server.feed(&room.kevin).await;
@@ -564,9 +511,7 @@ async fn only_the_proposing_side_can_cancel_and_calendars_hear_about_it() {
     let room = server.room().await;
     let event = server.propose(&room.justin, &room.id).await;
     let path = format!("/api/events/{event}");
-    server
-        .post(&room.kevin, &format!("{path}/rsvp"), json!({ "response": "yes" }))
-        .await;
+    server.post(&room.kevin, &format!("{path}/rsvp"), json!({ "response": "yes" })).await;
 
     let denied = server.post(&room.kevin, &format!("{path}/cancel"), json!({})).await;
     assert_eq!(denied.status, StatusCode::FORBIDDEN);
@@ -638,23 +583,20 @@ async fn activity_shows_the_tool_and_nothing_about_the_work() {
     let (bot, _) = server.bot(&room.justin, &room.id, "Scout").await;
     let path = format!("/api/hangouts/{}", room.id);
 
-    let reported = server
-        .post(&bot, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
-        .await;
+    let reported =
+        server.post(&bot, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" })).await;
     assert_eq!(reported.status, StatusCode::OK, "{}", reported.body);
     let viewer = server.get(&room.kevin, &path).await;
     assert_eq!(viewer.body["agents"][0]["activity"]["via"], "FlowRMM");
 
     // A sentence, a hostname with a colon and an oversized value are all refused.
     for via in ["restarting ACME-DC01: disk full", "acme-dc01:3389", &"x".repeat(41)] {
-        let refused = server
-            .post(&bot, "/api/activity", json!({ "kind": "computer", "via": via }))
-            .await;
+        let refused =
+            server.post(&bot, "/api/activity", json!({ "kind": "computer", "via": via })).await;
         assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{via}");
     }
-    let unknown = server
-        .post(&bot, "/api/activity", json!({ "kind": "banking", "via": "FlowRMM" }))
-        .await;
+    let unknown =
+        server.post(&bot, "/api/activity", json!({ "kind": "banking", "via": "FlowRMM" })).await;
     assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
     let human = server
         .post(&room.justin, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
@@ -762,7 +704,8 @@ async fn check_ins_can_only_be_answered_by_the_right_people() {
     let (don, _) = server.bot(&room.kevin, &room.id, "The Don").await;
     let check_ins = format!("/api/hangouts/{}/check-ins", room.id);
     let ask = |body: Value| server.post(&scout, &check_ins, body);
-    let path = |reply: &Reply| format!("/api/check-ins/{}/answer", reply.body["id"].as_str().unwrap());
+    let path =
+        |reply: &Reply| format!("/api/check-ins/{}/answer", reply.body["id"].as_str().unwrap());
     let go = json!({ "response": "go" });
 
     // Nobody approves their own side, whether bot or human.
@@ -805,9 +748,7 @@ async fn inbox_lists_plans_still_needing_an_answer() {
     let inbox = server.get(&don, "/api/inbox").await;
     assert_eq!(inbox.body["plans_to_answer"][0]["id"], event);
 
-    server
-        .post(&don, &format!("/api/events/{event}/rsvp"), json!({ "response": "maybe" }))
-        .await;
+    server.post(&don, &format!("/api/events/{event}/rsvp"), json!({ "response": "maybe" })).await;
     let inbox = server.get(&don, "/api/inbox").await;
     assert_eq!(inbox.body["plans_to_answer"].as_array().unwrap().len(), 0);
 }
@@ -847,11 +788,7 @@ async fn a_real_server_refuses_unsafe_notification_urls() {
     );
     let served = state.clone();
     tokio::spawn(async move { axum::serve(listener, app(served)).await });
-    let server = Server {
-        base,
-        client: Client::new(),
-        state,
-    };
+    let server = Server { base, client: Client::new(), state };
     let room = server.room().await;
 
     for url in [
@@ -888,9 +825,7 @@ async fn leaving_takes_your_bots_and_your_calendar_with_you() {
         .post(&room.kevin, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" }))
         .await;
 
-    server
-        .post(&room.kevin, &format!("/api/hangouts/{}/leave", room.id), json!({}))
-        .await;
+    server.post(&room.kevin, &format!("/api/hangouts/{}/leave", room.id), json!({})).await;
     let denied = server.get(&don, &format!("/api/hangouts/{}", room.id)).await;
     assert_eq!(denied.status, StatusCode::NOT_FOUND);
     assert!(!server.feed(&room.kevin).await.contains("SUMMARY:Tacos"));
@@ -974,9 +909,8 @@ async fn bots_can_plan_a_whole_hangout_over_mcp() {
     let event_id = proposed["structuredContent"]["event_id"].as_str().unwrap();
     assert_eq!(proposed["structuredContent"]["status"], "proposed");
 
-    let answered = server
-        .tool(&scout, "rsvp", json!({ "event_id": event_id, "response": "yes" }))
-        .await;
+    let answered =
+        server.tool(&scout, "rsvp", json!({ "event_id": event_id, "response": "yes" })).await;
     assert_eq!(answered["structuredContent"]["status"], "confirmed");
     assert!(server.feed(&room.justin).await.contains("STATUS:CONFIRMED"));
 
@@ -1030,13 +964,21 @@ impl Server {
     }
 
     async fn ask_owner(&self, bot: &str, room: &str, question: &str) -> Reply {
-        self.post(bot, &format!("/api/hangouts/{room}/owner-questions"), json!({ "question": question }))
-            .await
+        self.post(
+            bot,
+            &format!("/api/hangouts/{room}/owner-questions"),
+            json!({ "question": question }),
+        )
+        .await
     }
 
     async fn answer_question(&self, token: &str, question: &str, answer: &str) -> Reply {
-        self.post(token, &format!("/api/owner-questions/{question}/answer"), json!({ "answer": answer }))
-            .await
+        self.post(
+            token,
+            &format!("/api/owner-questions/{question}/answer"),
+            json!({ "answer": answer }),
+        )
+        .await
     }
 
     /// A question that was asked `age` seconds ago, straight into the database.
@@ -1114,9 +1056,7 @@ async fn only_the_bots_owner_ever_sees_its_question() {
     assert_eq!(inbox.body["owner_answers"], json!([]));
 
     // It's another room's business, so Justin doesn't see it in a second room.
-    let other = server
-        .post(&room.justin, "/api/hangouts", json!({ "name": "Elsewhere" }))
-        .await;
+    let other = server.post(&room.justin, "/api/hangouts", json!({ "name": "Elsewhere" })).await;
     let other = other.body["hangout"]["id"].as_str().unwrap();
     let elsewhere = server.get(&room.justin, &format!("/api/hangouts/{other}")).await;
     assert_eq!(elsewhere.body["owner_questions"], json!([]));
@@ -1135,7 +1075,9 @@ async fn a_question_pings_its_owner_alone_and_an_answer_is_only_a_doorbell() {
     let (url, for_kevin) = start_receiver().await;
     server.put(&room.kevin, "/api/notify", json!({ "url": url })).await;
     let (url, for_claude) = start_receiver().await;
-    server.put(&room.justin, &format!("/api/agents/{claude_id}/notify"), json!({ "url": url })).await;
+    server
+        .put(&room.justin, &format!("/api/agents/{claude_id}/notify"), json!({ "url": url }))
+        .await;
     let (url, for_muse) = start_receiver().await;
     server.put(&room.justin, &format!("/api/agents/{muse_id}/notify"), json!({ "url": url })).await;
     let (url, for_grok) = start_receiver().await;
@@ -1185,7 +1127,9 @@ async fn only_the_owner_can_answer_a_question_and_only_once() {
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.body);
         assert_eq!((refused.status, &refused.body), (nothing.status, &nothing.body));
     }
-    let tried = server.tool(&claude, "answer_owner_question", json!({ "question_id": id, "answer": "yes" })).await;
+    let tried = server
+        .tool(&claude, "answer_owner_question", json!({ "question_id": id, "answer": "yes" }))
+        .await;
     assert_eq!(tried["isError"], true, "{tried}");
     let page = server.get(&room.justin, &format!("/api/hangouts/{}", room.id)).await;
     assert_eq!(page.body["owner_questions"][0]["id"], id, "it's still waiting");
@@ -1227,9 +1171,8 @@ async fn only_a_bot_in_the_room_can_ask_and_a_bot_can_have_five_waiting() {
     let room = server.room().await;
     let (claude, _) = server.bot(&room.justin, &room.id, "Claude").await;
     let (grok, _) = server.bot(&room.kevin, &room.id, "Grok").await;
-    let elsewhere = server
-        .post("", "/api/hangouts", json!({ "name": "Elsewhere", "your_name": "Dee" }))
-        .await;
+    let elsewhere =
+        server.post("", "/api/hangouts", json!({ "name": "Elsewhere", "your_name": "Dee" })).await;
     let other_room = elsewhere.body["hangout"]["id"].as_str().unwrap();
 
     let person = server.ask_owner(&room.justin, &room.id, QUESTION).await;
@@ -1309,12 +1252,19 @@ async fn an_unanswered_question_lapses_in_a_week_and_an_answer_stays_for_a_day()
     assert_eq!(server.ask_owner(&claude, &room.id, "Sixth").await.status, StatusCode::CONFLICT);
     let open_answer = server.answer_question(&room.justin, "still-0", ANSWER).await;
     assert_eq!(open_answer.status, StatusCode::OK, "{}", open_answer.body);
-    assert_eq!(server.ask_owner(&claude, &room.id, "Now there's room").await.status, StatusCode::OK);
+    assert_eq!(
+        server.ask_owner(&claude, &room.id, "Now there's room").await.status,
+        StatusCode::OK
+    );
 
     // An answer stays in the bot's inbox for a day, then it's gone.
     server.old_question(&claude_id, &justin, &room.id, "yesterday", DAY);
     server.old_question(&claude_id, &justin, &room.id, "last-week", 2 * DAY);
-    assert!(server.state.db.answer_owner_question("yesterday", "recent", now() - DAY + 60).unwrap());
+    assert!(server
+        .state
+        .db
+        .answer_owner_question("yesterday", "recent", now() - DAY + 60)
+        .unwrap());
     assert!(server.state.db.answer_owner_question("last-week", "old", now() - DAY - 60).unwrap());
     let inbox = server.get(&claude, "/api/inbox").await;
     let answers = inbox.body["owner_answers"].as_array().unwrap();

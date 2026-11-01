@@ -97,27 +97,41 @@ impl Server {
     /// A room started by someone new: its id, its link's code and who started it.
     async fn room(&self, name: &str) -> (String, String, Who) {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
         (text(&made["hangout"]["id"]), code_of(&made["invite_url"]), who(&made))
     }
 
     async fn join(&self, code: &str, name: &str) -> Who {
-        who(&self.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name })).await.ok())
+        who(&self
+            .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name }))
+            .await
+            .ok())
     }
 
     /// A city started by someone new: its id, its link's code and who started it.
     async fn city(&self, name: &str) -> (String, String, Who) {
         let made = self
-            .post("", "/api/cities", json!({ "name": "Elm", "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/cities",
+                json!({ "name": "Elm", "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
         (text(&made["city"]["id"]), code_of(&made["invite_url"]), who(&made))
     }
 
     async fn join_city(&self, code: &str, name: &str) -> Who {
-        who(&self.post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": name })).await.ok())
+        who(&self
+            .post("", &format!("/api/city-invites/{code}/join"), json!({ "your_name": name }))
+            .await
+            .ok())
     }
 
     async fn friends(&self, who: &Who) -> Vec<String> {
@@ -126,11 +140,21 @@ impl Server {
     }
 
     async fn invite_to_room(&self, from: &Who, room: &str, to: &str) -> Reply {
-        self.post(&from.key, &format!("/api/hangouts/{room}/invite-friend"), json!({ "person_id": to })).await
+        self.post(
+            &from.key,
+            &format!("/api/hangouts/{room}/invite-friend"),
+            json!({ "person_id": to }),
+        )
+        .await
     }
 
     async fn invite_to_city(&self, from: &Who, city: &str, to: &str) -> Reply {
-        self.post(&from.key, &format!("/api/cities/{city}/invite-friend"), json!({ "person_id": to })).await
+        self.post(
+            &from.key,
+            &format!("/api/cities/{city}/invite-friend"),
+            json!({ "person_id": to }),
+        )
+        .await
     }
 
     async fn invited(&self, who: &Who) -> Vec<Value> {
@@ -183,11 +207,18 @@ async fn someone_who_answered_a_plans_link_is_a_friend_of_that_room_and_it_is_on
     let (room, code, ann) = server.room("Ann").await;
     let bo = server.join(&code, "Bo").await;
     let made = server
-        .post(&ann.key, &format!("/api/hangouts/{room}/events"), json!({ "title": "Tacos", "starts_at": LATER }))
+        .post(
+            &ann.key,
+            &format!("/api/hangouts/{room}/events"),
+            json!({ "title": "Tacos", "starts_at": LATER }),
+        )
         .await
         .ok();
     let event = text(&made["id"]);
-    let link = code_of(&server.post(&ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok()["invite_url"]);
+    let link = code_of(
+        &server.post(&ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok()
+            ["invite_url"],
+    );
     let answer = json!({ "response": "yes", "your_name": "Dee" });
     let dee = who(&server.post("", &format!("/api/plan-invites/{link}/answer"), answer).await.ok());
 
@@ -204,7 +235,10 @@ async fn someone_who_answered_a_plans_link_is_a_friend_of_that_room_and_it_is_on
 async fn a_bot_gets_no_list_of_people_and_can_invite_nobody() {
     let server = Server::start().await;
     let (room, ann, bo, cy) = server.three().await;
-    let made = server.post(&bo.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Scout" })).await.ok();
+    let made = server
+        .post(&bo.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Scout" }))
+        .await
+        .ok();
     let bot = Who { key: text(&made["token"]), id: String::new() };
     assert_eq!(server.get(&bot.key, "/api/friends").await.status, StatusCode::FORBIDDEN);
     assert_eq!(server.invite_to_room(&bot, &room, &cy.id).await.status, StatusCode::FORBIDDEN);
@@ -228,7 +262,8 @@ async fn a_stranger_gets_the_same_answer_as_nobody_and_someone_already_in_gets_4
     // A room they aren't in is one they can't see.
     let (other, _, _) = server.room("Dee").await;
     assert_eq!(server.invite_to_room(&ann, &other, &bo.id).await.status, StatusCode::NOT_FOUND);
-    let empty = server.post(&ann.key, &format!("/api/hangouts/{room}/invite-friend"), json!({})).await;
+    let empty =
+        server.post(&ann.key, &format!("/api/hangouts/{room}/invite-friend"), json!({})).await;
     assert_eq!(empty.status, StatusCode::BAD_REQUEST);
 }
 
@@ -245,7 +280,8 @@ async fn only_whoever_looks_after_a_citys_link_can_invite_to_it_and_managed_room
     assert!(server.invited(&cy).await.is_empty());
     assert_eq!(server.invite_to_city(&cy, &city, &bo.id).await.status, StatusCode::NOT_FOUND);
     // A Town Square takes nobody by invite, even from the person who started the city.
-    let square = text(&server.get(&ann.key, &format!("/api/cities/{city}")).await.ok()["city"]["square_id"]);
+    let square =
+        text(&server.get(&ann.key, &format!("/api/cities/{city}")).await.ok()["city"]["square_id"]);
     assert_eq!(server.invite_to_room(&ann, &square, &bo.id).await.status, StatusCode::FORBIDDEN);
     server.invite_to_room(&bo, &room, &ann.id).await.ok();
 }
@@ -258,7 +294,10 @@ async fn an_invite_shows_the_normal_page_and_goes_away_once_they_are_in() {
     server.invite_to_room(&ann, &room, &cy.id).await.ok();
 
     // Nothing has let them in.
-    assert_eq!(server.get(&cy.key, &format!("/api/hangouts/{room}")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get(&cy.key, &format!("/api/hangouts/{room}")).await.status,
+        StatusCode::NOT_FOUND
+    );
     let waiting = server.invited(&cy).await;
     assert_eq!(waiting.len(), 1);
     assert_eq!(waiting[0]["from"], "Ann");
@@ -278,12 +317,25 @@ async fn an_invite_gets_nobody_past_a_citys_rules_or_its_gate() {
     let server = Server::start().await;
     let (city, code, ann) = server.city("Ann").await;
     server.join_city(&code, "Bo").await;
-    server.post(&ann.key, "/api/hangouts", json!({ "name": "Side", "create_code": CODE })).await.ok();
-    let side = server.get(&ann.key, "/api/me").await.ok()["hangouts"].as_array().unwrap().iter().find(|h| h["name"] == "Side").unwrap().clone();
-    let side_code = text(&server.get(&ann.key, &format!("/api/hangouts/{}", text(&side["id"]))).await.ok()["hangout"]["invite_code"]);
+    server
+        .post(&ann.key, "/api/hangouts", json!({ "name": "Side", "create_code": CODE }))
+        .await
+        .ok();
+    let side = server.get(&ann.key, "/api/me").await.ok()["hangouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["name"] == "Side")
+        .unwrap()
+        .clone();
+    let side_code = text(
+        &server.get(&ann.key, &format!("/api/hangouts/{}", text(&side["id"]))).await.ok()
+            ["hangout"]["invite_code"],
+    );
     let cy = server.join(&side_code, "Cy").await;
     let rules = json!({ "min_vouches": 1, "rules_text": "Be kind." });
-    let set = server.send(&ann.key, Method::PUT, &format!("/api/cities/{city}/rules"), Some(rules)).await;
+    let set =
+        server.send(&ann.key, Method::PUT, &format!("/api/cities/{city}/rules"), Some(rules)).await;
     assert_eq!(set.status, StatusCode::OK, "{}", set.body);
 
     server.invite_to_city(&ann, &city, &cy.id).await.ok();
@@ -294,8 +346,14 @@ async fn an_invite_gets_nobody_past_a_citys_rules_or_its_gate() {
     // The page asks what it always asks: the rules first, and then they wait at the gate.
     let no_rules = server.post(&cy.key, &format!("/api/city-invites/{link}/join"), json!({})).await;
     assert_eq!(no_rules.status, StatusCode::CONFLICT, "{}", no_rules.body);
-    server.post(&cy.key, &format!("/api/city-invites/{link}/join"), json!({ "accept_rules": true })).await.ok();
-    assert_eq!(server.get(&cy.key, &format!("/api/cities/{city}")).await.status, StatusCode::NOT_FOUND);
+    server
+        .post(&cy.key, &format!("/api/city-invites/{link}/join"), json!({ "accept_rules": true }))
+        .await
+        .ok();
+    assert_eq!(
+        server.get(&cy.key, &format!("/api/cities/{city}")).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // FR5
@@ -308,8 +366,16 @@ async fn replacing_a_link_ends_the_invites_waiting_for_it_and_the_old_link_is_ne
     server.post(&ann.key, &format!("/api/invites/{other}/join"), json!({})).await.ok();
     server.invite_to_room(&ann, &room, &cy.id).await.ok();
     assert_eq!(text(&server.invited(&cy).await[0]["path"]), format!("/join/{code}"));
-    let fresh = code_of(&server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok()["invite_url"]);
-    assert!(server.invited(&cy).await.is_empty(), "the new link reached someone it wasn't given to");
+    let fresh = code_of(
+        &server
+            .post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({}))
+            .await
+            .ok()["invite_url"],
+    );
+    assert!(
+        server.invited(&cy).await.is_empty(),
+        "the new link reached someone it wasn't given to"
+    );
 
     // Someone who can see the link can ask again, and then it's the new link they're shown.
     server.invite_to_room(&ann, &room, &cy.id).await.ok();
@@ -336,13 +402,23 @@ async fn no_thanks_sticks_and_sending_again_looks_exactly_the_same_to_the_sender
 
     let id = text(&server.invited(&cy).await[0]["id"]);
     // Only the person invited can say no.
-    assert_eq!(server.post(&ann.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.post(&ann.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.status,
+        StatusCode::NOT_FOUND
+    );
     server.post(&cy.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.ok();
     assert!(server.invited(&cy).await.is_empty());
 
-    assert_eq!(server.invite_to_room(&ann, &room, &cy.id).await.ok(), first, "saying no doesn't show");
+    assert_eq!(
+        server.invite_to_room(&ann, &room, &cy.id).await.ok(),
+        first,
+        "saying no doesn't show"
+    );
     assert!(server.invited(&cy).await.is_empty(), "and it stuck");
-    assert_eq!(server.post(&cy.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.post(&cy.key, &format!("/api/friend-invites/{id}/decline"), json!({})).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // FR6
@@ -356,9 +432,13 @@ async fn an_invite_lapses_after_two_weeks_and_can_be_sent_again() {
     assert_eq!(db.friend_invites_for(&cy.id, then - waiting, 50).unwrap().len(), 1);
     assert!(db.friend_invites_for(&cy.id, then + 1, 50).unwrap().is_empty(), "it lapsed");
     // Sent again before it lapsed changes nothing, and after it lapsed it starts over.
-    assert!(!db.add_friend_invite("x", "room", &room, &ann.id, &cy.id, then, then - friends::INVITE_SECS).unwrap());
+    assert!(!db
+        .add_friend_invite("x", "room", &room, &ann.id, &cy.id, then, then - friends::INVITE_SECS)
+        .unwrap());
     let later = then + friends::INVITE_SECS + 60;
-    assert!(db.add_friend_invite("x", "room", &room, &ann.id, &cy.id, later, later - friends::INVITE_SECS).unwrap());
+    assert!(db
+        .add_friend_invite("x", "room", &room, &ann.id, &cy.id, later, later - friends::INVITE_SECS)
+        .unwrap());
 }
 
 // FR6
@@ -398,23 +478,39 @@ async fn a_person_can_send_twenty_invites_a_day() {
 async fn city_and_friend(server: &Server) -> (String, Who, Who) {
     let (city, code, ann) = server.city("Ann").await;
     server.join_city(&code, "Bo").await;
-    server.post(&ann.key, "/api/hangouts", json!({ "name": "Side", "create_code": CODE })).await.ok();
-    let side = server.get(&ann.key, "/api/me").await.ok()["hangouts"].as_array().unwrap().iter().find(|h| h["name"] == "Side").unwrap().clone();
-    let side_code = text(&server.get(&ann.key, &format!("/api/hangouts/{}", text(&side["id"]))).await.ok()["hangout"]["invite_code"]);
+    server
+        .post(&ann.key, "/api/hangouts", json!({ "name": "Side", "create_code": CODE }))
+        .await
+        .ok();
+    let side = server.get(&ann.key, "/api/me").await.ok()["hangouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["name"] == "Side")
+        .unwrap()
+        .clone();
+    let side_code = text(
+        &server.get(&ann.key, &format!("/api/hangouts/{}", text(&side["id"]))).await.ok()
+            ["hangout"]["invite_code"],
+    );
     let cy = server.join(&side_code, "Cy").await;
     (city, ann, cy)
 }
 
 async fn ask_for_vouches(server: &Server, ann: &Who, city: &str) {
     let rules = json!({ "min_vouches": 1, "rules_text": "" });
-    let set = server.send(&ann.key, Method::PUT, &format!("/api/cities/{city}/rules"), Some(rules)).await;
+    let set =
+        server.send(&ann.key, Method::PUT, &format!("/api/cities/{city}/rules"), Some(rules)).await;
     assert_eq!(set.status, StatusCode::OK, "{}", set.body);
 }
 
 async fn wait_at_the_gate(server: &Server, who: &Who) {
     let path = text(&server.invited(who).await[0]["path"]);
     let link = path.strip_prefix("/join-city/").unwrap();
-    let joined = server.post(&who.key, &format!("/api/city-invites/{link}/join"), json!({ "accept_rules": true })).await.ok();
+    let joined = server
+        .post(&who.key, &format!("/api/city-invites/{link}/join"), json!({ "accept_rules": true }))
+        .await
+        .ok();
     assert_eq!(joined["waiting"], true, "{joined}");
 }
 
@@ -426,8 +522,14 @@ async fn replacing_a_citys_link_keeps_out_someone_it_invited() {
     server.invite_to_city(&ann, &city, &cy.id).await.ok();
     assert_eq!(server.invited(&cy).await.len(), 1);
     server.post(&ann.key, &format!("/api/cities/{city}/invite/rotate"), json!({})).await.ok();
-    assert!(server.invited(&cy).await.is_empty(), "the new link reached someone it was replaced to keep out");
-    assert_eq!(server.get(&cy.key, &format!("/api/cities/{city}")).await.status, StatusCode::NOT_FOUND);
+    assert!(
+        server.invited(&cy).await.is_empty(),
+        "the new link reached someone it was replaced to keep out"
+    );
+    assert_eq!(
+        server.get(&cy.key, &format!("/api/cities/{city}")).await.status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // FR5
@@ -452,7 +554,10 @@ async fn being_turned_away_at_the_gate_ends_an_invite() {
     ask_for_vouches(&server, &ann, &city).await;
     server.invite_to_city(&ann, &city, &cy.id).await.ok();
     wait_at_the_gate(&server, &cy).await;
-    server.post(&ann.key, &format!("/api/cities/{city}/gate/{}/decline", cy.id), json!({})).await.ok();
+    server
+        .post(&ann.key, &format!("/api/cities/{city}/gate/{}/decline", cy.id), json!({}))
+        .await
+        .ok();
     assert!(server.invited(&cy).await.is_empty());
 
     // Asking again counts as changing your mind, and so does clearing the whole gate afterwards.
@@ -471,7 +576,11 @@ async fn sending_again_after_a_link_was_replaced_brings_an_invite_back_with_no_s
     server.post(&ann.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await.ok();
     // `send` pings only when this says the invite is new.
     let at = now();
-    let fresh = server.state.db.add_friend_invite("unused", "room", &room, &ann.id, &cy.id, at, at - friends::INVITE_SECS).unwrap();
+    let fresh = server
+        .state
+        .db
+        .add_friend_invite("unused", "room", &room, &ann.id, &cy.id, at, at - friends::INVITE_SECS)
+        .unwrap();
     assert!(!fresh, "that would have pinged them a second time");
     assert_eq!(server.invited(&cy).await.len(), 1);
 }

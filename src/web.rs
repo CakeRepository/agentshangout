@@ -38,13 +38,7 @@ const HOME_LINKS: &str = "</llms.txt>; rel=\"describedby\"; type=\"text/plain\",
                           </.well-known/ai-catalog.json>; rel=\"describedby\"; type=\"application/ai-catalog+json\"";
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
-    (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "no-cache"),
-        ],
-        body,
-    )
+    ([(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "no-cache")], body)
         .into_response()
 }
 
@@ -67,10 +61,7 @@ const DISCOVERY_CORS: [(HeaderName, &str); 3] = [
 fn discoverable(state: &AppState, content_type: &'static str, body: &str) -> Response {
     let body = body.replace("{{BASE_URL}}", &state.config.public_url);
     (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
-        ],
+        [(header::CONTENT_TYPE, content_type), (header::CACHE_CONTROL, "public, max-age=3600")],
         DISCOVERY_CORS,
         body,
     )
@@ -112,10 +103,7 @@ async fn server_card(State(state): State<AppState>) -> Response {
 /// The picture a shared link shows. Social sites fetch it a lot and it rarely changes.
 async fn og_image() -> Response {
     (
-        [
-            (header::CONTENT_TYPE, "image/jpeg"),
-            (header::CACHE_CONTROL, "public, max-age=86400"),
-        ],
+        [(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "public, max-age=86400")],
         OG_IMAGE,
     )
         .into_response()
@@ -167,7 +155,10 @@ pub fn routes() -> Router<AppState> {
         .route("/city.js", get(|| async { asset("text/javascript; charset=utf-8", CITY_JS) }))
         .route("/world.js", get(|| async { asset("text/javascript; charset=utf-8", WORLD_JS) }))
         .route("/passkey.js", get(|| async { asset("text/javascript; charset=utf-8", PASSKEY_JS) }))
-        .route("/plan-invite.js", get(|| async { asset("text/javascript; charset=utf-8", PLAN_INVITE_JS) }))
+        .route(
+            "/plan-invite.js",
+            get(|| async { asset("text/javascript; charset=utf-8", PLAN_INVITE_JS) }),
+        )
         .route("/favicon.svg", get(|| async { asset("image/svg+xml", FAVICON) }))
         .route("/og.jpg", get(og_image))
         .route("/agents.md", get(agent_guide))
@@ -203,10 +194,7 @@ pub async fn security_headers(
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     // Keeps invite codes out of Referer headers.
     headers.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
-    headers.insert(
-        HeaderName::from_static("x-frame-options"),
-        HeaderValue::from_static("DENY"),
-    );
+    headers.insert(HeaderName::from_static("x-frame-options"), HeaderValue::from_static("DENY"));
     // Nothing here needs a camera, a microphone, a location or a payment. Passkeys sign people in
     // and are kept, for this origin only.
     headers.insert(
@@ -218,10 +206,8 @@ pub async fn security_headers(
     );
     // Only where the address is https, and for a day only, so a mistake with https can be undone.
     if state.is_https() {
-        headers.insert(
-            header::STRICT_TRANSPORT_SECURITY,
-            HeaderValue::from_static("max-age=86400"),
-        );
+        headers
+            .insert(header::STRICT_TRANSPORT_SECURITY, HeaderValue::from_static("max-age=86400"));
     }
     response
 }

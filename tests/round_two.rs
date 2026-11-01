@@ -38,9 +38,11 @@ const COMMONS: &str = "commons";
 fn old_city(kind: Kind) -> bool {
     matches!(kind, Kind::Homes | Kind::Shops | Kind::Workshops | Kind::Park)
 }
-const CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
+const CHROME: &str =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
 const GOOGLEBOT: &str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
-const CHATGPT_USER: &str = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0";
+const CHATGPT_USER: &str =
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0";
 const GEMINI: &str = "Mozilla/5.0 (compatible; Google-Agent)";
 
 // ----------------------------------------------------------------------------------------------
@@ -172,14 +174,21 @@ impl Server {
 
     /// A server that believes it is at a public https address, as the live one does.
     async fn start_as_live() -> Self {
-        Self::boot(Db::open(":memory:").unwrap(), None, None, Some("https://agentshangout.test")).await
+        Self::boot(Db::open(":memory:").unwrap(), None, None, Some("https://agentshangout.test"))
+            .await
     }
 
     async fn start_with_keeper() -> (Self, Who) {
         let db = Db::open(":memory:").unwrap();
         let key = auth::new_owner_key();
-        db.create_person("keeper0000000001", "Keeper", &auth::hash_secret(&key), &auth::new_feed_token(), now())
-            .unwrap();
+        db.create_person(
+            "keeper0000000001",
+            "Keeper",
+            &auth::hash_secret(&key),
+            &auth::new_feed_token(),
+            now(),
+        )
+        .unwrap();
         let server = Self::boot(db, None, Some("keeper0000000001".to_string()), None).await;
         let keeper = Who { key, id: "keeper0000000001".to_string(), cookie: String::new() };
         (server, keeper)
@@ -189,7 +198,12 @@ impl Server {
         Self::boot(db, None, None, None).await
     }
 
-    async fn boot(db: Db, create_code: Option<String>, keeper_id: Option<String>, public_url: Option<&str>) -> Self {
+    async fn boot(
+        db: Db,
+        create_code: Option<String>,
+        keeper_id: Option<String>,
+        public_url: Option<&str>,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let state = AppState::new(
@@ -235,7 +249,8 @@ impl Server {
     }
 
     async fn person(&self, name: &str) -> Who {
-        let reply = self.post("/api/hangouts", json!({ "name": "Crew", "your_name": name })).send().await;
+        let reply =
+            self.post("/api/hangouts", json!({ "name": "Crew", "your_name": name })).send().await;
         let cookie = reply
             .headers
             .get("set-cookie")
@@ -305,13 +320,17 @@ impl Server {
     }
 
     async fn rpc(&self, method: &str, params: Value) -> Reply {
-        self.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
-            .send()
-            .await
+        self.post(
+            "/public/mcp",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }),
+        )
+        .send()
+        .await
     }
 
     async fn call(&self, name: &str, arguments: Value) -> Value {
-        self.rpc("tools/call", json!({ "name": name, "arguments": arguments })).await.body["result"].clone()
+        self.rpc("tools/call", json!({ "name": name, "arguments": arguments })).await.body["result"]
+            .clone()
     }
 
     async fn tool(&self, name: &str, arguments: Value) -> Value {
@@ -330,7 +349,11 @@ impl Server {
 
     /// A bot made in a hangout of its own.
     async fn bot(&self, name: &str) -> Bot {
-        let room = self.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Owner" })).send().await.ok();
+        let room = self
+            .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Owner" }))
+            .send()
+            .await
+            .ok();
         let key = room["owner_key"].as_str().unwrap().to_string();
         let hangout = room["hangout"]["id"].as_str().unwrap().to_string();
         let person = room["person"]["id"].as_str().unwrap().to_string();
@@ -338,7 +361,12 @@ impl Server {
     }
 
     async fn bot_in(&self, key: &str, person: &str, hangout: &str, name: &str) -> Bot {
-        let bot = self.post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": name })).token(key).send().await.ok();
+        let bot = self
+            .post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": name }))
+            .token(key)
+            .send()
+            .await
+            .ok();
         Bot {
             key: key.to_string(),
             person: person.to_string(),
@@ -385,7 +413,8 @@ impl Rng {
 }
 
 fn temp_db(label: &str) -> String {
-    let path = std::env::temp_dir().join(format!("round2-{label}-{}-{}.db", std::process::id(), now()));
+    let path =
+        std::env::temp_dir().join(format!("round2-{label}-{}-{}.db", std::process::id(), now()));
     path.to_str().unwrap().to_string()
 }
 
@@ -397,7 +426,9 @@ fn remove_db(path: &str) {
 
 /// Every table's rows as text, read from a second connection to a database file.
 fn dump(path: &str) -> BTreeMap<String, Vec<String>> {
-    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
     let names: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .unwrap()
@@ -429,7 +460,9 @@ fn dump(path: &str) -> BTreeMap<String, Vec<String>> {
 
 /// The schema as the database stores it, one entry per table, index and trigger.
 fn schema_of(path: &str) -> Vec<String> {
-    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let conn =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
     let mut stmt = conn
         .prepare("SELECT type || ' ' || name || ' ' || COALESCE(sql, '') FROM sqlite_master ORDER BY type, name")
         .unwrap();
@@ -476,7 +509,9 @@ fn tile(kind: Kind, level: u8, player: Option<u64>) -> Tile {
 /// A player of the server's own, who can be the builder of a place: a place's row names its
 /// builder, so unlike a tile of the old city it needs one that exists.
 fn make_player(db: &Db) -> u64 {
-    db.create_guest(&auth::hash_secret(&auth::new_id()), &auth::hash_secret(&auth::new_id()), now()).unwrap().id as u64
+    db.create_guest(&auth::hash_secret(&auth::new_id()), &auth::hash_secret(&auth::new_id()), now())
+        .unwrap()
+        .id as u64
 }
 
 /// Makes `Server::state`'s own player for a person, the one `act` uses when a person builds.
@@ -511,11 +546,19 @@ fn land_of(server: &Server, world: &str) -> world::Land {
 
 /// Places that a road joined to the highway is within reach of, worked out the long way.
 fn served_the_long_way(tiles: &Tiles) -> HashSet<(u16, u16)> {
-    let mut joined: HashSet<(u16, u16)> =
-        tiles.iter().filter(|(_, t)| t.kind == Kind::Road && t.player.is_none()).map(|(pos, _)| *pos).collect();
+    let mut joined: HashSet<(u16, u16)> = tiles
+        .iter()
+        .filter(|(_, t)| t.kind == Kind::Road && t.player.is_none())
+        .map(|(pos, _)| *pos)
+        .collect();
     let mut queue: Vec<(u16, u16)> = joined.iter().copied().collect();
     while let Some((x, y)) = queue.pop() {
-        for next in [(x.wrapping_add(1), y), (x.wrapping_sub(1), y), (x, y.wrapping_add(1)), (x, y.wrapping_sub(1))] {
+        for next in [
+            (x.wrapping_add(1), y),
+            (x.wrapping_sub(1), y),
+            (x, y.wrapping_add(1)),
+            (x, y.wrapping_sub(1)),
+        ] {
             if tiles.get(&next).is_some_and(|t| t.kind == Kind::Road) && joined.insert(next) {
                 queue.push(next);
             }
@@ -524,7 +567,9 @@ fn served_the_long_way(tiles: &Tiles) -> HashSet<(u16, u16)> {
     tiles
         .iter()
         .filter(|(_, t)| t.kind.is_building())
-        .filter(|(pos, _)| joined.iter().any(|j| j.0.abs_diff(pos.0) <= 3 && j.1.abs_diff(pos.1) <= 3))
+        .filter(|(pos, _)| {
+            joined.iter().any(|j| j.0.abs_diff(pos.0) <= 3 && j.1.abs_diff(pos.1) <= 3)
+        })
         .map(|(pos, _)| *pos)
         .collect()
 }
@@ -535,11 +580,13 @@ fn cheb(a: (i64, i64), b: (i64, i64)) -> i64 {
 
 fn open_ground(land: &world::Land, tiles: &Tiles, x: i64, y: i64) -> bool {
     match land.locate(x, y) {
-        Some(pos) => matches!(land.at(pos), Some(world::Ground::Grass | world::Ground::Sand)) && !tiles.contains_key(&pos),
+        Some(pos) => {
+            matches!(land.at(pos), Some(world::Ground::Grass | world::Ground::Sand))
+                && !tiles.contains_key(&pos)
+        }
         None => false,
     }
 }
-
 
 /// The limits count by the minute on the clock, so a test that counts what one minute lets through
 /// starts early in a minute, with plenty of it left.
@@ -560,13 +607,20 @@ fn make_a_dependant_road(server: &Server, builder: i64) -> (i64, i64) {
     let land = land_of(server, COMMONS);
     let tiles = server.tiles(COMMONS);
     let highway = world::highway(world::COMMONS_SEED, &land);
-    let road_tiles: Vec<(i64, i64)> =
-        tiles.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1))).collect();
-    for &(hx, hy) in highway.iter().map(|(x, y)| (i64::from(*x), i64::from(*y))).collect::<Vec<_>>().iter() {
+    let road_tiles: Vec<(i64, i64)> = tiles
+        .iter()
+        .filter(|(_, t)| t.kind == Kind::Road)
+        .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
+        .collect();
+    for &(hx, hy) in
+        highway.iter().map(|(x, y)| (i64::from(*x), i64::from(*y))).collect::<Vec<_>>().iter()
+    {
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let road = (hx + dx, hy + dy);
             let home = (hx + dx * 4, hy + dy * 4);
-            if !open_ground(&land, &tiles, road.0, road.1) || !open_ground(&land, &tiles, home.0, home.1) {
+            if !open_ground(&land, &tiles, road.0, road.1)
+                || !open_ground(&land, &tiles, home.0, home.1)
+            {
                 continue;
             }
             // Nothing else joined may reach the home.
@@ -577,8 +631,14 @@ fn make_a_dependant_road(server: &Server, builder: i64) -> (i64, i64) {
                 server,
                 COMMONS,
                 &[
-                    Change::Set((road.0 as u16, road.1 as u16), tile(Kind::Road, 0, Some(builder as u64))),
-                    Change::Set((home.0 as u16, home.1 as u16), tile(Kind::House, 0, Some(make_player(&server.state.db)))),
+                    Change::Set(
+                        (road.0 as u16, road.1 as u16),
+                        tile(Kind::Road, 0, Some(builder as u64)),
+                    ),
+                    Change::Set(
+                        (home.0 as u16, home.1 as u16),
+                        tile(Kind::House, 0, Some(make_player(&server.state.db))),
+                    ),
                 ],
             );
             return road;
@@ -606,7 +666,8 @@ fn crowd_the_commons(server: &Server, how_many: usize) {
 
 // W30, W13
 #[tokio::test]
-async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_guest_asking_again_and_again() {
+async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_guest_asking_again_and_again(
+) {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let guest = server.guest().await;
@@ -631,10 +692,22 @@ async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_
         println!("COST REPORT: {what}: {each:.3} ms each, {refused} of 200 refused, in a Commons of {} tiles", tiles.len());
         each
     };
-    let off_map = time("a bulldoze off the map (the cheapest refusal)", mv("bulldoze", Some(9_999), Some(9_999)));
-    let highway_tile = time("a bulldoze of a highway tile, which nobody can take down", mv("bulldoze", Some(i64::from(hx)), Some(i64::from(hy))));
-    let needed = time("a bulldoze of my own road that a place depends on", mv("bulldoze", Some(road.0), Some(road.1)));
-    println!("COST REPORT: the dependent road costs {:.0} times a cheap refusal", needed / off_map.max(0.0001));
+    let off_map = time(
+        "a bulldoze off the map (the cheapest refusal)",
+        mv("bulldoze", Some(9_999), Some(9_999)),
+    );
+    let highway_tile = time(
+        "a bulldoze of a highway tile, which nobody can take down",
+        mv("bulldoze", Some(i64::from(hx)), Some(i64::from(hy))),
+    );
+    let needed = time(
+        "a bulldoze of my own road that a place depends on",
+        mv("bulldoze", Some(road.0), Some(road.1)),
+    );
+    println!(
+        "COST REPORT: the dependent road costs {:.0} times a cheap refusal",
+        needed / off_map.max(0.0001)
+    );
     assert!(highway_tile > 0.0 && needed > 0.0);
 
     // The same over HTTP, the way a guest would ask. A refused move is free to the guest, and the
@@ -642,7 +715,9 @@ async fn a_refused_bulldoze_of_a_road_loads_the_whole_world_and_nothing_stops_a_
     let mut limited = 0;
     let mut refused = 0;
     for _ in 0..400 {
-        let reply = server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": road.0, "y": road.1 })).await;
+        let reply = server
+            .act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": road.0, "y": road.1 }))
+            .await;
         match reply.status {
             StatusCode::BAD_REQUEST => refused += 1,
             StatusCode::TOO_MANY_REQUESTS => limited += 1,
@@ -687,10 +762,24 @@ fn the_whole_map_says(
     let (x, y) = (m.x.unwrap(), m.y.unwrap());
     let (x2, y2) = (m.x2.unwrap_or(x), m.y2.unwrap_or(y));
     let span = Span { x: x.min(x2), y: y.min(y2), x2: x.max(x2), y2: y.max(y2) };
-    let gone = |who: u64| server.state.db.player(who as i64).unwrap().is_none_or(|p| at - p.seen_at >= world::GONE_SECS);
+    let gone = |who: u64| {
+        server
+            .state
+            .db
+            .player(who as i64)
+            .unwrap()
+            .is_none_or(|p| at - p.seen_at >= world::GONE_SECS)
+    };
     match m.action.as_str() {
         "road" => world::plan_road(land, tiles, builder, span),
-        "place" => world::plan_place(land, tiles, builder, Kind::parse(m.kind.as_deref().unwrap()).unwrap(), x, y),
+        "place" => world::plan_place(
+            land,
+            tiles,
+            builder,
+            Kind::parse(m.kind.as_deref().unwrap()).unwrap(),
+            x,
+            y,
+        ),
         "bulldoze" => world::plan_bulldoze(land, tiles, builder, x, y, &gone),
         other => panic!("{other}"),
     }
@@ -698,7 +787,13 @@ fn the_whole_map_says(
 
 /// A random move, most of them near a road, some at the edges of the map, a good share of the
 /// bulldozes aimed at what someone built, and some places on the tiles kept for side streets.
-fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, i64)], kept: &[(i64, i64)]) -> Move {
+fn random_move(
+    rng: &mut Rng,
+    size: i64,
+    roads: &[(i64, i64)],
+    targets: &[(i64, i64)],
+    kept: &[(i64, i64)],
+) -> Move {
     let (mut x, mut y) = match rng.below(100) {
         0..=69 if !roads.is_empty() => {
             let (sx, sy) = roads[rng.below(roads.len() as u64) as usize];
@@ -729,7 +824,15 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, 
             } else {
                 (x, y)
             };
-            Move { action: "place".into(), x: Some(px), y: Some(py), x2: None, y2: None, kind: Some(kind.into()), emote: None }
+            Move {
+                action: "place".into(),
+                x: Some(px),
+                y: Some(py),
+                x2: None,
+                y2: None,
+                kind: Some(kind.into()),
+                emote: None,
+            }
         }
         30..=54 if !roads.is_empty() && rng.below(100) < 60 => {
             // A road that starts beside an existing one and runs away from it.
@@ -737,7 +840,15 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, 
             let (dx, dy) = [(1, 0), (-1, 0), (0, 1), (0, -1)][rng.below(4) as usize];
             let len = 1 + rng.below(17) as i64;
             let (sx, sy) = (rx + dx, ry + dy);
-            Move { action: "road".into(), x: Some(sx), y: Some(sy), x2: Some(sx + dx * (len - 1)), y2: Some(sy + dy * (len - 1)), kind: None, emote: None }
+            Move {
+                action: "road".into(),
+                x: Some(sx),
+                y: Some(sy),
+                x2: Some(sx + dx * (len - 1)),
+                y2: Some(sy + dy * (len - 1)),
+                kind: None,
+                emote: None,
+            }
         }
         30..=64 => {
             let long = rng.below(19) as i64 - 9;
@@ -746,7 +857,15 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, 
                 n if n % 2 == 0 => (x + long, y),
                 _ => (x, y + long),
             };
-            Move { action: "road".into(), x: Some(x), y: Some(y), x2: Some(x2), y2: Some(y2), kind: None, emote: None }
+            Move {
+                action: "road".into(),
+                x: Some(x),
+                y: Some(y),
+                x2: Some(x2),
+                y2: Some(y2),
+                kind: None,
+                emote: None,
+            }
         }
         _ => {
             if !targets.is_empty() && rng.below(100) < 70 {
@@ -761,7 +880,13 @@ fn random_move(rng: &mut Rng, size: i64, roads: &[(i64, i64)], targets: &[(i64, 
 
 /// Plays `rounds` random moves by `players` in a world, with time passing, and checks every one
 /// against the whole map.
-fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usize, seed: u64) -> FuzzStats {
+fn fuzz_a_world(
+    server: &Server,
+    world: &str,
+    players: &[PlayerRow],
+    rounds: usize,
+    seed: u64,
+) -> FuzzStats {
     let row = server.state.db.world(world).unwrap().unwrap();
     let land = world::terrain(row.seed, row.size);
     let size = row.size as i64;
@@ -775,8 +900,11 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
         if round % 400 == 399 {
             at += 8 * 86_400;
         }
-        let roads: Vec<(i64, i64)> =
-            before.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1))).collect();
+        let roads: Vec<(i64, i64)> = before
+            .iter()
+            .filter(|(_, t)| t.kind == Kind::Road)
+            .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
+            .collect();
         let targets: Vec<(i64, i64)> = before
             .iter()
             .filter(|(_, t)| t.player.is_some() && (t.kind == Kind::Road || t.kind.is_building()))
@@ -811,8 +939,15 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
         match (expected, got) {
             // W54 to W61: who the player is, what they have and how long they have waited are not the
             // map's to decide, and a guest is always told no. Whatever is said, nothing changes.
-            (_, Err(error)) if is_place && matches!(error.status, StatusCode::FORBIDDEN | StatusCode::CONFLICT) => {
-                assert!(person || error.status == StatusCode::FORBIDDEN, "{text}: a guest was told {}", error.status);
+            (_, Err(error))
+                if is_place
+                    && matches!(error.status, StatusCode::FORBIDDEN | StatusCode::CONFLICT) =>
+            {
+                assert!(
+                    person || error.status == StatusCode::FORBIDDEN,
+                    "{text}: a guest was told {}",
+                    error.status
+                );
                 assert_eq!(after, before, "{text}: refused and changed tiles");
                 stats.held += 1;
             }
@@ -825,10 +960,17 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
             (Ok(plan), Ok(acted)) => {
                 assert!(person || !is_place, "{text}: somebody who is not a person put up a place");
                 assert!(!person || m.action != "road", "{text}: a person laid a road");
-                assert_eq!((acted.cost, acted.changed as usize, acted.skipped), (plan.cost, plan.changes.len(), plan.skipped), "{text}");
+                assert_eq!(
+                    (acted.cost, acted.changed as usize, acted.skipped),
+                    (plan.cost, plan.changes.len(), plan.skipped),
+                    "{text}"
+                );
                 let mut should = before.clone();
                 world::apply(&mut should, &plan.changes);
-                assert_eq!(after, should, "{text}: the tiles are not what the whole map's plan makes");
+                assert_eq!(
+                    after, should,
+                    "{text}: the tiles are not what the whole map's plan makes"
+                );
                 *stats.done.entry(m.action.clone()).or_default() += 1;
                 if m.action == "bulldoze" {
                     let (x, y) = (m.x.unwrap() as u16, m.y.unwrap() as u16);
@@ -836,17 +978,23 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
                     if was.is_some_and(|tile| tile.kind == Kind::Road) {
                         stats.road_cuts += 1;
                         // W17: no place that had a road lost it.
-                        let (served, still) = (served_the_long_way(&before), served_the_long_way(&after));
+                        let (served, still) =
+                            (served_the_long_way(&before), served_the_long_way(&after));
                         assert!(
                             served.is_subset(&still),
                             "{text}: a road came down and left {:?} without one",
                             served.difference(&still).collect::<Vec<_>>()
                         );
                     }
-                    if was.is_some_and(|tile| tile.player.is_some() && tile.player != Some(who.id as u64)) {
+                    if was.is_some_and(|tile| {
+                        tile.player.is_some() && tile.player != Some(who.id as u64)
+                    }) {
                         stats.abandoned_taken += 1;
                         // W57: somebody else's place is never anyone's to take down.
-                        assert!(!was.is_some_and(|tile| tile.kind.is_building()), "{text}: a place was taken by someone else");
+                        assert!(
+                            !was.is_some_and(|tile| tile.kind.is_building()),
+                            "{text}: a place was taken by someone else"
+                        );
                     }
                 }
             }
@@ -859,13 +1007,20 @@ fn fuzz_a_world(server: &Server, world: &str, players: &[PlayerRow], rounds: usi
                 stats.needed += u32::from(why.contains("depends"));
             }
             (Ok(plan), Err(error)) => {
-                panic!("{text}: the whole map allows {plan:?} and the server said {} {}", error.status, error.message)
+                panic!(
+                    "{text}: the whole map allows {plan:?} and the server said {} {}",
+                    error.status, error.message
+                )
             }
-            (Err(why), Ok(acted)) => panic!("{text}: the whole map says {why:?} and the server did {acted:?}"),
+            (Err(why), Ok(acted)) => {
+                panic!("{text}: the whole map says {why:?} and the server did {acted:?}")
+            }
         }
         // W46: nothing with no builder is ever taken down or changed into something else by a move.
         for (pos, was) in before.iter().filter(|(_, t)| t.player.is_none()) {
-            let there = after.get(pos).unwrap_or_else(|| panic!("{text}: the street at {pos:?} with no builder is gone"));
+            let there = after
+                .get(pos)
+                .unwrap_or_else(|| panic!("{text}: the street at {pos:?} with no builder is gone"));
             assert_eq!((there.kind, there.player), (was.kind, None), "{text}: {pos:?}");
         }
         before = after;
@@ -907,11 +1062,17 @@ async fn in_the_commons_every_move_is_decided_as_the_whole_map_would_decide_it()
     let stats = fuzz_a_world(&server, COMMONS, &players, 3_000, 0x5EED_0001);
     for action in ["place", "road", "bulldoze"] {
         let least = if action == "place" { 5 } else { 30 };
-        assert!(stats.done.get(action).copied().unwrap_or(0) >= least, "too few {action} moves worked to say anything: {stats:?}");
+        assert!(
+            stats.done.get(action).copied().unwrap_or(0) >= least,
+            "too few {action} moves worked to say anything: {stats:?}"
+        );
     }
     assert!(stats.held >= 10, "who may place was hardly tried: {stats:?}");
     assert!(stats.kept >= 3, "side streets were hardly tried: {stats:?}");
-    assert!(stats.road_cuts >= 5 && stats.needed >= 1, "the road-cut check was hardly tried: {stats:?}");
+    assert!(
+        stats.road_cuts >= 5 && stats.needed >= 1,
+        "the road-cut check was hardly tried: {stats:?}"
+    );
 }
 
 // W25, W27
@@ -924,7 +1085,18 @@ async fn nothing_can_be_done_in_a_frozen_world_whatever_is_asked_and_nothing_in_
     server.frozen_world(id, Some(&owner.id), true, 4242, now());
     // What it held when it froze, the old kinds among it.
     let land = land_of_world(&server, id);
-    let (kinds, builder) = ([Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cafe, Kind::House], make_player(&server.state.db));
+    let (kinds, builder) = (
+        [
+            Kind::Road,
+            Kind::Homes,
+            Kind::Shops,
+            Kind::Workshops,
+            Kind::Park,
+            Kind::Cafe,
+            Kind::House,
+        ],
+        make_player(&server.state.db),
+    );
     let old: Vec<Change> = (0..40u16)
         .map(|n| (20 + n % 8, 10 + n / 8))
         .filter(|&pos| land.at(pos).is_some_and(|ground| ground.is_open()))
@@ -940,9 +1112,13 @@ async fn nothing_can_be_done_in_a_frozen_world_whatever_is_asked_and_nothing_in_
     players.extend(some_players(&server, 2, 2).await);
     let (tiles, active) = (server.tiles(id), server.state.db.world(id).unwrap().unwrap().active_at);
     let size = world::OWN_SIZE as i64;
-    let roads: Vec<(i64, i64)> =
-        tiles.iter().filter(|(_, t)| t.kind == Kind::Road).map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1))).collect();
-    let targets: Vec<(i64, i64)> = tiles.keys().map(|pos| (i64::from(pos.0), i64::from(pos.1))).collect();
+    let roads: Vec<(i64, i64)> = tiles
+        .iter()
+        .filter(|(_, t)| t.kind == Kind::Road)
+        .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
+        .collect();
+    let targets: Vec<(i64, i64)> =
+        tiles.keys().map(|pos| (i64::from(pos.0), i64::from(pos.1))).collect();
     let mut rng = Rng(0x5EED_0003);
     let mut at = now();
     for round in 0..400 {
@@ -950,17 +1126,27 @@ async fn nothing_can_be_done_in_a_frozen_world_whatever_is_asked_and_nothing_in_
         at += 61;
         let who = &players[rng.below(players.len() as u64) as usize];
         let m = match round % 5 {
-            0 => mv("walk", Some(rng.below(size as u64) as i64), Some(rng.below(size as u64) as i64)),
+            0 => {
+                mv("walk", Some(rng.below(size as u64) as i64), Some(rng.below(size as u64) as i64))
+            }
             1 => Move { emote: Some("wave".into()), ..mv("emote", None, None) },
             _ => random_move(&mut rng, size, &roads, &targets, &[]),
         };
         refill(&server, who, at);
-        let error = worlds::act(&server.state, who, id, &m, at).expect_err(&format!("round {round}: {m:?} worked in a frozen world"));
+        let error = worlds::act(&server.state, who, id, &m, at)
+            .expect_err(&format!("round {round}: {m:?} worked in a frozen world"));
         assert_eq!(error.status, StatusCode::FORBIDDEN, "round {round}: {m:?}: {}", error.message);
-        assert!(server.state.db.world_player(id, who.id).unwrap().is_none(), "round {round}: {m:?} put a player in a frozen world");
+        assert!(
+            server.state.db.world_player(id, who.id).unwrap().is_none(),
+            "round {round}: {m:?} put a player in a frozen world"
+        );
     }
     assert_eq!(server.tiles(id), tiles, "a refused move changed a frozen world");
-    assert_eq!(server.state.db.world(id).unwrap().unwrap().active_at, active, "a refused move woke a frozen world");
+    assert_eq!(
+        server.state.db.world(id).unwrap().unwrap().active_at,
+        active,
+        "a refused move woke a frozen world"
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -997,23 +1183,45 @@ fn land_of_world(server: &Server, world: &str) -> world::Land {
 
 // W28, W46
 #[tokio::test]
-async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_touches_nothing_players_built() {
+async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_touches_nothing_players_built(
+) {
     // A new server makes the land and the highway, and no town.
     let fresh = Server::start().await;
     worlds::ensure_commons(&fresh.state).unwrap();
     let land = land_of(&fresh, COMMONS);
-    let highway: HashSet<(u16, u16)> = world::highway(world::COMMONS_SEED, &land).into_iter().collect();
+    let highway: HashSet<(u16, u16)> =
+        world::highway(world::COMMONS_SEED, &land).into_iter().collect();
     let tiles = fresh.tiles(COMMONS);
-    assert_eq!(tiles.keys().copied().collect::<HashSet<_>>(), highway, "a new Commons has more on it than the highway");
-    assert!(tiles.values().all(|t| *t == tile(Kind::Road, 0, None)), "something on the highway is not a road with no builder");
-    assert!(fresh.state.db.world_end(COMMONS).unwrap().is_none(), "a new Commons has a clock running");
+    assert_eq!(
+        tiles.keys().copied().collect::<HashSet<_>>(),
+        highway,
+        "a new Commons has more on it than the highway"
+    );
+    assert!(
+        tiles.values().all(|t| *t == tile(Kind::Road, 0, None)),
+        "something on the highway is not a road with no builder"
+    );
+    assert!(
+        fresh.state.db.world_end(COMMONS).unwrap().is_none(),
+        "a new Commons has a clock running"
+    );
 
     // A Commons that already exists, with players' tiles of every kind on it, old and new, on the
     // ground where a founding town used to be added.
     let path = temp_db("town");
     let (_, highway) = a_bare_commons(&Db::open(&path).unwrap());
     let highway: HashSet<(u16, u16)> = highway.into_iter().collect();
-    let kinds = [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road, Kind::House, Kind::Cafe, Kind::Club, Kind::Studio];
+    let kinds = [
+        Kind::Homes,
+        Kind::Shops,
+        Kind::Workshops,
+        Kind::Park,
+        Kind::Road,
+        Kind::House,
+        Kind::Cafe,
+        Kind::Club,
+        Kind::Studio,
+    ];
     // Each builder has one of each kind, as a person's house is the one they can have.
     let builders: Vec<u64> = (0..10).map(|_| make_player(&Db::open(&path).unwrap())).collect();
     let theirs: Vec<Change> = (0..90u16)
@@ -1022,17 +1230,28 @@ async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_t
         .enumerate()
         .map(|(n, pos)| {
             let kind = kinds[n % kinds.len()];
-            Change::Set(pos, tile(kind, if old_city(kind) { (n % 4) as u8 } else { 0 }, Some(builders[n / kinds.len()])))
+            Change::Set(
+                pos,
+                tile(
+                    kind,
+                    if old_city(kind) { (n % 4) as u8 } else { 0 },
+                    Some(builders[n / kinds.len()]),
+                ),
+            )
         })
         .collect();
     {
         let db = Db::open(&path).unwrap();
-        db.in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &theirs, now())).unwrap();
+        db.in_transaction::<(), rusqlite::Error>(|tx| tx.write_changes(COMMONS, &theirs, now()))
+            .unwrap();
     }
     // The server starts, and starts again, as a server does every day: nothing changes.
     let first = Server::on(Db::open(&path).unwrap()).await;
     let before = first.tiles(COMMONS);
-    assert!(before.len() >= highway.len() + theirs.len() - 5, "the tiles the test made are not all there");
+    assert!(
+        before.len() >= highway.len() + theirs.len() - 5,
+        "the tiles the test made are not all there"
+    );
     worlds::ensure_commons(&first.state).unwrap();
     assert_eq!(first.tiles(COMMONS), before, "starting the server changed what was on The Commons");
     let second = Server::on(Db::open(&path).unwrap()).await;
@@ -1044,7 +1263,8 @@ async fn a_new_commons_is_the_highway_and_nothing_else_and_starting_the_server_t
 
 // W19, W28, W46
 #[tokio::test]
-async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_with_nothing_of_the_old_city() {
+async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_with_nothing_of_the_old_city(
+) {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let players = some_players(&server, 2, 2).await;
@@ -1060,7 +1280,10 @@ async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_wi
             // A player makes a move near the middle, where the highway ends.
             let roads: Vec<(i64, i64)> = before
                 .iter()
-                .filter(|(pos, t)| t.kind == Kind::Road && cheb((i64::from(pos.0), i64::from(pos.1)), (size / 2, size / 2)) < 30)
+                .filter(|(pos, t)| {
+                    t.kind == Kind::Road
+                        && cheb((i64::from(pos.0), i64::from(pos.1)), (size / 2, size / 2)) < 30
+                })
                 .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
                 .collect();
             let who = &players[rng.below(players.len() as u64) as usize];
@@ -1076,25 +1299,41 @@ async fn a_long_run_of_steps_changes_no_tile_and_starts_no_clock_on_a_commons_wi
     println!("COST REPORT: 3,000 steps with {player_moves} moves from the players");
     assert!(player_moves >= 20, "the run proved little: {player_moves} moves");
     // W64: nothing of the old city stands, so no clock ever started and no disaster is on the way.
-    assert!(server.state.db.world_end(COMMONS).unwrap().is_none(), "a clock started on a Commons with nothing of the old city");
+    assert!(
+        server.state.db.world_end(COMMONS).unwrap().is_none(),
+        "a clock started on a Commons with nothing of the old city"
+    );
     assert_eq!(server.state.db.world(COMMONS).unwrap().unwrap().step, 3_000);
 }
 
 // W19, W27, W46
 #[tokio::test]
-async fn a_step_changes_nothing_in_a_world_somebody_started_and_never_starts_the_end_of_the_old_city_there() {
+async fn a_step_changes_nothing_in_a_world_somebody_started_and_never_starts_the_end_of_the_old_city_there(
+) {
     let server = Server::start().await;
     let owner = server.person("Owner").await;
     let id = "frozen0000000001";
     server.frozen_world(id, Some(&owner.id), true, 4242, now());
     // What it held when it froze: the old kinds and a place.
     let land = land_of_world(&server, id);
-    let (kinds, builder) = ([Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road, Kind::Cafe], make_player(&server.state.db));
+    let (kinds, builder) = (
+        [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Road, Kind::Cafe],
+        make_player(&server.state.db),
+    );
     let old: Vec<Change> = (0..60u16)
         .map(|n| (16 + n % 10, 8 + n / 10))
         .filter(|&pos| land.at(pos).is_some_and(|ground| ground.is_open()))
         .enumerate()
-        .map(|(n, pos)| Change::Set(pos, tile(kinds[n % kinds.len()], if old_city(kinds[n % kinds.len()]) { (n % 4) as u8 } else { 0 }, Some(builder))))
+        .map(|(n, pos)| {
+            Change::Set(
+                pos,
+                tile(
+                    kinds[n % kinds.len()],
+                    if old_city(kinds[n % kinds.len()]) { (n % 4) as u8 } else { 0 },
+                    Some(builder),
+                ),
+            )
+        })
         .collect();
     assert!(old.iter().any(|c| matches!(c, Change::Set(_, t) if old_city(t.kind))));
     put_tiles(&server, id, &old);
@@ -1105,7 +1344,10 @@ async fn a_step_changes_nothing_in_a_world_somebody_started_and_never_starts_the
         worlds::step_world(&server.state, id, at0 + step * 60).unwrap();
     }
     assert_eq!(server.tiles(id), before, "stepping changed a world in somebody's name");
-    assert!(server.state.db.world_end(id).unwrap().is_none(), "a clock started in a world that is not The Commons");
+    assert!(
+        server.state.db.world_end(id).unwrap().is_none(),
+        "a clock started in a world that is not The Commons"
+    );
 }
 
 // W19, W46, W29
@@ -1118,7 +1360,10 @@ async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or
     let roads: Vec<(i64, i64)> = server
         .tiles(COMMONS)
         .iter()
-        .filter(|(pos, t)| t.kind == Kind::Road && cheb((i64::from(pos.0), i64::from(pos.1)), (size / 2, size / 2)) < 30)
+        .filter(|(pos, t)| {
+            t.kind == Kind::Road
+                && cheb((i64::from(pos.0), i64::from(pos.1)), (size / 2, size / 2)) < 30
+        })
         .map(|(pos, _)| (i64::from(pos.0), i64::from(pos.1)))
         .collect();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1169,7 +1414,9 @@ async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or
                         }
                     };
                     let at = base + i * 4 + n as i64;
-                    let _ = state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.charge(who.id, worlds::today(at), 0, at));
+                    let _ = state.db.in_transaction::<(), rusqlite::Error>(|tx| {
+                        tx.charge(who.id, worlds::today(at), 0, at)
+                    });
                     done += usize::from(worlds::act(&state, &who, COMMONS, &m, at).is_ok());
                 }
                 done
@@ -1183,7 +1430,10 @@ async fn players_moving_while_the_world_steps_never_lose_a_tile_to_each_other_or
     println!("COST REPORT: {done} moves went in while the world stepped 1,500 times");
     assert!(done >= 40, "too few moves went in to say anything ({done})");
     assert!(bad.is_empty(), "tiles changed hands: {bad:?}");
-    assert!(server.state.db.world_end(COMMONS).unwrap().is_none(), "a clock started on a Commons with nothing of the old city");
+    assert!(
+        server.state.db.world_end(COMMONS).unwrap().is_none(),
+        "a clock started on a Commons with nothing of the old city"
+    );
 }
 
 // W24
@@ -1209,13 +1459,18 @@ async fn only_the_commons_steps_whatever_happens_to_the_worlds_that_froze() {
     assert_eq!(due(now()), [COMMONS.to_string()], "a refused move woke a world");
     // The Commons steps whenever anyone last moved, because its street walks by its step.
     let commons_active = server.state.db.world(COMMONS).unwrap().unwrap().active_at;
-    assert_eq!(due(commons_active + 31 * 86_400), [COMMONS.to_string()], "The Commons went to sleep");
+    assert_eq!(
+        due(commons_active + 31 * 86_400),
+        [COMMONS.to_string()],
+        "The Commons went to sleep"
+    );
     // Even an emote, which woke an open world once, does nothing in one now.
     let owner = server.person("Owner").await;
     let player = person_player(&server, &owner);
     let later = now() + 45 * 86_400;
     refill(&server, &player, later);
-    let refused = worlds::act(&server.state, &player, "awake00000000001", &wave_move(), later).unwrap_err();
+    let refused =
+        worlds::act(&server.state, &player, "awake00000000001", &wave_move(), later).unwrap_err();
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.message);
     assert_eq!(due(later), [COMMONS.to_string()], "a move woke a frozen world");
     // And a round of steps takes only The Commons.
@@ -1226,7 +1481,8 @@ async fn only_the_commons_steps_whatever_happens_to_the_worlds_that_froze() {
 
 // W24, W25, W32
 #[tokio::test]
-async fn measure_a_round_of_steps_when_two_hundred_frozen_worlds_are_full_and_only_the_commons_steps() {
+async fn measure_a_round_of_steps_when_two_hundred_frozen_worlds_are_full_and_only_the_commons_steps(
+) {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let at = now();
@@ -1239,22 +1495,34 @@ async fn measure_a_round_of_steps_when_two_hundred_frozen_worlds_are_full_and_on
         let mut fill = Vec::new();
         for y in 0..world::OWN_SIZE as u16 {
             for x in 0..world::OWN_SIZE as u16 {
-                if (x + y) % 3 != 0 && matches!(land.at((x, y)), Some(world::Ground::Grass | world::Ground::Sand)) {
-                    let kind = [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park][usize::from(x % 4)];
+                if (x + y) % 3 != 0
+                    && matches!(land.at((x, y)), Some(world::Ground::Grass | world::Ground::Sand))
+                {
+                    let kind =
+                        [Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park][usize::from(x % 4)];
                     fill.push(Change::Set((x, y), tile(kind, (y % 3) as u8, Some(5))));
                 }
             }
         }
         put_tiles(&server, &id, &fill);
     }
-    println!("COST REPORT: 200 full frozen worlds made in {:.1} s", started.elapsed().as_secs_f64());
+    println!(
+        "COST REPORT: 200 full frozen worlds made in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
     let started = Instant::now();
     let report = worlds::step_all(&server.state, at + 60);
     let took = started.elapsed().as_secs_f64();
-    println!("COST REPORT: one round of steps over {} awake worlds took {took:.2} s", report.stepped.len());
+    println!(
+        "COST REPORT: one round of steps over {} awake worlds took {took:.2} s",
+        report.stepped.len()
+    );
     assert!(report.failed.is_empty());
     assert_eq!(report.stepped, [COMMONS.to_string()], "a frozen world took a step");
-    assert!(took < 60.0, "a round of steps took {took:.1} s, which is longer than the minute it has");
+    assert!(
+        took < 60.0,
+        "a round of steps took {took:.1} s, which is longer than the minute it has"
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1269,8 +1537,18 @@ fn random_town(rng: &mut Rng, side: u16, players: u64) -> Tiles {
     for _ in 0..rng.below(140) + 10 {
         let pos = (rng.below(u64::from(side)) as u16, rng.below(u64::from(side)) as u16);
         let kind = rng.pick(&[
-            Kind::Road, Kind::Homes, Kind::Shops, Kind::Workshops, Kind::Park, Kind::Cleared, Kind::House, Kind::Studio,
-            Kind::Club, Kind::Cafe, Kind::Road, Kind::House,
+            Kind::Road,
+            Kind::Homes,
+            Kind::Shops,
+            Kind::Workshops,
+            Kind::Park,
+            Kind::Cleared,
+            Kind::House,
+            Kind::Studio,
+            Kind::Club,
+            Kind::Cafe,
+            Kind::Road,
+            Kind::House,
         ]);
         let level = if old_city(kind) { rng.below(4) as u8 } else { 0 };
         let owner = if rng.below(10) == 0 { None } else { Some(1 + rng.below(players)) };
@@ -1324,9 +1602,14 @@ async fn a_tip_a_goal_and_your_town_depend_on_what_is_yours_and_never_on_what_th
         // The same buildings of mine, with another builder's name on them: nothing changes, because
         // what a player's own tiles say is the whole of it.
         let mine = own_tiles(&tiles, me);
-        let renamed: Tiles = mine.iter().map(|(pos, t)| (*pos, Tile { player: Some(1_000 + me), ..*t })).collect();
+        let renamed: Tiles =
+            mine.iter().map(|(pos, t)| (*pos, Tile { player: Some(1_000 + me), ..*t })).collect();
         for person in [false, true] {
-            assert_eq!(world::tip(&mine, person, 30), world::tip(&renamed, person, 30), "round {round}: a tip changed with a name");
+            assert_eq!(
+                world::tip(&mine, person, 30),
+                world::tip(&renamed, person, 30),
+                "round {round}: a tip changed with a name"
+            );
             assert_eq!(
                 world::goal(&world::town(&mine), person),
                 world::goal(&world::town(&renamed), person),
@@ -1348,7 +1631,15 @@ async fn a_tip_a_goal_and_your_town_depend_on_what_is_yours_and_never_on_what_th
         &server,
         bob_id,
         112,
-        &[(Kind::Road, 0), (Kind::House, 0), (Kind::Studio, 0), (Kind::Club, 0), (Kind::Cafe, 0), (Kind::Homes, 3), (Kind::Park, 0)],
+        &[
+            (Kind::Road, 0),
+            (Kind::House, 0),
+            (Kind::Studio, 0),
+            (Kind::Club, 0),
+            (Kind::Cafe, 0),
+            (Kind::Homes, 3),
+            (Kind::Park, 0),
+        ],
     );
     let after = server.me(&ann.token, COMMONS).await;
     for key in ["your_town", "goal", "tip"] {
@@ -1383,7 +1674,11 @@ async fn how_am_i_doing_is_limited_per_address_in_mcp_and_everything_it_says_is_
         let result = &reply.body["result"];
         if result["isError"] == true {
             refused += 1;
-            assert!(result["content"][0]["text"].as_str().unwrap().contains("too often"), "{}", reply.text);
+            assert!(
+                result["content"][0]["text"].as_str().unwrap().contains("too often"),
+                "{}",
+                reply.text
+            );
         } else {
             told += 1;
             let tip = result["structuredContent"]["tip"].as_str().unwrap();
@@ -1391,20 +1686,37 @@ async fn how_am_i_doing_is_limited_per_address_in_mcp_and_everything_it_says_is_
             let goal = result["structuredContent"]["goal"].as_str().unwrap();
             assert!(world::GOALS.contains(&goal), "{goal}");
             // Everything else in the answer is a number, a listed word or a name from the lists.
-            let allowed_keys = ["player", "moves_left", "moves_per_day", "kind", "built", "world", "tip", "your_town", "goal"];
+            let allowed_keys = [
+                "player",
+                "moves_left",
+                "moves_per_day",
+                "kind",
+                "built",
+                "world",
+                "tip",
+                "your_town",
+                "goal",
+            ];
             for key in result["structuredContent"].as_object().unwrap().keys() {
                 assert!(allowed_keys.contains(&key.as_str()), "an unexpected field {key}");
             }
         }
     }
     println!("COST REPORT: 300 how_am_i_doing calls from one address in a minute: {told} answered, {refused} slowed down");
-    assert!((235..=245).contains(&told), "{told} calls were answered: the limit is a view's 240 a minute");
-    assert!(call("198.51.100.21").await.body["result"]["isError"].is_null(), "another address was held up too");
+    assert!(
+        (235..=245).contains(&told),
+        "{told} calls were answered: the limit is a view's 240 a minute"
+    );
+    assert!(
+        call("198.51.100.21").await.body["result"]["isError"].is_null(),
+        "another address was held up too"
+    );
 }
 
 // W47, W30
 #[tokio::test]
-async fn joining_again_and_again_with_a_bot_token_reads_the_whole_world_for_its_tip_each_time_and_is_never_slowed_down() {
+async fn joining_again_and_again_with_a_bot_token_reads_the_whole_world_for_its_tip_each_time_and_is_never_slowed_down(
+) {
     // Joins are counted by the minute on the clock, and 300 must all fall in one of them to pass 240.
     start_early_in_a_minute().await;
     let server = Server::start().await;
@@ -1414,7 +1726,12 @@ async fn joining_again_and_again_with_a_bot_token_reads_the_whole_world_for_its_
     let (mut limited, mut joined) = (0, 0);
     // More than the 240 views a minute that an address is allowed, which a join now counts as.
     for _ in 0..300 {
-        let reply = server.post("/api/public/join", json!({})).token(&bot.token).ip("198.51.100.30").send().await;
+        let reply = server
+            .post("/api/public/join", json!({}))
+            .token(&bot.token)
+            .ip("198.51.100.30")
+            .send()
+            .await;
         match reply.status {
             StatusCode::OK => {
                 joined += 1;
@@ -1463,7 +1780,12 @@ async fn measure_how_few_addresses_it_takes_to_leave_every_new_guest_outside_for
     assert!(honest.is_err());
     // A bot with its own token, and a signed-in person, are not kept out.
     let bot = server.bot("Welcome").await;
-    let reply = server.post("/api/public/join", json!({})).token(&bot.token).ip("203.0.113.99").send().await;
+    let reply = server
+        .post("/api/public/join", json!({}))
+        .token(&bot.token)
+        .ip("203.0.113.99")
+        .send()
+        .await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.show());
 }
 
@@ -1472,7 +1794,13 @@ async fn measure_how_few_addresses_it_takes_to_leave_every_new_guest_outside_for
 fn measure_how_many_networks_it_takes_to_get_honest_addresses_refused_views() {
     let state = AppState::new(
         Db::open(":memory:").unwrap(),
-        Config { public_url: "https://agentshangout.test".into(), create_code: None, allow_private_webhooks: false, keeper_id: None, god_ids: Vec::new() },
+        Config {
+            public_url: "https://agentshangout.test".into(),
+            create_code: None,
+            allow_private_webhooks: false,
+            keeper_id: None,
+            god_ids: Vec::new(),
+        },
     );
     let at = now();
     let mut sent = 0u64;
@@ -1481,13 +1809,21 @@ fn measure_how_many_networks_it_takes_to_get_honest_addresses_refused_views() {
         while sent < target {
             let a = sent;
             // Every request from a different IPv6 network, so a different address as far as the limit sees.
-            let headers = ip_headers(&format!("2a0{:x}:{:x}:{:x}::1", a >> 32, (a >> 16) & 0xffff, a & 0xffff));
+            let headers = ip_headers(&format!(
+                "2a0{:x}:{:x}:{:x}::1",
+                a >> 32,
+                (a >> 16) & 0xffff,
+                a & 0xffff
+            ));
             let _ = worlds::allow_view(&state, &headers, at);
             sent += 1;
         }
         let mut refused = 0;
         for victim in 0..200u32 {
-            let headers = ip_headers(&format!("203.0.113.{}", victim % 250 + 1).replace("203.0.113", &format!("198.{}.113", victim / 250 + 18)));
+            let headers = ip_headers(
+                &format!("203.0.113.{}", victim % 250 + 1)
+                    .replace("203.0.113", &format!("198.{}.113", victim / 250 + 18)),
+            );
             refused += usize::from(worlds::allow_view(&state, &headers, at).is_err());
         }
         line += &format!(" after {sent} requests: {refused} of 200 honest addresses refused;");
@@ -1502,11 +1838,14 @@ async fn measure_what_a_missing_address_header_is_worth_on_a_server_that_thinks_
     let server = Server::start_as_live().await;
     let mut views = 0;
     for _ in 0..300 {
-        views += usize::from(server.get("/api/worlds/commons").send().await.status == StatusCode::OK);
+        views +=
+            usize::from(server.get("/api/worlds/commons").send().await.status == StatusCode::OK);
     }
     let mut joins = 0;
     for _ in 0..20 {
-        joins += usize::from(server.post("/api/public/join", json!({})).send().await.status == StatusCode::OK);
+        joins += usize::from(
+            server.post("/api/public/join", json!({})).send().await.status == StatusCode::OK,
+        );
     }
     println!("COST REPORT: with no X-Forwarded-For on a server whose public address is https: {views} of 300 views and {joins} of 20 joins were answered, from one caller");
     // Caddy always adds the header, so a request without one is the shared unknown address: it has
@@ -1555,13 +1894,38 @@ async fn measure_how_many_browsers_behind_one_address_the_view_limit_leaves_room
 async fn no_visit_to_a_private_page_or_route_is_ever_noticed_whatever_the_visitor_calls_itself() {
     let server = Server::start().await;
     let private = [
-        "/h/abcdefghijklmnop", "/join/abcdefghijklmnopqrstuvwx", "/c/abcdefghijklmnop", "/house/abcdefghijklmnop",
-        "/join-city/abcdefghijklmnop", "/join-house/abcdefghijklmnop", "/api/hangouts/abcdefghijklmnop", "/api/me",
-        "/api/cities/abcdefghijklmnop", "/api/city-invites/abcdefghijklmnop", "/api/house-invites/abcdefghijklmnop",
-        "/api/invites/abcdefghijklmnop", "/cal/abcdefghijklmnop.ics", "/world/commons/extra", "/world/", "/world",
-        "/%77orld/commons", "/worlds/extra", "/api/worlds/commons", "/api/worlds", "/api/worlds/commons/me", "/style.css",
-        "/app.js", "/world.js", "/favicon.svg", "/indexnow.txt", "/mcp", "/public", "/public/mcp/", "/api/public/join",
-        "/?token=secret&join=abcdefghijklmnop", "/h/abcdefghijklmnop?key=ah_owner_secret",
+        "/h/abcdefghijklmnop",
+        "/join/abcdefghijklmnopqrstuvwx",
+        "/c/abcdefghijklmnop",
+        "/house/abcdefghijklmnop",
+        "/join-city/abcdefghijklmnop",
+        "/join-house/abcdefghijklmnop",
+        "/api/hangouts/abcdefghijklmnop",
+        "/api/me",
+        "/api/cities/abcdefghijklmnop",
+        "/api/city-invites/abcdefghijklmnop",
+        "/api/house-invites/abcdefghijklmnop",
+        "/api/invites/abcdefghijklmnop",
+        "/cal/abcdefghijklmnop.ics",
+        "/world/commons/extra",
+        "/world/",
+        "/world",
+        "/%77orld/commons",
+        "/worlds/extra",
+        "/api/worlds/commons",
+        "/api/worlds",
+        "/api/worlds/commons/me",
+        "/style.css",
+        "/app.js",
+        "/world.js",
+        "/favicon.svg",
+        "/indexnow.txt",
+        "/mcp",
+        "/public",
+        "/public/mcp/",
+        "/api/public/join",
+        "/?token=secret&join=abcdefghijklmnop",
+        "/h/abcdefghijklmnop?key=ah_owner_secret",
     ];
     for agent in [GEMINI, CHATGPT_USER, GOOGLEBOT, CHROME, ""] {
         for path in private {
@@ -1579,8 +1943,14 @@ async fn no_visit_to_a_private_page_or_route_is_ever_noticed_whatever_the_visito
         }
     }
     let at = now();
-    assert!(server.state.worlds.visitors(at).is_empty(), "a visit to a private path put a visitor on the street");
-    assert!(server.state.worlds.frogs(at).is_empty(), "a visit to a private path put a frog on the street");
+    assert!(
+        server.state.worlds.visitors(at).is_empty(),
+        "a visit to a private path put a visitor on the street"
+    );
+    assert!(
+        server.state.worlds.frogs(at).is_empty(),
+        "a visit to a private path put a frog on the street"
+    );
     // The same callers do show up where they should, so the check above could have failed.
     let mut asked = server.get("/world/commons").ip("198.51.100.78").ua(GEMINI);
     asked = asked.header("accept", "text/html");
@@ -1588,7 +1958,11 @@ async fn no_visit_to_a_private_page_or_route_is_ever_noticed_whatever_the_visito
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     server.get("/").ip("198.51.100.79").ua(GOOGLEBOT).send().await;
     assert_eq!(server.state.worlds.frogs(now()).len(), 1);
-    server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).ip("198.51.100.80").send().await;
+    server
+        .post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+        .ip("198.51.100.80")
+        .send()
+        .await;
     assert_eq!(server.state.worlds.visitors(now()).len(), 2);
 }
 
@@ -1602,7 +1976,12 @@ const WANT_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self';
 #[track_caller]
 fn secure(reply: &Reply, what: &str) {
     let get = |name: &str| reply.headers.get(name).map(|v| v.to_str().unwrap().to_string());
-    assert_eq!(get("content-security-policy").as_deref(), Some(WANT_CSP), "{what}: {}", reply.status);
+    assert_eq!(
+        get("content-security-policy").as_deref(),
+        Some(WANT_CSP),
+        "{what}: {}",
+        reply.status
+    );
     assert_eq!(get("x-content-type-options").as_deref(), Some("nosniff"), "{what}");
     assert_eq!(get("referrer-policy").as_deref(), Some("no-referrer"), "{what}");
     assert_eq!(get("x-frame-options").as_deref(), Some("DENY"), "{what}");
@@ -1612,8 +1991,24 @@ fn secure(reply: &Reply, what: &str) {
 }
 
 const LEAKS: [&str; 18] = [
-    "src/", "src\\", ".rs:", "rusqlite", "sqlite", "SELECT ", "INSERT ", "UPDATE ", "panicked", "thread '", "RUST_BACKTRACE",
-    "C:\\", "/home/", "/var/lib", "Result::unwrap", "called `", "stack backtrace", "axum",
+    "src/",
+    "src\\",
+    ".rs:",
+    "rusqlite",
+    "sqlite",
+    "SELECT ",
+    "INSERT ",
+    "UPDATE ",
+    "panicked",
+    "thread '",
+    "RUST_BACKTRACE",
+    "C:\\",
+    "/home/",
+    "/var/lib",
+    "Result::unwrap",
+    "called `",
+    "stack backtrace",
+    "axum",
 ];
 
 #[track_caller]
@@ -1625,22 +2020,76 @@ fn leaks_nothing(text: &str, what: &str) {
 
 // W2, W6, W29
 #[tokio::test]
-async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carries_the_security_headers_and_none_is_a_server_error() {
+async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carries_the_security_headers_and_none_is_a_server_error(
+) {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let guest = server.guest().await;
     let paths = [
-        "/", "/worlds", "/world/commons", "/world/nope", "/h/abc", "/join/abc", "/c/abc", "/house/abc", "/join-city/abc",
-        "/join-house/abc", "/p/abc", "/style.css", "/app.js", "/room.js", "/city.js", "/world.js", "/passkey.js", "/plan-invite.js", "/favicon.svg",
-        "/og.jpg", "/llms-full.txt", "/.well-known/mcp-registry-auth",
-        "/agents.md", "/robots.txt", "/sitemap.xml", "/llms.txt", "/indexnow.txt", "/api/worlds", "/api/worlds/commons",
-        "/api/worlds/commons/me", "/api/worlds/commons/look", "/api/worlds/commons/act", "/api/worlds/preview", "/api/worlds/mine", "/api/worlds/join/abc",
-        "/api/worlds/commons/players/1/remove", "/api/public/join", "/api/players/claim", "/api/players/mine",
-        "/api/players/1", "/api/players/1/reroll", "/api/plan-invites/abc", "/api/plan-invites/abc/answer", "/api/plan-invites/abc/plan.ics",
-        "/public/mcp", "/mcp", "/api/passkeys/available", "/nothing/here",
-        "/api/nothing", "/world/commons/", "//", "/%00", "/%ff%fe", "/world/%E0%A4%A",
+        "/",
+        "/worlds",
+        "/world/commons",
+        "/world/nope",
+        "/h/abc",
+        "/join/abc",
+        "/c/abc",
+        "/house/abc",
+        "/join-city/abc",
+        "/join-house/abc",
+        "/p/abc",
+        "/style.css",
+        "/app.js",
+        "/room.js",
+        "/city.js",
+        "/world.js",
+        "/passkey.js",
+        "/plan-invite.js",
+        "/favicon.svg",
+        "/og.jpg",
+        "/llms-full.txt",
+        "/.well-known/mcp-registry-auth",
+        "/agents.md",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/llms.txt",
+        "/indexnow.txt",
+        "/api/worlds",
+        "/api/worlds/commons",
+        "/api/worlds/commons/me",
+        "/api/worlds/commons/look",
+        "/api/worlds/commons/act",
+        "/api/worlds/preview",
+        "/api/worlds/mine",
+        "/api/worlds/join/abc",
+        "/api/worlds/commons/players/1/remove",
+        "/api/public/join",
+        "/api/players/claim",
+        "/api/players/mine",
+        "/api/players/1",
+        "/api/players/1/reroll",
+        "/api/plan-invites/abc",
+        "/api/plan-invites/abc/answer",
+        "/api/plan-invites/abc/plan.ics",
+        "/public/mcp",
+        "/mcp",
+        "/api/passkeys/available",
+        "/nothing/here",
+        "/api/nothing",
+        "/world/commons/",
+        "//",
+        "/%00",
+        "/%ff%fe",
+        "/world/%E0%A4%A",
     ];
-    let methods = [Method::GET, Method::HEAD, Method::POST, Method::PUT, Method::DELETE, Method::PATCH, Method::OPTIONS];
+    let methods = [
+        Method::GET,
+        Method::HEAD,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+        Method::OPTIONS,
+    ];
     let mut count = 0;
     for path in paths {
         for method in &methods {
@@ -1663,13 +2112,26 @@ async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carrie
         }
     }
     // Answers that are made before any route runs.
-    let big = server.post("/api/worlds/commons/act", json!({ "action": "emote", "emote": "x".repeat(200_000) })).token(&guest.token).send().await;
+    let big = server
+        .post("/api/worlds/commons/act", json!({ "action": "emote", "emote": "x".repeat(200_000) }))
+        .token(&guest.token)
+        .send()
+        .await;
     assert_eq!(big.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", big.show());
     secure(&big, "a body over the limit");
-    let wrong = server.req(Method::POST, "/api/worlds/commons/act").token(&guest.token).raw("text/plain", b"{\"action\":\"walk\"}").send().await;
+    let wrong = server
+        .req(Method::POST, "/api/worlds/commons/act")
+        .token(&guest.token)
+        .raw("text/plain", b"{\"action\":\"walk\"}")
+        .send()
+        .await;
     assert!(wrong.status.is_client_error(), "{}", wrong.show());
     secure(&wrong, "the wrong content type");
-    let garbage = server.req(Method::POST, "/public/mcp").raw("application/json", &[0xff, 0xfe, 0x00, 0x7b]).send().await;
+    let garbage = server
+        .req(Method::POST, "/public/mcp")
+        .raw("application/json", &[0xff, 0xfe, 0x00, 0x7b])
+        .send()
+        .await;
     secure(&garbage, "bytes that are not text");
     leaks_nothing(&garbage.text, "bytes that are not text");
     println!("COST REPORT: {count} requests checked");
@@ -1680,17 +2142,80 @@ async fn every_answer_to_every_method_on_every_page_asset_and_world_route_carrie
 async fn nothing_that_should_not_be_there_is_served_and_the_refusals_say_nothing() {
     let server = Server::start().await;
     let paths = [
-        "/.git/HEAD", "/.git/config", "/.git/index", "/.gitignore", "/.env", "/.env.local", "/.env.production", "/Cargo.toml",
-        "/Cargo.lock", "/src/main.rs", "/src/lib.rs", "/src/db.rs", "/agenthangout.db", "/agenthangout.db-wal", "/demo.db",
-        "/demo.db-wal", "/db.sqlite", "/backup.sql", "/backup.zip", "/index.html.bak", "/app.js.bak", "/app.js.map", "/world.js.map",
-        "/style.css.map", "/room.js.map", "/web/app.js", "/web/home.html", "/web/index.html", "/home.html", "/index.html",
-        "/examples/demo_bots.rs", "/hooks/doorbell.ps1", "/deploy/provision.sh", "/deploy/azure.local.env", "/docs/city.md",
-        "/docs/public-city.md", "/README.md", "/target/debug/agenthangout.exe", "/debug", "/debug/pprof", "/metrics", "/health",
-        "/healthz", "/status", "/admin", "/api/admin", "/api/debug", "/api/health", "/api/version", "/swagger.json",
-        "/openapi.json", "/.well-known/security.txt", "/server-status", "/actuator/health", "/console", "/phpinfo.php",
-        "/wp-login.php", "/.DS_Store", "/api/", "/api", "/public", "/public/", "/robots.txt.bak", "/sitemap.xml.gz", "/api/worlds/../me",
-        "/api/worlds/%2e%2e/me", "/world/commons/../../.env", "/..%2f..%2fCargo.toml", "/%2e%2e/%2e%2e/Cargo.toml",
-        "/static/../Cargo.toml", "/app.js/../Cargo.toml", "/api/keeper", "/api/export", "/api/dump",
+        "/.git/HEAD",
+        "/.git/config",
+        "/.git/index",
+        "/.gitignore",
+        "/.env",
+        "/.env.local",
+        "/.env.production",
+        "/Cargo.toml",
+        "/Cargo.lock",
+        "/src/main.rs",
+        "/src/lib.rs",
+        "/src/db.rs",
+        "/agenthangout.db",
+        "/agenthangout.db-wal",
+        "/demo.db",
+        "/demo.db-wal",
+        "/db.sqlite",
+        "/backup.sql",
+        "/backup.zip",
+        "/index.html.bak",
+        "/app.js.bak",
+        "/app.js.map",
+        "/world.js.map",
+        "/style.css.map",
+        "/room.js.map",
+        "/web/app.js",
+        "/web/home.html",
+        "/web/index.html",
+        "/home.html",
+        "/index.html",
+        "/examples/demo_bots.rs",
+        "/hooks/doorbell.ps1",
+        "/deploy/provision.sh",
+        "/deploy/azure.local.env",
+        "/docs/city.md",
+        "/docs/public-city.md",
+        "/README.md",
+        "/target/debug/agenthangout.exe",
+        "/debug",
+        "/debug/pprof",
+        "/metrics",
+        "/health",
+        "/healthz",
+        "/status",
+        "/admin",
+        "/api/admin",
+        "/api/debug",
+        "/api/health",
+        "/api/version",
+        "/swagger.json",
+        "/openapi.json",
+        "/.well-known/security.txt",
+        "/server-status",
+        "/actuator/health",
+        "/console",
+        "/phpinfo.php",
+        "/wp-login.php",
+        "/.DS_Store",
+        "/api/",
+        "/api",
+        "/public",
+        "/public/",
+        "/robots.txt.bak",
+        "/sitemap.xml.gz",
+        "/api/worlds/../me",
+        "/api/worlds/%2e%2e/me",
+        "/world/commons/../../.env",
+        "/..%2f..%2fCargo.toml",
+        "/%2e%2e/%2e%2e/Cargo.toml",
+        "/static/../Cargo.toml",
+        "/app.js/../Cargo.toml",
+        "/api/keeper",
+        "/api/export",
+        "/api/dump",
     ];
     let mut served = Vec::new();
     for path in paths {
@@ -1700,7 +2225,12 @@ async fn nothing_that_should_not_be_there_is_served_and_the_refusals_say_nothing
         if reply.status.is_success() {
             served.push(format!("{path}: {}", reply.status));
         }
-        assert!(reply.text.len() < 400, "{path}: a refusal with {} bytes of explanation: {}", reply.text.len(), reply.text);
+        assert!(
+            reply.text.len() < 400,
+            "{path}: a refusal with {} bytes of explanation: {}",
+            reply.text.len(),
+            reply.text
+        );
     }
     assert!(served.is_empty(), "paths that were served: {served:?}");
     // What is served on purpose is the same for everyone, and is not a dump of anything.
@@ -1715,36 +2245,61 @@ async fn a_broken_request_to_any_route_gets_no_server_error_and_no_path_no_sql_a
     let owner = server.person("Owner").await;
     let bot = server.bot("Scout").await;
     let routes = vec![
-        (Method::POST, "/api/session"), (Method::POST, "/api/hangouts"), (Method::POST, "/api/cities"), (Method::PUT, "/api/notify"),
-        (Method::POST, "/api/status"), (Method::POST, "/api/activity"), (Method::POST, "/api/trips"), (Method::POST, "/api/worlds"),
-        (Method::POST, "/api/worlds/commons/act"), (Method::POST, "/api/public/join"), (Method::POST, "/api/players/claim"),
-        (Method::POST, "/api/passkeys/register/start"), (Method::POST, "/api/passkeys/register/finish"),
-        (Method::POST, "/api/passkeys/login/start"), (Method::POST, "/api/passkeys/login/finish"), (Method::POST, "/public/mcp"),
-        (Method::POST, "/mcp"), (Method::POST, "/api/key/rotate"), (Method::POST, "/api/houses/abcdefghijklmnop/scenes"),
-        (Method::PUT, "/api/cities/abcdefghijklmnop/rules"), (Method::PUT, "/api/houses/abcdefghijklmnop/rules"),
-        (Method::POST, "/api/hangouts/abcdefghijklmnop/events"), (Method::POST, "/api/hangouts/abcdefghijklmnop/messages"),
-        (Method::POST, "/api/events/abcdefghijklmnop/rsvp"), (Method::POST, "/api/check-ins/abcdefghijklmnop/answer"),
+        (Method::POST, "/api/session"),
+        (Method::POST, "/api/hangouts"),
+        (Method::POST, "/api/cities"),
+        (Method::PUT, "/api/notify"),
+        (Method::POST, "/api/status"),
+        (Method::POST, "/api/activity"),
+        (Method::POST, "/api/trips"),
+        (Method::POST, "/api/worlds"),
+        (Method::POST, "/api/worlds/commons/act"),
+        (Method::POST, "/api/public/join"),
+        (Method::POST, "/api/players/claim"),
+        (Method::POST, "/api/passkeys/register/start"),
+        (Method::POST, "/api/passkeys/register/finish"),
+        (Method::POST, "/api/passkeys/login/start"),
+        (Method::POST, "/api/passkeys/login/finish"),
+        (Method::POST, "/public/mcp"),
+        (Method::POST, "/mcp"),
+        (Method::POST, "/api/key/rotate"),
+        (Method::POST, "/api/houses/abcdefghijklmnop/scenes"),
+        (Method::PUT, "/api/cities/abcdefghijklmnop/rules"),
+        (Method::PUT, "/api/houses/abcdefghijklmnop/rules"),
+        (Method::POST, "/api/hangouts/abcdefghijklmnop/events"),
+        (Method::POST, "/api/hangouts/abcdefghijklmnop/messages"),
+        (Method::POST, "/api/events/abcdefghijklmnop/rsvp"),
+        (Method::POST, "/api/check-ins/abcdefghijklmnop/answer"),
     ];
     let bodies: Vec<(&str, Vec<u8>)> = vec![
         ("application/json", b"{".to_vec()),
         ("application/json", b"[1,2,3]".to_vec()),
-        ("application/json", b"{\"name\": 5, \"seed\": \"x\", \"action\": [], \"x\": 1e999}".to_vec()),
+        (
+            "application/json",
+            b"{\"name\": 5, \"seed\": \"x\", \"action\": [], \"x\": 1e999}".to_vec(),
+        ),
         ("application/json", b"{\"seed\": 18446744073709551616, \"open\": \"maybe\"}".to_vec()),
         ("application/json", vec![0xff, 0xfe, 0xfd]),
         ("application/json", format!("{{\"a\": \"{}\"}}", "z".repeat(70_000)).into_bytes()),
         ("text/plain", b"hello".to_vec()),
         ("application/x-www-form-urlencoded", b"a=b&c=d".to_vec()),
     ];
-    let creds: Vec<Option<String>> = vec![None, Some(made_up_token()), Some(owner.key.clone()), Some(bot.token.clone())];
+    let creds: Vec<Option<String>> =
+        vec![None, Some(made_up_token()), Some(owner.key.clone()), Some(bot.token.clone())];
     let mut count = 0;
     for (method, path) in &routes {
         for (content_type, body) in &bodies {
             for cred in &creds {
-                let mut request = server.req(method.clone(), path).raw(content_type, body).ip(&server.fresh_ip());
+                let mut request =
+                    server.req(method.clone(), path).raw(content_type, body).ip(&server.fresh_ip());
                 if let Some(cred) = cred {
                     request = request.token(cred);
                 }
-                let what = format!("{method} {path} as {} with {content_type} {} bytes", cred.as_deref().map_or("nobody", |c| &c[..8]), body.len());
+                let what = format!(
+                    "{method} {path} as {} with {content_type} {} bytes",
+                    cred.as_deref().map_or("nobody", |c| &c[..8]),
+                    body.len()
+                );
                 let reply = request.try_send().await.unwrap_or_else(|e| panic!("{what}: {e}"));
                 assert!(!reply.status.is_server_error(), "{what}: {}", reply.show());
                 leaks_nothing(&reply.text, &what);
@@ -1795,16 +2350,27 @@ async fn the_wrong_method_on_a_world_route_never_does_the_work_and_never_breaks(
     ];
     for (method, path, wanted) in cases {
         for cred in [None, Some(guest.token.clone()), Some(ann.key.clone())] {
-            let mut request = server.req(method.clone(), &path).ip(&server.fresh_ip()).json(json!({ "action": "walk", "x": 70, "y": 70 }));
+            let mut request = server
+                .req(method.clone(), &path)
+                .ip(&server.fresh_ip())
+                .json(json!({ "action": "walk", "x": 70, "y": 70 }));
             if let Some(cred) = &cred {
                 request = request.token(cred);
             }
             let reply = request.send().await;
-            assert!(wanted.contains(&reply.status.as_u16()), "{method} {path}: {} (wanted one of {wanted:?})", reply.show());
+            assert!(
+                wanted.contains(&reply.status.as_u16()),
+                "{method} {path}: {} (wanted one of {wanted:?})",
+                reply.show()
+            );
         }
     }
     assert_eq!(server.tiles(COMMONS), before_tiles);
-    assert_eq!(server.moves_left(&guest.token).await, before_moves, "a move was charged for the wrong method");
+    assert_eq!(
+        server.moves_left(&guest.token).await,
+        before_moves,
+        "a move was charged for the wrong method"
+    );
     // HEAD is the one other method that reaches a handler, and a view is counted like any other.
     let head = server.req(Method::HEAD, "/api/worlds/commons").ip("198.51.100.90").send().await;
     assert_eq!(head.status, StatusCode::OK);
@@ -1825,9 +2391,26 @@ fn no_page_script_can_turn_a_string_from_the_api_into_markup_script_or_a_link_th
     for name in ["app.js", "world.js", "city.js", "room.js", "passkey.js", "plan-invite.js"] {
         let source = read_web(name);
         for banned in [
-            "innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function", "srcdoc", "javascript:",
-            "createContextualFragment", "DOMParser", "setAttribute('on", "setAttribute(\"on", "setAttribute('style'", "location.href =",
-            "location.assign", "location.replace", "window.open(", "postMessage(", "importScripts", ".innerText =",
+            "innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "document.write",
+            "eval(",
+            "new Function",
+            "srcdoc",
+            "javascript:",
+            "createContextualFragment",
+            "DOMParser",
+            "setAttribute('on",
+            "setAttribute(\"on",
+            "setAttribute('style'",
+            "location.href =",
+            "location.assign",
+            "location.replace",
+            "window.open(",
+            "postMessage(",
+            "importScripts",
+            ".innerText =",
         ] {
             assert!(!source.contains(banned), "web/{name} uses {banned}");
         }
@@ -1857,7 +2440,11 @@ fn no_page_script_can_turn_a_string_from_the_api_into_markup_script_or_a_link_th
                         "web/app.js line {}: `${{{expression}}}` goes into a path as it is: {line}",
                         n + 1
                     );
-                    assert!(!expression.contains("name"), "web/app.js line {}: a name goes into a path: {line}", n + 1);
+                    assert!(
+                        !expression.contains("name"),
+                        "web/app.js line {}: a name goes into a path: {line}",
+                        n + 1
+                    );
                     checked += 1;
                     left = &after[end..];
                 }
@@ -1892,8 +2479,20 @@ fn a_name_in_a_private_city_can_only_reach_the_screen_as_text() {
 /// Builds a situation on an edge of The Commons: a street with no builder along the edge (as a
 /// highway is), a road of the owner's beside it, and a place of someone else's that only the owner's
 /// road serves. `along` is the direction of the edge, `inward` the direction away from it.
-fn an_edge_town(server: &Server, owner: u64, start: (i64, i64), along: (i64, i64), inward: (i64, i64), second_road: bool) -> ((i64, i64), (i64, i64), (i64, i64)) {
-    let at = |a: i64, b: i64| ((start.0 + along.0 * a + inward.0 * b) as u16, (start.1 + along.1 * a + inward.1 * b) as u16);
+fn an_edge_town(
+    server: &Server,
+    owner: u64,
+    start: (i64, i64),
+    along: (i64, i64),
+    inward: (i64, i64),
+    second_road: bool,
+) -> ((i64, i64), (i64, i64), (i64, i64)) {
+    let at = |a: i64, b: i64| {
+        (
+            (start.0 + along.0 * a + inward.0 * b) as u16,
+            (start.1 + along.1 * a + inward.1 * b) as u16,
+        )
+    };
     let mut changes = Vec::new();
     for a in 0..12 {
         changes.push(Change::Set(at(a, 0), tile(Kind::Road, 0, None)));
@@ -1931,15 +2530,33 @@ async fn a_road_along_any_edge_of_the_map_that_a_place_depends_on_cannot_be_take
         let (road, _, home) = an_edge_town(&server, player.id as u64, start, along, inward, false);
         let before = server.tiles(COMMONS);
         // The highway may pass close enough to serve the place as well: then there is nothing to protect.
-        let others = before.iter().filter(|(p, t)| t.kind == Kind::Road && (i64::from(p.0), i64::from(p.1)) != road && cheb((i64::from(p.0), i64::from(p.1)), home) <= 3);
-        if others.filter(|(p, _)| ![(road.0 as u16, road.1 as u16)].contains(p)).any(|(_, t)| t.player != Some(player.id as u64)) {
+        let others = before.iter().filter(|(p, t)| {
+            t.kind == Kind::Road
+                && (i64::from(p.0), i64::from(p.1)) != road
+                && cheb((i64::from(p.0), i64::from(p.1)), home) <= 3
+        });
+        if others
+            .filter(|(p, _)| ![(road.0 as u16, road.1 as u16)].contains(p))
+            .any(|(_, t)| t.player != Some(player.id as u64))
+        {
             continue;
         }
         tested += 1;
-        assert!(served_the_long_way(&before).contains(&(home.0 as u16, home.1 as u16)), "the situation at {start:?} has nothing to protect");
+        assert!(
+            served_the_long_way(&before).contains(&(home.0 as u16, home.1 as u16)),
+            "the situation at {start:?} has nothing to protect"
+        );
         refill(&server, &player, now());
-        let cut = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(road.0), Some(road.1)), now());
-        let error = cut.expect_err(&format!("the road at {road:?} came down at the edge {start:?} and left a place without a road"));
+        let cut = worlds::act(
+            &server.state,
+            &player,
+            COMMONS,
+            &mv("bulldoze", Some(road.0), Some(road.1)),
+            now(),
+        );
+        let error = cut.expect_err(&format!(
+            "the road at {road:?} came down at the edge {start:?} and left a place without a road"
+        ));
         assert!(error.message.contains("depends on that road"), "{}", error.message);
         assert_eq!(server.tiles(COMMONS), before);
     }
@@ -1948,29 +2565,63 @@ async fn a_road_along_any_edge_of_the_map_that_a_place_depends_on_cannot_be_take
 
 // W16, W17, W57
 #[tokio::test]
-async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leave_a_place_without_a_road() {
+async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leave_a_place_without_a_road(
+) {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let owner = server.person("Owner").await;
     let player = person_player(&server, &owner);
     // The edge at the west, where The Commons' highway doesn't come.
-    let (first, second, home) = an_edge_town(&server, player.id as u64, (0, 24), (0, 1), (1, 0), true);
+    let (first, second, home) =
+        an_edge_town(&server, player.id as u64, (0, 24), (0, 1), (1, 0), true);
     let now_t = now();
     refill(&server, &player, now_t);
     // The tile further out serves the place as well as the first does, so it can go.
-    worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(second.0), Some(second.1)), now_t).unwrap();
+    worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(second.0), Some(second.1)),
+        now_t,
+    )
+    .unwrap();
     // The first is what is left, and now it cannot.
-    let cut = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 1);
+    let cut = worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(first.0), Some(first.1)),
+        now_t + 1,
+    );
     assert!(cut.is_err(), "the second step left the place at {home:?} without a road");
     // The place is somebody else's, so it can't be taken down to get round that either (W57).
-    let theirs = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(home.0), Some(home.1)), now_t + 2);
+    let theirs = worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(home.0), Some(home.1)),
+        now_t + 2,
+    );
     assert!(theirs.is_err(), "somebody else's place was taken down");
     // Once its owner has taken it down, the road serves nothing and the cut is allowed.
     put_tiles(&server, COMMONS, &[Change::Remove((home.0 as u16, home.1 as u16))]);
-    let freed = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(first.0), Some(first.1)), now_t + 3);
+    let freed = worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(first.0), Some(first.1)),
+        now_t + 3,
+    );
     assert!(freed.is_ok(), "a road that serves no place was refused: {freed:?}");
     // A road can't be laid over a place, the owner's own or anyone's (W16).
-    put_tiles(&server, COMMONS, &[Change::Set((first.0 as u16, first.1 as u16), tile(Kind::House, 0, Some(player.id as u64)))]);
+    put_tiles(
+        &server,
+        COMMONS,
+        &[Change::Set(
+            (first.0 as u16, first.1 as u16),
+            tile(Kind::House, 0, Some(player.id as u64)),
+        )],
+    );
     let agent = server.guest().await;
     let laid = server.act(&agent.token, COMMONS, road_move(first, first)).await;
     assert_eq!(laid.status, StatusCode::BAD_REQUEST, "{}", laid.show());
@@ -1979,19 +2630,25 @@ async fn taking_a_road_down_in_two_steps_that_are_each_allowed_still_cannot_leav
 
 // W15, W54
 #[tokio::test]
-async fn measure_how_many_people_it_takes_to_turn_every_side_street_of_the_highway_into_a_dead_end() {
+async fn measure_how_many_people_it_takes_to_turn_every_side_street_of_the_highway_into_a_dead_end()
+{
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let land = land_of(&server, COMMONS);
     let tiles = server.tiles(COMMONS);
-    let highway: Vec<(i64, i64)> = world::highway(world::COMMONS_SEED, &land).iter().map(|&(x, y)| (i64::from(x), i64::from(y))).collect();
+    let highway: Vec<(i64, i64)> = world::highway(world::COMMONS_SEED, &land)
+        .iter()
+        .map(|&(x, y)| (i64::from(x), i64::from(y)))
+        .collect();
     let kept = |p: (i64, i64)| world::is_reserved(&tiles, (p.0 as u16, p.1 as u16));
     let free = |p: (i64, i64)| open_ground(&land, &tiles, p.0, p.1);
     let mut alleys = Vec::new();
     for &(hx, hy) in &highway {
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let street: Vec<(i64, i64)> = (1..=3).map(|i| (hx + dx * i, hy + dy * i)).collect();
-            if (street[0].0 + street[0].1).rem_euclid(6) == 0 && street.iter().all(|&p| free(p) && kept(p)) {
+            if (street[0].0 + street[0].1).rem_euclid(6) == 0
+                && street.iter().all(|&p| free(p) && kept(p))
+            {
                 alleys.push((street, (dx, dy)));
             }
         }
@@ -2027,19 +2684,34 @@ async fn measure_how_many_people_it_takes_to_turn_every_side_street_of_the_highw
     }
     let to_block: Vec<(i64, i64)> = to_block.into_iter().filter(|&p| free(p) && !kept(p)).collect();
     for &p in &to_block {
-        let reply = server.act(&wall.token, COMMONS, json!({ "action": "place", "kind": "house", "x": p.0, "y": p.1 })).await;
+        let reply = server
+            .act(
+                &wall.token,
+                COMMONS,
+                json!({ "action": "place", "kind": "house", "x": p.0, "y": p.1 }),
+            )
+            .await;
         assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
     }
     assert_eq!(server.moves_left(&wall.token).await, 30, "a refused wall cost something");
     assert_eq!(server.tiles(COMMONS), tiles, "a guest built a wall");
     // And with every wall of that street standing anyway, the stub can be laid and cannot go any further.
     let wall_builder = make_player(&server.state.db);
-    let builders: Vec<Change> = to_block.iter().map(|&p| Change::Set((p.0 as u16, p.1 as u16), tile(Kind::Cafe, 0, Some(wall_builder)))).collect();
+    let builders: Vec<Change> = to_block
+        .iter()
+        .map(|&p| Change::Set((p.0 as u16, p.1 as u16), tile(Kind::Cafe, 0, Some(wall_builder))))
+        .collect();
     put_tiles(&server, COMMONS, &builders);
     let honest = server.guest().await;
     let stub = server.act(&honest.token, COMMONS, road_move(street[0], street[2])).await;
     assert_eq!(stub.status, StatusCode::OK, "{}", stub.show());
-    let beyond = server.act(&honest.token, COMMONS, road_move(street[0], (street[0].0 + dx * 6, street[0].1 + dy * 6))).await;
+    let beyond = server
+        .act(
+            &honest.token,
+            COMMONS,
+            road_move(street[0], (street[0].0 + dx * 6, street[0].1 + dy * 6)),
+        )
+        .await;
     println!("COST REPORT: with {} places around it the side street takes a 3 tile road and a road past it is refused: {}", to_block.len(), beyond.show());
     assert_eq!(beyond.status, StatusCode::BAD_REQUEST);
 }
@@ -2051,7 +2723,16 @@ async fn measure_how_many_people_it_takes_to_turn_every_side_street_of_the_highw
 async fn session_for(server: &Server, key: &str) -> String {
     let reply = server.post("/api/session", json!({ "owner_key": key })).send().await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.show());
-    reply.headers.get("set-cookie").expect("a session cookie").to_str().unwrap().split(';').next().unwrap().to_string()
+    reply
+        .headers
+        .get("set-cookie")
+        .expect("a session cookie")
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
 }
 
 fn wave() -> Value {
@@ -2060,10 +2741,15 @@ fn wave() -> Value {
 
 // A7, A8, A9, W2, W9
 #[tokio::test]
-async fn ending_a_session_replacing_the_key_or_removing_a_passkey_stops_exactly_what_it_should_in_a_world() {
+async fn ending_a_session_replacing_the_key_or_removing_a_passkey_stops_exactly_what_it_should_in_a_world(
+) {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
-    let (a, b, c) = (session_for(&server, &ann.key).await, session_for(&server, &ann.key).await, session_for(&server, &ann.key).await);
+    let (a, b, c) = (
+        session_for(&server, &ann.key).await,
+        session_for(&server, &ann.key).await,
+        session_for(&server, &ann.key).await,
+    );
     let acts = |cookie: &str| {
         let cookie = cookie.to_string();
         let server = &server;
@@ -2075,13 +2761,24 @@ async fn ending_a_session_replacing_the_key_or_removing_a_passkey_stops_exactly_
         spent += 1;
     }
     // Signing out ends that one device, and only it.
-    assert_eq!(server.req(Method::DELETE, "/api/session").cookie(&a).send().await.status, StatusCode::OK);
-    assert_eq!(acts(&a).await, StatusCode::UNAUTHORIZED, "a session that was signed out still builds");
+    assert_eq!(
+        server.req(Method::DELETE, "/api/session").cookie(&a).send().await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        acts(&a).await,
+        StatusCode::UNAUTHORIZED,
+        "a session that was signed out still builds"
+    );
     assert_eq!(acts(&b).await, StatusCode::OK);
     spent += 1;
     // A guest claimed on the way: it is Ann's now, and it has a token of its own.
     let guest = server.guest().await;
-    let claimed = server.post("/api/players/claim", json!({ "claim_code": guest.claim })).cookie(&b).send().await;
+    let claimed = server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .cookie(&b)
+        .send()
+        .await;
     assert_eq!(claimed.status, StatusCode::OK, "{}", claimed.show());
     let claimed_id = claimed.body["player"]["id"].as_i64().unwrap();
     assert_eq!(server.act(&guest.token, COMMONS, wave()).await.status, StatusCode::OK);
@@ -2089,34 +2786,92 @@ async fn ending_a_session_replacing_the_key_or_removing_a_passkey_stops_exactly_
     let rotated = server.post("/api/key/rotate", json!({})).cookie(&b).send().await;
     assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.show());
     let new_key = rotated.body["owner_key"].as_str().unwrap().to_string();
-    assert_eq!(acts(&b).await, StatusCode::UNAUTHORIZED, "the old session of the device that rotated still builds");
-    assert_eq!(acts(&c).await, StatusCode::UNAUTHORIZED, "another device's session survived a new key");
-    assert_eq!(server.post("/api/worlds/commons/act", wave()).token(&ann.key).send().await.status, StatusCode::UNAUTHORIZED, "the old owner key still builds");
-    assert_eq!(server.post("/api/worlds/commons/act", wave()).token(&new_key).send().await.status, StatusCode::OK);
+    assert_eq!(
+        acts(&b).await,
+        StatusCode::UNAUTHORIZED,
+        "the old session of the device that rotated still builds"
+    );
+    assert_eq!(
+        acts(&c).await,
+        StatusCode::UNAUTHORIZED,
+        "another device's session survived a new key"
+    );
+    assert_eq!(
+        server.post("/api/worlds/commons/act", wave()).token(&ann.key).send().await.status,
+        StatusCode::UNAUTHORIZED,
+        "the old owner key still builds"
+    );
+    assert_eq!(
+        server.post("/api/worlds/commons/act", wave()).token(&new_key).send().await.status,
+        StatusCode::OK
+    );
     spent += 1;
     // What the new key does not end: the claimed player keeps its token. The person can end it, one by one.
     let survives = server.act(&guest.token, COMMONS, wave()).await.status == StatusCode::OK;
-    println!("COST REPORT: after the owner key was replaced, the claimed player's token {}", if survives { "still works (the person must revoke it by hand)" } else { "stopped" });
+    println!(
+        "COST REPORT: after the owner key was replaced, the claimed player's token {}",
+        if survives { "still works (the person must revoke it by hand)" } else { "stopped" }
+    );
     // Removing a passkey ends the other devices' sessions and keeps the one that did it.
     let (d, e) = (session_for(&server, &new_key).await, session_for(&server, &new_key).await);
     server
         .state
         .db
-        .add_passkey(&ann.id, &agenthangout::db::NewPasskey { id: "pk0000000000001", credential_id: "cred1", passkey: "{}", label: "phone" }, 20, now())
+        .add_passkey(
+            &ann.id,
+            &agenthangout::db::NewPasskey {
+                id: "pk0000000000001",
+                credential_id: "cred1",
+                passkey: "{}",
+                label: "phone",
+            },
+            20,
+            now(),
+        )
         .unwrap();
-    assert_eq!(server.req(Method::DELETE, "/api/passkeys/pk0000000000001").cookie(&d).send().await.status, StatusCode::OK);
-    assert_eq!(acts(&e).await, StatusCode::UNAUTHORIZED, "a passkey was removed and another device's session still builds");
+    assert_eq!(
+        server.req(Method::DELETE, "/api/passkeys/pk0000000000001").cookie(&d).send().await.status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        acts(&e).await,
+        StatusCode::UNAUTHORIZED,
+        "a passkey was removed and another device's session still builds"
+    );
     assert_eq!(acts(&d).await, StatusCode::OK);
     spent += 1;
     // None of it refilled a day: the person has the moves they had, less what they spent.
-    let left = server.post("/api/worlds/commons/act", wave()).token(&new_key).send().await.ok()["moves_left"].as_i64().unwrap();
+    let left = server.post("/api/worlds/commons/act", wave()).token(&new_key).send().await.ok()
+        ["moves_left"]
+        .as_i64()
+        .unwrap();
     assert_eq!(left, 300 - spent - 1, "signing in again changed how many moves a person has");
     // The person ends the claimed player; it can't build, can't be claimed again, and what it built stays.
-    let revoked = server.req(Method::DELETE, &format!("/api/players/{claimed_id}")).token(&new_key).send().await;
+    let revoked = server
+        .req(Method::DELETE, &format!("/api/players/{claimed_id}"))
+        .token(&new_key)
+        .send()
+        .await;
     assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.show());
     assert_eq!(server.act(&guest.token, COMMONS, wave()).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.req(Method::DELETE, &format!("/api/players/{claimed_id}")).token(&new_key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&new_key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .req(Method::DELETE, &format!("/api/players/{claimed_id}"))
+            .token(&new_key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+            .token(&new_key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // W10, W11
@@ -2131,11 +2886,19 @@ async fn a_claim_code_is_dead_once_its_guest_has_idled_out_and_a_claimed_guest_n
         last_seen(&server, &server.player_row(id), at, ago);
     }
     // A guest that idled out can't be claimed, and its token is dead.
-    let late = server.post("/api/players/claim", json!({ "claim_code": stale.claim })).token(&ann.key).send().await;
+    let late = server
+        .post("/api/players/claim", json!({ "claim_code": stale.claim }))
+        .token(&ann.key)
+        .send()
+        .await;
     assert_eq!(late.status, StatusCode::NOT_FOUND, "{}", late.show());
     assert_eq!(server.act(&stale.token, COMMONS, wave()).await.status, StatusCode::UNAUTHORIZED);
     // One that was about to is claimed in time, and from then on it is the person's.
-    let in_time = server.post("/api/players/claim", json!({ "claim_code": nearly.claim })).token(&ann.key).send().await;
+    let in_time = server
+        .post("/api/players/claim", json!({ "claim_code": nearly.claim }))
+        .token(&ann.key)
+        .send()
+        .await;
     assert_eq!(in_time.status, StatusCode::OK, "{}", in_time.show());
     let month_on = at + 30 * 86_400;
     let headers = |token: &str| {
@@ -2143,26 +2906,47 @@ async fn a_claim_code_is_dead_once_its_guest_has_idled_out_and_a_claimed_guest_n
         headers.insert("authorization", HeaderValue::from_str(&format!("Bearer {token}")).unwrap());
         headers
     };
-    assert!(worlds::player_from_headers(&server.state, &headers(&nearly.token), month_on).is_ok(), "a claimed player idled out");
-    assert!(worlds::player_from_headers(&server.state, &headers(&fresh.token), month_on).is_err(), "a guest nobody claimed never idled out");
+    assert!(
+        worlds::player_from_headers(&server.state, &headers(&nearly.token), month_on).is_ok(),
+        "a claimed player idled out"
+    );
+    assert!(
+        worlds::player_from_headers(&server.state, &headers(&fresh.token), month_on).is_err(),
+        "a guest nobody claimed never idled out"
+    );
     // Claimed, a guest still plays in The Commons with a bigger day.
-    server.post("/api/players/claim", json!({ "claim_code": fresh.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": fresh.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     assert_eq!(server.me(&fresh.token, COMMONS).await["moves_per_day"], 200);
 }
 
 // W1, W3, W4, W18
 #[tokio::test]
-async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing_in_private_life_and_says_nothing_of_it() {
+async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing_in_private_life_and_says_nothing_of_it(
+) {
     let path = temp_db("removal");
     let server = Server::on(Db::open(&path).unwrap()).await;
     // Alice has a city and a house and a bot called Pixel in its living room.
-    let made = server.post("/api/cities", json!({ "name": "Friends", "your_name": "Alice" })).send().await.ok();
+    let made = server
+        .post("/api/cities", json!({ "name": "Friends", "your_name": "Alice" }))
+        .send()
+        .await
+        .ok();
     let (alice_key, alice_id, city) = (
         made["owner_key"].as_str().unwrap().to_string(),
         made["person"]["id"].as_str().unwrap().to_string(),
         made["city"]["id"].as_str().unwrap().to_string(),
     );
-    let house = server.post(&format!("/api/cities/{city}/houses"), json!({ "name": "Alice House" })).token(&alice_key).send().await.ok();
+    let house = server
+        .post(&format!("/api/cities/{city}/houses"), json!({ "name": "Alice House" }))
+        .token(&alice_key)
+        .send()
+        .await
+        .ok();
     let living = house["living_room_id"].as_str().unwrap().to_string();
     let pixel = server.bot_in(&alice_key, &alice_id, &living, "Pixel").await;
     // Carol's world froze with some of Pixel's tiles in it, from back when it could build there.
@@ -2183,30 +2967,79 @@ async fn an_owner_removing_a_bots_player_from_their_frozen_world_changes_nothing
     server.fresh_view(world).await;
     let before = dump(&path);
 
-    let removed = server.post(&format!("/api/worlds/{world}/players/{player_id}/remove"), json!({})).token(&carol.key).send().await;
+    let removed = server
+        .post(&format!("/api/worlds/{world}/players/{player_id}/remove"), json!({}))
+        .token(&carol.key)
+        .send()
+        .await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.show());
     assert_eq!(removed.body["tiles_removed"], 3);
     // Carol's answer is a count of tiles, and nothing that names the bot, its owner, their city or house.
-    for secret in [alice_id.as_str(), pixel.agent.as_str(), city.as_str(), pixel.token.as_str(), alice_key.as_str(), "Pixel", "Alice", "Friends"] {
+    for secret in [
+        alice_id.as_str(),
+        pixel.agent.as_str(),
+        city.as_str(),
+        pixel.token.as_str(),
+        alice_key.as_str(),
+        "Pixel",
+        "Alice",
+        "Friends",
+    ] {
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
-    let world_tables = ["worlds", "world_tiles", "world_buildings", "players", "world_players", "world_members", "crawler_sightings", "place_clocks", "world_ends", "world_squares"];
+    let world_tables = [
+        "worlds",
+        "world_tiles",
+        "world_buildings",
+        "players",
+        "world_players",
+        "world_members",
+        "crawler_sightings",
+        "place_clocks",
+        "world_ends",
+        "world_squares",
+    ];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
             assert_eq!(rows, &before[table], "removing a player from a world changed {table}");
         }
     }
-    assert!(server.tiles(world).values().all(|t| t.player != Some(player_id as u64)), "what the bot built stayed");
+    assert!(
+        server.tiles(world).values().all(|t| t.player != Some(player_id as u64)),
+        "what the bot built stayed"
+    );
     assert_eq!(after["world_members"].len(), 1, "the bot was not barred from that world");
     // The bot is only barred from that world, and is a player everywhere else, The Commons included.
     assert_eq!(server.act(&token, world, wave()).await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.act(&token, COMMONS, wave()).await.status, StatusCode::OK, "one world's owner ended a player for the whole server");
-    assert_eq!(server.post("/api/public/join", json!({ "world_id": world })).token(&pixel.token).ip("198.51.100.5").send().await.status, StatusCode::FORBIDDEN);
-    let elsewhere = server.post("/api/public/join", json!({})).token(&pixel.token).ip("198.51.100.5").send().await;
+    assert_eq!(
+        server.act(&token, COMMONS, wave()).await.status,
+        StatusCode::OK,
+        "one world's owner ended a player for the whole server"
+    );
+    assert_eq!(
+        server
+            .post("/api/public/join", json!({ "world_id": world }))
+            .token(&pixel.token)
+            .ip("198.51.100.5")
+            .send()
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    let elsewhere = server
+        .post("/api/public/join", json!({}))
+        .token(&pixel.token)
+        .ip("198.51.100.5")
+        .send()
+        .await;
     assert_eq!(elsewhere.status, StatusCode::OK, "{}", elsewhere.show());
     // And Carol can't tell from this which of her visitors belongs to a person she knows.
-    let again = server.post(&format!("/api/worlds/{world}/players/{player_id}/remove"), json!({})).token(&carol.key).send().await;
+    let again = server
+        .post(&format!("/api/worlds/{world}/players/{player_id}/remove"), json!({}))
+        .token(&carol.key)
+        .send()
+        .await;
     assert!(again.status.is_success() || again.status == StatusCode::NOT_FOUND, "{}", again.show());
     drop(server);
     remove_db(&path);
@@ -2228,9 +3061,17 @@ async fn a_bot_can_be_deleted_whatever_became_of_its_public_player() {
     let path = temp_db("trigger");
     let server = Server::on(Db::open(&path).unwrap()).await;
     let bot = server.bot("Looper").await;
-    assert_eq!(server.act(&bot.key, COMMONS, wave()).await.status, StatusCode::OK, "the person's own player");
+    assert_eq!(
+        server.act(&bot.key, COMMONS, wave()).await.status,
+        StatusCode::OK,
+        "the person's own player"
+    );
     let _token = server.bot_player(&bot).await;
-    let rotated = server.post(&format!("/api/agents/{}/rotate", bot.agent), json!({})).token(&bot.key).send().await;
+    let rotated = server
+        .post(&format!("/api/agents/{}/rotate", bot.agent), json!({}))
+        .token(&bot.key)
+        .send()
+        .await;
     assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.show());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.busy_timeout(Duration::from_secs(5)).unwrap();
@@ -2309,25 +3150,48 @@ fn make_the_live_database(path: &str) -> LiveRows {
     q("INSERT INTO hangouts VALUES ('square000000001', 'Friends Square', 'invitecodesquare0000000001', 'justin0000000001', ?)", &[&t0]);
     q("INSERT INTO hangouts VALUES ('casaliving00001', 'Casa Living Room', 'invitecodecasaliving00001', 'justin0000000001', ?)", &[&t0]);
     q("INSERT INTO hangouts VALUES ('casaporch00001a', 'Casa Porch', 'invitecodecasaporch000001', 'justin0000000001', ?)", &[&t0]);
-    for (hangout, person) in [("flowhaus0000001", "justin0000000001"), ("flowhaus0000001", "dana00000000002"), ("square000000001", "justin0000000001"), ("square000000001", "dana00000000002"), ("casaliving00001", "justin0000000001"), ("casaporch00001a", "justin0000000001")] {
+    for (hangout, person) in [
+        ("flowhaus0000001", "justin0000000001"),
+        ("flowhaus0000001", "dana00000000002"),
+        ("square000000001", "justin0000000001"),
+        ("square000000001", "dana00000000002"),
+        ("casaliving00001", "justin0000000001"),
+        ("casaporch00001a", "justin0000000001"),
+    ] {
         q("INSERT INTO members VALUES (?, ?, ?)", &[&hangout, &person, &t0]);
     }
     q("INSERT INTO agents VALUES ('claude0000000001', 'justin0000000001', 'Claude', ?, 'Checking calendars', ?, ?, ?)", &[&h(&rows.claude_token), &(t0 + 100), &(t0 + 200), &t0]);
     q("INSERT INTO agents VALUES ('grok00000000002a', 'dana00000000002', 'Grok', ?, NULL, NULL, NULL, ?)", &[&h(&auth::new_agent_token()), &t0]);
     q("INSERT INTO agents VALUES ('casa00000000003a', 'justin0000000001', 'Casa', ?, NULL, NULL, NULL, ?)", &[&h(&rows.casa_token), &t0]);
-    q("INSERT INTO agent_activity VALUES ('claude0000000001', 'computer', 'FlowRMM', ?)", &[&(t0 + 400)]);
+    q(
+        "INSERT INTO agent_activity VALUES ('claude0000000001', 'computer', 'FlowRMM', ?)",
+        &[&(t0 + 400)],
+    );
     q("INSERT INTO agent_doorbell VALUES ('claude0000000001', 0, ?)", &[&(t0 + 500)]);
-    for (room, agent) in [("flowhaus0000001", "claude0000000001"), ("flowhaus0000001", "grok00000000002a"), ("casaliving00001", "claude0000000001")] {
+    for (room, agent) in [
+        ("flowhaus0000001", "claude0000000001"),
+        ("flowhaus0000001", "grok00000000002a"),
+        ("casaliving00001", "claude0000000001"),
+    ] {
         q("INSERT INTO room_agents VALUES (?, ?)", &[&room, &agent]);
     }
     for n in 0..25i64 {
-        let (speaker, kind) = if n % 7 == 6 { ("Justin", "note") } else if n % 2 == 0 { ("Claude", "chat") } else { ("Grok", "chat") };
+        let (speaker, kind) = if n % 7 == 6 {
+            ("Justin", "note")
+        } else if n % 2 == 0 {
+            ("Claude", "chat")
+        } else {
+            ("Grok", "chat")
+        };
         let body = format!("Message {n}: can we do tacos on Friday? <b>bold</b> \"quoted\" 'single' ; DROP TABLE people; --");
         q("INSERT INTO messages (hangout_id, person_id, agent_id, speaker, kind, body, created_at) VALUES ('flowhaus0000001', NULL, NULL, ?, ?, ?, ?)", &[&speaker, &kind, &body, &(t0 + 1_000 + n * 60)]);
     }
     q("INSERT INTO events VALUES ('event00000000001', 'flowhaus0000001', 'Tacos', 'Veracruz', 'Bring cash', ?, ?, 'confirmed', 2, 1, 'justin0000000001', 'Claude', ?, ?)", &[&(now() + 86_400), &(now() + 86_400 + 7_200), &t0, &t0]);
     q("INSERT INTO events VALUES ('event00000000002', 'flowhaus0000001', 'Hike', '', '', ?, ?, 'proposed', 2, 0, 'dana00000000002', 'Grok', ?, ?)", &[&(now() + 2 * 86_400), &(now() + 2 * 86_400 + 3_600), &t0, &t0]);
-    q("INSERT INTO rsvps VALUES ('event00000000001', 'justin0000000001', 'yes', 'Claude', '', ?)", &[&t0]);
+    q(
+        "INSERT INTO rsvps VALUES ('event00000000001', 'justin0000000001', 'yes', 'Claude', '', ?)",
+        &[&t0],
+    );
     q("INSERT INTO rsvps VALUES ('event00000000001', 'dana00000000002', 'yes', NULL, 'see you', ?)", &[&t0]);
     q("INSERT INTO check_ins VALUES ('checkin00000001a', 'flowhaus0000001', 'justin0000000001', 'Claude', 'claude0000000001', 'Booking the table', 'dana00000000002', 0, 'go', 'Dana', 0, 'fine', ?, ?)", &[&(t0 + 3_600), &t0]);
     q("INSERT INTO notify_targets VALUES ('justin0000000001', 'https://example.com/hook')", &[]);
@@ -2341,10 +3205,15 @@ fn make_the_live_database(path: &str) -> LiveRows {
     q("INSERT INTO bot_homes VALUES ('casa00000000003a', 'house0000000001a', 0, 1)", &[]);
     q("INSERT INTO trips VALUES ('trip00000000001a', 'grok00000000002a', 'house0000000001a', 'visit', 'Pair on the build', 1440, 'ended', 'grok00000000002a', 'dana00000000002', 'justin0000000001', NULL, NULL, ?, ?, 'justin0000000001', ?, ?)", &[&(t0 + 10), &(t0 + 20), &(t0 + 100), &t0]);
     q("INSERT INTO passes VALUES ('pass00000000001a', 'house0000000001a', 'grok00000000002a', 60, 'justin0000000001', 'dana00000000002', ?)", &[&t0]);
-    q("INSERT INTO scenes VALUES ('scene00000000001a', 'house0000000001a', 'Movie Night', ?)", &[&t0]);
+    q(
+        "INSERT INTO scenes VALUES ('scene00000000001a', 'house0000000001a', 'Movie Night', ?)",
+        &[&t0],
+    );
     q("INSERT INTO scene_requests VALUES ('screq00000000001a', 'scene00000000001a', 'house0000000001a', 'justin0000000001', 'done', 'justin0000000001', ?, ?)", &[&(t0 + 900), &t0]);
     q("INSERT INTO house_status VALUES ('house0000000001a', 'ok', ?)", &[&t0]);
-    let fk: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0)).unwrap();
+    let fk: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(fk, 0, "the live database as the test makes it is not consistent");
     rows
 }
@@ -2355,7 +3224,14 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     let path = temp_db("live");
     let rows = make_the_live_database(&path);
     let old_tables = dump(&path);
-    assert!(old_tables.keys().all(|t| !["players", "worlds", "sessions", "passkeys", "world_tiles"].contains(&t.as_str())));
+    assert!(old_tables.keys().all(|t| ![
+        "players",
+        "worlds",
+        "sessions",
+        "passkeys",
+        "world_tiles"
+    ]
+    .contains(&t.as_str())));
 
     // The new code opens it. Nothing that was there changes, and the new tables are empty.
     drop(Db::open(&path).unwrap());
@@ -2363,10 +3239,15 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     for (table, was) in &old_tables {
         assert_eq!(&upgraded[table], was, "opening the database changed {table}");
     }
-    let new_tables: Vec<&String> = upgraded.keys().filter(|t| !old_tables.contains_key(*t)).collect();
+    let new_tables: Vec<&String> =
+        upgraded.keys().filter(|t| !old_tables.contains_key(*t)).collect();
     assert!(new_tables.len() >= 13, "{new_tables:?}");
     for table in &new_tables {
-        assert!(upgraded[*table].is_empty(), "{table} has rows nobody put there: {:?}", upgraded[*table]);
+        assert!(
+            upgraded[*table].is_empty(),
+            "{table} has rows nobody put there: {:?}",
+            upgraded[*table]
+        );
     }
     // Starting it again and again changes nothing: same schema, same rows.
     let schema = schema_of(&path);
@@ -2375,7 +3256,12 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     }
     assert_eq!(schema_of(&path), schema, "opening the database again changed its schema");
     assert_eq!(dump(&path), upgraded, "opening the database again changed its rows");
-    for needed in ["players_end_with_their_bot", "players_one_own_per_person", "worlds_one_each", "sessions_by_person"] {
+    for needed in [
+        "players_end_with_their_bot",
+        "players_one_own_per_person",
+        "worlds_one_each",
+        "sessions_by_person",
+    ] {
         assert!(schema.iter().any(|s| s.contains(needed)), "{needed} is missing");
     }
 
@@ -2383,9 +3269,17 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     let server = Server::on(Db::open(&path).unwrap()).await;
     let me = server.get("/api/me").token(&rows.justin_key).send().await.ok();
     assert_eq!(me["name"], "Justin");
-    let room = server.get("/api/hangouts/flowhaus0000001").token(&rows.justin_key).send().await.ok();
-    assert_eq!(room["messages"].as_array().unwrap().len() + room["notes"].as_array().unwrap().len(), 25, "the chat did not all arrive");
-    assert!(room["messages"][0]["body"].as_str().unwrap().contains("DROP TABLE people"), "a message was changed");
+    let room =
+        server.get("/api/hangouts/flowhaus0000001").token(&rows.justin_key).send().await.ok();
+    assert_eq!(
+        room["messages"].as_array().unwrap().len() + room["notes"].as_array().unwrap().len(),
+        25,
+        "the chat did not all arrive"
+    );
+    assert!(
+        room["messages"][0]["body"].as_str().unwrap().contains("DROP TABLE people"),
+        "a message was changed"
+    );
     assert_eq!(room["events"].as_array().unwrap().len(), 2);
     let city = server.get("/api/cities/city00000000001a").token(&rows.dana_key).send().await.ok();
     assert_eq!(city["houses"].as_array().unwrap().len(), 1);
@@ -2394,16 +3288,26 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
     let queue = server.get("/api/house/queue").token(&rows.casa_token).send().await;
     assert_eq!(queue.status, StatusCode::OK, "{}", queue.show());
     // A bot that is the house's bot still can't play, and one that is Justin's can.
-    assert_eq!(server.post("/api/public/join", json!({})).token(&rows.casa_token).send().await.status, StatusCode::FORBIDDEN);
-    let claude_player = server.post("/api/public/join", json!({})).token(&rows.claude_token).send().await;
+    assert_eq!(
+        server.post("/api/public/join", json!({})).token(&rows.casa_token).send().await.status,
+        StatusCode::FORBIDDEN
+    );
+    let claude_player =
+        server.post("/api/public/join", json!({})).token(&rows.claude_token).send().await;
     assert_eq!(claude_player.status, StatusCode::OK, "{}", claude_player.show());
     // The public worlds work on it, and so do passkey sign-ins and sessions for the people who were there.
     let cookie = session_for(&server, &rows.justin_key).await;
-    assert_eq!(server.post("/api/worlds/commons/act", wave()).cookie(&cookie).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server.post("/api/worlds/commons/act", wave()).cookie(&cookie).send().await.status,
+        StatusCode::OK
+    );
     let guest = server.guest().await;
     assert_eq!(server.act(&guest.token, COMMONS, wave()).await.status, StatusCode::OK);
     let (_, commons) = (0, server.tiles(COMMONS));
-    assert!(commons.len() > 40 && commons.values().all(|t| t.player.is_none()), "The Commons is not the highway");
+    assert!(
+        commons.len() > 40 && commons.values().all(|t| t.player.is_none()),
+        "The Commons is not the highway"
+    );
     drop(server);
 
     // And a restart on top of all that: the same Commons, the same tiles, and still no complaints.
@@ -2422,7 +3326,9 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
         }
     }
     let conn = rusqlite::Connection::open(&path).unwrap();
-    let broken: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0)).unwrap();
+    let broken: i64 = conn
+        .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))
+        .unwrap();
     let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
     assert_eq!((broken, integrity.as_str()), (0, "ok"));
     remove_db(&path);
@@ -2430,7 +3336,8 @@ async fn the_database_the_live_server_has_upgrades_safely_and_the_same_way_every
 
 // R38
 #[test]
-fn an_old_database_with_the_one_player_a_person_index_from_before_the_swap_opens_and_keeps_its_rows() {
+fn an_old_database_with_the_one_player_a_person_index_from_before_the_swap_opens_and_keeps_its_rows(
+) {
     // The first version of the worlds tables had one index on players per person. A database that has
     // it, with rows that the new index would refuse if they were counted the same way, must still open.
     let path = temp_db("indexswap");
@@ -2451,7 +3358,10 @@ fn an_old_database_with_the_one_player_a_person_index_from_before_the_swap_opens
     let after = dump(&path);
     assert_eq!(before["players"], after["players"]);
     let schema = schema_of(&path);
-    assert!(!schema.iter().any(|s| s.contains("players_one_per_person")), "the old index is still there");
+    assert!(
+        !schema.iter().any(|s| s.contains("players_one_per_person")),
+        "the old index is still there"
+    );
     assert!(schema.iter().any(|s| s.contains("players_one_own_per_person")));
     remove_db(&path);
 }
@@ -2462,7 +3372,8 @@ fn an_old_database_with_the_one_player_a_person_index_from_before_the_swap_opens
 
 // W45, W47
 #[tokio::test]
-async fn every_road_the_guide_shows_works_as_written_and_costs_a_move_a_tile_and_no_other_build_is_taught() {
+async fn every_road_the_guide_shows_works_as_written_and_costs_a_move_a_tile_and_no_other_build_is_taught(
+) {
     let server = Server::start().await;
     let guide = server.get("/agents.md").send().await.text;
     // Every `build` the guide shows, as the `{"type": ..., ...}` it is written as.
@@ -2480,25 +3391,47 @@ async fn every_road_the_guide_shows_works_as_written_and_costs_a_move_a_tile_and
     assert_eq!(joined["moves_left"], 30);
     let mut left = 30;
     for call in &calls {
-        let mut arguments: Value = serde_json::from_str(call).unwrap_or_else(|e| panic!("the guide shows {call}, which is not JSON: {e}"));
+        let mut arguments: Value = serde_json::from_str(call)
+            .unwrap_or_else(|e| panic!("the guide shows {call}, which is not JSON: {e}"));
         // W13: a road is all an agent can build now, so it is all the guide may show.
-        assert_eq!(arguments["type"], "road", "the guide shows {call}, and only a road can be built");
-        let tiles = 1 + (arguments["x2"].as_i64().unwrap_or(arguments["x"].as_i64().unwrap()) - arguments["x"].as_i64().unwrap()).abs()
-            + (arguments["y2"].as_i64().unwrap_or(arguments["y"].as_i64().unwrap()) - arguments["y"].as_i64().unwrap()).abs();
+        assert_eq!(
+            arguments["type"], "road",
+            "the guide shows {call}, and only a road can be built"
+        );
+        let tiles = 1
+            + (arguments["x2"].as_i64().unwrap_or(arguments["x"].as_i64().unwrap())
+                - arguments["x"].as_i64().unwrap())
+            .abs()
+            + (arguments["y2"].as_i64().unwrap_or(arguments["y"].as_i64().unwrap())
+                - arguments["y"].as_i64().unwrap())
+            .abs();
         arguments["player_token"] = json!(token);
         let done = server.tool("build", arguments).await;
         let cost = done["cost"].as_i64().unwrap();
         left -= cost;
         assert_eq!(done["moves_left"].as_i64(), Some(left), "{call}: {done}");
-        assert_eq!(cost + done["skipped"].as_i64().unwrap(), tiles, "{call}: a road costs a move a tile, and a tile already there is skipped: {done}");
+        assert_eq!(
+            cost + done["skipped"].as_i64().unwrap(),
+            tiles,
+            "{call}: a road costs a move a tile, and a tile already there is skipped: {done}"
+        );
     }
     assert!(left >= 0, "the guide's first moves cost more than a guest's 30");
     // The highway is where the guide says it is.
     let land = land_of(&server, COMMONS);
-    let highway: HashSet<(i64, i64)> = world::highway(world::COMMONS_SEED, &land).iter().map(|&(x, y)| (i64::from(x), i64::from(y))).collect();
+    let highway: HashSet<(i64, i64)> = world::highway(world::COMMONS_SEED, &land)
+        .iter()
+        .map(|&(x, y)| (i64::from(x), i64::from(y)))
+        .collect();
     assert!(highway.iter().any(|&(_, y)| y == 0), "the highway does not come in from the top edge");
-    assert!((24..=64).all(|y| highway.contains(&(46, y))), "the highway does not run down x 46 to y 64");
-    assert!((46..=64).all(|x| highway.contains(&(x, 64))), "the highway does not run east along y 64 to the middle");
+    assert!(
+        (24..=64).all(|y| highway.contains(&(46, y))),
+        "the highway does not run down x 46 to y 64"
+    );
+    assert!(
+        (46..=64).all(|x| highway.contains(&(x, 64))),
+        "the highway does not run east along y 64 to the middle"
+    );
 }
 
 // W45
@@ -2512,7 +3445,10 @@ async fn every_number_the_public_pages_promise_is_the_one_the_server_uses() {
     let moves = joined["moves_per_day"].as_i64().unwrap();
     assert_eq!(moves, i64::from(worlds::GUEST_MOVES));
     for (name, page) in [("home", &home), ("llms.txt", &llms), ("agents.md", &guide)] {
-        assert!(page.contains(&format!("{moves} moves")), "{name} does not say {moves} moves a day");
+        assert!(
+            page.contains(&format!("{moves} moves")),
+            "{name} does not say {moves} moves a day"
+        );
         assert!(!page.contains("{{BASE_URL}}"), "{name} still has a placeholder");
     }
     assert!(guide.contains("200 moves a day") && llms.len() > 100);
@@ -2527,7 +3463,6 @@ async fn every_number_the_public_pages_promise_is_the_one_the_server_uses() {
     assert_eq!(server.post("/api/public/join", json!({})).send().await.status, StatusCode::OK);
 }
 
-
 // W9, W11, W30
 #[tokio::test]
 async fn measure_how_many_moves_a_day_one_person_can_have_by_making_bots() {
@@ -2535,7 +3470,8 @@ async fn measure_how_many_moves_a_day_one_person_can_have_by_making_bots() {
     let first = server.bot("Bot 0").await;
     let mut tokens = vec![server.bot_player(&first).await];
     for n in 1..30 {
-        let bot = server.bot_in(&first.key, &first.person, &first.hangout, &format!("Bot {n}")).await;
+        let bot =
+            server.bot_in(&first.key, &first.person, &first.hangout, &format!("Bot {n}")).await;
         tokens.push(server.bot_player(&bot).await);
     }
     let mut total = 0;
@@ -2549,19 +3485,36 @@ async fn measure_how_many_moves_a_day_one_person_can_have_by_making_bots() {
 
 // W1, W3, W4, W18
 #[tokio::test]
-async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_private_life_and_tells_nobody_whose_it_was() {
+async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_private_life_and_tells_nobody_whose_it_was(
+) {
     let path = temp_db("keeper");
     let db = Db::open(&path).unwrap();
     let keeper_key = auth::new_owner_key();
-    db.create_person("keeper0000000001", "Keeper", &auth::hash_secret(&keeper_key), &auth::new_feed_token(), now()).unwrap();
+    db.create_person(
+        "keeper0000000001",
+        "Keeper",
+        &auth::hash_secret(&keeper_key),
+        &auth::new_feed_token(),
+        now(),
+    )
+    .unwrap();
     let server = Server::boot(db, None, Some("keeper0000000001".to_string()), None).await;
-    let made = server.post("/api/cities", json!({ "name": "Friends", "your_name": "Alice" })).send().await.ok();
+    let made = server
+        .post("/api/cities", json!({ "name": "Friends", "your_name": "Alice" }))
+        .send()
+        .await
+        .ok();
     let (alice_key, alice_id, city) = (
         made["owner_key"].as_str().unwrap().to_string(),
         made["person"]["id"].as_str().unwrap().to_string(),
         made["city"]["id"].as_str().unwrap().to_string(),
     );
-    let house = server.post(&format!("/api/cities/{city}/houses"), json!({ "name": "Alice House" })).token(&alice_key).send().await.ok();
+    let house = server
+        .post(&format!("/api/cities/{city}/houses"), json!({ "name": "Alice House" }))
+        .token(&alice_key)
+        .send()
+        .await
+        .ok();
     let living = house["living_room_id"].as_str().unwrap().to_string();
     let pixel = server.bot_in(&alice_key, &alice_id, &living, "Pixel").await;
     let token = server.bot_player(&pixel).await;
@@ -2580,13 +3533,27 @@ async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_priva
     server.acts_ok(&token, COMMONS, road_move(spot, spot)).await;
 
     let before = dump(&path);
-    let removed = server.post(&format!("/api/worlds/commons/players/{player_id}/remove"), json!({})).token(&keeper_key).send().await;
+    let removed = server
+        .post(&format!("/api/worlds/commons/players/{player_id}/remove"), json!({}))
+        .token(&keeper_key)
+        .send()
+        .await;
     assert_eq!(removed.status, StatusCode::OK, "{}", removed.show());
-    for secret in [alice_id.as_str(), pixel.agent.as_str(), city.as_str(), pixel.token.as_str(), alice_key.as_str(), "Pixel", "Alice", "Friends"] {
+    for secret in [
+        alice_id.as_str(),
+        pixel.agent.as_str(),
+        city.as_str(),
+        pixel.token.as_str(),
+        alice_key.as_str(),
+        "Pixel",
+        "Alice",
+        "Friends",
+    ] {
         assert!(!removed.text.contains(secret), "the answer shows {secret}: {}", removed.text);
     }
     let after = dump(&path);
-    let world_tables = ["worlds", "world_tiles", "players", "world_players", "world_members", "crawler_sightings"];
+    let world_tables =
+        ["worlds", "world_tiles", "players", "world_players", "world_members", "crawler_sightings"];
     for (table, rows) in &after {
         if !world_tables.contains(&table.as_str()) {
             assert_eq!(rows, &before[table], "ending a player changed {table}");
@@ -2594,14 +3561,23 @@ async fn the_keeper_ending_a_bots_player_in_the_commons_changes_nothing_in_priva
     }
     // The bot is out of the public worlds for good, and is still the same bot at home.
     assert_eq!(server.act(&token, COMMONS, wave()).await.status, StatusCode::UNAUTHORIZED);
-    let again = server.post("/api/public/join", json!({})).token(&pixel.token).ip("198.51.100.6").send().await;
+    let again = server
+        .post("/api/public/join", json!({}))
+        .token(&pixel.token)
+        .ip("198.51.100.6")
+        .send()
+        .await;
     assert_eq!(again.status, StatusCode::FORBIDDEN, "{}", again.show());
     for secret in [alice_id.as_str(), pixel.agent.as_str(), city.as_str()] {
         assert!(!again.text.contains(secret), "{}", again.text);
     }
     assert_eq!(server.get("/api/inbox").token(&pixel.token).send().await.status, StatusCode::OK);
     assert_eq!(server.get("/api/me").token(&pixel.token).send().await.status, StatusCode::OK);
-    assert_eq!(server.get(&format!("/api/cities/{city}")).token(&pixel.token).send().await.status, StatusCode::OK, "removal from the Commons took the bot out of its own city");
+    assert_eq!(
+        server.get(&format!("/api/cities/{city}")).token(&pixel.token).send().await.status,
+        StatusCode::OK,
+        "removal from the Commons took the bot out of its own city"
+    );
     // The tiles it built came down, and the keeper's call says how many and nothing else.
     assert!(removed.body["tiles_removed"].as_i64().unwrap() >= 1);
     drop(server);
@@ -2615,7 +3591,12 @@ async fn enormous_headers_are_answered_or_refused_and_leave_nothing_behind() {
     let long_agent = format!("Mozilla/5.0 (compatible; GPTBot/1.2) {}", "A".repeat(60_000));
     let many_commas = format!("{}203.0.113.7", "1.1.1.1, ".repeat(7_000));
     let mut answered = 0;
-    for (method, path) in [(Method::GET, "/"), (Method::GET, "/api/worlds/commons"), (Method::POST, "/public/mcp"), (Method::GET, "/world/commons")] {
+    for (method, path) in [
+        (Method::GET, "/"),
+        (Method::GET, "/api/worlds/commons"),
+        (Method::POST, "/public/mcp"),
+        (Method::GET, "/world/commons"),
+    ] {
         let mut request = server.req(method.clone(), path).ua(&long_agent).ip(&many_commas);
         if path == "/public/mcp" {
             request = request.json(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }));
@@ -2625,7 +3606,9 @@ async fn enormous_headers_are_answered_or_refused_and_leave_nothing_behind() {
                 assert!(!reply.status.is_server_error(), "{method} {path}: {}", reply.status);
                 answered += 1;
             }
-            Err(error) => println!("COST REPORT: {method} {path}: the connection was closed: {error}"),
+            Err(error) => {
+                println!("COST REPORT: {method} {path}: the connection was closed: {error}")
+            }
         }
     }
     println!("COST REPORT: {answered} of 4 requests with a 60 KB user agent and a 60 KB address list were answered");
@@ -2643,7 +3626,14 @@ async fn enormous_headers_are_answered_or_refused_and_leave_nothing_behind() {
 #[track_caller]
 fn retry_after(reply: &Reply) -> u64 {
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
-    reply.headers.get("retry-after").expect("a 429 says when to come back").to_str().unwrap().parse().unwrap()
+    reply
+        .headers
+        .get("retry-after")
+        .expect("a 429 says when to come back")
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 // W30, W13
@@ -2659,7 +3649,12 @@ async fn a_bulldoze_with_no_builder_or_not_the_players_is_refused_without_readin
     let highway = world::highway(world::COMMONS_SEED, &land);
     let (hx, hy) = highway[highway.len() / 2];
     // A place that somebody else built, so it is not up for the taking.
-    let theirs = server.tiles(COMMONS).iter().find(|(_, t)| t.kind == Kind::House).map(|(pos, _)| *pos).unwrap();
+    let theirs = server
+        .tiles(COMMONS)
+        .iter()
+        .find(|(_, t)| t.kind == Kind::House)
+        .map(|(pos, _)| *pos)
+        .unwrap();
     let row = server.player_row(guest_id);
     // Each try is a minute later than the last, so the limit on refused moves never gets in the way.
     let mut at = now();
@@ -2667,7 +3662,10 @@ async fn a_bulldoze_with_no_builder_or_not_the_players_is_refused_without_readin
         let started = Instant::now();
         for _ in 0..tries {
             at += 61;
-            assert_eq!(worlds::act(&server.state, &row, COMMONS, &mv, at).unwrap_err().status, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                worlds::act(&server.state, &row, COMMONS, &mv, at).unwrap_err().status,
+                StatusCode::BAD_REQUEST
+            );
         }
         started.elapsed().as_secs_f64() * 1000.0 / tries as f64
     };
@@ -2683,16 +3681,23 @@ async fn a_bulldoze_with_no_builder_or_not_the_players_is_refused_without_readin
 
 // W30, W13
 #[tokio::test]
-async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_says_when_to_come_back() {
+async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_says_when_to_come_back(
+) {
     start_early_in_a_minute().await;
     let server = Server::start().await;
-    let (one, two, three, elsewhere) = (server.guest().await, server.guest().await, server.guest().await, server.guest().await);
+    let (one, two, three, elsewhere) =
+        (server.guest().await, server.guest().await, server.guest().await, server.guest().await);
     let nonsense = json!({ "action": "bulldoze", "x": 9999, "y": 9999 });
     // Two players behind one address, 40 refusals each: the address runs out, and neither player has.
     let (mut refused, mut limited) = (0, 0);
     for n in 0..80 {
         let who = if n % 2 == 0 { &one } else { &two };
-        let reply = server.post("/api/worlds/commons/act", nonsense.clone()).token(&who.token).ip("198.51.100.77").send().await;
+        let reply = server
+            .post("/api/worlds/commons/act", nonsense.clone())
+            .token(&who.token)
+            .ip("198.51.100.77")
+            .send()
+            .await;
         match reply.status {
             StatusCode::BAD_REQUEST => refused += 1,
             StatusCode::TOO_MANY_REQUESTS => {
@@ -2705,23 +3710,52 @@ async fn refused_moves_are_limited_per_address_as_well_as_per_player_and_a_429_s
     println!("COST REPORT: 80 refused moves from two players at one address in a minute: {refused} answered, {limited} turned away");
     assert_eq!((refused, limited), (60, 20));
     // From that address even a good move is turned away at the door, and nothing was charged.
-    let good = server.post("/api/worlds/commons/act", wave()).token(&one.token).ip("198.51.100.77").send().await;
+    let good = server
+        .post("/api/worlds/commons/act", wave())
+        .token(&one.token)
+        .ip("198.51.100.77")
+        .send()
+        .await;
     assert_eq!(good.status, StatusCode::TOO_MANY_REQUESTS, "{}", good.show());
     assert_eq!(server.moves_left(&one.token).await, 30);
     // Another address is not held up, and nor is the same player from another address: 40 is below their own 60.
-    let fine = server.post("/api/worlds/commons/act", wave()).token(&elsewhere.token).ip("198.51.100.78").send().await;
+    let fine = server
+        .post("/api/worlds/commons/act", wave())
+        .token(&elsewhere.token)
+        .ip("198.51.100.78")
+        .send()
+        .await;
     assert_eq!(fine.status, StatusCode::OK, "{}", fine.show());
-    let moved = server.post("/api/worlds/commons/act", wave()).token(&one.token).ip("198.51.100.79").send().await;
+    let moved = server
+        .post("/api/worlds/commons/act", wave())
+        .token(&one.token)
+        .ip("198.51.100.79")
+        .send()
+        .await;
     assert_eq!(moved.status, StatusCode::OK, "{}", moved.show());
     // One player's own 60 are counted wherever they come from.
     for n in 0..60 {
-        let reply = server.post("/api/worlds/commons/act", nonsense.clone()).token(&three.token).ip(&format!("203.0.113.{}", 100 + n)).send().await;
+        let reply = server
+            .post("/api/worlds/commons/act", nonsense.clone())
+            .token(&three.token)
+            .ip(&format!("203.0.113.{}", 100 + n))
+            .send()
+            .await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{n}: {}", reply.show());
     }
-    let after = server.post("/api/worlds/commons/act", wave()).token(&three.token).ip("203.0.113.250").send().await;
+    let after = server
+        .post("/api/worlds/commons/act", wave())
+        .token(&three.token)
+        .ip("203.0.113.250")
+        .send()
+        .await;
     assert!((1..=60).contains(&retry_after(&after)), "{}", after.show());
     // With no address header on plain http, the player's count is all there is.
-    let alone = server.post("/api/worlds/commons/act", nonsense.clone()).token(&elsewhere.token).send().await;
+    let alone = server
+        .post("/api/worlds/commons/act", nonsense.clone())
+        .token(&elsewhere.token)
+        .send()
+        .await;
     assert_eq!(alone.status, StatusCode::BAD_REQUEST);
     // The tools are held to the same, and say so as a refusal the model can read.
     let said = server.call("emote", json!({ "player_token": three.token, "emote": "wave" })).await;
@@ -2743,12 +3777,17 @@ async fn a_browser_on_another_site_can_ask_first_and_nothing_promises_a_missing_
             .send()
             .await;
         assert_eq!(asked.status, StatusCode::NO_CONTENT, "{path}: {}", asked.show());
-        let said = |name: &str| asked.headers.get(name).map(|value| value.to_str().unwrap().to_lowercase());
+        let said = |name: &str| {
+            asked.headers.get(name).map(|value| value.to_str().unwrap().to_lowercase())
+        };
         assert_eq!(said("access-control-allow-origin").as_deref(), Some("*"), "{path}");
         assert_eq!(said("access-control-allow-methods").as_deref(), Some("get"), "{path}");
         assert!(said("access-control-allow-headers").unwrap().contains("if-none-match"), "{path}");
         let read = server.get(path).send().await;
-        assert!(read.headers.get("access-control-expose-headers").is_none(), "{path}: no ETag is sent");
+        assert!(
+            read.headers.get("access-control-expose-headers").is_none(),
+            "{path}: no ETag is sent"
+        );
     }
 }
 
@@ -2796,7 +3835,10 @@ async fn every_429_says_how_many_seconds_to_wait_and_the_wait_fits_the_limit() {
     let sixth = server.post("/api/public/join", json!({})).ip("203.0.113.41").send().await;
     let wait = retry_after(&sixth);
     let left = 3600 - now().rem_euclid(3600);
-    assert!(wait >= 1 && wait.abs_diff(left as u64) <= 5, "{wait} s, with {left} s of the hour left");
+    assert!(
+        wait >= 1 && wait.abs_diff(left as u64) <= 5,
+        "{wait} s, with {left} s of the hour left"
+    );
     // Moves: when a day's are spent, they come back at midnight UTC.
     let guest = server.guest().await;
     for _ in 0..30 {
@@ -2805,22 +3847,53 @@ async fn every_429_says_how_many_seconds_to_wait_and_the_wait_fits_the_limit() {
     let spent = server.act(&guest.token, COMMONS, wave()).await;
     let wait = retry_after(&spent);
     let left = 86_400 - now().rem_euclid(86_400);
-    assert!(wait >= 1 && wait.abs_diff(left as u64) <= 5, "{wait} s, with {left} s of the day left");
+    assert!(
+        wait >= 1 && wait.abs_diff(left as u64) <= 5,
+        "{wait} s, with {left} s of the day left"
+    );
     // Anything else that says 429 says something, and nothing else says it.
-    assert!(server.get("/api/worlds/commons").ip("203.0.113.42").send().await.headers.get("retry-after").is_none());
+    assert!(server
+        .get("/api/worlds/commons")
+        .ip("203.0.113.42")
+        .send()
+        .await
+        .headers
+        .get("retry-after")
+        .is_none());
 }
 
 // W51
 #[tokio::test]
-async fn every_answer_says_what_the_browser_may_not_use_and_an_https_server_says_to_keep_to_https() {
+async fn every_answer_says_what_the_browser_may_not_use_and_an_https_server_says_to_keep_to_https()
+{
     let live = Server::start_as_live().await;
     let plain = Server::start().await;
     let guest = plain.guest().await;
-    for path in ["/", "/world/commons", "/api/worlds/commons", "/nothing/here", "/agents.md", "/public/mcp", "/style.css"] {
+    for path in [
+        "/",
+        "/world/commons",
+        "/api/worlds/commons",
+        "/nothing/here",
+        "/agents.md",
+        "/public/mcp",
+        "/style.css",
+    ] {
         for (server, https) in [(&live, true), (&plain, false)] {
             let reply = server.get(path).ip("203.0.113.9").send().await;
-            let policy = reply.headers.get("permissions-policy").unwrap_or_else(|| panic!("{path}: no Permissions-Policy")).to_str().unwrap();
-            for want in ["camera=()", "microphone=()", "geolocation=()", "payment=()", "publickey-credentials-get=(self)", "publickey-credentials-create=(self)"] {
+            let policy = reply
+                .headers
+                .get("permissions-policy")
+                .unwrap_or_else(|| panic!("{path}: no Permissions-Policy"))
+                .to_str()
+                .unwrap();
+            for want in [
+                "camera=()",
+                "microphone=()",
+                "geolocation=()",
+                "payment=()",
+                "publickey-credentials-get=(self)",
+                "publickey-credentials-create=(self)",
+            ] {
                 assert!(policy.contains(want), "{path}: {policy}");
             }
             let hsts = reply.headers.get("strict-transport-security").map(|v| v.to_str().unwrap());
@@ -2828,14 +3901,19 @@ async fn every_answer_says_what_the_browser_may_not_use_and_an_https_server_says
         }
     }
     // A refusal carries them too.
-    let big = plain.post("/api/worlds/commons/act", json!({ "action": "emote", "emote": "x".repeat(200_000) })).token(&guest.token).send().await;
+    let big = plain
+        .post("/api/worlds/commons/act", json!({ "action": "emote", "emote": "x".repeat(200_000) }))
+        .token(&guest.token)
+        .send()
+        .await;
     assert_eq!(big.status, StatusCode::PAYLOAD_TOO_LARGE);
     assert!(big.headers.get("permissions-policy").is_some());
 }
 
 // W3
 #[test]
-fn the_index_that_keeps_one_player_for_each_person_is_remade_to_leave_out_removed_players_and_keeps_every_row() {
+fn the_index_that_keeps_one_player_for_each_person_is_remade_to_leave_out_removed_players_and_keeps_every_row(
+) {
     let path = temp_db("removedindex");
     drop(Db::open(&path).unwrap());
     {
@@ -2859,7 +3937,10 @@ fn the_index_that_keeps_one_player_for_each_person_is_remade_to_leave_out_remove
     let index = schema.iter().find(|s| s.starts_with("index players_one_own_per_person")).unwrap();
     assert!(index.contains("removed = 0"), "the index was not remade: {index}");
     assert!(schema.iter().any(|s| s.contains("world_tiles_by_world_player")));
-    assert!(!schema.iter().any(|s| s.contains("world_tiles_by_player")), "the index on the player alone is still there");
+    assert!(
+        !schema.iter().any(|s| s.contains("world_tiles_by_player")),
+        "the index on the player alone is still there"
+    );
     // Opening it again, as every start does, changes nothing: schema or rows.
     for _ in 0..3 {
         drop(Db::open(&path).unwrap());
@@ -2870,7 +3951,9 @@ fn the_index_that_keeps_one_player_for_each_person_is_remade_to_leave_out_remove
     // two that are not removed still can't both be theirs.
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.execute("UPDATE players SET removed = 1", []).unwrap();
-    let add = |seed: i64| conn.execute("INSERT INTO players (name_seed, person_id, seen_at, created_at) VALUES (?, 'p1', 0, 0)", [seed]);
+    let add = |seed: i64| {
+        conn.execute("INSERT INTO players (name_seed, person_id, seen_at, created_at) VALUES (?, 'p1', 0, 0)", [seed])
+    };
     assert!(add(6).is_ok());
     assert!(add(7).is_err(), "a person got two players of their own");
     drop(conn);
@@ -2886,13 +3969,21 @@ async fn a_deleted_bots_player_lets_go_of_the_person_so_it_is_never_taken_for_th
     // The bot plays first and has its token replaced, so its player has no token and no person's
     // own player has been made yet. Then the bot is deleted.
     let _token = server.bot_player(&bot).await;
-    let rotated = server.post(&format!("/api/agents/{}/rotate", bot.agent), json!({})).token(&bot.key).send().await;
+    let rotated = server
+        .post(&format!("/api/agents/{}/rotate", bot.agent), json!({}))
+        .token(&bot.key)
+        .send()
+        .await;
     assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.show());
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.busy_timeout(Duration::from_secs(5)).unwrap();
     conn.pragma_update(None, "foreign_keys", true).unwrap();
     conn.execute("DELETE FROM agents WHERE id = ?", [&bot.agent]).unwrap();
-    let left: (i64, Option<String>) = conn.query_row("SELECT removed, person_id FROM players", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+    let left: (i64, Option<String>) = conn
+        .query_row("SELECT removed, person_id FROM players", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap();
     assert_eq!(left, (1, None), "the bot's player is ended and belongs to nobody");
     drop(conn);
     // The person has never played as themselves, and is not told they were removed.
@@ -2908,7 +3999,9 @@ fn lay(server: &Server, builder: i64, row: u16, built: &[(Kind, u8)]) {
     let changes: Vec<Change> = built
         .iter()
         .enumerate()
-        .map(|(n, (kind, level))| Change::Set((n as u16, row), tile(*kind, *level, Some(builder as u64))))
+        .map(|(n, (kind, level))| {
+            Change::Set((n as u16, row), tile(*kind, *level, Some(builder as u64)))
+        })
         .collect();
     put_tiles(server, COMMONS, &changes);
 }
@@ -2927,14 +4020,46 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
 
     // An agent starts with nothing, and its ladder is roads. A guest can't place anything, so no `places`.
     let fresh = server.me(&ann.token, COMMONS).await;
-    assert_eq!(sorted_keys(&fresh), ["goal", "moves_left", "moves_per_day", "player", "tip", "your_town"]);
+    assert_eq!(
+        sorted_keys(&fresh),
+        ["goal", "moves_left", "moves_per_day", "player", "tip", "your_town"]
+    );
     assert_eq!(fresh["your_town"], json!({ "roads": 0, "places": 0 }));
     assert_eq!(fresh["goal"], world::GOALS[4]);
     assert!(fresh["tip"].as_str().unwrap().starts_with("No road yet"), "{fresh}");
 
     // Ann has a road, and tiles of the old city that count for nothing. Bob has twelve places.
-    lay(&server, ann_id, 110, &[(Kind::Road, 0), (Kind::Homes, 2), (Kind::Shops, 0), (Kind::Workshops, 1), (Kind::Park, 0)]);
-    lay(&server, bob_id, 112, &[(Kind::House, 0), (Kind::Cafe, 0), (Kind::Cafe, 0), (Kind::Cafe, 0), (Kind::Club, 0), (Kind::Club, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0), (Kind::Studio, 0)]);
+    lay(
+        &server,
+        ann_id,
+        110,
+        &[
+            (Kind::Road, 0),
+            (Kind::Homes, 2),
+            (Kind::Shops, 0),
+            (Kind::Workshops, 1),
+            (Kind::Park, 0),
+        ],
+    );
+    lay(
+        &server,
+        bob_id,
+        112,
+        &[
+            (Kind::House, 0),
+            (Kind::Cafe, 0),
+            (Kind::Cafe, 0),
+            (Kind::Cafe, 0),
+            (Kind::Club, 0),
+            (Kind::Club, 0),
+            (Kind::Studio, 0),
+            (Kind::Studio, 0),
+            (Kind::Studio, 0),
+            (Kind::Studio, 0),
+            (Kind::Studio, 0),
+            (Kind::Studio, 0),
+        ],
+    );
     let mine = server.me(&ann.token, COMMONS).await;
     let wanted = json!({ "roads": 1, "places": 0 });
     assert_eq!(mine["your_town"], wanted, "{mine}");
@@ -2942,32 +4067,54 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     assert_eq!(mine["tip"], world::TIPS[4], "{mine}");
     let his = server.me(&bob.token, COMMONS).await;
     assert_eq!(his["your_town"], json!({ "roads": 0, "places": 12 }));
-    assert_eq!(his["goal"], world::GOALS[4], "a guest's ladder is roads, whatever stands on its tiles");
+    assert_eq!(
+        his["goal"],
+        world::GOALS[4],
+        "a guest's ladder is roads, whatever stands on its tiles"
+    );
     // The tool says the same, and a little more.
     let how = server.tool("how_am_i_doing", json!({ "player_token": ann.token })).await;
     for key in ["player", "moves_left", "moves_per_day", "your_town", "goal", "tip"] {
         assert_eq!(how[key], mine[key], "{key}");
     }
-    assert_eq!(how["built"], json!({ "homes": 1, "park": 1, "road": 1, "shops": 1, "workshops": 1 }));
+    assert_eq!(
+        how["built"],
+        json!({ "homes": 1, "park": 1, "road": 1, "shops": 1, "workshops": 1 })
+    );
     assert_eq!(how["kind"], "guest");
     // The same maths as the world's, over her tiles: that is the whole of it.
-    let hers: Tiles = server.tiles(COMMONS).into_iter().filter(|(_, t)| t.player == Some(ann_id as u64)).collect();
+    let hers: Tiles = server
+        .tiles(COMMONS)
+        .into_iter()
+        .filter(|(_, t)| t.player == Some(ann_id as u64))
+        .collect();
     assert_eq!(serde_json::to_value(world::town(&hers)).unwrap(), wanted);
     // Everything in it is a number, a listed sentence, or her generated name.
     let numbers_only = mine["your_town"].as_object().unwrap().values().all(|v| v.is_u64());
-    assert!(numbers_only && world::GOALS.contains(&mine["goal"].as_str().unwrap()) && world::TIPS.contains(&mine["tip"].as_str().unwrap()));
+    assert!(
+        numbers_only
+            && world::GOALS.contains(&mine["goal"].as_str().unwrap())
+            && world::TIPS.contains(&mine["tip"].as_str().unwrap())
+    );
 
     // A person's ladder is places, and they are told when each comes (W62).
     let dee = server.person("Dee").await;
     let dee_id = person_player(&server, &dee).id;
     let start = server.me(&dee.key, COMMONS).await;
-    assert_eq!(sorted_keys(&start), ["full", "goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]);
+    assert_eq!(
+        sorted_keys(&start),
+        ["full", "goal", "moves_left", "moves_per_day", "places", "player", "tip", "your_town"]
+    );
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");
     assert_eq!(sorted_keys(&start["places"]), ["cafe", "club", "house", "studio"]);
     lay(&server, dee_id, 114, &[(Kind::House, 0)]);
     let one = server.me(&dee.key, COMMONS).await;
-    assert_eq!((&one["goal"], &one["tip"]), (&json!(world::GOALS[1]), &json!(world::TIPS[2])), "{one}");
+    assert_eq!(
+        (&one["goal"], &one["tip"]),
+        (&json!(world::GOALS[1]), &json!(world::TIPS[2])),
+        "{one}"
+    );
     lay(&server, dee_id, 116, &[(Kind::Studio, 0)]);
     assert_eq!(server.me(&dee.key, COMMONS).await["goal"], world::GOALS[2]);
     lay(&server, dee_id, 118, &[(Kind::Club, 0), (Kind::Cafe, 0)]);
@@ -2984,11 +4131,20 @@ async fn me_is_limited_like_a_view_and_a_player_who_is_not_one_is_turned_away_fi
     let guest = server.guest().await;
     let mut told = 0;
     for _ in 0..300 {
-        let reply = server.get("/api/worlds/commons/me").token(&guest.token).ip("198.51.100.55").send().await;
+        let reply = server
+            .get("/api/worlds/commons/me")
+            .token(&guest.token)
+            .ip("198.51.100.55")
+            .send()
+            .await;
         match reply.status {
             StatusCode::OK => told += 1,
             StatusCode::TOO_MANY_REQUESTS => {
-                assert!(reply.body["error"].as_str().unwrap().contains("too often"), "{}", reply.show());
+                assert!(
+                    reply.body["error"].as_str().unwrap().contains("too often"),
+                    "{}",
+                    reply.show()
+                );
                 assert!(retry_after(&reply) <= 60);
             }
             other => panic!("{other}"),
@@ -2996,15 +4152,46 @@ async fn me_is_limited_like_a_view_and_a_player_who_is_not_one_is_turned_away_fi
     }
     assert!((235..=245).contains(&told), "{told} answers: a view's 240 a minute");
     // Another address is fine, and a stranger is still a 401, whoever they are.
-    assert_eq!(server.get("/api/worlds/commons/me").token(&guest.token).ip("198.51.100.56").send().await.status, StatusCode::OK);
-    assert_eq!(server.get("/api/worlds/commons/me").token(&made_up_token()).ip("198.51.100.57").send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.get("/api/worlds/commons/me").ip("198.51.100.57").send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.get("/api/worlds/nowhere/me").token(&guest.token).ip("198.51.100.57").send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .get("/api/worlds/commons/me")
+            .token(&guest.token)
+            .ip("198.51.100.56")
+            .send()
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        server
+            .get("/api/worlds/commons/me")
+            .token(&made_up_token())
+            .ip("198.51.100.57")
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.get("/api/worlds/commons/me").ip("198.51.100.57").send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .get("/api/worlds/nowhere/me")
+            .token(&guest.token)
+            .ip("198.51.100.57")
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // W31, W30, W15, W50, W54
 #[tokio::test]
-async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_kept_for_side_streets() {
+async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_kept_for_side_streets(
+) {
     start_early_in_a_minute().await;
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
@@ -3013,19 +4200,30 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
     let tiles = server.tiles(COMMONS);
 
     // The end of the highway, in a window as big as it is allowed to be.
-    let http = server.get("/api/worlds/commons/look?x=64&y=64&w=40&h=40").ip("198.51.100.60").send().await.ok();
+    let http = server
+        .get("/api/worlds/commons/look?x=64&y=64&w=40&h=40")
+        .ip("198.51.100.60")
+        .send()
+        .await
+        .ok();
     assert_eq!((&http["window"]["w"], &http["window"]["h"]), (&json!(32), &json!(32)));
     assert_eq!(http["land"].as_array().unwrap().len(), 32);
     let tool = server.tool("look", json!({ "x": 64, "y": 64, "w": 40, "h": 40 })).await;
     assert_eq!(http, tool, "the tool and the route say the same");
     let (x0, y0) = (http["window"]["x"].as_i64().unwrap(), http["window"]["y"].as_i64().unwrap());
-    let listed: HashSet<(i64, i64)> = http["reserved"].as_array().unwrap().iter().map(|p| (p[0].as_i64().unwrap(), p[1].as_i64().unwrap())).collect();
+    let listed: HashSet<(i64, i64)> = http["reserved"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| (p[0].as_i64().unwrap(), p[1].as_i64().unwrap()))
+        .collect();
     assert!(listed.len() >= 6, "the highway keeps hardly any side streets: {}", listed.len());
     // Every tile it lists is open ground in the window that a place would be refused on, and it lists them all.
     let mut every = HashSet::new();
     for y in y0..y0 + 32 {
         for x in x0..x0 + 32 {
-            if open_ground(&land, &tiles, x, y) && world::is_reserved(&tiles, (x as u16, y as u16)) {
+            if open_ground(&land, &tiles, x, y) && world::is_reserved(&tiles, (x as u16, y as u16))
+            {
                 every.insert((x, y));
             }
         }
@@ -3035,7 +4233,10 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
     // can ask, so a guest is told so first.
     let &(rx, ry) = listed.iter().next().unwrap();
     let house = json!({ "action": "place", "kind": "house", "x": rx, "y": ry });
-    assert_eq!(server.act(&guest.token, COMMONS, house.clone()).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server.act(&guest.token, COMMONS, house.clone()).await.status,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(server.moves_left(&guest.token).await, 30);
     let dee = server.person("Dee").await;
     let place = server.act(&dee.key, COMMONS, house).await;
@@ -3044,37 +4245,88 @@ async fn look_over_http_is_the_tool_with_the_same_limits_and_it_lists_the_tiles_
     assert_eq!(server.me(&dee.key, COMMONS).await["moves_left"], 300);
 
     // A player token says where you are, and a made-up one is turned away. Nobody needs either.
-    let you = server.get("/api/worlds/commons/look?w=4&h=4").token(&guest.token).ip("198.51.100.60").send().await.ok();
+    let you = server
+        .get("/api/worlds/commons/look?w=4&h=4")
+        .token(&guest.token)
+        .ip("198.51.100.60")
+        .send()
+        .await
+        .ok();
     assert_eq!(you["you"]["moves_left"], 30);
     assert!(http["you"].is_null());
-    let bad_token = server.get("/api/worlds/commons/look").token(&made_up_token()).ip("198.51.100.60").send().await;
+    let bad_token = server
+        .get("/api/worlds/commons/look")
+        .token(&made_up_token())
+        .ip("198.51.100.60")
+        .send()
+        .await;
     assert_eq!(bad_token.status, StatusCode::UNAUTHORIZED);
     // A signed-in person's cookie is not a player token: looking makes no player of them.
     let ann = server.person("Ann").await;
-    let with_cookie = server.get("/api/worlds/commons/look").cookie(&ann.cookie).ip("198.51.100.60").send().await.ok();
+    let with_cookie = server
+        .get("/api/worlds/commons/look")
+        .cookie(&ann.cookie)
+        .ip("198.51.100.60")
+        .send()
+        .await
+        .ok();
     assert!(with_cookie["you"].is_null());
     assert!(server.state.db.players_of(&ann.id).unwrap().is_empty());
     // The sizes are the tool's: never more than 32, never less than 1.
-    let tiny = server.get("/api/worlds/commons/look?x=5&y=5&w=0&h=-9").ip("198.51.100.60").send().await.ok();
+    let tiny = server
+        .get("/api/worlds/commons/look?x=5&y=5&w=0&h=-9")
+        .ip("198.51.100.60")
+        .send()
+        .await
+        .ok();
     assert_eq!((&tiny["window"]["w"], &tiny["window"]["h"]), (&json!(1), &json!(1)));
     // Anything that is not a window is one fixed answer that repeats nothing that was sent.
     for (query, status) in [
-        ("?x=5", 400), ("?y=5", 400), ("?x=zzmarker&y=1", 400), ("?x=&y=", 400), ("?w=1.5", 400), ("?zzmarker=1", 400),
-        ("?x=1&y=2&z=3", 400), ("?x=99999&y=1", 400), ("?x=-1&y=-1", 400), ("?x=9223372036854775808&y=1", 400),
+        ("?x=5", 400),
+        ("?y=5", 400),
+        ("?x=zzmarker&y=1", 400),
+        ("?x=&y=", 400),
+        ("?w=1.5", 400),
+        ("?zzmarker=1", 400),
+        ("?x=1&y=2&z=3", 400),
+        ("?x=99999&y=1", 400),
+        ("?x=-1&y=-1", 400),
+        ("?x=9223372036854775808&y=1", 400),
     ] {
-        let reply = server.get(&format!("/api/worlds/commons/look{query}")).ip("198.51.100.60").send().await;
+        let reply = server
+            .get(&format!("/api/worlds/commons/look{query}"))
+            .ip("198.51.100.60")
+            .send()
+            .await;
         assert_eq!(reply.status.as_u16(), status, "{query}: {}", reply.show());
-        assert!(!reply.text.contains("zzmarker") && !reply.text.contains("99999") && !reply.text.contains("9223372036854775808"), "{query}: {}", reply.text);
+        assert!(
+            !reply.text.contains("zzmarker")
+                && !reply.text.contains("99999")
+                && !reply.text.contains("9223372036854775808"),
+            "{query}: {}",
+            reply.text
+        );
     }
-    assert_eq!(server.get("/api/worlds/nowhere/look").ip("198.51.100.60").send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get("/api/worlds/nowhere/look").ip("198.51.100.60").send().await.status,
+        StatusCode::NOT_FOUND
+    );
     for method in [Method::POST, Method::PUT, Method::DELETE] {
-        let reply = server.req(method.clone(), "/api/worlds/commons/look").ip("198.51.100.60").json(json!({})).send().await;
+        let reply = server
+            .req(method.clone(), "/api/worlds/commons/look")
+            .ip("198.51.100.60")
+            .json(json!({}))
+            .send()
+            .await;
         assert_eq!(reply.status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
     }
     // It is limited like a view: 240 a minute for an address, all of the above counted.
     let mut served = 0;
     for _ in 0..300 {
-        served += usize::from(server.get("/api/worlds/commons/look").ip("198.51.100.61").send().await.status == StatusCode::OK);
+        served += usize::from(
+            server.get("/api/worlds/commons/look").ip("198.51.100.61").send().await.status
+                == StatusCode::OK,
+        );
     }
     assert!((235..=245).contains(&served), "{served} windows in a minute");
 }
@@ -3087,8 +4339,21 @@ async fn the_guides_explain_the_land_the_score_the_goal_side_streets_visitors_an
     let llms = server.get("/llms.txt").send().await.text;
     let commons = &guide[..guide.find("## Private rooms").unwrap()];
     for needle in [
-        "`12g3f`", "run-length", "rows from y=0", "`your_town`", "`goal`", "ladder", "`reserved`", "multiple of 6", "Visitors", "frogs", "midnight UTC",
-        "don't carry over", "from y 24", "/look?x=", "Retry-After",
+        "`12g3f`",
+        "run-length",
+        "rows from y=0",
+        "`your_town`",
+        "`goal`",
+        "ladder",
+        "`reserved`",
+        "multiple of 6",
+        "Visitors",
+        "frogs",
+        "midnight UTC",
+        "don't carry over",
+        "from y 24",
+        "/look?x=",
+        "Retry-After",
     ] {
         assert!(commons.contains(needle), "the guide never says: {needle}");
     }

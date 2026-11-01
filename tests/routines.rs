@@ -100,20 +100,33 @@ impl Server {
     /// Someone new, by way of a room of their own: the room's id, and who they are.
     async fn someone(&self, name: &str) -> (String, Who) {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": format!("{name}'s Cafe"), "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": format!("{name}'s Cafe"), "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
         (text(&made["hangout"]["id"]), Who { key: text(&made["owner_key"]) })
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> (String, String) {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         (text(&made["agent"]["id"]), text(&made["token"]))
     }
 
     async fn town(&self) -> Town {
         let (cafe, ann) = self.someone("Ann").await;
-        self.put(&ann.key, &format!("/api/floors/{cafe}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+        self.put(
+            &ann.key,
+            &format!("/api/floors/{cafe}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
         let (_, fern) = self.bot(&ann, &cafe, "Fern").await;
         let (bo_room, bo) = self.someone("Bo").await;
         let (rover_id, rover) = self.bot(&bo, &bo_room, "Rover").await;
@@ -170,8 +183,17 @@ async fn only_a_bots_owner_sets_its_routine() {
 
     let lunch = json!({ "days": ["mon", "wed"], "starts": "12:00", "ends": "13:30", "max_social_runs": 3, "public_places": true });
     server.set_routine(&town.rover, &town.rover_id, lunch.clone()).await.is(StatusCode::FORBIDDEN);
-    server.set_routine(&town.ann.key, &town.rover_id, lunch.clone()).await.is(StatusCode::NOT_FOUND);
-    for (field, bad) in [("days", json!(["funday"])), ("starts", json!("25:00")), ("ends", json!("12:00")), ("max_social_runs", json!(0)), ("max_social_runs", json!(21))] {
+    server
+        .set_routine(&town.ann.key, &town.rover_id, lunch.clone())
+        .await
+        .is(StatusCode::NOT_FOUND);
+    for (field, bad) in [
+        ("days", json!(["funday"])),
+        ("starts", json!("25:00")),
+        ("ends", json!("12:00")),
+        ("max_social_runs", json!(0)),
+        ("max_social_runs", json!(21)),
+    ] {
         let mut body = lunch.clone();
         body[field] = bad;
         server.set_routine(&town.bo.key, &town.rover_id, body).await.is(StatusCode::BAD_REQUEST);
@@ -194,14 +216,16 @@ async fn a_bot_goes_out_only_in_its_hours_with_public_places_on() {
     server.refused(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
 
     // Public places on, but no social hours.
-    let off_hours = json!({ "days": [], "starts": "12:00", "ends": "13:00", "public_places": true });
+    let off_hours =
+        json!({ "days": [], "starts": "12:00", "ends": "13:00", "public_places": true });
     server.set_routine(&town.bo.key, &town.rover_id, off_hours).await.ok();
     let message = server.refused(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
     assert!(message.contains("social hours"), "{message}");
 
     server.always_out(&town, 5).await;
     let places = server.tool(&town.rover, "public_floors", json!({})).await;
-    let listed: Vec<String> = places["places"].as_array().unwrap().iter().map(|floor| text(&floor["id"])).collect();
+    let listed: Vec<String> =
+        places["places"].as_array().unwrap().iter().map(|floor| text(&floor["id"])).collect();
     assert_eq!(listed, std::slice::from_ref(&town.cafe));
     assert!(places["trust_note"].is_string());
 
@@ -214,7 +238,8 @@ async fn a_bot_goes_out_only_in_its_hours_with_public_places_on() {
     assert!(server.out_at(&town.rover).await.is_null());
     server.refused(&town.rover, "read_room", json!({ "hangout_id": town.cafe })).await;
     server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
-    let off = json!({ "days": ["mon"], "starts": "00:00", "ends": "24:00", "public_places": false });
+    let off =
+        json!({ "days": ["mon"], "starts": "00:00", "ends": "24:00", "public_places": false });
     server.set_routine(&town.bo.key, &town.rover_id, off).await.ok();
     assert!(server.out_at(&town.rover).await.is_null());
 }
@@ -224,12 +249,25 @@ async fn a_bot_goes_out_only_in_its_hours_with_public_places_on() {
 async fn a_bot_that_stays_home_never_goes_out() {
     let server = Server::start().await;
     let town = server.town().await;
-    let made = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Cy", "create_code": CODE }))
+        .await
+        .ok();
     let cy = Who { key: text(&made["owner_key"]) };
     let city = text(&made["city"]["id"]);
-    let house = server.post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy House" })).await.ok();
+    let house = server
+        .post(&cy.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Cy House" }))
+        .await
+        .ok();
     let (keeper_id, keeper) = server.bot(&cy, &text(&house["living_room_id"]), "Keeper").await;
-    server.put(&cy.key, &format!("/api/agents/{keeper_id}/home"), json!({ "house_id": house["house"]["id"], "stays_home": true })).await.ok();
+    server
+        .put(
+            &cy.key,
+            &format!("/api/agents/{keeper_id}/home"),
+            json!({ "house_id": house["house"]["id"], "stays_home": true }),
+        )
+        .await
+        .ok();
     let body = json!({ "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "starts": "00:00", "ends": "24:00", "public_places": true });
     server.set_routine(&cy.key, &keeper_id, body).await.ok();
 
@@ -265,11 +303,22 @@ async fn out_a_bot_is_a_walk_in_until_its_hours_end() {
     // Its hours end at midnight UTC, Bo having no clock saved, unless 12 hours come first.
     let now = now();
     let expected = ((now / DAY + 1) * DAY).min(now + 12 * 3600);
-    let until = time::OffsetDateTime::parse(&text(&went["until"]), &time::format_description::well_known::Rfc3339).unwrap().unix_timestamp();
+    let until = time::OffsetDateTime::parse(
+        &text(&went["until"]),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap()
+    .unix_timestamp();
     assert!((until - expected).abs() <= 2, "{until} vs {expected}");
 
     // A walk-in can't ask a check-in (S20).
-    server.refused(&town.rover, "check_in", json!({ "hangout_id": town.cafe, "about": "May I wake everyone?" })).await;
+    server
+        .refused(
+            &town.rover,
+            "check_in",
+            json!({ "hangout_id": town.cafe, "about": "May I wake everyone?" }),
+        )
+        .await;
 }
 
 // L9
@@ -284,11 +333,22 @@ async fn in_its_hours_a_bot_wanders_when_its_doorbell_checks_in() {
 
     server.always_out(&town, 5).await;
     server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
-    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str(), "the one public floor there is");
+    assert_eq!(
+        server.out_at(&town.rover).await,
+        town.cafe.as_str(),
+        "the one public floor there is"
+    );
 
     // A paused doorbell doesn't wander.
     server.tool(&town.rover, "come_back", json!({})).await;
-    server.put(&town.bo.key, &format!("/api/agents/{}/doorbell", town.rover_id), json!({ "paused": true })).await.ok();
+    server
+        .put(
+            &town.bo.key,
+            &format!("/api/agents/{}/doorbell", town.rover_id),
+            json!({ "paused": true }),
+        )
+        .await
+        .ok();
     server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
     assert!(server.out_at(&town.rover).await.is_null());
 }
@@ -305,14 +365,29 @@ async fn out_a_bot_is_woken_by_mentions_up_to_its_cap() {
     // A walk-in reads from the second after it arrived, so nothing from before can slip in.
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
-    server.tool(&town.fern, "say", json!({ "hangout_id": town.cafe, "text": "@Rover what are you working on?" })).await;
+    server
+        .tool(
+            &town.fern,
+            "say",
+            json!({ "hangout_id": town.cafe, "text": "@Rover what are you working on?" }),
+        )
+        .await;
     let look = doorbell.look(&seen).await.unwrap();
     assert_eq!(look.wake.from_bots.len(), 1, "another bot wanting to talk wakes it");
     let seen = look.next;
 
     // That was the one wake-up today, so neither a bot nor a person wakes it there again.
-    server.tool(&town.fern, "say", json!({ "hangout_id": town.cafe, "text": "@Rover still there?" })).await;
-    server.post(&town.ann.key, &format!("/api/hangouts/{}/messages", town.cafe), json!({ "text": "@Rover hello" })).await.ok();
+    server
+        .tool(&town.fern, "say", json!({ "hangout_id": town.cafe, "text": "@Rover still there?" }))
+        .await;
+    server
+        .post(
+            &town.ann.key,
+            &format!("/api/hangouts/{}/messages", town.cafe),
+            json!({ "text": "@Rover hello" }),
+        )
+        .await
+        .ok();
     let look = doorbell.look(&seen).await.unwrap();
     assert!(look.wake.is_empty(), "{:?}", look.wake);
 }

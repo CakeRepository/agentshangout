@@ -130,9 +130,13 @@ impl Server {
 
     /// Someone nobody listed, and their first room.
     async fn someone(&self, name: &str) -> (String, Who) {
-        let body = json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE });
+        let body =
+            json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE });
         let made = self.post("", "/api/hangouts", body).await.ok();
-        (text(&made["hangout"]["id"]), Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) })
+        (
+            text(&made["hangout"]["id"]),
+            Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) },
+        )
     }
 
     async fn person(&self, name: &str) -> Who {
@@ -145,7 +149,10 @@ impl Server {
 
     /// A bot of this person's, with its id and its token.
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> (String, String) {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         (text(&made["agent"]["id"]), text(&made["token"]))
     }
 
@@ -177,14 +184,19 @@ impl Server {
             .into_iter()
             .filter(|&(x, y)| {
                 let pos = (x as u16, y as u16);
-                !tiles.contains_key(&pos) && !world::is_reserved(&tiles, pos) && land.at(pos).is_some_and(|ground| ground.is_open())
+                !tiles.contains_key(&pos)
+                    && !world::is_reserved(&tiles, pos)
+                    && land.at(pos).is_some_and(|ground| ground.is_open())
             })
             .collect()
     }
 
     fn highway_tile(&self) -> (i64, i64) {
         let tiles = self.state.db.world_tiles(COMMONS).unwrap();
-        let (&(x, y), _) = tiles.iter().find(|(_, tile)| tile.kind == Kind::Road && tile.player.is_none()).unwrap();
+        let (&(x, y), _) = tiles
+            .iter()
+            .find(|(_, tile)| tile.kind == Kind::Road && tile.player.is_none())
+            .unwrap();
         (i64::from(x), i64::from(y))
     }
 
@@ -192,10 +204,11 @@ impl Server {
     fn road_spot(&self) -> (i64, i64) {
         let tiles = self.state.db.world_tiles(COMMONS).unwrap();
         let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
-        let mut beside = tiles.iter().filter(|(_, tile)| tile.kind == Kind::Road).flat_map(|(&(x, y), _)| {
-            let (x, y) = (i64::from(x), i64::from(y));
-            [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
-        });
+        let mut beside =
+            tiles.iter().filter(|(_, tile)| tile.kind == Kind::Road).flat_map(|(&(x, y), _)| {
+                let (x, y) = (i64::from(x), i64::from(y));
+                [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+            });
         beside
             .find(|at| {
                 let pos = (at.0 as u16, at.1 as u16);
@@ -222,7 +235,9 @@ impl Server {
             for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let line: Vec<(i64, i64)> = (1..=9).map(|i| (x + dx * i, y + dy * i)).collect();
                 let end = line[8];
-                let far = roads.iter().all(|road| (road.0 - end.0).abs() > 5 || (road.1 - end.1).abs() > 5);
+                let far = roads
+                    .iter()
+                    .all(|road| (road.0 - end.0).abs() > 5 || (road.1 - end.1).abs() > 5);
                 if far && line.iter().all(|at| open(*at)) {
                     return (line[0], line[7], end);
                 }
@@ -247,7 +262,15 @@ impl Server {
         let at = now() + days * DAY;
         let player = self.state.db.own_player(&who.id, at).unwrap();
         let (x, y) = self.free_spots()[0];
-        let mv = Move { action: "place".to_string(), x: Some(x), y: Some(y), x2: None, y2: None, kind: Some(kind.to_string()), emote: None };
+        let mv = Move {
+            action: "place".to_string(),
+            x: Some(x),
+            y: Some(y),
+            x2: None,
+            y2: None,
+            kind: Some(kind.to_string()),
+            emote: None,
+        };
         worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
         (x, y)
     }
@@ -312,7 +335,10 @@ async fn only_the_people_named_have_the_switch_and_nobody_else_hears_of_it() {
 
     let (room, stranger) = server.someone("Stranger").await;
     let (_, stranger_bot) = server.bot(&stranger, &room, "Rover").await;
-    let hall = server.post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE })).await.ok();
+    let hall = server
+        .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
+        .await
+        .ok();
     let (_, justins_bot) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     let guest = server.guest().await;
 
@@ -324,11 +350,23 @@ async fn only_the_people_named_have_the_switch_and_nobody_else_hears_of_it() {
     // Everyone else gets the 404 of a route that isn't there, even Justin's own bot, and a bad body
     // doesn't tell them otherwise.
     for token in [&stranger.key, &stranger_bot, &justins_bot] {
-        server.put(token, "/api/god-mode", json!({ "on": true })).await.refused(StatusCode::NOT_FOUND);
-        server.put(token, "/api/god-mode", json!({ "nonsense": 1 })).await.refused(StatusCode::NOT_FOUND);
+        server
+            .put(token, "/api/god-mode", json!({ "on": true }))
+            .await
+            .refused(StatusCode::NOT_FOUND);
+        server
+            .put(token, "/api/god-mode", json!({ "nonsense": 1 }))
+            .await
+            .refused(StatusCode::NOT_FOUND);
     }
-    server.put(&justin.key, "/api/god-mode", json!({ "nonsense": 1 })).await.refused(StatusCode::BAD_REQUEST);
-    server.put(&guest, "/api/god-mode", json!({ "on": true })).await.refused(StatusCode::UNAUTHORIZED);
+    server
+        .put(&justin.key, "/api/god-mode", json!({ "nonsense": 1 }))
+        .await
+        .refused(StatusCode::BAD_REQUEST);
+    server
+        .put(&guest, "/api/god-mode", json!({ "on": true }))
+        .await
+        .refused(StatusCode::UNAUTHORIZED);
     server.put("", "/api/god-mode", json!({ "on": true })).await.refused(StatusCode::UNAUTHORIZED);
     assert_eq!(server.get(&justin.key, "/api/me").await.ok()["god_mode"], false);
 
@@ -359,7 +397,9 @@ async fn the_switch_stays_as_it_was_left_until_someone_is_off_the_list() {
     assert!(off.get(&justin.key, "/api/me").await.ok().get("god_mode").is_none());
     assert!(off.me(&justin.key).await.get("god_mode").is_none());
     off.act(&justin.key, road_move(off.road_spot())).await.refused(StatusCode::FORBIDDEN);
-    off.put(&justin.key, "/api/god-mode", json!({ "on": false })).await.refused(StatusCode::NOT_FOUND);
+    off.put(&justin.key, "/api/god-mode", json!({ "on": false }))
+        .await
+        .refused(StatusCode::NOT_FOUND);
 }
 
 // W16
@@ -508,17 +548,28 @@ async fn god_mode_doesnt_change_the_land_or_say_anything_to_anyone() {
     let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
     let size = world::COMMONS_SIZE as u16;
     let all = (0..size).flat_map(|x| (0..size).map(move |y| (x, y)));
-    let water = all.clone().find(|pos| land.at(*pos) == Some(Ground::Water)).expect("The Commons has water");
+    let water = all
+        .clone()
+        .find(|pos| land.at(*pos) == Some(Ground::Water))
+        .expect("The Commons has water");
     let water = (i64::from(water.0), i64::from(water.1));
     server.place(&justin, "house", water).await.refused(StatusCode::BAD_REQUEST);
     server.act(&justin.key, road_move(water)).await.refused(StatusCode::BAD_REQUEST);
 
     // A place needs a road beside it, and a road has to touch one.
     let tiles = server.state.db.world_tiles(COMMONS).unwrap();
-    let road_near = |x: i64, y: i64| (-2..=2).any(|dx| (-2..=2).any(|dy| tiles.contains_key(&((x + dx) as u16, (y + dy) as u16))));
+    let road_near = |x: i64, y: i64| {
+        (-2..=2)
+            .any(|dx| (-2..=2).any(|dy| tiles.contains_key(&((x + dx) as u16, (y + dy) as u16))))
+    };
     let empty = all
         .map(|(x, y)| (i64::from(x), i64::from(y)))
-        .find(|&(x, y)| (2..126).contains(&x) && (2..126).contains(&y) && land.at((x as u16, y as u16)).is_some_and(|ground| ground.is_open()) && !road_near(x, y))
+        .find(|&(x, y)| {
+            (2..126).contains(&x)
+                && (2..126).contains(&y)
+                && land.at((x as u16, y as u16)).is_some_and(|ground| ground.is_open())
+                && !road_near(x, y)
+        })
         .expect("open land away from the roads");
     server.place(&justin, "house", empty).await.refused(StatusCode::BAD_REQUEST);
     server.act(&justin.key, road_move(empty)).await.refused(StatusCode::BAD_REQUEST);
@@ -526,7 +577,16 @@ async fn god_mode_doesnt_change_the_land_or_say_anything_to_anyone() {
     // A place they put up is theirs like any other, and nothing says how.
     let spot = server.build(&justin, "cafe").await;
     let view = server.view().await;
-    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Justin", "Justin's Café"])), "{}", view["owners"]);
+    assert!(
+        view["owners"].as_array().unwrap().contains(&json!([
+            spot.0,
+            spot.1,
+            "Justin",
+            "Justin's Café"
+        ])),
+        "{}",
+        view["owners"]
+    );
     assert!(!view.to_string().contains("god"));
 }
 
@@ -534,14 +594,23 @@ async fn god_mode_doesnt_change_the_land_or_say_anything_to_anyone() {
 #[tokio::test]
 async fn a_bot_gets_nothing_from_its_owners_switch() {
     let (server, justin, _) = Server::start().await;
-    let hall = server.post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE })).await.ok();
+    let hall = server
+        .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
+        .await
+        .ok();
     let (_, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.switch(&justin, true).await;
 
     // Its project's studio goes through Justin's own player, and it still waits.
     let started = server.tool(&fern, "start_project", json!({ "name": "Garden robot" })).await;
     let spot = server.free_spots()[0];
-    let refused = server.call(&fern, "build_studio", json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 })).await;
+    let refused = server
+        .call(
+            &fern,
+            "build_studio",
+            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
+        )
+        .await;
     assert_eq!(refused["isError"], true, "{refused}");
     assert!(refused["content"][0]["text"].as_str().unwrap().contains("hasn't come"), "{refused}");
     assert_eq!(server.tile(spot), None);
@@ -566,16 +635,26 @@ async fn every_item_is_unlocked_while_it_is_on_and_what_was_placed_stays() {
     let room = text(&server.go_in(&justin.key, house).await.ok()["hangout_id"]);
     let items = format!("/api/floors/{room}/items");
     let catalog = server.get(&justin.key, "/api/items").await.ok();
-    let locked = catalog["items"].as_array().unwrap().iter().filter(|item| item["unlocked"] != true).count();
+    let locked =
+        catalog["items"].as_array().unwrap().iter().filter(|item| item["unlocked"] != true).count();
     assert_eq!(locked, 0, "{catalog}");
     server.post(&justin.key, &items, json!({ "kind": "fireplace", "x": 30, "y": 2 })).await.ok();
 
     server.switch(&justin, false).await;
     let catalog = server.get(&justin.key, "/api/items").await.ok();
-    let fireplace = catalog["items"].as_array().unwrap().iter().find(|item| item["kind"] == "fireplace").unwrap().clone();
+    let fireplace = catalog["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["kind"] == "fireplace")
+        .unwrap()
+        .clone();
     assert_eq!(fireplace["unlocked"], false);
     assert_eq!(fireplace["friends_needed"], 6);
-    server.post(&justin.key, &items, json!({ "kind": "fireplace", "x": 34, "y": 2 })).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&justin.key, &items, json!({ "kind": "fireplace", "x": 34, "y": 2 }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     let snapshot = server.get(&justin.key, &format!("/api/hangouts/{room}")).await.ok();
     assert_eq!(snapshot["items"].as_array().map(Vec::len), Some(1), "{snapshot}");
 }
@@ -642,8 +721,20 @@ async fn only_god_mode_puts_up_the_town_square_and_a_world_has_one() {
 
     // It's a place like any other on the map, whose owner the view names.
     let view = server.view().await;
-    assert!(view["tiles"].as_array().unwrap().contains(&json!([spot.0, spot.1, "square", 0])), "the view shows it");
-    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Justin", "Town Square"])), "{}", view["owners"]);
+    assert!(
+        view["tiles"].as_array().unwrap().contains(&json!([spot.0, spot.1, "square", 0])),
+        "the view shows it"
+    );
+    assert!(
+        view["owners"].as_array().unwrap().contains(&json!([
+            spot.0,
+            spot.1,
+            "Justin",
+            "Town Square"
+        ])),
+        "{}",
+        view["owners"]
+    );
 
     // Their own 3 aren't touched by it.
     server.switch(&justin, false).await;
@@ -683,7 +774,13 @@ async fn the_town_square_opens_onto_one_big_public_room_that_comes_back() {
     // Then anyone signed in can go in.
     assert_eq!(server.go_in(&ann.key, spot).await.ok()["hangout_id"], room.as_str());
     let floors = server.get(&ann.key, "/api/spaces/public").await.ok();
-    let floor = floors["floors"].as_array().unwrap().iter().find(|floor| floor["id"] == room.as_str()).unwrap().clone();
+    let floor = floors["floors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|floor| floor["id"] == room.as_str())
+        .unwrap()
+        .clone();
     assert_eq!(floor["space_name"], "Town Square");
     assert_eq!(floor["size"], "big");
     assert_eq!(floor["capacity"], 150);
@@ -691,7 +788,9 @@ async fn the_town_square_opens_onto_one_big_public_room_that_comes_back() {
     // An ordinary place doesn't take over its room, and the square gets it back wherever it goes.
     server.switch(&justin, true).await;
     server.clear(&justin, spot).await.ok();
-    let elsewhere = |taken: &[(i64, i64)]| server.free_spots().into_iter().find(|at| !taken.contains(at)).unwrap();
+    let elsewhere = |taken: &[(i64, i64)]| {
+        server.free_spots().into_iter().find(|at| !taken.contains(at)).unwrap()
+    };
     let cafe = elsewhere(&[spot]);
     server.place(&justin, "cafe", cafe).await.ok();
     assert_ne!(server.go_in(&justin.key, cafe).await.ok()["hangout_id"], room.as_str());
@@ -708,7 +807,14 @@ async fn public_floors_list_the_town_square_first_while_it_stands() {
 
     // A newer floor with as many people on it still comes after it.
     let (busy, cy) = server.someone("Cy").await;
-    server.put(&cy.key, &format!("/api/floors/{busy}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{busy}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
 
     let (room, bo) = server.someone("Bo").await;
     let (rover_id, rover) = server.bot(&bo, &room, "Rover").await;
@@ -727,7 +833,13 @@ async fn public_floors_list_the_town_square_first_while_it_stands() {
     // With its building down the room is only a room.
     server.clear(&justin, spot).await.ok();
     let listed = server.get(&bo.key, "/api/spaces/public").await.ok()["floors"].clone();
-    let room = listed.as_array().unwrap().iter().find(|floor| floor["id"] == square.as_str()).unwrap().clone();
+    let room = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|floor| floor["id"] == square.as_str())
+        .unwrap()
+        .clone();
     assert_eq!(room["town_square"], false);
 }
 
@@ -736,7 +848,14 @@ async fn public_floors_list_the_town_square_first_while_it_stands() {
 async fn a_bot_with_no_project_wanders_to_the_town_square() {
     let (server, justin, _) = Server::start().await;
     let (cafe, cy) = server.someone("Cy").await;
-    server.put(&cy.key, &format!("/api/floors/{cafe}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{cafe}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
     let (_, square) = server.town_square(&justin).await;
 
     // Whichever half hour it is, and however many bots there are, they all come here.
@@ -749,7 +868,10 @@ async fn a_bot_with_no_project_wanders_to_the_town_square() {
     }
 
     // That goes for a bot whose owner is a member there too, because a square isn't their room.
-    let hall = server.post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE })).await.ok();
+    let hall = server
+        .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
+        .await
+        .ok();
     let (fern_id, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.all_day(&justin, &fern_id, true).await;
     server.post(&fern, "/api/doorbell", json!({})).await.ok();
@@ -761,7 +883,10 @@ async fn a_bot_with_no_project_wanders_to_the_town_square() {
 async fn a_bot_in_a_project_wanders_as_it_did() {
     let (server, justin, _) = Server::start().await;
     let (_, square) = server.town_square(&justin).await;
-    let hall = server.post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE })).await.ok();
+    let hall = server
+        .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
+        .await
+        .ok();
     let (fern_id, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.tool(&fern, "start_project", json!({ "name": "Garden robot" })).await;
     server.all_day(&justin, &fern_id, true).await;
@@ -811,7 +936,13 @@ async fn the_town_square_is_called_town_square_with_or_without_a_visit() {
     server.switch(&justin, true).await;
     let spot = server.build(&justin, "square").await;
     let name_at = |view: &Value| {
-        let row = view["owners"].as_array().unwrap().iter().find(|row| row[0] == spot.0 && row[1] == spot.1).unwrap().clone();
+        let row = view["owners"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row[0] == spot.0 && row[1] == spot.1)
+            .unwrap()
+            .clone();
         (text(&row[2]), text(&row[3]))
     };
 
@@ -823,14 +954,23 @@ async fn the_town_square_is_called_town_square_with_or_without_a_visit() {
     let door = server.go_in(&justin.key, spot).await.ok();
     assert_eq!(name_at(&server.view().await).1, "Town Square");
     let space = text(&door["space_id"]);
-    server.put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" })).await.ok();
+    server
+        .put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" }))
+        .await
+        .ok();
     assert_eq!(name_at(&server.view().await).1, "Meeting Green");
 }
 
 /// The floors in the public list that say they are the town square's.
 async fn square_floors(server: &Server, token: &str) -> Vec<String> {
     let floors = server.get(token, "/api/spaces/public").await.ok();
-    floors["floors"].as_array().unwrap().iter().filter(|floor| floor["town_square"] == true).map(|floor| text(&floor["id"])).collect()
+    floors["floors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|floor| floor["town_square"] == true)
+        .map(|floor| text(&floor["id"]))
+        .collect()
 }
 
 // W82: a square on a tile that was a cafe opens a room of its own, not the cafe's.
@@ -846,7 +986,13 @@ async fn a_square_on_a_cafes_tile_opens_a_new_room_and_not_the_cafes() {
     assert_ne!(room, cafe_room);
     assert_eq!(square_floors(&server, &justin.key).await, vec![room.clone()]);
     let floors = server.get(&justin.key, "/api/spaces/public").await.ok();
-    let floor = floors["floors"].as_array().unwrap().iter().find(|floor| floor["id"] == room.as_str()).unwrap().clone();
+    let floor = floors["floors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|floor| floor["id"] == room.as_str())
+        .unwrap()
+        .clone();
     assert_eq!(floor["size"], "big");
     assert_eq!(floor["town_square"], true);
 }
@@ -882,7 +1028,10 @@ async fn renaming_the_squares_room_keeps_it_the_squares_and_a_cafe_called_town_s
     let spot = server.build(&justin, "square").await;
     let door = server.go_in(&justin.key, spot).await.ok();
     let (room, space) = (text(&door["hangout_id"]), text(&door["space_id"]));
-    server.put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" })).await.ok();
+    server
+        .put(&justin.key, &format!("/api/spaces/{space}"), json!({ "name": "Meeting Green" }))
+        .await
+        .ok();
     server.clear(&justin, spot).await.ok();
     let elsewhere = server.free_spots().into_iter().find(|at| *at != spot).unwrap();
     server.place(&justin, "square", elsewhere).await.ok();
@@ -894,12 +1043,23 @@ async fn renaming_the_squares_room_keeps_it_the_squares_and_a_cafe_called_town_s
     let cafe = server.build_later(&ann, "cafe", 8);
     let door = server.go_in(&ann.key, cafe).await.ok();
     let (cafe_room, cafe_space) = (text(&door["hangout_id"]), text(&door["space_id"]));
-    server.put(&ann.key, &format!("/api/spaces/{cafe_space}"), json!({ "name": "Town Square" })).await.ok();
+    server
+        .put(&ann.key, &format!("/api/spaces/{cafe_space}"), json!({ "name": "Town Square" }))
+        .await
+        .ok();
     server.clear(&ann, cafe).await.ok();
     let again = server.free_spots().into_iter().find(|at| *at != spot && *at != elsewhere).unwrap();
     let at = now() + 9 * DAY;
     let player = server.state.db.own_player(&ann.id, at).unwrap();
-    let mv = Move { action: "place".to_string(), x: Some(again.0), y: Some(again.1), x2: None, y2: None, kind: Some("cafe".to_string()), emote: None };
+    let mv = Move {
+        action: "place".to_string(),
+        x: Some(again.0),
+        y: Some(again.1),
+        x2: None,
+        y2: None,
+        kind: Some("cafe".to_string()),
+        emote: None,
+    };
     worlds::act(&server.state, &player, COMMONS, &mv, at).unwrap();
     assert_eq!(server.go_in(&ann.key, again).await.ok()["hangout_id"], cafe_room.as_str());
     assert!(!server.state.db.is_town_square_room(&cafe_space).unwrap());

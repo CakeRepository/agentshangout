@@ -70,7 +70,10 @@ fn who(body: &Value) -> Who {
 
 fn temp_db() -> String {
     let unique = auth::new_id();
-    std::env::temp_dir().join(format!("agenthangout-test-{unique}.db")).to_string_lossy().into_owned()
+    std::env::temp_dir()
+        .join(format!("agenthangout-test-{unique}.db"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 impl Server {
@@ -86,7 +89,8 @@ impl Server {
     async fn start_with_keeper() -> (Self, Who) {
         let db = Db::open(":memory:").unwrap();
         let key = auth::new_owner_key();
-        db.create_person("keeper", "Keeper", &auth::hash_secret(&key), "keeper-feed", now()).unwrap();
+        db.create_person("keeper", "Keeper", &auth::hash_secret(&key), "keeper-feed", now())
+            .unwrap();
         let server = Self::boot(db, Some("keeper".to_string())).await;
         (server, Who { key, id: "keeper".to_string() })
     }
@@ -144,13 +148,21 @@ impl Server {
     /// Someone who came in on a friend's link, so they have no third space of their own yet.
     async fn person(&self, name: &str) -> Who {
         let host = self
-            .post("", "/api/hangouts", json!({ "name": "Host", "your_name": "Host", "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": "Host", "your_name": "Host", "create_code": CODE }),
+            )
             .await
             .ok();
         let room = text(&host["hangout"]["id"]);
-        let snapshot = self.get(&text(&host["owner_key"]), &format!("/api/hangouts/{room}")).await.ok();
+        let snapshot =
+            self.get(&text(&host["owner_key"]), &format!("/api/hangouts/{room}")).await.ok();
         let code = text(&snapshot["hangout"]["invite_code"]);
-        who(&self.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name })).await.ok())
+        who(&self
+            .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": name }))
+            .await
+            .ok())
     }
 
     async fn guest(&self) -> String {
@@ -263,7 +275,10 @@ impl Server {
     }
 
     fn jump_to(&self, step: u64) {
-        self.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.set_step(COMMONS, step)).unwrap();
+        self.state
+            .db
+            .in_transaction::<(), rusqlite::Error>(|tx| tx.set_step(COMMONS, step))
+            .unwrap();
     }
 
     fn end(&self) -> Option<WorldEnd> {
@@ -273,7 +288,10 @@ impl Server {
     /// What the keeper's asking does, on this step. Returns the step it will strike.
     fn bring_the_omens(&self) -> u64 {
         let step = self.state.db.world(COMMONS).unwrap().unwrap().step;
-        self.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.start_disaster(COMMONS, step)).unwrap();
+        self.state
+            .db
+            .in_transaction::<(), rusqlite::Error>(|tx| tx.start_disaster(COMMONS, step))
+            .unwrap();
         assert_eq!(self.end().unwrap().omen_step, Some(step), "the omens started");
         step + world::OMEN_STEPS
     }
@@ -314,7 +332,9 @@ fn road_beside_the_highway(server: &Server) -> Value {
                 let (nx, ny) = (i32::from(x) + dx, i32::from(y) + dy);
                 let pos = (nx as u16, ny as u16);
                 let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
-                if !tiles.contains_key(&pos) && land.at(pos).is_some_and(|ground| ground.letter() == 'g') {
+                if !tiles.contains_key(&pos)
+                    && land.at(pos).is_some_and(|ground| ground.letter() == 'g')
+                {
                     return json!({ "action": "road", "x": nx, "y": ny });
                 }
             }
@@ -332,7 +352,10 @@ async fn nobody_can_zone_or_lay_a_park_and_being_refused_costs_nothing() {
     for action in ["zone", "park"] {
         let body = json!({ "action": action, "kind": "homes", "x": 10, "y": 10 });
         server.act(&guest, body).await.refused(StatusCode::BAD_REQUEST);
-        server.act(&guest, json!({ "action": action, "x": 10, "y": 10 })).await.refused(StatusCode::BAD_REQUEST);
+        server
+            .act(&guest, json!({ "action": action, "x": 10, "y": 10 }))
+            .await
+            .refused(StatusCode::BAD_REQUEST);
     }
     assert_eq!(server.me(&guest).await["moves_left"], before);
 }
@@ -451,15 +474,24 @@ async fn a_world_someone_started_is_frozen_but_can_be_watched() {
     ] {
         server.post(token, path, body).await.refused(StatusCode::FORBIDDEN);
     }
-    server.post("", "/api/public/join", json!({ "world_id": "frozen" })).await.refused(StatusCode::FORBIDDEN);
-    server.post(&guest, "/api/worlds/join/frozen-code", json!({})).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post("", "/api/public/join", json!({ "world_id": "frozen" }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
+    server
+        .post(&guest, "/api/worlds/join/frozen-code", json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
 
     worlds::step_all(&server.state, now());
     assert_eq!(server.state.db.world_tiles("frozen").unwrap(), before);
     let view = server.get("", "/api/worlds/frozen").await.ok();
     assert_eq!(view["step"], 0, "it took no step");
     assert!(view["tiles"].as_array().unwrap().contains(&json!([3, 3, "homes", 2])));
-    assert!(server.state.db.world_end("frozen").unwrap().is_none(), "a disaster isn't for frozen worlds");
+    assert!(
+        server.state.db.world_end("frozen").unwrap().is_none(),
+        "a disaster isn't for frozen worlds"
+    );
 }
 
 // W61
@@ -493,7 +525,10 @@ async fn the_clock_keeps_going_once_it_has_started() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     let house = server.build(&ann, "house").await;
-    let since = server.state.db.place_clock(COMMONS, server.state.db.own_player(&ann.id, now()).unwrap().id);
+    let since = server
+        .state
+        .db
+        .place_clock(COMMONS, server.state.db.own_player(&ann.id, now()).unwrap().id);
     assert!(since.unwrap().is_some());
 
     // Taking the house down and putting it back doesn't start the wait again.
@@ -579,11 +614,18 @@ async fn placing_a_cafe_never_opens_a_room_someone_already_has() {
     // A studio's room, with something said in it, and then the studio comes down.
     let studio = server.build_later(&ann, "studio", 8);
     let room = text(&server.go_in(&ann.key, studio).await.ok()["hangout_id"]);
-    server.post(&ann.key, &format!("/api/hangouts/{room}/messages"), json!({ "text": "ours" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/hangouts/{room}/messages"), json!({ "text": "ours" }))
+        .await
+        .ok();
     server.act(&ann.key, json!({ "action": "bulldoze", "x": studio.0, "y": studio.1 })).await.ok();
 
     let cafe = server.build_later(&ann, "cafe", 8);
-    assert_eq!(text(&server.go_in(&ann.key, cafe).await.ok()["hangout_id"]), room, "the room came back");
+    assert_eq!(
+        text(&server.go_in(&ann.key, cafe).await.ok()["hangout_id"]),
+        room,
+        "the room came back"
+    );
     server.go_in(&stranger.key, cafe).await.refused(StatusCode::NOT_FOUND);
     let floor = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
     assert_eq!(floor["floor"]["floor"]["access"], "private", "{floor}");
@@ -608,7 +650,8 @@ async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_g
     // Only a café: a studio's floor still needs the code (S16).
     let studio = server.build_later(&ann, "studio", 8);
     let other = text(&server.go_in(&ann.key, studio).await.ok()["hangout_id"]);
-    let refused = server.put(&ann.key, &format!("/api/floors/{other}"), json!({ "access": "public" })).await;
+    let refused =
+        server.put(&ann.key, &format!("/api/floors/{other}"), json!({ "access": "public" })).await;
     assert_ne!(refused.status, StatusCode::OK, "{}", refused.body);
 
     // And a café that's gone from the map is any other third space.
@@ -626,8 +669,14 @@ async fn on_a_server_with_a_code_a_room_starts_from_the_map() {
     let ann = server.person("Ann").await;
     assert_eq!(server.get("", "/api/server").await.ok(), json!({ "asks_for_code": true }));
 
-    server.post(&ann.key, "/api/hangouts", json!({ "name": "Off the map" })).await.refused(StatusCode::FORBIDDEN);
-    server.post(&ann.key, "/api/cities", json!({ "name": "Elm" })).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&ann.key, "/api/hangouts", json!({ "name": "Off the map" }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
+    server
+        .post(&ann.key, "/api/cities", json!({ "name": "Elm" }))
+        .await
+        .refused(StatusCode::FORBIDDEN);
 
     let house = server.build(&ann, "house").await;
     let room = text(&server.go_in(&ann.key, house).await.ok()["hangout_id"]);
@@ -644,7 +693,10 @@ async fn only_the_owner_of_a_cafe_opens_it_with_no_code() {
     let room = text(&server.go_in(&ann.key, cafe).await.ok()["hangout_id"]);
     let snapshot = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
     let code = text(&snapshot["hangout"]["invite_code"]);
-    let bo = who(&server.post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Bo" })).await.ok());
+    let bo = who(&server
+        .post("", &format!("/api/invites/{code}/join"), json!({ "your_name": "Bo" }))
+        .await
+        .ok());
     server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
 
     let path = format!("/api/floors/{room}");
@@ -683,11 +735,17 @@ async fn only_the_keeper_can_ask_for_a_disaster_and_only_when_none_is_under_way(
     server.post("", &path, json!({})).await.refused(StatusCode::UNAUTHORIZED);
     assert!(server.end().is_none(), "a refused ask started something");
 
-    let tools = server.post("", "/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })).await.ok();
+    let tools = server
+        .post("", "/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
+        .await
+        .ok();
     assert!(!tools.to_string().contains("\"disaster\""), "{tools}");
 
     server.frozen_world(&keeper);
-    server.post(&keeper.key, "/api/worlds/frozen/disaster", json!({})).await.refused(StatusCode::FORBIDDEN);
+    server
+        .post(&keeper.key, "/api/worlds/frozen/disaster", json!({}))
+        .await
+        .refused(StatusCode::FORBIDDEN);
     assert!(server.state.db.world_end("frozen").unwrap().is_none());
 
     let asked = server.post(&keeper.key, &path, json!({})).await.ok();
@@ -712,7 +770,10 @@ fn which_disaster_it_is_is_random_and_can_be_worked_out_again() {
     let mut seen = HashSet::new();
     for step in 0..3_000 {
         seen.insert(world::disaster_for(world::COMMONS_SEED, step));
-        assert_eq!(world::disaster_for(world::COMMONS_SEED, step), world::disaster_for(world::COMMONS_SEED, step));
+        assert_eq!(
+            world::disaster_for(world::COMMONS_SEED, step),
+            world::disaster_for(world::COMMONS_SEED, step)
+        );
     }
     assert_eq!(seen.len(), Disaster::ALL.len(), "every disaster can come");
 }
@@ -750,7 +811,13 @@ async fn omens_say_what_is_coming_and_moves_still_work() {
     // The last step of the omens still isn't the first of the strike.
     server.jump_to(strikes - 1);
     server.step();
-    assert!(server.state.db.world_tiles(COMMONS).unwrap().values().any(|tile| tile.kind == Kind::Homes));
+    assert!(server
+        .state
+        .db
+        .world_tiles(COMMONS)
+        .unwrap()
+        .values()
+        .any(|tile| tile.kind == Kind::Homes));
 }
 
 // W67
@@ -774,7 +841,9 @@ async fn it_strikes_step_by_step_and_nobody_can_move_while_it_does() {
     let tiles = server.state.db.world_tiles(COMMONS).unwrap();
     let (x, y) = hits
         .iter()
-        .flat_map(|&(x, y, _)| [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)].map(|(dx, dy)| (x + dx, y + dy)))
+        .flat_map(|&(x, y, _)| {
+            [(0, 0), (1, 0), (0, 1), (-1, 0), (0, -1)].map(|(dx, dy)| (x + dx, y + dy))
+        })
         .find(|&(x, y)| !tiles.contains_key(&(x as u16, y as u16)))
         .expect("a circle with room in it");
     let target = Tile { kind: Kind::Homes, level: 2, player: None };
@@ -791,7 +860,10 @@ async fn it_strikes_step_by_step_and_nobody_can_move_while_it_does() {
     // What a page draws has already happened.
     assert_eq!(disaster["hits"], json!(hits), "{disaster}");
 
-    server.act(&guest, json!({ "action": "emote", "emote": "wave" })).await.refused(StatusCode::CONFLICT);
+    server
+        .act(&guest, json!({ "action": "emote", "emote": "wave" }))
+        .await
+        .refused(StatusCode::CONFLICT);
     server.act(&guest, road_beside_the_highway(&server)).await.refused(StatusCode::CONFLICT);
     let reply = server.get(&guest, &format!("/api/worlds/{COMMONS}/look")).await;
     reply.ok();
@@ -806,8 +878,13 @@ async fn it_strikes_step_by_step_and_nobody_can_move_while_it_does() {
 fn meteors_fall_on_the_middle_half_of_the_map() {
     let size = world::COMMONS_SIZE as i64;
     for done in 0..world::STRIKE_STEPS {
-        for (x, y, _) in world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE) {
-            assert!((size / 4..size * 3 / 4).contains(&x) && (size / 4..size * 3 / 4).contains(&y), "{x},{y}");
+        for (x, y, _) in
+            world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE)
+        {
+            assert!(
+                (size / 4..size * 3 / 4).contains(&x) && (size / 4..size * 3 / 4).contains(&y),
+                "{x},{y}"
+            );
         }
     }
 }
@@ -815,7 +892,8 @@ fn meteors_fall_on_the_middle_half_of_the_map() {
 // W67: a meteor's fire keeps spreading from where it came down, and more of them come down.
 #[test]
 fn a_meteors_fire_spreads_until_it_has_taken_the_city() {
-    let at = |done| world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE);
+    let at =
+        |done| world::strike(world::COMMONS_SEED, Disaster::Meteors, done, world::COMMONS_SIZE);
     assert_eq!(at(0).len(), 1, "one comes down first");
     assert!(at(7).len() > at(3).len(), "and more follow");
     for done in 1..world::STRIKE_STEPS {
@@ -844,14 +922,28 @@ fn a_fire_has_a_rough_edge_inside_its_circle() {
             tiles.insert((x, y), road);
         }
     }
-    let gone: HashSet<_> = world::strike_changes(&tiles, &[], &[(20, 20, 12)], false).iter().map(Change::pos).collect();
+    let gone: HashSet<_> = world::strike_changes(&tiles, &[], &[(20, 20, 12)], false)
+        .iter()
+        .map(Change::pos)
+        .collect();
     let distance = |&(x, y): &(u16, u16)| (i64::from(x) - 20).pow(2) + (i64::from(y) - 20).pow(2);
     assert!(gone.iter().all(|pos| distance(pos) <= 144), "past its circle");
-    assert!(tiles.keys().filter(|pos| distance(pos) <= 100).all(|pos| gone.contains(pos)), "the middle went");
+    assert!(
+        tiles.keys().filter(|pos| distance(pos) <= 100).all(|pos| gone.contains(pos)),
+        "the middle went"
+    );
     let edge = tiles.keys().filter(|pos| (101..=144).contains(&distance(pos)));
-    let (burned, left) = edge.fold((0, 0), |(burned, left), pos| {
-        if gone.contains(pos) { (burned + 1, left) } else { (burned, left + 1) }
-    });
+    let (burned, left) =
+        edge.fold(
+            (0, 0),
+            |(burned, left), pos| {
+                if gone.contains(pos) {
+                    (burned + 1, left)
+                } else {
+                    (burned, left + 1)
+                }
+            },
+        );
     assert!(burned > 0 && left > 0, "{burned} burned and {left} left of a perfect ring");
 }
 
@@ -886,7 +978,10 @@ fn a_strike_takes_what_is_in_its_circles_and_the_last_takes_the_rest_but_never_t
     let highway = [(10, 10)];
 
     let hits = [(10, 10, 3)];
-    assert_eq!(world::strike_changes(&tiles, &highway, &hits, false), vec![Change::Remove((11, 10))]);
+    assert_eq!(
+        world::strike_changes(&tiles, &highway, &hits, false),
+        vec![Change::Remove((11, 10))]
+    );
     assert_eq!(
         world::strike_changes(&tiles, &highway, &[], true),
         vec![Change::Remove((11, 10)), Change::Remove((30, 30))],
@@ -942,7 +1037,10 @@ async fn accounts_tokens_rooms_and_unlocks_all_stay() {
     let guest = server.guest().await;
     let house = server.build(&ann, "house").await;
     let room = text(&server.go_in(&ann.key, house).await.ok()["hangout_id"]);
-    server.post(&ann.key, &format!("/api/hangouts/{room}/messages"), json!({ "text": "still here" })).await.ok();
+    server
+        .post(&ann.key, &format!("/api/hangouts/{room}/messages"), json!({ "text": "still here" }))
+        .await
+        .ok();
     let later = server.build_later(&ann, "studio", 8);
     let studio = text(&server.go_in(&ann.key, later).await.ok()["hangout_id"]);
 

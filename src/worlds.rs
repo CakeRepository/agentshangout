@@ -34,7 +34,10 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     auth::{self, Caller},
-    db::{random_name_seed, BotJoined, Claimed, NewWorld, PlayerKind, PlayerRow, WorldEnd, WorldRow, WorldTx},
+    db::{
+        random_name_seed, BotJoined, Claimed, NewWorld, PlayerKind, PlayerRow, WorldEnd, WorldRow,
+        WorldTx,
+    },
     error::{ApiError, ApiResult},
     god_mode, now,
     world::{self, Change, Ground, Kind, Land, Phase, Roads, Span, Tiles},
@@ -400,11 +403,7 @@ impl Runtime {
         if walkers.visitors.len() >= MAX_VISITORS {
             walkers.visitors.pop_front();
         }
-        walkers.visitors.push_back(Visitor {
-            key,
-            n: rand::random(),
-            arrived: now,
-        });
+        walkers.visitors.push_back(Visitor { key, n: rand::random(), arrived: now });
         true
     }
 
@@ -419,11 +418,7 @@ impl Runtime {
         if walkers.people.len() >= MAX_PEOPLE {
             walkers.people.pop_front();
         }
-        walkers.people.push_back(Person {
-            key,
-            n: rand::random(),
-            looked: now,
-        });
+        walkers.people.push_back(Person { key, n: rand::random(), looked: now });
         true
     }
 
@@ -494,10 +489,8 @@ impl Runtime {
 
     /// W42: the address alone, so an agent that changes what it calls itself is still one visitor.
     fn visitor_key(&self, address: &str) -> u64 {
-        let digest = Sha256::new()
-            .chain_update(self.salt)
-            .chain_update(address.as_bytes())
-            .finalize();
+        let digest =
+            Sha256::new().chain_update(self.salt).chain_update(address.as_bytes()).finalize();
         u64::from_be_bytes(digest[..8].try_into().unwrap_or([0; 8]))
     }
 }
@@ -555,7 +548,9 @@ fn kind_word(kind: PlayerKind) -> &'static str {
 /// W3: the bot that runs a house, and a bot that stays home, can't play.
 fn check_bot_may_play(state: &AppState, agent_id: &str) -> ApiResult<()> {
     match state.db.bot_home(agent_id)? {
-        Some(home) if home.is_house => Err(ApiError::forbidden("a house bot can't play in the public worlds")),
+        Some(home) if home.is_house => {
+            Err(ApiError::forbidden("a house bot can't play in the public worlds"))
+        }
         Some(home) if home.stays_home => {
             Err(ApiError::forbidden("a bot that stays home can't play in the public worlds"))
         }
@@ -595,11 +590,14 @@ fn person_player(state: &AppState, person_id: &str, now: i64) -> ApiResult<Playe
 /// W2: who is calling a world route. A guest token (as a bearer), or a signed-in person by
 /// session cookie, bearer session or owner key. A bot token is not a player token, and a guest
 /// token is not a credential anywhere else.
-pub fn player_from_headers(state: &AppState, headers: &HeaderMap, now: i64) -> ApiResult<PlayerRow> {
+pub fn player_from_headers(
+    state: &AppState,
+    headers: &HeaderMap,
+    now: i64,
+) -> ApiResult<PlayerRow> {
     let bearer = auth::bearer_token(headers);
-    let secret = bearer
-        .or_else(|| auth::session_cookie(headers))
-        .ok_or_else(ApiError::unauthorized)?;
+    let secret =
+        bearer.or_else(|| auth::session_cookie(headers)).ok_or_else(ApiError::unauthorized)?;
     let hash = auth::hash_secret(secret);
     if bearer.is_some() {
         if let Some(player) = state.db.player_by_token(&hash)? {
@@ -627,7 +625,8 @@ fn not_playing_yet(state: &AppState, headers: &HeaderMap) -> ApiResult<Option<St
     let Some(caller) = state.authenticate(&auth::hash_secret(secret))? else {
         return Ok(None);
     };
-    Ok((!caller.is_agent() && !state.db.has_own_player(&caller.person_id)?).then_some(caller.person_id))
+    Ok((!caller.is_agent() && !state.db.has_own_player(&caller.person_id)?)
+        .then_some(caller.person_id))
 }
 
 /// Who `GET /api/worlds/{id}/me` is about. A person who hasn't made a move gets a stand-in with
@@ -660,10 +659,9 @@ pub fn player_from_token(
     let token = argument
         .or_else(|| auth::bearer_token(headers))
         .ok_or_else(|| unauthorized_because("give the player_token that join gave you"))?;
-    let player = state
-        .db
-        .player_by_token(&auth::hash_secret(token))?
-        .ok_or_else(|| unauthorized_because("that player_token isn't valid: join again for a new one"))?;
+    let player = state.db.player_by_token(&auth::hash_secret(token))?.ok_or_else(|| {
+        unauthorized_because("that player_token isn't valid: join again for a new one")
+    })?;
     usable(state, player, now)
 }
 
@@ -781,13 +779,22 @@ fn wait_for(kind: Kind, since: Option<i64>, now: i64) -> i64 {
 
 /// W54, W56, W61: a place is for a person, within what they and the world can hold, once it has come.
 /// God mode goes past their other places and how long they've waited, not what a world holds (W76).
-fn may_place(tx: &WorldTx, world: &WorldRow, player: &PlayerRow, kind: Kind, god: bool, now: i64) -> ApiResult<()> {
+fn may_place(
+    tx: &WorldTx,
+    world: &WorldRow,
+    player: &PlayerRow,
+    kind: Kind,
+    god: bool,
+    now: i64,
+) -> ApiResult<()> {
     if player.kind() != PlayerKind::Person {
         return Err(ApiError::forbidden("only a person can place a building: sign in on the site"));
     }
     // W81: the town square isn't anyone's to place but god mode's, and a world has one.
     if kind == Kind::Square && !god {
-        return Err(ApiError::forbidden("only someone who runs this server can place the town square"));
+        return Err(ApiError::forbidden(
+            "only someone who runs this server can place the town square",
+        ));
     }
     if kind == Kind::Square && tx.has_square(&world.id)? {
         return Err(ApiError::conflict("this world already has its town square"));
@@ -839,12 +846,7 @@ fn span_of(x: i64, y: i64, x2: Option<i64>, y2: Option<i64>) -> Result<Span, &'s
         (Some(x2), Some(y2)) => (x2, y2),
         _ => return Err("x2 and y2 come together"),
     };
-    Ok(Span {
-        x: x.min(x2),
-        y: y.min(y2),
-        x2: x.max(x2),
-        y2: y.max(y2),
-    })
+    Ok(Span { x: x.min(x2), y: y.min(y2), x2: x.max(x2), y2: y.max(y2) })
 }
 
 fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
@@ -928,7 +930,8 @@ fn tiles_near(
     longest: u32,
     margin: i64,
 ) -> rusqlite::Result<Tiles> {
-    let (Some(first), Some(last)) = (land.locate(span.x, span.y), land.locate(span.x2, span.y2)) else {
+    let (Some(first), Some(last)) = (land.locate(span.x, span.y), land.locate(span.x2, span.y2))
+    else {
         return Ok(Tiles::new());
     };
     if last.0 < first.0 || last.1 < first.1 {
@@ -1030,9 +1033,9 @@ fn apply_move(
             // W17: the builder of whatever is there, and whether they have been gone for a week.
             let there = pos.and_then(|pos| near.get(&pos)).and_then(|tile| tile.player);
             let gone = match there {
-                Some(who) => tx
-                    .player_seen_at(who as i64)?
-                    .is_none_or(|seen| now - seen >= world::GONE_SECS),
+                Some(who) => {
+                    tx.player_seen_at(who as i64)?.is_none_or(|seen| now - seen >= world::GONE_SECS)
+                }
                 None => false,
             };
             let is_gone = |who: u64| Some(who) == there && gone;
@@ -1091,12 +1094,7 @@ fn apply_move(
     let used = used_today(&player, now) + cost;
     tx.charge(player.id, day_of(&player, now), i64::from(used), now)?;
     tx.wake_world(&world.id, now)?;
-    Ok(Acted {
-        moves_left: left - cost,
-        changed: changes.len() as u32,
-        skipped,
-        cost,
-    })
+    Ok(Acted { moves_left: left - cost, changed: changes.len() as u32, skipped, cost })
 }
 
 fn world_is_busy(now: i64) -> ApiError {
@@ -1214,10 +1212,8 @@ fn standing(
 ) -> ApiResult<(Value, Tiles)> {
     let world = require_world(state, world_id)?;
     let land = state.worlds.land_for(world.seed, world.size);
-    let (pos, emote) = state
-        .db
-        .world_player(&world.id, player.id)?
-        .unwrap_or((land.land.centre(), None));
+    let (pos, emote) =
+        state.db.world_player(&world.id, player.id)?.unwrap_or((land.land.centre(), None));
     let own = state.db.player_tiles(&world.id, player.id)?;
     let town = world::town(&own);
     let person = player.kind() == PlayerKind::Person;
@@ -1227,11 +1223,7 @@ fn standing(
         .db
         .world_end(&world.id)?
         .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
-    let tip = if striking {
-        world::TIP_STRIKING
-    } else {
-        world::tip(&own, person, left)
-    };
+    let tip = if striking { world::TIP_STRIKING } else { world::tip(&own, person, left) };
     let mut reply = json!({
         "player": {
             "id": player.id,
@@ -1257,17 +1249,41 @@ fn standing(
 }
 
 /// W62, W76: how long until a person can place each kind.
-fn places_left(state: &AppState, world_id: &str, player_id: i64, god: bool, now: i64) -> ApiResult<Value> {
+fn places_left(
+    state: &AppState,
+    world_id: &str,
+    player_id: i64,
+    god: bool,
+    now: i64,
+) -> ApiResult<Value> {
     let since = state.db.place_clock(world_id, player_id)?;
-    let left = PLACE_WAITS.iter().map(|(kind, _)| (kind.as_str(), if god { 0 } else { wait_for(*kind, since, now) }));
+    let left = PLACE_WAITS
+        .iter()
+        .map(|(kind, _)| (kind.as_str(), if god { 0 } else { wait_for(*kind, since, now) }));
     Ok(Value::Object(left.map(|(kind, secs)| (kind.to_string(), json!(secs))).collect()))
 }
 
 /// W62, W76, W81: the kinds a person can't place any more of, so the toolbar can turn them off.
-fn places_full(state: &AppState, world_id: &str, player_id: i64, god: bool) -> ApiResult<Vec<&'static str>> {
+fn places_full(
+    state: &AppState,
+    world_id: &str,
+    player_id: i64,
+    god: bool,
+) -> ApiResult<Vec<&'static str>> {
     let (houses, others, _) = state.db.building_counts(world_id, player_id)?;
-    let held = |kind: Kind| if kind == Kind::House { houses >= MAX_HOUSES } else { !god && others >= MAX_THIRD_SPACES };
-    let mut full: Vec<_> = PLACE_WAITS.iter().map(|(kind, _)| *kind).filter(|kind| held(*kind)).map(Kind::as_str).collect();
+    let held = |kind: Kind| {
+        if kind == Kind::House {
+            houses >= MAX_HOUSES
+        } else {
+            !god && others >= MAX_THIRD_SPACES
+        }
+    };
+    let mut full: Vec<_> = PLACE_WAITS
+        .iter()
+        .map(|(kind, _)| *kind)
+        .filter(|kind| held(*kind))
+        .map(Kind::as_str)
+        .collect();
     if god && state.db.has_square(world_id)? {
         full.push(Kind::Square.as_str());
     }
@@ -1376,7 +1392,9 @@ pub fn join(
             allow_view(state, headers, now)?;
             let hash = auth::hash_secret(bearer);
             if state.db.player_by_token(&hash)?.is_some() {
-                return Err(ApiError::bad_request("you already have a player: use your player_token"));
+                return Err(ApiError::bad_request(
+                    "you already have a player: use your player_token",
+                ));
             }
             let caller = state.authenticate(&hash)?.ok_or_else(ApiError::unauthorized)?;
             let Some(agent_id) = caller.agent_id.as_deref() else {
@@ -1424,18 +1442,17 @@ pub fn join(
         None => state.db.player_tiles(&world.id, player.id)?,
     };
     let tip = world::tip(&own, false, moves_left(&player, now));
-    Ok(Joined {
-        player,
-        token,
-        claim_code,
-        world,
-        tip,
-    })
+    Ok(Joined { player, token, claim_code, world, tip })
 }
 
 /// W27: a world's link opened one that was still open. Every world with a link is frozen now, so all
 /// it can say is that, to someone who holds the link.
-pub fn join_by_code(state: &AppState, player: &PlayerRow, code: &str, now: i64) -> ApiResult<String> {
+pub fn join_by_code(
+    state: &AppState,
+    player: &PlayerRow,
+    code: &str,
+    now: i64,
+) -> ApiResult<String> {
     ensure_commons(state)?;
     state.worlds.limits.people.take(&format!("code:{}", player.id), now, "slow down")?;
     let world = state.db.world_by_code(code)?.ok_or_else(not_found)?;
@@ -1455,7 +1472,9 @@ pub fn claim(state: &AppState, caller: &Caller, code: &str, now: i64) -> ApiResu
     )?;
     match claimed {
         Claimed::Done(player) => Ok(player),
-        Claimed::NoSuchCode => Err(ApiError::new(StatusCode::NOT_FOUND, "that claim code doesn't work")),
+        Claimed::NoSuchCode => {
+            Err(ApiError::new(StatusCode::NOT_FOUND, "that claim code doesn't work"))
+        }
         Claimed::TooMany => Err(ApiError::conflict("you have claimed as many players as you can")),
     }
 }
@@ -1487,7 +1506,9 @@ pub fn reroll(state: &AppState, caller: &Caller, player_id: &str, now: i64) -> A
     let player = state
         .db
         .player(id)?
-        .filter(|player| !player.removed && player.person_id.as_deref() == Some(caller.person_id.as_str()))
+        .filter(|player| {
+            !player.removed && player.person_id.as_deref() == Some(caller.person_id.as_str())
+        })
         .ok_or_else(not_found)?;
     state.worlds.limits.people.take(&format!("reroll:{}", caller.person_id), now, "slow down")?;
     let current = name_of(&player);
@@ -1514,7 +1535,9 @@ pub fn revoke(state: &AppState, caller: &Caller, player_id: &str) -> ApiResult<(
     let player = state
         .db
         .player(id)?
-        .filter(|player| !player.removed && player.person_id.as_deref() == Some(caller.person_id.as_str()))
+        .filter(|player| {
+            !player.removed && player.person_id.as_deref() == Some(caller.person_id.as_str())
+        })
         .ok_or_else(not_found)?;
     if player.kind() != PlayerKind::Claimed {
         return Err(ApiError::bad_request(
@@ -2023,11 +2046,7 @@ pub fn look(
     let x0 = cx.saturating_sub(wide / 2).min(size - wide);
     let y0 = cy.saturating_sub(high / 2).min(size - high);
     let rows: Vec<String> = (y0..y0 + high)
-        .map(|y| {
-            (x0..x0 + wide)
-                .map(|x| land.land.get(x, y).map_or('w', Ground::letter))
-                .collect()
-        })
+        .map(|y| (x0..x0 + wide).map(|x| land.land.get(x, y).map_or('w', Ground::letter)).collect())
         .collect();
     let region = [x0 as i64, y0 as i64, (x0 + wide - 1) as i64, (y0 + high - 1) as i64];
     // A side street is told by the roads up to 3 tiles from a tile, so those are read as well.
@@ -2131,7 +2150,11 @@ fn disaster_step(state: &AppState, tx: &WorldTx, world: &WorldRow) -> ApiResult<
 
 /// W64: the keeper asks for a disaster. It's the only way one starts, and it's why it takes a person:
 /// it takes down what people built. Omens start now, and it's chosen by the step it's asked on (W65).
-pub fn start_disaster(state: &AppState, caller: &Caller, world_id: &str) -> ApiResult<&'static str> {
+pub fn start_disaster(
+    state: &AppState,
+    caller: &Caller,
+    world_id: &str,
+) -> ApiResult<&'static str> {
     require_person(caller)?;
     let world = require_world(state, world_id)?;
     refuse_frozen(&world)?;
@@ -2260,9 +2283,7 @@ pub async fn run_steps(state: AppState) {
         };
         for id in due {
             let step_state = state.clone();
-            if tokio::task::spawn_blocking(move || step_one(&step_state, &id, now()))
-                .await
-                .is_err()
+            if tokio::task::spawn_blocking(move || step_one(&step_state, &id, now())).await.is_err()
             {
                 tracing::error!("a world's step stopped half way");
             }
@@ -2283,11 +2304,7 @@ fn write_due_sightings(state: &AppState, now: i64) {
 }
 
 fn record_sightings(state: &AppState, id: &'static str, visits: u32, now: i64) {
-    if state
-        .db
-        .add_sightings(id, today(now), i64::from(visits), now)
-        .is_err()
-    {
+    if state.db.add_sightings(id, today(now), i64::from(visits), now).is_err() {
         // Nothing but a kind is said, so a log can't be made to hold what a visitor sent.
         tracing::warn!(kind = id, "sightings could not be written");
         state.worlds.return_sightings(id, visits);
@@ -2307,14 +2324,15 @@ fn place_of(method: &Method, path: &str) -> Option<Place> {
     if method == Method::GET {
         match path {
             "/" | "/worlds" | "/robots.txt" | "/sitemap.xml" => return Some(Place::Page),
-            "/llms.txt" | "/llms-full.txt" | "/agents.md" | "/.well-known/ai-catalog.json"
+            "/llms.txt"
+            | "/llms-full.txt"
+            | "/agents.md"
+            | "/.well-known/ai-catalog.json"
             | "/public/mcp/server-card" => return Some(Place::AgentOnly),
             "/api/worlds/commons" => return Some(Place::Commons),
             _ => {}
         }
-        if path
-            .strip_prefix("/world/")
-            .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+        if path.strip_prefix("/world/").is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
         {
             return Some(Place::Page);
         }
@@ -2361,7 +2379,8 @@ pub fn note_request(state: &AppState, method: &Method, path: &str, headers: &Hea
     let street = state.worlds.clone_commons_slot();
     match (place, agent) {
         (Place::Commons, None)
-            if is_a_page_watching(headers) && !is_on_the_street_as_a_player(state, headers, now) =>
+            if is_a_page_watching(headers)
+                && !is_on_the_street_as_a_player(state, headers, now) =>
         {
             person(state, headers, now, street);
         }
@@ -2466,7 +2485,8 @@ mod tests {
     fn a_key_is_only_held_up_by_another_that_shares_both_its_counters() {
         let limiter = Limiter::new(64, 60, 3);
         let slots = |key: &str| limiter.slots(key, 64);
-        let busy = (0..).map(|n| format!("busy-{n}")).find(|key| slots(key)[0] != slots(key)[1]).unwrap();
+        let busy =
+            (0..).map(|n| format!("busy-{n}")).find(|key| slots(key)[0] != slots(key)[1]).unwrap();
         // One key that shares just one counter with the busy one, and one that shares both. A key can
         // land on one counter twice, so the first key's second can't be either of the busy one's.
         let keys = (0..).map(|n| format!("key-{n}"));
@@ -2512,7 +2532,8 @@ mod tests {
         };
         assert_eq!((span.x, span.y, span.x2, span.y2), (7, 2, 7, 2), "no far end is one tile");
         // The extremes of a number are only ever compared, never added.
-        let Ok(Parsed::Road(span)) = parse(json!({ "action": "road", "x": i64::MAX, "y": 0, "x2": i64::MIN, "y2": 0 }))
+        let Ok(Parsed::Road(span)) =
+            parse(json!({ "action": "road", "x": i64::MAX, "y": 0, "x2": i64::MIN, "y2": 0 }))
         else {
             panic!("a road");
         };
@@ -2522,8 +2543,14 @@ mod tests {
     #[test]
     fn a_move_takes_only_what_its_action_takes() {
         assert!(parse(json!({ "action": "place", "kind": "cafe", "x": 1, "y": 2 })).is_ok());
-        assert!(parse(json!({ "action": "place", "kind": "cafe", "x": 1, "y": 2, "x2": 3, "y2": 4 })).is_err());
-        assert!(parse(json!({ "action": "place", "x": 1, "y": 2 })).is_err(), "a place needs a kind");
+        assert!(parse(
+            json!({ "action": "place", "kind": "cafe", "x": 1, "y": 2, "x2": 3, "y2": 4 })
+        )
+        .is_err());
+        assert!(
+            parse(json!({ "action": "place", "x": 1, "y": 2 })).is_err(),
+            "a place needs a kind"
+        );
         assert!(parse(json!({ "action": "place", "kind": "park", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "zone", "kind": "homes", "x": 1, "y": 2 })).is_err());
         assert!(parse(json!({ "action": "park", "x": 1, "y": 2 })).is_err());
@@ -2531,7 +2558,10 @@ mod tests {
         assert!(parse(json!({ "action": "emote", "emote": "dance" })).is_ok());
         assert!(parse(json!({ "action": "emote", "emote": "dance", "x": 1 })).is_err());
         assert!(parse(json!({ "action": "walk", "x": 1 })).is_err());
-        assert!(serde_json::from_value::<Move>(json!({ "action": "walk", "x": 1, "y": 2, "z": 3 })).is_err());
+        assert!(serde_json::from_value::<Move>(
+            json!({ "action": "walk", "x": 1, "y": 2, "z": 3 })
+        )
+        .is_err());
     }
 
     #[test]

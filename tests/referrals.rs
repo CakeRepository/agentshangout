@@ -122,12 +122,20 @@ impl Server {
         let response = request.send().await.unwrap();
         let status = response.status();
         let text_header = |name| {
-            response.headers().get(name).map(|value: &header::HeaderValue| value.to_str().unwrap().to_string())
+            response
+                .headers()
+                .get(name)
+                .map(|value: &header::HeaderValue| value.to_str().unwrap().to_string())
         };
         let retry_after = text_header(header::RETRY_AFTER);
         let set_cookie = text_header(header::SET_COOKIE);
         let text = response.text().await.unwrap();
-        Reply { status, retry_after, set_cookie, body: serde_json::from_str(&text).unwrap_or(Value::String(text)) }
+        Reply {
+            status,
+            retry_after,
+            set_cookie,
+            body: serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        }
     }
 
     async fn get(&self, token: &str, path: &str) -> Reply {
@@ -140,7 +148,11 @@ impl Server {
 
     async fn room(&self, name: &str) -> Room {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": ROOM_NAME, "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": ROOM_NAME, "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
         Room {
@@ -151,12 +163,18 @@ impl Server {
     }
 
     async fn join(&self, invite: &str, name: &str) -> Who {
-        let joined = self.post("", &format!("/api/invites/{invite}/join"), json!({ "your_name": name })).await.ok();
+        let joined = self
+            .post("", &format!("/api/invites/{invite}/join"), json!({ "your_name": name }))
+            .await
+            .ok();
         Who { key: text(&joined["owner_key"]), id: text(&joined["person"]["id"]) }
     }
 
     async fn bot(&self, owner: &Who, room: &str) -> String {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Scout" })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": "Scout" }))
+            .await
+            .ok();
         text(&made["token"])
     }
 
@@ -183,7 +201,10 @@ impl Server {
 
     /// The plan's link as a code.
     async fn link(&self, who: &Who, event: &str) -> String {
-        code_of(&self.post(&who.key, &format!("/api/events/{event}/invite"), json!({})).await.ok()["invite_url"])
+        code_of(
+            &self.post(&who.key, &format!("/api/events/{event}/invite"), json!({})).await.ok()
+                ["invite_url"],
+        )
     }
 
     async fn answer(&self, token: &str, code: &str, body: Value) -> Reply {
@@ -192,7 +213,8 @@ impl Server {
 
     /// Someone new answers through the link.
     async fn invitee(&self, code: &str, name: &str, response: &str) -> Who {
-        let body = self.answer("", code, json!({ "response": response, "your_name": name })).await.ok();
+        let body =
+            self.answer("", code, json!({ "response": response, "your_name": name })).await.ok();
         Who { key: text(&body["owner_key"]), id: text(&body["person"]["id"]) }
     }
 
@@ -237,7 +259,13 @@ async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
     let room = server.room("Ann").await;
     server.start_city(&room.ann).await.refused();
     server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Eve" })).await.refused();
-    let wrong = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Eve", "create_code": "guess" })).await;
+    let wrong = server
+        .post(
+            "",
+            "/api/cities",
+            json!({ "name": "Elm", "your_name": "Eve", "create_code": "guess" }),
+        )
+        .await;
     wrong.refused();
 
     // Brought into a room by a friend.
@@ -245,9 +273,15 @@ async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
     server.start_city(&bo).await.refused();
 
     // Brought into a city by a friend.
-    let made = server.post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
     let invite = code_of(&made["invite_url"]);
-    let joined = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Cy" })).await.ok();
+    let joined = server
+        .post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Cy" }))
+        .await
+        .ok();
     let cy = Who { key: text(&joined["owner_key"]), id: text(&joined["person"]["id"]) };
     server.start_city(&cy).await.refused();
 
@@ -262,7 +296,10 @@ async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
     server.post(&bot, "/api/cities", json!({ "name": "Elm" })).await.refused();
 
     // The code still works, for someone who is already here.
-    let city = server.post(&bo.key, "/api/cities", json!({ "name": "Ash", "create_code": CODE })).await.ok();
+    let city = server
+        .post(&bo.key, "/api/cities", json!({ "name": "Ash", "create_code": CODE }))
+        .await
+        .ok();
     assert_eq!(city["person"]["id"], bo.id.as_str());
 }
 
@@ -271,7 +308,8 @@ async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
 async fn a_server_with_no_code_lets_anyone_on_it_start_a_city() {
     let open = Server::start_with(None).await;
     assert_eq!(open.get("", "/api/server").await.ok(), json!({ "asks_for_code": false }), "S49");
-    let made = open.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).await.ok();
+    let made =
+        open.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).await.ok();
     assert_eq!(made["city"]["name"], "Elm");
     let room = open.room("Bo").await;
     open.start_city(&room.ann).await.ok();
@@ -281,12 +319,21 @@ async fn a_server_with_no_code_lets_anyone_on_it_start_a_city() {
 #[tokio::test]
 async fn a_city_that_exists_still_takes_people_in_with_no_code() {
     let server = Server::start().await;
-    let made = server.post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
     let city = text(&made["city"]["id"]);
     let invite = code_of(&made["invite_url"]);
-    let joined = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Bo" })).await.ok();
+    let joined = server
+        .post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Bo" }))
+        .await
+        .ok();
     let bo = text(&joined["owner_key"]);
-    server.post(&bo, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo's place" })).await.ok();
+    server
+        .post(&bo, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo's place" }))
+        .await
+        .ok();
     server.get(&bo, &format!("/api/cities/{city}")).await.ok();
 }
 
@@ -315,14 +362,20 @@ async fn only_a_person_in_the_room_can_get_a_plans_link() {
     let room = server.room("Ann").await;
     let event = server.plan(&room.ann, &room.id, 2).await;
     let bot = server.bot(&room.ann, &room.id).await;
-    for path in [format!("/api/events/{event}/invite"), format!("/api/events/{event}/invite/rotate")] {
+    for path in
+        [format!("/api/events/{event}/invite"), format!("/api/events/{event}/invite/rotate")]
+    {
         let from_bot = server.post(&bot, &path, json!({})).await;
         assert_eq!(from_bot.status, StatusCode::FORBIDDEN, "{}", from_bot.show());
         assert_eq!(server.post("", &path, json!({})).await.status, StatusCode::UNAUTHORIZED);
         let other = server.room("Eve").await;
-        assert_eq!(server.post(&other.ann.key, &path, json!({})).await.status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            server.post(&other.ann.key, &path, json!({})).await.status,
+            StatusCode::NOT_FOUND
+        );
     }
-    let made = server.post(&room.ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok();
+    let made =
+        server.post(&room.ann.key, &format!("/api/events/{event}/invite"), json!({})).await.ok();
     assert!(text(&made["invite_url"]).starts_with(&format!("{}/p/", server.base)), "{made}");
 }
 
@@ -336,10 +389,14 @@ async fn a_plan_has_one_link_and_replacing_it_stops_the_old_one() {
     let first = server.link(&room.ann, &event).await;
     assert_eq!(server.link(&bo, &event).await, first, "asking again gives the same link");
 
-    let replaced = server.post(&bo.key, &format!("/api/events/{event}/invite/rotate"), json!({})).await.ok();
+    let replaced =
+        server.post(&bo.key, &format!("/api/events/{event}/invite/rotate"), json!({})).await.ok();
     let second = code_of(&replaced["invite_url"]);
     assert_ne!(second, first);
-    assert_eq!(server.get("", &format!("/api/plan-invites/{first}")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get("", &format!("/api/plan-invites/{first}")).await.status,
+        StatusCode::NOT_FOUND
+    );
     let old = server.answer("", &first, json!({ "response": "yes", "your_name": "Eve" })).await;
     assert_eq!(old.status, StatusCode::NOT_FOUND);
     let preview = server.get("", &format!("/api/plan-invites/{second}")).await.ok();
@@ -354,7 +411,8 @@ async fn a_link_stops_working_when_its_plan_is_cancelled_or_over() {
     let event = server.plan(&room.ann, &room.id, 2).await;
     let link = server.link(&room.ann, &event).await;
     server.post(&room.ann.key, &format!("/api/events/{event}/cancel"), json!({})).await.ok();
-    for path in [format!("/api/plan-invites/{link}"), format!("/api/plan-invites/{link}/plan.ics")] {
+    for path in [format!("/api/plan-invites/{link}"), format!("/api/plan-invites/{link}/plan.ics")]
+    {
         assert_eq!(server.get("", &path).await.status, StatusCode::NOT_FOUND, "{path}");
     }
     let refused = server.answer("", &link, json!({ "response": "yes", "your_name": "Eve" })).await;
@@ -364,12 +422,28 @@ async fn a_link_stops_working_when_its_plan_is_cancelled_or_over() {
     assert_eq!(again.status, StatusCode::CONFLICT);
 
     let past = "over-plan-5512";
-    server.state.db.insert_event(&NewEvent {
-        id: past, hangout_id: &room.id, title: "Old", location: "", notes: "", starts_at: now() - 2 * DAY,
-        ends_at: now() - DAY, min_yes: 1, proposed_by: &room.ann.id, proposer: "Ann", now: now() - 3 * DAY,
-    }).unwrap();
+    server
+        .state
+        .db
+        .insert_event(&NewEvent {
+            id: past,
+            hangout_id: &room.id,
+            title: "Old",
+            location: "",
+            notes: "",
+            starts_at: now() - 2 * DAY,
+            ends_at: now() - DAY,
+            min_yes: 1,
+            proposed_by: &room.ann.id,
+            proposer: "Ann",
+            now: now() - 3 * DAY,
+        })
+        .unwrap();
     server.state.db.plan_invite_code(past, "over-code-5512", &room.ann.id, now()).unwrap();
-    assert_eq!(server.get("", "/api/plan-invites/over-code-5512").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get("", "/api/plan-invites/over-code-5512").await.status,
+        StatusCode::NOT_FOUND
+    );
 
     assert_eq!(server.get("", "/api/plan-invites/nope").await.status, StatusCode::NOT_FOUND);
 }
@@ -380,15 +454,42 @@ async fn a_link_shows_the_plan_and_nothing_else_from_the_room() {
     let server = Server::start().await;
     let room = server.room("Ann").await;
     let bo = server.join(&room.invite, "Bo").await;
-    server.post(&room.ann.key, &format!("/api/hangouts/{}/messages", room.id), json!({ "text": CHAT_WORDS })).await.ok();
-    server.post(&room.ann.key, &format!("/api/hangouts/{}/notes", room.id), json!({ "text": CHAT_WORDS })).await.ok();
+    server
+        .post(
+            &room.ann.key,
+            &format!("/api/hangouts/{}/messages", room.id),
+            json!({ "text": CHAT_WORDS }),
+        )
+        .await
+        .ok();
+    server
+        .post(
+            &room.ann.key,
+            &format!("/api/hangouts/{}/notes", room.id),
+            json!({ "text": CHAT_WORDS }),
+        )
+        .await
+        .ok();
     let event = server.plan(&bo, &room.id, 3).await;
     let link = server.link(&room.ann, &event).await;
     let preview = server.get("", &format!("/api/plan-invites/{link}")).await.ok();
 
     let mut keys: Vec<&str> = preview.as_object().unwrap().keys().map(String::as_str).collect();
     keys.sort_unstable();
-    assert_eq!(keys, ["ends_at", "invited_by", "location", "on_calendar", "starts_at", "title", "yes", "yes_needed", "your_answer"]);
+    assert_eq!(
+        keys,
+        [
+            "ends_at",
+            "invited_by",
+            "location",
+            "on_calendar",
+            "starts_at",
+            "title",
+            "yes",
+            "yes_needed",
+            "your_answer"
+        ]
+    );
     assert_eq!(preview["title"], "Tacos");
     assert_eq!(preview["location"], "Veracruz");
     assert_eq!(preview["invited_by"], "Ann");
@@ -401,7 +502,8 @@ async fn a_link_shows_the_plan_and_nothing_else_from_the_room() {
         assert!(!shown.contains(private), "the link shows {private}: {shown}");
     }
 
-    let answered = server.answer("", &link, json!({ "response": "yes", "your_name": "Dee" })).await.ok();
+    let answered =
+        server.answer("", &link, json!({ "response": "yes", "your_name": "Dee" })).await.ok();
     let shown = answered.to_string();
     for private in [ROOM_NAME, PLAN_NOTES, CHAT_WORDS, room.id.as_str()] {
         assert!(!shown.contains(private), "the answer shows {private}: {shown}");
@@ -415,7 +517,8 @@ async fn a_friend_answers_with_a_name_and_gets_an_account_with_a_session() {
     let room = server.room("Ann").await;
     let event = server.plan(&room.ann, &room.id, 3).await;
     let link = server.link(&room.ann, &event).await;
-    let answered = server.answer("", &link, json!({ "response": "maybe", "your_name": "Dee" })).await;
+    let answered =
+        server.answer("", &link, json!({ "response": "maybe", "your_name": "Dee" })).await;
     let cookie = answered.set_cookie.clone().expect("signed in on this browser");
     let body = answered.ok();
     assert_eq!(body["plan"]["your_answer"], "maybe");
@@ -478,10 +581,14 @@ async fn a_persons_answer_through_the_link_stands_over_their_bots() {
     let bo = server.join(&room.invite, "Bo").await;
     let bot = server.bot(&bo, &room.id).await;
     let event = server.plan(&room.ann, &room.id, 3).await;
-    server.post(&bot, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" })).await.ok();
+    server
+        .post(&bot, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" }))
+        .await
+        .ok();
     let link = server.link(&room.ann, &event).await;
     server.answer(&bo.key, &link, json!({ "response": "no" })).await.ok();
-    let late = server.post(&bot, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" })).await;
+    let late =
+        server.post(&bot, &format!("/api/events/{event}/rsvp"), json!({ "response": "yes" })).await;
     assert_eq!(late.status, StatusCode::CONFLICT, "{}", late.show());
 }
 
@@ -504,9 +611,13 @@ async fn an_invitee_gets_nothing_of_the_room() {
     ] {
         assert_eq!(server.get(&dee.key, &path).await.status, StatusCode::NOT_FOUND, "{path}");
     }
-    let said = server.post(&dee.key, &format!("/api/hangouts/{}/messages", room.id), json!({ "text": "hi" })).await;
+    let said = server
+        .post(&dee.key, &format!("/api/hangouts/{}/messages", room.id), json!({ "text": "hi" }))
+        .await;
     assert_eq!(said.status, StatusCode::NOT_FOUND);
-    let answered = server.post(&dee.key, &format!("/api/events/{other}/rsvp"), json!({ "response": "yes" })).await;
+    let answered = server
+        .post(&dee.key, &format!("/api/events/{other}/rsvp"), json!({ "response": "yes" }))
+        .await;
     assert_eq!(answered.status, StatusCode::NOT_FOUND, "another plan in the room isn't theirs");
     let share = server.post(&dee.key, &format!("/api/events/{event}/invite"), json!({})).await;
     assert_eq!(share.status, StatusCode::NOT_FOUND, "they can't hand out the link either");
@@ -553,14 +664,26 @@ async fn an_invitees_yes_confirms_the_plan_and_reaches_their_calendar() {
 #[tokio::test]
 async fn an_invitees_yes_never_grows_a_city() {
     let server = Server::start().await;
-    let made = server.post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE })).await.ok();
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
     let city = text(&made["city"]["id"]);
     let square = text(&made["city"]["square_id"]);
     let ann = text(&made["person"]["id"]);
     let db = &server.state.db;
     let past = |id: &'static str| NewEvent {
-        id, hangout_id: &square, title: "Old", location: "", notes: "", starts_at: now() - 2 * DAY,
-        ends_at: now() - DAY, min_yes: 2, proposed_by: &ann, proposer: "Ann", now: now() - 3 * DAY,
+        id,
+        hangout_id: &square,
+        title: "Old",
+        location: "",
+        notes: "",
+        starts_at: now() - 2 * DAY,
+        ends_at: now() - DAY,
+        min_yes: 2,
+        proposed_by: &ann,
+        proposer: "Ann",
+        now: now() - 3 * DAY,
     };
 
     db.insert_event(&past("with-invitee")).unwrap();
@@ -571,7 +694,14 @@ async fn an_invitees_yes_never_grows_a_city() {
     db.set_event_status("with-invitee", "confirmed", now()).unwrap();
     assert_eq!(db.gatherings(&city, now()).unwrap(), 0, "one person and a link is no gathering");
 
-    let joined = server.post("", &format!("/api/city-invites/{}/join", code_of(&made["invite_url"])), json!({ "your_name": "Bo" })).await.ok();
+    let joined = server
+        .post(
+            "",
+            &format!("/api/city-invites/{}/join", code_of(&made["invite_url"])),
+            json!({ "your_name": "Bo" }),
+        )
+        .await
+        .ok();
     db.upsert_rsvp("with-invitee", &text(&joined["person"]["id"]), "yes", None, "", now()).unwrap();
     assert_eq!(db.gatherings(&city, now()).unwrap(), 1, "two people in the city and a friend is");
 }
@@ -587,7 +717,8 @@ async fn a_plan_takes_thirty_invitees() {
     for n in 1..30 {
         server.invitee(&link, &format!("Friend {n}"), "yes").await;
     }
-    let full = server.answer("", &link, json!({ "response": "yes", "your_name": "One more" })).await;
+    let full =
+        server.answer("", &link, json!({ "response": "yes", "your_name": "One more" })).await;
     assert_eq!(full.status, StatusCode::CONFLICT, "{}", full.show());
     assert!(full.set_cookie.is_none(), "F12: nobody was made");
 
@@ -611,7 +742,13 @@ async fn the_last_places_on_a_plan_cannot_be_taken_twice() {
         .map(|n| {
             let (server, link) = (server.clone(), link.clone());
             tokio::spawn(async move {
-                server.answer("", &link, json!({ "response": "yes", "your_name": format!("Late {n}") })).await
+                server
+                    .answer(
+                        "",
+                        &link,
+                        json!({ "response": "yes", "your_name": format!("Late {n}") }),
+                    )
+                    .await
             })
         })
         .collect();
@@ -651,7 +788,13 @@ async fn the_room_sees_who_answered_and_gets_one_line_for_it() {
     assert_eq!(view["invitees"].as_array().unwrap().len(), 1, "{view}");
     assert_eq!(view["invitees"][0]["name"], "Dee");
     assert_eq!(view["invitees"][0]["event_id"], event.as_str());
-    let rsvp = view["events"][0]["rsvps"].as_array().unwrap().iter().find(|r| r["person_id"] == dee.id.as_str()).unwrap().clone();
+    let rsvp = view["events"][0]["rsvps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["person_id"] == dee.id.as_str())
+        .unwrap()
+        .clone();
     assert_eq!(rsvp["response"], "no");
     assert_eq!(lines_about(&view, "through its link"), 1);
     assert_eq!(lines_about(&view, "Dee said yes to \"Tacos\""), 1);
@@ -714,7 +857,10 @@ async fn an_invitees_calendar_leaves_out_the_notes_and_the_room() {
     }
 
     let hers = server.feed(&room.ann).await;
-    assert!(hers.contains(PLAN_NOTES) && hers.contains(ROOM_NAME), "someone in the room still gets it all: {hers}");
+    assert!(
+        hers.contains(PLAN_NOTES) && hers.contains(ROOM_NAME),
+        "someone in the room still gets it all: {hers}"
+    );
 }
 
 // F21

@@ -165,7 +165,12 @@ pub const BOT_PARTS: [Part; 5] = [
     Part {
         part: "chest",
         label: "Chest",
-        choices: &[word("plain", "Lights"), word("heart", "Heart"), word("star", "Star"), word("bolt", "Bolt")],
+        choices: &[
+            word("plain", "Lights"),
+            word("heart", "Heart"),
+            word("star", "Star"),
+            word("bolt", "Bolt"),
+        ],
     },
     Part { part: "hat", label: "Hat", choices: HATS },
 ];
@@ -186,7 +191,11 @@ fn in_wardrobe(wearer: Wearer, part: &str, choice: &str) -> bool {
 }
 
 /// C4, C6: what's chosen for each of these, by id, with anyone who has nothing to wear left out.
-pub fn looks_of(state: &AppState, wearer: Wearer, ids: &[String]) -> ApiResult<BTreeMap<String, Look>> {
+pub fn looks_of(
+    state: &AppState,
+    wearer: Wearer,
+    ids: &[String],
+) -> ApiResult<BTreeMap<String, Look>> {
     let mut looks = state.db.looks(wearer, ids)?;
     for look in looks.values_mut() {
         look.retain(|part, choice| in_wardrobe(wearer, part, choice));
@@ -203,16 +212,28 @@ pub struct Looks {
 }
 
 /// C11: for the people with this floor open and the room's bots. A bot has nothing to draw.
-pub fn in_room(state: &AppState, caller: &Caller, present: &[String], agents: &[Agent]) -> ApiResult<Looks> {
+pub fn in_room(
+    state: &AppState,
+    caller: &Caller,
+    present: &[String],
+    agents: &[Agent],
+) -> ApiResult<Looks> {
     if caller.is_agent() {
         return Ok(Looks::default());
     }
     let bots: Vec<String> = agents.iter().map(|agent| agent.id.clone()).collect();
-    Ok(Looks { people: looks_of(state, Wearer::Person, present)?, bots: looks_of(state, Wearer::Bot, &bots)? })
+    Ok(Looks {
+        people: looks_of(state, Wearer::Person, present)?,
+        bots: looks_of(state, Wearer::Bot, &bots)?,
+    })
 }
 
 /// C13: for the bots on a city's map. A bot has nothing to draw.
-pub fn on_map(state: &AppState, caller: &Caller, bots: &[String]) -> ApiResult<BTreeMap<String, Look>> {
+pub fn on_map(
+    state: &AppState,
+    caller: &Caller,
+    bots: &[String],
+) -> ApiResult<BTreeMap<String, Look>> {
     if caller.is_agent() {
         return Ok(BTreeMap::new());
     }
@@ -220,12 +241,7 @@ pub fn on_map(state: &AppState, caller: &Caller, bots: &[String]) -> ApiResult<B
 }
 
 /// C1, C2, C5: all of a change is checked before any of it is kept.
-fn change_look(
-    state: &AppState,
-    wearer: Wearer,
-    id: &str,
-    change: &Change,
-) -> ApiResult<Look> {
+fn change_look(state: &AppState, wearer: Wearer, id: &str, change: &Change) -> ApiResult<Look> {
     for (part, choice) in change {
         let known = match choice {
             Some(choice) => in_wardrobe(wearer, part, choice),
@@ -271,7 +287,9 @@ fn slow_down(state: &AppState, caller: &Caller) -> ApiResult<()> {
     if state.allow_writes(&format!("look:{}", caller.person_id), MAX_CHANGES_PER_MINUTE) {
         return Ok(());
     }
-    Err(ApiError::too_many_requests(format!("slow down: {MAX_CHANGES_PER_MINUTE} changes a minute")))
+    Err(ApiError::too_many_requests(format!(
+        "slow down: {MAX_CHANGES_PER_MINUTE} changes a minute"
+    )))
 }
 
 // Routes

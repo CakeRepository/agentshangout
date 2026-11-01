@@ -34,10 +34,12 @@ async fn start_early_in(period: i64, room: i64) {
         tokio::time::sleep(std::time::Duration::from_secs(left as u64 + 1)).await;
     }
 }
-const CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
+const CHROME: &str =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36";
 const GOOGLEBOT: &str = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
 const GPTBOT: &str = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2";
-const CHATGPT_USER: &str = "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0";
+const CHATGPT_USER: &str =
+    "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0";
 const GEMINI: &str = "Mozilla/5.0 (compatible; Google-Agent)";
 
 struct Server {
@@ -163,8 +165,14 @@ impl Server {
     async fn start_with_keeper() -> (Self, Who) {
         let db = Db::open(":memory:").unwrap();
         let key = auth::new_owner_key();
-        db.create_person("keeper0000000001", "Keeper", &auth::hash_secret(&key), &auth::new_feed_token(), now())
-            .unwrap();
+        db.create_person(
+            "keeper0000000001",
+            "Keeper",
+            &auth::hash_secret(&key),
+            &auth::new_feed_token(),
+            now(),
+        )
+        .unwrap();
         let server = Self::boot(db, None, Some("keeper0000000001".to_string())).await;
         let keeper = Who { key, id: "keeper0000000001".to_string(), cookie: String::new() };
         (server, keeper)
@@ -312,7 +320,8 @@ impl Server {
     /// Road tiles in a world that a player built, put there directly.
     fn built_by(&self, world: &str, player: i64, at: &[(i64, i64)]) {
         let tile = Tile { kind: Kind::Road, level: 0, player: Some(player as u64) };
-        let changes: Vec<Change> = at.iter().map(|&(x, y)| Change::Set((x as u16, y as u16), tile)).collect();
+        let changes: Vec<Change> =
+            at.iter().map(|&(x, y)| Change::Set((x as u16, y as u16), tile)).collect();
         self.write(world, &changes);
     }
 
@@ -334,13 +343,17 @@ impl Server {
     // The public MCP endpoint
 
     async fn rpc(&self, method: &str, params: Value) -> Reply {
-        self.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }))
-            .send()
-            .await
+        self.post(
+            "/public/mcp",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params }),
+        )
+        .send()
+        .await
     }
 
     async fn call(&self, name: &str, arguments: Value) -> Value {
-        self.rpc("tools/call", json!({ "name": name, "arguments": arguments })).await.body["result"].clone()
+        self.rpc("tools/call", json!({ "name": name, "arguments": arguments })).await.body["result"]
+            .clone()
     }
 
     /// A tool that worked: its structured result.
@@ -426,7 +439,9 @@ impl Map {
         let streets: world::Tiles = built
             .iter()
             .filter(|(_, (kind, _))| kind == "road")
-            .map(|(&(x, y), _)| ((x as u16, y as u16), Tile { kind: Kind::Road, level: 0, player: None }))
+            .map(|(&(x, y), _)| {
+                ((x as u16, y as u16), Tile { kind: Kind::Road, level: 0, player: None })
+            })
             .collect();
         let size = ground.len() as i64;
         Map { size, ground, built, kept: kept_tiles(size, &streets) }
@@ -442,7 +457,12 @@ impl Map {
             .collect();
         let built = tiles
             .iter()
-            .map(|(&(x, y), tile)| ((i64::from(x), i64::from(y)), (tile.kind.as_str().to_string(), i64::from(tile.level))))
+            .map(|(&(x, y), tile)| {
+                (
+                    (i64::from(x), i64::from(y)),
+                    (tile.kind.as_str().to_string(), i64::from(tile.level)),
+                )
+            })
             .collect();
         Map { size: row.size as i64, ground, built, kept: kept_tiles(row.size as i64, &tiles) }
     }
@@ -465,7 +485,12 @@ impl Map {
     }
 
     fn roads(&self) -> Vec<(i64, i64)> {
-        let mut roads: Vec<_> = self.built.iter().filter(|(_, (kind, _))| kind == "road").map(|(pos, _)| *pos).collect();
+        let mut roads: Vec<_> = self
+            .built
+            .iter()
+            .filter(|(_, (kind, _))| kind == "road")
+            .map(|(pos, _)| *pos)
+            .collect();
         roads.sort();
         roads
     }
@@ -522,7 +547,15 @@ fn mv(action: &str, x: Option<i64>, y: Option<i64>) -> Move {
 }
 
 fn emote(word: &str) -> Move {
-    Move { action: "emote".to_string(), x: None, y: None, x2: None, y2: None, kind: None, emote: Some(word.to_string()) }
+    Move {
+        action: "emote".to_string(),
+        x: None,
+        y: None,
+        x2: None,
+        y2: None,
+        kind: None,
+        emote: Some(word.to_string()),
+    }
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -548,7 +581,8 @@ async fn a_guest_token_is_an_unknown_token_on_every_route_but_a_worlds() {
         (Method::POST, "/api/key/rotate"),
         (Method::GET, "/api/house/queue"),
     ] {
-        let reply = server.req(method.clone(), path).token(&guest.token).json(json!({})).send().await;
+        let reply =
+            server.req(method.clone(), path).token(&guest.token).json(json!({})).send().await;
         assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{method} {path}: {}", reply.show());
     }
     // The private MCP endpoint doesn't know it either.
@@ -573,7 +607,10 @@ async fn a_guest_token_never_authenticates_where_the_hash_of_a_key_would() {
     // Only its hash is stored, and nothing but players looks at that table.
     let hash = auth::hash_secret(&guest.token);
     assert!(server.state.db.player_by_token(&hash).unwrap().is_some());
-    assert!(server.state.db.player_by_token(&guest.token).unwrap().is_none(), "the token itself is not stored");
+    assert!(
+        server.state.db.player_by_token(&guest.token).unwrap().is_none(),
+        "the token itself is not stored"
+    );
     assert!(server.state.authenticate(&hash).unwrap().is_none());
 }
 
@@ -581,18 +618,25 @@ async fn a_guest_token_never_authenticates_where_the_hash_of_a_key_would() {
 #[tokio::test]
 async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made() {
     let server = Server::start().await;
-    let made = server
-        .post("/api/cities", json!({ "name": "Elm", "your_name": "Ann" }))
+    let made =
+        server.post("/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).send().await.ok();
+    let ann = made["owner_key"].as_str().unwrap().to_string();
+    let city = made["city"]["id"].as_str().unwrap().to_string();
+    let house = server
+        .post(&format!("/api/cities/{city}/houses"), json!({ "name": "Ann House" }))
+        .token(&ann)
         .send()
         .await
         .ok();
-    let ann = made["owner_key"].as_str().unwrap().to_string();
-    let city = made["city"]["id"].as_str().unwrap().to_string();
-    let house = server.post(&format!("/api/cities/{city}/houses"), json!({ "name": "Ann House" })).token(&ann).send().await.ok();
     let house_id = house["house"]["id"].as_str().unwrap().to_string();
     let living = house["living_room_id"].as_str().unwrap().to_string();
 
-    let bot = server.post(&format!("/api/hangouts/{living}/agents"), json!({ "name": "Homebody" })).token(&ann).send().await.ok();
+    let bot = server
+        .post(&format!("/api/hangouts/{living}/agents"), json!({ "name": "Homebody" }))
+        .token(&ann)
+        .send()
+        .await
+        .ok();
     let stay_token = bot["token"].as_str().unwrap().to_string();
     let stay_id = bot["agent"]["id"].as_str().unwrap().to_string();
     server
@@ -602,7 +646,12 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
         .send()
         .await
         .ok();
-    let casa = server.post(&format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" })).token(&ann).send().await.ok();
+    let casa = server
+        .post(&format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" }))
+        .token(&ann)
+        .send()
+        .await
+        .ok();
     let house_token = casa["token"].as_str().unwrap().to_string();
 
     for token in [&stay_token, &house_token] {
@@ -633,10 +682,19 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
 async fn an_ordinary_bot_token_links_a_player_with_200_moves_and_a_new_token_each_time() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let bo_key = room["owner_key"].as_str().unwrap().to_string();
     let room_id = room["hangout"]["id"].as_str().unwrap().to_string();
-    let bot = server.post(&format!("/api/hangouts/{room_id}/agents"), json!({ "name": "Scout" })).token(&bo_key).send().await.ok();
+    let bot = server
+        .post(&format!("/api/hangouts/{room_id}/agents"), json!({ "name": "Scout" }))
+        .token(&bo_key)
+        .send()
+        .await
+        .ok();
     let bot_token = bot["token"].as_str().unwrap().to_string();
     let agent_id = bot["agent"]["id"].as_str().unwrap().to_string();
     let seen_before = server.state.db.agent(&agent_id, now()).unwrap().unwrap().last_seen_at;
@@ -654,7 +712,10 @@ async fn an_ordinary_bot_token_links_a_player_with_200_moves_and_a_new_token_eac
     let new_token = second["player_token"].as_str().unwrap().to_string();
     assert_ne!(token, new_token);
     assert_eq!(second["name"], first["name"], "the same player");
-    assert_eq!(server.get("/api/worlds/commons/me").token(&token).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     assert_eq!(server.moves_left(&new_token).await, 200);
 
     // W5: it didn't count as the bot being seen in a room.
@@ -670,10 +731,17 @@ async fn an_ordinary_bot_token_links_a_player_with_200_moves_and_a_new_token_eac
 #[tokio::test]
 async fn a_bot_token_is_not_a_player_token() {
     let server = Server::start().await;
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let key = room["owner_key"].as_str().unwrap().to_string();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(&key)
         .send()
         .await
@@ -697,7 +765,10 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
     let key = room["owner_key"].as_str().unwrap().to_string();
     let person_id = room["person"]["id"].as_str().unwrap().to_string();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "SecretBotName" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "SecretBotName" }),
+        )
         .token(&key)
         .send()
         .await
@@ -708,7 +779,12 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
     let joined = server.post("/api/public/join", json!({})).token(&bot_token).send().await.ok();
     let token = joined["player_token"].as_str().unwrap().to_string();
     let guest = server.guest().await;
-    let claimed = server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&key).send().await.ok();
+    let claimed = server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&key)
+        .send()
+        .await
+        .ok();
     assert_eq!(claimed["player"]["kind"], "claimed");
     server.act(&token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "cheer" })).await.ok();
@@ -724,7 +800,13 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
     ];
     seen.push(joined.to_string());
     for text in &seen {
-        for secret in ["SecretPersonName", "SecretBotName", "SecretCrewName", person_id.as_str(), agent_id.as_str()] {
+        for secret in [
+            "SecretPersonName",
+            "SecretBotName",
+            "SecretCrewName",
+            person_id.as_str(),
+            agent_id.as_str(),
+        ] {
             assert!(!text.contains(secret), "{secret} leaked into {text}");
         }
     }
@@ -746,14 +828,25 @@ async fn mine_is_the_only_link_and_only_the_person_sees_it() {
     let ann = server.person("Ann").await;
     let bo = server.person("Bo").await;
     let guest = server.guest().await;
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     let mine = server.get("/api/players/mine").token(&ann.key).send().await.ok();
     assert_eq!(mine["players"].as_array().unwrap().len(), 1);
     assert_eq!(mine["players"][0]["name"], guest.name);
     assert!(!mine.to_string().contains(&ann.id), "not even their own id is needed");
-    assert_eq!(server.get("/api/players/mine").token(&bo.key).send().await.ok()["players"], json!([]));
+    assert_eq!(
+        server.get("/api/players/mine").token(&bo.key).send().await.ok()["players"],
+        json!([])
+    );
     // A guest can't ask, and nobody who isn't signed in can.
-    assert_eq!(server.get("/api/players/mine").token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.get("/api/players/mine").token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     assert_eq!(server.get("/api/players/mine").send().await.status, StatusCode::UNAUTHORIZED);
 }
 
@@ -761,11 +854,16 @@ async fn mine_is_the_only_link_and_only_the_person_sees_it() {
 #[tokio::test]
 async fn playing_a_world_changes_nothing_in_a_private_city() {
     let server = Server::start().await;
-    let made = server.post("/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).send().await.ok();
+    let made =
+        server.post("/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).send().await.ok();
     let ann = made["owner_key"].as_str().unwrap().to_string();
     let city = made["city"]["id"].as_str().unwrap().to_string();
     let person = made["person"]["id"].as_str().unwrap().to_string();
-    let before = server.get(&format!("/api/cities/{city}/people/{person}/standing")).token(&ann).send().await;
+    let before = server
+        .get(&format!("/api/cities/{city}/people/{person}/standing"))
+        .token(&ann)
+        .send()
+        .await;
     let me_before = server.get("/api/me").token(&ann).send().await.body;
 
     for _ in 0..3 {
@@ -775,7 +873,11 @@ async fn playing_a_world_changes_nothing_in_a_private_city() {
     let spot = building_spots(&map, 1)[0];
     server.act(&ann, COMMONS, place("house", spot)).await.ok();
 
-    let after = server.get(&format!("/api/cities/{city}/people/{person}/standing")).token(&ann).send().await;
+    let after = server
+        .get(&format!("/api/cities/{city}/people/{person}/standing"))
+        .token(&ann)
+        .send()
+        .await;
     assert_eq!(before.body, after.body);
     assert_eq!(before.status, after.status);
     assert_eq!(me_before, server.get("/api/me").token(&ann).send().await.body);
@@ -833,10 +935,28 @@ async fn unknown_fields_and_unlisted_words_are_refused_and_never_echoed() {
         .send()
         .await;
     assert!(reply.status.is_client_error() && !reply.text.contains("9999999"), "{}", reply.show());
-    let reply = server.req(Method::POST, "/api/worlds/commons/act").token(&guest.token).raw("application/json", b"{zzz-secret").send().await;
-    assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"), "{}", reply.show());
-    let reply = server.req(Method::POST, "/api/worlds/commons/act").token(&guest.token).raw("text/plain", b"zzz-secret").send().await;
-    assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"), "{}", reply.show());
+    let reply = server
+        .req(Method::POST, "/api/worlds/commons/act")
+        .token(&guest.token)
+        .raw("application/json", b"{zzz-secret")
+        .send()
+        .await;
+    assert!(
+        reply.status.is_client_error() && !reply.text.contains("zzz-secret"),
+        "{}",
+        reply.show()
+    );
+    let reply = server
+        .req(Method::POST, "/api/worlds/commons/act")
+        .token(&guest.token)
+        .raw("text/plain", b"zzz-secret")
+        .send()
+        .await;
+    assert!(
+        reply.status.is_client_error() && !reply.text.contains("zzz-secret"),
+        "{}",
+        reply.show()
+    );
     // Nothing was spent by any of it.
     assert_eq!(server.moves_left(&guest.token).await, 30);
 }
@@ -846,14 +966,37 @@ async fn unknown_fields_and_unlisted_words_are_refused_and_never_echoed() {
 async fn bodies_of_other_world_routes_are_just_as_strict() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
-    let reply = server.post("/api/worlds", json!({ "seed": 5, "zzz-secret-field": 1 })).token(&ann.key).send().await;
-    assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"), "{}", reply.show());
-    let reply = server.post("/api/worlds", json!({ "seed": "zzz-secret" })).token(&ann.key).send().await;
-    assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"), "{}", reply.show());
-    assert!(server.state.db.world_of_owner(&ann.id).unwrap().is_none(), "none of those made a world");
-    let reply = server.post("/api/players/claim", json!({ "claim_code": "x", "zzz-secret": 1 })).token(&ann.key).send().await;
+    let reply = server
+        .post("/api/worlds", json!({ "seed": 5, "zzz-secret-field": 1 }))
+        .token(&ann.key)
+        .send()
+        .await;
+    assert!(
+        reply.status.is_client_error() && !reply.text.contains("zzz-secret"),
+        "{}",
+        reply.show()
+    );
+    let reply =
+        server.post("/api/worlds", json!({ "seed": "zzz-secret" })).token(&ann.key).send().await;
+    assert!(
+        reply.status.is_client_error() && !reply.text.contains("zzz-secret"),
+        "{}",
+        reply.show()
+    );
+    assert!(
+        server.state.db.world_of_owner(&ann.id).unwrap().is_none(),
+        "none of those made a world"
+    );
+    let reply = server
+        .post("/api/players/claim", json!({ "claim_code": "x", "zzz-secret": 1 }))
+        .token(&ann.key)
+        .send()
+        .await;
     assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"));
-    let reply = server.post("/api/public/join", json!({ "world_id": "commons", "zzz-secret": 1 })).send().await;
+    let reply = server
+        .post("/api/public/join", json!({ "world_id": "commons", "zzz-secret": 1 }))
+        .send()
+        .await;
     assert!(reply.status.is_client_error() && !reply.text.contains("zzz-secret"));
 }
 
@@ -861,16 +1004,15 @@ async fn bodies_of_other_world_routes_are_just_as_strict() {
 #[tokio::test]
 async fn the_public_mcp_endpoint_refuses_what_it_does_not_list_without_echoing_it() {
     let server = Server::start().await;
-    let token = server.tool("join", json!({}))
-        .await["player_token"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let token = server.tool("join", json!({})).await["player_token"].as_str().unwrap().to_string();
     for (name, args) in [
         ("build", json!({ "player_token": token, "type": "zzz-secret-type", "x": 1, "y": 1 })),
         ("build", json!({ "player_token": token, "type": "homes", "x": 1, "y": 1 })),
         ("build", json!({ "player_token": token, "type": "house", "x": 1, "y": 1 })),
-        ("build", json!({ "player_token": token, "type": "road", "x": 1, "y": 1, "zzz-secret": 1 })),
+        (
+            "build",
+            json!({ "player_token": token, "type": "road", "x": 1, "y": 1, "zzz-secret": 1 }),
+        ),
         ("build", json!({ "player_token": token, "type": "road", "x": "zzz-secret", "y": 1 })),
         ("build", json!({ "player_token": token, "type": "road" })),
         ("emote", json!({ "player_token": token, "emote": "zzz-secret" })),
@@ -890,7 +1032,11 @@ async fn the_public_mcp_endpoint_refuses_what_it_does_not_list_without_echoing_i
     // Neither does a bad request as a whole.
     let reply = server.rpc("zzz-secret-method", json!({})).await;
     assert!(!reply.text.contains("zzz-secret"), "{}", reply.text);
-    let reply = server.req(Method::POST, "/public/mcp").raw("application/json", b"{zzz-secret").send().await;
+    let reply = server
+        .req(Method::POST, "/public/mcp")
+        .raw("application/json", b"{zzz-secret")
+        .send()
+        .await;
     assert!(!reply.text.contains("zzz-secret"), "{}", reply.text);
     assert_eq!(server.moves_left(&token).await, 30);
 }
@@ -910,7 +1056,12 @@ async fn every_name_comes_from_the_lists_and_a_reroll_cannot_be_typed() {
     assert_eq!(guest.name, world::player_name(seed as u64), "a player's name is their seed's");
     assert_ne!(seed, id, "a player's seed is not their number");
 
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     let mut changed = false;
     for _ in 0..5 {
         let reply = server
@@ -942,12 +1093,52 @@ async fn only_the_person_who_claimed_a_player_can_reroll_it() {
     let guest = server.guest().await;
     let id = server.player_id(&guest.token).await;
     // Unclaimed: nobody's to reroll.
-    assert_eq!(server.post(&format!("/api/players/{id}/reroll"), json!({})).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
-    assert_eq!(server.post(&format!("/api/players/{id}/reroll"), json!({})).token(&bo.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post(&format!("/api/players/{id}/reroll"), json!({})).token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post("/api/players/zzz/reroll", json!({})).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post(&format!("/api/players/{id}/reroll"), json!({})).token(&ann.key).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server
+            .post(&format!("/api/players/{id}/reroll"), json!({}))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
+    assert_eq!(
+        server
+            .post(&format!("/api/players/{id}/reroll"), json!({}))
+            .token(&bo.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post(&format!("/api/players/{id}/reroll"), json!({}))
+            .token(&guest.token)
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.post("/api/players/zzz/reroll", json!({})).token(&ann.key).send().await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post(&format!("/api/players/{id}/reroll"), json!({}))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::OK
+    );
 }
 
 // W8
@@ -955,8 +1146,19 @@ async fn only_the_person_who_claimed_a_player_can_reroll_it() {
 async fn everything_a_world_returns_is_numbers_and_listed_words() {
     let server = Server::start().await;
     let names = all_names();
-    let kinds: HashSet<&str> =
-        ["road", "homes", "shops", "workshops", "park", "cleared", "house", "cafe", "club", "studio"].into();
+    let kinds: HashSet<&str> = [
+        "road",
+        "homes",
+        "shops",
+        "workshops",
+        "park",
+        "cleared",
+        "house",
+        "cafe",
+        "club",
+        "studio",
+    ]
+    .into();
     let emotes: HashSet<&str> = ["wave", "cheer", "think", "sleep", "dance"].into();
     let stages: HashSet<&str> = ["hamlet", "village", "town", "city"].into();
     let crawler_ids: HashSet<&str> = world::CRAWLERS.iter().map(|crawler| crawler.id).collect();
@@ -975,7 +1177,9 @@ async fn everything_a_world_returns_is_numbers_and_listed_words() {
     assert_eq!(view["crawlers"].as_array().unwrap().len(), 2);
     assert_eq!(view["visitors"].as_array().unwrap().len(), 1);
 
-    let is_row = |text: &str| !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || "gfwsh".contains(c));
+    let is_row = |text: &str| {
+        !text.is_empty() && text.chars().all(|c| c.is_ascii_digit() || "gfwsh".contains(c))
+    };
     for tile in view["tiles"].as_array().unwrap() {
         assert!(kinds.contains(tile[2].as_str().unwrap()));
     }
@@ -987,7 +1191,10 @@ async fn everything_a_world_returns_is_numbers_and_listed_words() {
         assert!(player[4].is_null() || emotes.contains(player[4].as_str().unwrap()));
     }
     for frog in view["crawlers"].as_array().unwrap() {
-        assert!(crawler_ids.contains(frog[0].as_str().unwrap()) && crawler_names.contains(frog[1].as_str().unwrap()));
+        assert!(
+            crawler_ids.contains(frog[0].as_str().unwrap())
+                && crawler_names.contains(frog[1].as_str().unwrap())
+        );
     }
     for visitor in view["visitors"].as_array().unwrap() {
         assert!(names.contains(visitor[0].as_str().unwrap()));
@@ -1027,8 +1234,16 @@ async fn a_guest_has_30_moves_and_a_person_300_and_a_claimed_guest_200() {
     assert_eq!(server.me(&ann.key, COMMONS).await["moves_left"], 300);
     assert_eq!(server.me(&ann.key, COMMONS).await["moves_per_day"], 300);
     // A person signed in by cookie is the same person.
-    assert_eq!(server.get("/api/worlds/commons/me").cookie(&ann.cookie).send().await.ok()["moves_left"], 300);
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
+    assert_eq!(
+        server.get("/api/worlds/commons/me").cookie(&ann.cookie).send().await.ok()["moves_left"],
+        300
+    );
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     assert_eq!(server.me(&guest.token, COMMONS).await["moves_left"], 200);
     // Looking is free, so none of it cost anything.
     server.get("/api/worlds").send().await.ok();
@@ -1043,10 +1258,12 @@ async fn the_thirty_first_move_of_a_day_is_refused_and_midnight_utc_brings_them_
     let server = Server::start().await;
     let guest = server.guest().await;
     for n in 0..30 {
-        let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+        let reply =
+            server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
         assert_eq!(reply.status, StatusCode::OK, "move {n}: {}", reply.show());
     }
-    let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+    let reply =
+        server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
     assert_eq!(server.moves_left(&guest.token).await, 0);
 
@@ -1066,7 +1283,8 @@ async fn a_player_with_no_moves_left_hears_so_before_their_move_is_looked_at() {
     let server = Server::start().await;
     let guest = server.guest().await;
     for n in 0..30 {
-        let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+        let reply =
+            server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
         assert_eq!(reply.status, StatusCode::OK, "move {n}: {}", reply.show());
     }
     // There's nothing here to take down, which a player with moves left is told.
@@ -1088,13 +1306,37 @@ async fn allowances_cannot_be_bought_traded_or_given_away() {
     let guest = server.guest().await;
     let other = server.guest().await;
     // No route or field moves moves between players, and a claimed code works for one person once.
-    for body in [json!({ "action": "emote", "emote": "wave", "moves": 100 }), json!({ "action": "emote", "emote": "wave", "to": 1 })] {
+    for body in [
+        json!({ "action": "emote", "emote": "wave", "moves": 100 }),
+        json!({ "action": "emote", "emote": "wave", "to": 1 }),
+    ] {
         assert!(server.act(&guest.token, COMMONS, body).await.status.is_client_error());
     }
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": other.claim })).token(&ann.key).send().await.status, StatusCode::OK);
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": other.claim }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::OK
+    );
     assert_eq!(server.moves_left(&other.token).await, 200);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }
 
 // W10
@@ -1106,12 +1348,19 @@ async fn a_guest_token_is_stored_as_a_hash_and_stops_after_seven_idle_days() {
     let map = Map::from_db(&server, COMMONS);
     let (first, last) = map.line_from_road(2).unwrap();
     server.act(&guest.token, COMMONS, road_move(first, last)).await.ok();
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        2
+    );
 
     // Seven days and a bit with nobody using it.
     let player = server.player_row(id);
     let later = player.seen_at + 7 * 86_400 + 60;
-    server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.charge(id, 0, 0, player.seen_at)).unwrap();
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(id, 0, 0, player.seen_at))
+        .unwrap();
     assert!(player.seen_at <= later);
     // The HTTP calls use the real clock, so move the guest's last sighting back instead.
     server
@@ -1121,10 +1370,14 @@ async fn a_guest_token_is_stored_as_a_hash_and_stops_after_seven_idle_days() {
         .unwrap();
     let reply = server.get("/api/worlds/commons/me").token(&guest.token).send().await;
     assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.show());
-    let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+    let reply =
+        server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
     assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
     // What it built stays.
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        2
+    );
 
     // One used just under a week ago still works, and using it keeps it going.
     let other = server.guest().await;
@@ -1134,7 +1387,10 @@ async fn a_guest_token_is_stored_as_a_hash_and_stops_after_seven_idle_days() {
         .db
         .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(other_id, 0, 0, now() - 6 * 86_400))
         .unwrap();
-    assert_eq!(server.get("/api/worlds/commons/me").token(&other.token).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&other.token).send().await.status,
+        StatusCode::OK
+    );
     assert!(server.player_row(other_id).seen_at >= now() - 5, "using it was noted");
 }
 
@@ -1145,13 +1401,21 @@ async fn a_claimed_guest_does_not_expire_for_being_idle() {
     let ann = server.person("Ann").await;
     let guest = server.guest().await;
     let id = server.player_id(&guest.token).await;
-    server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     server
         .state
         .db
         .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(id, 0, 0, now() - 30 * 86_400))
         .unwrap();
-    assert_eq!(server.get("/api/worlds/commons/me").token(&guest.token).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&guest.token).send().await.status,
+        StatusCode::OK
+    );
 }
 
 // W11
@@ -1165,24 +1429,93 @@ async fn a_claim_code_works_once_and_a_person_can_claim_twenty() {
         guests.push(server.guest().await);
     }
     // A wrong code, a guest, and nobody signed in can't claim.
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": "not-a-code" })).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[0].claim })).token(&guests[1].token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[0].claim })).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": "not-a-code" }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[0].claim }))
+            .token(&guests[1].token)
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[0].claim }))
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
     // The token is not the code.
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[0].token })).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[0].token }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 
     for guest in &guests[..20] {
-        let reply = server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await;
+        let reply = server
+            .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+            .token(&ann.key)
+            .send()
+            .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.show());
     }
-    let reply = server.post("/api/players/claim", json!({ "claim_code": guests[20].claim })).token(&ann.key).send().await;
+    let reply = server
+        .post("/api/players/claim", json!({ "claim_code": guests[20].claim }))
+        .token(&ann.key)
+        .send()
+        .await;
     assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.show());
     // The code that was refused for being too many still works for someone with room.
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[20].claim })).token(&bo.key).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[20].claim }))
+            .token(&bo.key)
+            .send()
+            .await
+            .status,
+        StatusCode::OK
+    );
     // And a used code is dead, for anyone.
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[0].claim })).token(&bo.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guests[0].claim })).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"].as_array().unwrap().len(), 20);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[0].claim }))
+            .token(&bo.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guests[0].claim }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"]
+            .as_array()
+            .unwrap()
+            .len(),
+        20
+    );
 }
 
 // W11
@@ -1194,7 +1527,10 @@ async fn a_claim_code_is_kept_only_as_a_hash_and_a_bot_player_has_none() {
     assert_eq!(guest.claim.len(), 20);
     assert_ne!(guest.claim, guest.token);
     // The claim code never works as a player token.
-    assert_eq!(server.get("/api/worlds/commons/me").token(&guest.claim).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&guest.claim).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     let _ = ann;
 }
 
@@ -1210,10 +1546,16 @@ async fn new_guests_are_capped_per_address_and_across_the_server() {
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
     assert!(!reply.text.contains("player_token"));
     // Another address is a different allowance, and the last address in the header is the one counted.
-    let reply = server.post("/api/public/join", json!({})).ip("198.51.100.1, 203.0.113.10").send().await;
+    let reply =
+        server.post("/api/public/join", json!({})).ip("198.51.100.1, 203.0.113.10").send().await;
     assert_eq!(reply.status, StatusCode::OK);
-    let reply = server.post("/api/public/join", json!({})).ip("203.0.113.99, 203.0.113.9").send().await;
-    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "the client's own words can't change the address");
+    let reply =
+        server.post("/api/public/join", json!({})).ip("203.0.113.99, 203.0.113.9").send().await;
+    assert_eq!(
+        reply.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the client's own words can't change the address"
+    );
     // The same through MCP.
     let reply = server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } })).ip("203.0.113.9").send().await;
     assert_eq!(reply.body["result"]["isError"], true);
@@ -1237,14 +1579,26 @@ async fn new_guests_are_capped_at_600_an_hour_across_the_whole_server() {
     let reply = server.post("/api/public/join", json!({})).ip(&ip).send().await;
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
     // A bot with its own token is not a new guest, so the cap doesn't stop it.
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(room["owner_key"].as_str().unwrap())
         .send()
         .await
         .ok();
-    let reply = server.post("/api/public/join", json!({})).token(bot["token"].as_str().unwrap()).ip(&ip).send().await;
+    let reply = server
+        .post("/api/public/join", json!({}))
+        .token(bot["token"].as_str().unwrap())
+        .ip(&ip)
+        .send()
+        .await;
     assert_eq!(reply.status, StatusCode::OK, "{}", reply.show());
 }
 
@@ -1261,14 +1615,27 @@ async fn each_move_costs_what_the_table_says() {
 
     let (first, last) = map.line_from_road(3).unwrap();
     let road = server.act(&guest.token, COMMONS, road_move(first, last)).await.ok();
-    assert_eq!((road["cost"].as_i64(), road["changed"].as_i64(), road["moves_left"].as_i64()), (Some(3), Some(3), Some(27)));
+    assert_eq!(
+        (road["cost"].as_i64(), road["changed"].as_i64(), road["moves_left"].as_i64()),
+        (Some(3), Some(3), Some(27))
+    );
     // The end of the road is nothing's way to the highway, so it can come down.
-    let bulldoze = server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": last.0, "y": last.1 })).await.ok();
+    let bulldoze = server
+        .act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": last.0, "y": last.1 }))
+        .await
+        .ok();
     assert_eq!((bulldoze["cost"].as_i64(), bulldoze["moves_left"].as_i64()), (Some(1), Some(26)));
     let centre = map.size / 2;
-    let walk = server.act(&guest.token, COMMONS, json!({ "action": "walk", "x": centre + 1, "y": centre })).await.ok();
-    assert_eq!((walk["cost"].as_i64(), walk["changed"].as_i64(), walk["moves_left"].as_i64()), (Some(1), Some(0), Some(25)));
-    let wave = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
+    let walk = server
+        .act(&guest.token, COMMONS, json!({ "action": "walk", "x": centre + 1, "y": centre }))
+        .await
+        .ok();
+    assert_eq!(
+        (walk["cost"].as_i64(), walk["changed"].as_i64(), walk["moves_left"].as_i64()),
+        (Some(1), Some(0), Some(25))
+    );
+    let wave =
+        server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     assert_eq!((wave["cost"].as_i64(), wave["moves_left"].as_i64()), (Some(1), Some(24)));
     assert_eq!(server.moves_left(&guest.token).await, 24);
 
@@ -1358,18 +1725,35 @@ async fn only_open_land_can_be_built_on_and_forest_is_cleared_by_bulldozing() {
             json!({ "action": "bulldoze", "x": x, "y": y }),
         ] {
             let token = if body["action"] == "place" { &ann.key } else { &guest.token };
-            assert!(server.act(token, COMMONS, body.clone()).await.status.is_client_error(), "{body}");
+            assert!(
+                server.act(token, COMMONS, body.clone()).await.status.is_client_error(),
+                "{body}"
+            );
         }
     }
     // Forest can't be built on, but one bulldoze clears it and then it can.
     let (x, y) = forest;
-    assert!(server.act(&guest.token, COMMONS, json!({ "action": "road", "x": x, "y": y })).await.status.is_client_error());
+    assert!(server
+        .act(&guest.token, COMMONS, json!({ "action": "road", "x": x, "y": y }))
+        .await
+        .status
+        .is_client_error());
     assert!(server.act(&ann.key, COMMONS, place("house", forest)).await.status.is_client_error());
-    let cleared = server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y })).await.ok();
+    let cleared = server
+        .act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y }))
+        .await
+        .ok();
     assert_eq!(cleared["cost"], 1);
     let tile = server.tiles(COMMONS)[&(x as u16, y as u16)];
     assert_eq!(tile.kind, Kind::Cleared);
-    assert!(server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y })).await.status.is_client_error(), "already cleared");
+    assert!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y }))
+            .await
+            .status
+            .is_client_error(),
+        "already cleared"
+    );
     assert_eq!(server.act(&ann.key, COMMONS, place("house", forest)).await.status, StatusCode::OK);
     assert_eq!(server.tiles(COMMONS)[&(x as u16, y as u16)].kind, Kind::House);
     // Bulldozing a place built on forest puts the clearing back.
@@ -1387,7 +1771,10 @@ async fn a_world_starts_with_a_highway_and_a_road_must_touch_a_road() {
     let highway = map.roads();
     assert!(highway.len() > 20, "a highway from the edge of the map to the middle");
     assert!(highway.contains(&(map.size / 2, map.size / 2)), "it ends in the middle");
-    assert!(highway.iter().any(|&(x, y)| x == 0 || y == 0 || x == map.size - 1 || y == map.size - 1), "and starts at an edge");
+    assert!(
+        highway.iter().any(|&(x, y)| x == 0 || y == 0 || x == map.size - 1 || y == map.size - 1),
+        "and starts at an edge"
+    );
     // Nothing else is there yet: the highway and no founding town (W28).
     let shown = view["tiles"].as_array().unwrap();
     let expected = the_highway();
@@ -1403,7 +1790,10 @@ async fn a_world_starts_with_a_highway_and_a_road_must_touch_a_road() {
         let roads = map.roads();
         (0..map.size)
             .flat_map(|y| (0..map.size).map(move |x| (x, y)))
-            .find(|&(x, y)| (0..3).all(|i| map.open(x + i, y)) && roads.iter().all(|&(rx, ry)| (rx - x).abs() > 4 || (ry - y).abs() > 4))
+            .find(|&(x, y)| {
+                (0..3).all(|i| map.open(x + i, y))
+                    && roads.iter().all(|&(rx, ry)| (rx - x).abs() > 4 || (ry - y).abs() > 4)
+            })
             .unwrap()
     };
     let reply = server.act(&guest.token, COMMONS, road_move(far, (far.0 + 2, far.1))).await;
@@ -1414,7 +1804,11 @@ async fn a_world_starts_with_a_highway_and_a_road_must_touch_a_road() {
     // Joined up now: a road that starts beside the new one, away from the highway, is let in too.
     let more = Map::from_db(&server, COMMONS);
     let beyond = more.line_from_road(2).unwrap();
-    assert!(server.act(&guest.token, COMMONS, road_move(beyond.0, beyond.1)).await.status.is_success());
+    assert!(server
+        .act(&guest.token, COMMONS, road_move(beyond.0, beyond.1))
+        .await
+        .status
+        .is_success());
 }
 
 // W16
@@ -1428,7 +1822,11 @@ async fn a_road_is_a_straight_line_of_up_to_16_and_a_drag_in_any_direction_works
     // 17 tiles is too long, a diagonal is not a line.
     let long = map.line_from_road(17);
     if let Some((first, last)) = long {
-        assert!(server.act(&ann.key, COMMONS, road_move(first, last)).await.status.is_client_error());
+        assert!(server
+            .act(&ann.key, COMMONS, road_move(first, last))
+            .await
+            .status
+            .is_client_error());
     }
     let (road_first, _) = map.line_from_road(1).unwrap();
     let diagonal = json!({ "action": "road", "x": road_first.0, "y": road_first.1, "x2": road_first.0 + 2, "y2": road_first.1 + 2 });
@@ -1459,7 +1857,10 @@ async fn a_road_over_road_skips_what_is_there_and_charges_only_for_the_rest() {
     assert_eq!(server.moves_left(&guest.token).await, 27);
     // The same road longer: what is road already is skipped and only what's new is charged.
     let longer = server.act(&guest.token, COMMONS, road_move(first, last)).await.ok();
-    assert_eq!((longer["changed"].as_i64(), longer["skipped"].as_i64(), longer["cost"].as_i64()), (Some(2), Some(3), Some(2)));
+    assert_eq!(
+        (longer["changed"].as_i64(), longer["skipped"].as_i64(), longer["cost"].as_i64()),
+        (Some(2), Some(3), Some(2))
+    );
     assert_eq!(server.moves_left(&guest.token).await, 25);
     // Over only road: refused, nothing charged.
     let again = server.act(&guest.token, COMMONS, road_move(first, last)).await;
@@ -1480,7 +1881,12 @@ async fn a_move_that_costs_more_than_you_have_is_refused_whole() {
     let before = server.tiles(COMMONS);
     let (first, last) = map.line_from_road(6).unwrap();
     let reply = server.act(&guest.token, COMMONS, road_move(first, last)).await;
-    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "6 tiles for 5 moves: {}", reply.show());
+    assert_eq!(
+        reply.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "6 tiles for 5 moves: {}",
+        reply.show()
+    );
     assert_eq!(server.moves_left(&guest.token).await, 5);
     assert_eq!(server.tiles(COMMONS), before, "none of it was built");
     let (first, last) = map.line_from_road(5).unwrap();
@@ -1515,19 +1921,41 @@ async fn you_can_bulldoze_only_what_you_built_until_its_builder_has_been_gone_a_
     // The highway has no builder, so it is never anyone's to take down, and Ann can't either.
     let (hx, hy) = *map.roads().first().unwrap();
     for token in [&ann.token, &bo.token] {
-        assert!(server.act(token, COMMONS, json!({ "action": "bulldoze", "x": hx, "y": hy })).await.status.is_client_error());
+        assert!(server
+            .act(token, COMMONS, json!({ "action": "bulldoze", "x": hx, "y": hy }))
+            .await
+            .status
+            .is_client_error());
     }
     // A builder away for six days: still not.
-    server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now() - 6 * 86_400)).unwrap();
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now() - 6 * 86_400))
+        .unwrap();
     assert!(server.act(&bo.token, COMMONS, bulldoze.clone()).await.status.is_client_error());
     // Gone a week: it is free to clear.
-    server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now() - 7 * 86_400 - 5)).unwrap();
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now() - 7 * 86_400 - 5))
+        .unwrap();
     let cleared = server.act(&bo.token, COMMONS, bulldoze).await;
     assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.show());
     assert!(!server.tiles(COMMONS).contains_key(&(x as u16, y as u16)));
     // Ann comes back and can still take down her own.
-    server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now())).unwrap();
-    assert_eq!(server.act(&ann.token, COMMONS, json!({ "action": "bulldoze", "x": first.0, "y": first.1 })).await.status, StatusCode::OK);
+    server
+        .state
+        .db
+        .in_transaction::<(), rusqlite::Error>(|tx| tx.charge(ann_id, 0, 0, now()))
+        .unwrap();
+    assert_eq!(
+        server
+            .act(&ann.token, COMMONS, json!({ "action": "bulldoze", "x": first.0, "y": first.1 }))
+            .await
+            .status,
+        StatusCode::OK
+    );
 }
 
 // W18
@@ -1548,39 +1976,103 @@ async fn the_keeper_removes_a_player_from_the_commons_and_their_token_stops() {
     let path = format!("/api/worlds/{COMMONS}/players/{id}/remove");
     // Not a person, not the keeper: no.
     assert_eq!(server.post(&path, json!({})).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post(&path, json!({})).token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post(&path, json!({})).token(&other.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post(&path, json!({})).token(&ann.key).send().await.status, StatusCode::FORBIDDEN);
-    assert!(server.tiles(COMMONS).values().any(|tile| tile.player == Some(id as u64)), "nothing was taken down");
+    assert_eq!(
+        server.post(&path, json!({})).token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.post(&path, json!({})).token(&other.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.post(&path, json!({})).token(&ann.key).send().await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert!(
+        server.tiles(COMMONS).values().any(|tile| tile.player == Some(id as u64)),
+        "nothing was taken down"
+    );
 
     let removed = server.post(&path, json!({})).token(&keeper.key).send().await.ok();
     assert_eq!(removed["ok"], true);
     assert_eq!(removed["tiles_removed"], 3);
     assert!(!server.tiles(COMMONS).values().any(|tile| tile.player == Some(id as u64)));
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player.is_none()).count(), highway, "the highway can't be removed");
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player.is_none()).count(),
+        highway,
+        "the highway can't be removed"
+    );
     // The token stops, everywhere, and the player has left the street.
-    assert_eq!(server.get("/api/worlds/commons/me").token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.call("how_am_i_doing", json!({ "player_token": guest.token })).await["isError"], true);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.call("how_am_i_doing", json!({ "player_token": guest.token })).await["isError"],
+        true
+    );
     let view = server.fresh_view(COMMONS).await;
     assert_eq!(view["players"].as_array().unwrap().len(), 1, "only the other one is still there");
     // The claim code stops too, and the other player is untouched.
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(server.me(&other.token, COMMONS).await["moves_left"], 29);
     // The keeper can't remove an id that was never in this world, or remove themself.
-    assert_eq!(server.post(&format!("/api/worlds/{COMMONS}/players/9999/remove"), json!({})).token(&keeper.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post(&format!("/api/worlds/{COMMONS}/players/zzz/remove"), json!({})).token(&keeper.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server
+            .post(&format!("/api/worlds/{COMMONS}/players/9999/remove"), json!({}))
+            .token(&keeper.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post(&format!("/api/worlds/{COMMONS}/players/zzz/remove"), json!({}))
+            .token(&keeper.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
     // A bot isn't a person, even a keeper's.
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(room["owner_key"].as_str().unwrap())
         .send()
         .await
         .ok();
     let other_id = server.player_id(&other.token).await;
     assert_eq!(
-        server.post(&format!("/api/worlds/{COMMONS}/players/{other_id}/remove"), json!({})).token(bot["token"].as_str().unwrap()).send().await.status,
+        server
+            .post(&format!("/api/worlds/{COMMONS}/players/{other_id}/remove"), json!({}))
+            .token(bot["token"].as_str().unwrap())
+            .send()
+            .await
+            .status,
         StatusCode::FORBIDDEN
     );
 }
@@ -1593,7 +2085,11 @@ async fn nobody_is_the_keeper_unless_the_server_says_so() {
     let guest = server.guest().await;
     server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     let id = server.player_id(&guest.token).await;
-    let reply = server.post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({})).token(&ann.key).send().await;
+    let reply = server
+        .post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({}))
+        .token(&ann.key)
+        .send()
+        .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert_eq!(server.me(&guest.token, COMMONS).await["moves_left"], 29);
 }
@@ -1609,9 +2105,17 @@ async fn me_tells_the_keeper_they_are_the_keeper_and_nobody_else() {
     let hers = server.get("/api/me").token(&ann.key).send().await.ok();
     assert!(hers.get("keeper").is_none(), "{hers}");
     // A bot is not the keeper, even one of the keeper's own.
-    let room = server.post("/api/hangouts", json!({ "name": "Crew" })).token(&keeper.key).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew" }))
+        .token(&keeper.key)
+        .send()
+        .await
+        .ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(&keeper.key)
         .send()
         .await
@@ -1624,8 +2128,14 @@ async fn me_tells_the_keeper_they_are_the_keeper_and_nobody_else() {
     server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     let id = server.player_id(&guest.token).await;
     let path = format!("/api/worlds/{COMMONS}/players/{id}/remove");
-    assert_eq!(server.post(&path, json!({})).token(&ann.key).send().await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&path, json!({})).token(&keeper.key).send().await.status, StatusCode::OK);
+    assert_eq!(
+        server.post(&path, json!({})).token(&ann.key).send().await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server.post(&path, json!({})).token(&keeper.key).send().await.status,
+        StatusCode::OK
+    );
     // A server that was never told who the keeper is has none.
     let plain = Server::start().await;
     let bo = plain.person("Bo").await;
@@ -1651,28 +2161,78 @@ async fn an_owner_removes_a_player_only_from_their_own_world() {
 
     // Bo can't touch Ann's world, Ann can't touch The Commons, and the guest can't do anything.
     let path = format!("/api/worlds/{ann_world}/players/{id}/remove");
-    assert_eq!(server.post(&path, json!({})).token(&bo.key).send().await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&path, json!({})).token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({})).token(&ann.key).send().await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.post(&format!("/api/worlds/{bo_world}/players/{id}/remove"), json!({})).token(&ann.key).send().await.status, StatusCode::FORBIDDEN);
-    assert_eq!(server.tiles(&ann_world).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
+    assert_eq!(
+        server.post(&path, json!({})).token(&bo.key).send().await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server.post(&path, json!({})).token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({}))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server
+            .post(&format!("/api/worlds/{bo_world}/players/{id}/remove"), json!({}))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        server.tiles(&ann_world).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        2
+    );
 
     let removed = server.post(&path, json!({})).token(&ann.key).send().await.ok();
     assert_eq!(removed["tiles_removed"], 2);
-    assert_eq!(server.tiles(&ann_world).values().filter(|tile| tile.player == Some(id as u64)).count(), 0);
+    assert_eq!(
+        server.tiles(&ann_world).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        0
+    );
     // They are barred from it, and the owner's world is the only place it reaches: the player is
     // still a player everywhere else, because a world's owner can't end a player.
-    let barred = server.state.db.in_transaction::<_, rusqlite::Error>(|tx| tx.member_state(&ann_world, id)).unwrap();
+    let barred = server
+        .state
+        .db
+        .in_transaction::<_, rusqlite::Error>(|tx| tx.member_state(&ann_world, id))
+        .unwrap();
     assert_eq!(barred, Some(true));
-    let again = server.act(&guest.token, &ann_world, json!({ "action": "emote", "emote": "wave" })).await;
+    let again =
+        server.act(&guest.token, &ann_world, json!({ "action": "emote", "emote": "wave" })).await;
     assert_eq!(again.status, StatusCode::FORBIDDEN, "{}", again.show());
-    assert_eq!(server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::OK);
-    assert_eq!(server.tiles(&bo_world).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
+    assert_eq!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(
+        server.tiles(&bo_world).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        2
+    );
     // An owner can't remove themselves.
     let own = server.state.db.own_player(&ann.id, now()).unwrap().id;
     let (spare, _) = Map::from_db(&server, &ann_world).line_from_road(1).unwrap();
     server.built_by(&ann_world, own, &[spare]);
-    assert_eq!(server.post(&format!("/api/worlds/{ann_world}/players/{own}/remove"), json!({})).token(&ann.key).send().await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        server
+            .post(&format!("/api/worlds/{ann_world}/players/{own}/remove"), json!({}))
+            .token(&ann.key)
+            .send()
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1701,7 +2261,10 @@ async fn a_step_is_a_pure_function_so_two_worlds_with_the_same_moves_match() {
     let (second, second_step) = run().await;
     assert_eq!(first_step, 120, "a step a time, and a number for each");
     assert_eq!(second_step, 120);
-    assert_eq!(first, second, "nothing random is stored: the same moves and steps give the same map");
+    assert_eq!(
+        first, second,
+        "nothing random is stored: the same moves and steps give the same map"
+    );
     assert!(first.values().any(|tile| tile.kind == Kind::House), "the moves were made");
 }
 
@@ -1729,7 +2292,10 @@ async fn the_commons_always_steps_however_long_nobody_plays_and_however_big_it_g
 async fn a_step_that_fails_is_reported_and_the_next_round_tries_again() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
-    assert!(!worlds::step_one(&server.state, "no-such-world", now()), "a world that can't be stepped says so");
+    assert!(
+        !worlds::step_one(&server.state, "no-such-world", now()),
+        "a world that can't be stepped says so"
+    );
     assert!(worlds::step_one(&server.state, COMMONS, now()));
     assert_eq!(server.state.db.world(COMMONS).unwrap().unwrap().step, 1);
     // A frozen world takes no step, and every round steps whatever is due all the same.
@@ -1807,7 +2373,10 @@ async fn a_frozen_worlds_link_is_never_shown_and_only_its_owner_has_it() {
     assert!(!list.text.contains(&closed_code) && !list.text.contains(&open_code));
     // Only the owner sees it, in `mine`.
     let mine = server.get("/api/worlds/mine").token(&ann.key).send().await.ok();
-    assert_eq!((mine["world"]["id"].as_str(), mine["world"]["invite_code"].as_str()), (Some(closed.as_str()), Some(closed_code.as_str())));
+    assert_eq!(
+        (mine["world"]["id"].as_str(), mine["world"]["invite_code"].as_str()),
+        (Some(closed.as_str()), Some(closed_code.as_str()))
+    );
     let hers = server.get("/api/worlds/mine").token(&ann.key).send().await.text;
     let his = server.get("/api/worlds/mine").token(&bo.key).send().await.text;
     assert!(!hers.contains(&open_code) && !his.contains(&closed_code));
@@ -1833,7 +2402,11 @@ async fn the_commons_is_128_by_128_with_a_fixed_seed_and_is_there_from_the_start
     let again = Server::start().await;
     assert_eq!(again.view(COMMONS).await["tiles"], view["tiles"]);
     // And it has no owner to remove.
-    assert_eq!(server.get("/api/worlds/mine").token(&server.person("Ann").await.key).send().await.ok()["world"], Value::Null);
+    assert_eq!(
+        server.get("/api/worlds/mine").token(&server.person("Ann").await.key).send().await.ok()
+            ["world"],
+        Value::Null
+    );
 }
 
 // W28
@@ -1875,13 +2448,20 @@ async fn a_world_view_is_built_once_and_served_from_memory_to_everyone() {
     assert_eq!(not_modified.status, StatusCode::NOT_MODIFIED);
     assert!(not_modified.text.is_empty());
     assert_eq!(not_modified.headers.get("etag").unwrap().to_str().unwrap(), tag);
-    let other = server.get("/api/worlds/commons").header("if-none-match", "\"something-else\"").send().await;
+    let other = server
+        .get("/api/worlds/commons")
+        .header("if-none-match", "\"something-else\"")
+        .send()
+        .await;
     assert_eq!(other.status, StatusCode::OK);
     // The list too.
     server.get("/api/worlds").send().await.ok();
     let list = server.get("/api/worlds").send().await;
     let tag = list.headers.get("etag").unwrap().to_str().unwrap().to_string();
-    assert_eq!(server.get("/api/worlds").header("if-none-match", &tag).send().await.status, StatusCode::NOT_MODIFIED);
+    assert_eq!(
+        server.get("/api/worlds").header("if-none-match", &tag).send().await.status,
+        StatusCode::NOT_MODIFIED
+    );
 }
 
 // W29
@@ -1918,9 +2498,15 @@ async fn a_move_makes_the_view_stale_and_it_is_rebuilt_within_a_second() {
     server.act(&guest.token, COMMONS, road_move(road_first, road_last)).await.ok();
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let view = server.view(COMMONS).await;
-    assert_eq!(server.state.worlds.view_builds(), builds + 1, "one rebuild for everything that changed");
+    assert_eq!(
+        server.state.worlds.view_builds(),
+        builds + 1,
+        "one rebuild for everything that changed"
+    );
     assert_eq!(view["players"][0][4], "dance");
-    assert!(view["tiles"].as_array().unwrap().len() >= first["tiles"].as_array().unwrap().len() + 2);
+    assert!(
+        view["tiles"].as_array().unwrap().len() >= first["tiles"].as_array().unwrap().len() + 2
+    );
     // Nobody asking and nothing changing, so it isn't rebuilt more than every few seconds.
     for _ in 0..10 {
         server.view(COMMONS).await;
@@ -1940,11 +2526,18 @@ async fn views_for_worlds_that_do_not_exist_are_refused_and_keep_nothing() {
         assert!(!reply.text.contains("made-up"));
     }
     assert_eq!(server.state.worlds.view_builds(), builds);
-    assert_eq!(server.get("/api/worlds/mine").send().await.status, StatusCode::UNAUTHORIZED, "mine isn't a world id");
+    assert_eq!(
+        server.get("/api/worlds/mine").send().await.status,
+        StatusCode::UNAUTHORIZED,
+        "mine isn't a world id"
+    );
     // The preview of maps to choose from went with starting a world (W26).
     assert_eq!(server.get("/api/worlds/preview").send().await.status, StatusCode::NOT_FOUND);
     assert_eq!(server.state.worlds.view_builds(), builds);
-    assert_eq!(server.get("/api/worlds/join/xyz").send().await.status, StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        server.get("/api/worlds/join/xyz").send().await.status,
+        StatusCode::METHOD_NOT_ALLOWED
+    );
 }
 
 // W30
@@ -1959,19 +2552,34 @@ async fn world_views_are_limited_to_240_a_minute_per_address() {
     let over = server.get("/api/worlds/commons").ip("203.0.113.50").send().await;
     assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.show());
     // The list shares the allowance, another address has its own, and no address header is local.
-    assert_eq!(server.get("/api/worlds").ip("203.0.113.50").send().await.status, StatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(server.get("/api/worlds/commons").ip("203.0.113.51").send().await.status, StatusCode::OK);
+    assert_eq!(
+        server.get("/api/worlds").ip("203.0.113.50").send().await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        server.get("/api/worlds/commons").ip("203.0.113.51").send().await.status,
+        StatusCode::OK
+    );
     for _ in 0..70 {
         assert_eq!(server.get("/api/worlds/commons").send().await.status, StatusCode::OK);
     }
     // A client can't borrow someone else's address by naming it first in the header.
-    assert_eq!(server.get("/api/worlds/commons").ip("203.0.113.99, 203.0.113.50").send().await.status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        server.get("/api/worlds/commons").ip("203.0.113.99, 203.0.113.50").send().await.status,
+        StatusCode::TOO_MANY_REQUESTS
+    );
     // `look` is a view too.
     let reply = server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "look", "arguments": {} } })).ip("203.0.113.50").send().await;
     assert_eq!(reply.body["result"]["isError"], true);
     // Moves are not views: they have their own cap.
     let guest = server.guest().await;
-    assert_eq!(server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::OK);
+    assert_eq!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::OK
+    );
 }
 
 // W30
@@ -1986,7 +2594,9 @@ async fn moves_are_capped_in_a_world_at_300_a_minute() {
     let mut refused = 0;
     for guest in &guests {
         for _ in 0..30 {
-            let reply = server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+            let reply = server
+                .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+                .await;
             match reply.status {
                 StatusCode::OK => applied += 1,
                 StatusCode::TOO_MANY_REQUESTS => refused += 1,
@@ -2006,11 +2616,23 @@ async fn moves_are_capped_in_a_world_at_300_a_minute() {
     for _ in 0..7 {
         let guest = fresh.guest().await;
         for _ in 0..50 {
-            assert_eq!(fresh.act(&guest.token, COMMONS, json!({ "action": "walk", "x": -1, "y": -1 })).await.status, StatusCode::BAD_REQUEST);
+            assert_eq!(
+                fresh
+                    .act(&guest.token, COMMONS, json!({ "action": "walk", "x": -1, "y": -1 }))
+                    .await
+                    .status,
+                StatusCode::BAD_REQUEST
+            );
         }
     }
     let guest = fresh.guest().await;
-    assert_eq!(fresh.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::OK);
+    assert_eq!(
+        fresh
+            .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::OK
+    );
 }
 
 /// A guest made straight in the database, for tests that need many and call the rules directly.
@@ -2029,7 +2651,8 @@ async fn a_world_that_has_used_its_300_is_told_so_and_the_minute_after_it_is_ope
     let t = now();
     let owner = server.state.db.own_player(&ann.id, t).unwrap();
     for n in 0..300 {
-        worlds::act(&server.state, &owner, COMMONS, &emote("wave"), t).unwrap_or_else(|error| panic!("move {n}: {error:?}"));
+        worlds::act(&server.state, &owner, COMMONS, &emote("wave"), t)
+            .unwrap_or_else(|error| panic!("move {n}: {error:?}"));
     }
     // The 301st, from a player with moves to spare, is the world's to refuse, and costs them nothing.
     let guest = spare_guest(&server, 0, t);
@@ -2048,7 +2671,8 @@ async fn a_world_that_has_used_its_300_is_told_so_and_the_minute_after_it_is_ope
 async fn look_returns_at_most_32_by_32_tiles_and_a_view_has_a_fixed_size() {
     let server = Server::start().await;
     let guest = server.guest().await;
-    let look = server.tool("look", json!({ "player_token": guest.token, "w": 500, "h": 1000 })).await;
+    let look =
+        server.tool("look", json!({ "player_token": guest.token, "w": 500, "h": 1000 })).await;
     assert_eq!(look["window"]["w"], 32);
     assert_eq!(look["window"]["h"], 32);
     let rows = look["land"].as_array().unwrap();
@@ -2094,17 +2718,39 @@ async fn look_returns_at_most_32_by_32_tiles_and_a_view_has_a_fixed_size() {
 async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_its_seven() {
     let server = Server::start().await;
     let reply = server.rpc("tools/list", json!({})).await;
-    let names: Vec<&str> = reply.body["result"]["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = reply.body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"]);
     // Nothing private is offered, or works, here.
-    for private in ["inbox", "say", "read_room", "list_city", "ask_owner", "propose_hangout", "rsvp", "ask_for_trip", "house_queue"] {
+    for private in [
+        "inbox",
+        "say",
+        "read_room",
+        "list_city",
+        "ask_owner",
+        "propose_hangout",
+        "rsvp",
+        "ask_for_trip",
+        "house_queue",
+    ] {
         assert!(!names.contains(&private));
         server.tool_refused(private, json!({})).await;
     }
     // And the private endpoint offers nothing public.
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(room["owner_key"].as_str().unwrap())
         .send()
         .await
@@ -2114,7 +2760,12 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
         .token(bot["token"].as_str().unwrap())
         .send()
         .await;
-    let private_names: Vec<&str> = private.body["result"]["tools"].as_array().unwrap().iter().map(|tool| tool["name"].as_str().unwrap()).collect();
+    let private_names: Vec<&str> = private.body["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
@@ -2156,13 +2807,18 @@ async fn a_crawler_fetching_a_page_is_shown_as_a_frog_on_a_road() {
     assert_eq!(view["players"], json!([]));
     assert_eq!(view["visitors"], json!([]));
     assert_eq!(view["places"], 0, "nothing was put up");
-    assert_eq!(view["tiles"].as_array().unwrap().len(), the_highway().len(), "the map is as it was");
+    assert_eq!(
+        view["tiles"].as_array().unwrap().len(),
+        the_highway().len(),
+        "the map is as it was"
+    );
     // One frog per kind, however often it comes. Another kind is another frog.
     server.get("/").ua(GOOGLEBOT).send().await;
     server.get("/worlds").ua(GOOGLEBOT).send().await;
     server.get("/").ua(GPTBOT).send().await;
     let view = server.fresh_view(COMMONS).await;
-    let ids: Vec<&str> = view["crawlers"].as_array().unwrap().iter().map(|frog| frog[0].as_str().unwrap()).collect();
+    let ids: Vec<&str> =
+        view["crawlers"].as_array().unwrap().iter().map(|frog| frog[0].as_str().unwrap()).collect();
     assert_eq!(ids, ["googlebot", "gptbot"], "in the order of the list");
     // Where it hops comes from the step: after a step it has moved on, nobody steered it.
     let before = view["crawlers"][0].clone();
@@ -2204,7 +2860,9 @@ async fn every_listed_page_shows_a_crawler_and_nothing_else_does() {
         assert!(fresh.state.worlds.visitors(now()).is_empty(), "{method} {path} is not a visitor");
     }
     // A user agent that isn't on the list is ignored, whatever it fetches.
-    for agent in ["curl/8.5", "Mozilla/5.0 Chrome/126", "SomeUnknownBot/1.0", "", "Googlebo", "Goog1ebot"] {
+    for agent in
+        ["curl/8.5", "Mozilla/5.0 Chrome/126", "SomeUnknownBot/1.0", "", "Googlebo", "Goog1ebot"]
+    {
         server.get("/").ua(agent).send().await;
         server.get("/worlds").ua(agent).send().await;
     }
@@ -2239,7 +2897,10 @@ async fn a_frog_is_shown_for_five_minutes_after_its_last_visit() {
 /// What a browser sends when a page looks at The Commons, from an address of its own.
 fn page_headers(n: u32) -> HeaderMap {
     let mut headers = HeaderMap::new();
-    headers.insert("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140".parse().unwrap());
+    headers.insert(
+        "user-agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140".parse().unwrap(),
+    );
     headers.insert("sec-fetch-site", "same-origin".parse().unwrap());
     headers.insert("sec-fetch-mode", "cors".parse().unwrap());
     headers.insert("x-forwarded-for", format!("198.51.{}.{}", n / 250, n % 250).parse().unwrap());
@@ -2253,7 +2914,9 @@ const COMMONS_VIEW: &str = "/api/worlds/commons";
 async fn a_page_looking_at_the_commons_is_one_person_on_the_street_until_it_stops() {
     let server = Server::start().await;
     let t = 1_700_000_000;
-    let note = |n: u32, at: i64| worlds::note_request(&server.state, &Method::GET, COMMONS_VIEW, &page_headers(n), at);
+    let note = |n: u32, at: i64| {
+        worlds::note_request(&server.state, &Method::GET, COMMONS_VIEW, &page_headers(n), at)
+    };
     let people = |at: i64| server.state.worlds.people(at);
     note(1, t);
     assert_eq!(people(t).len(), 1);
@@ -2280,7 +2943,10 @@ async fn only_a_browser_page_on_the_commons_counts_as_a_person() {
     let t = 1_700_000_000;
     let tried = |headers: HeaderMap, method: Method, path: &str| {
         worlds::note_request(&server.state, &method, path, &headers, t);
-        assert!(server.state.worlds.people(t).is_empty(), "{method} {path} made a person from {headers:?}");
+        assert!(
+            server.state.worlds.people(t).is_empty(),
+            "{method} {path} made a person from {headers:?}"
+        );
     };
     // Anything that isn't the page's own look at The Commons.
     tried(page_headers(1), Method::GET, "/");
@@ -2310,14 +2976,21 @@ async fn someone_signed_in_shows_once_as_a_person_watching_or_as_their_own_playe
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let ann = server.person("Ann").await;
-    let session = server.state.db.create_session(&auth::hash_secret("ann-session"), &ann.id, now() + 3600, now());
+    let session = server.state.db.create_session(
+        &auth::hash_secret("ann-session"),
+        &ann.id,
+        now() + 3600,
+        now(),
+    );
     session.unwrap();
     let page = |cookie: &str| {
         let mut headers = page_headers(1);
         headers.insert("cookie", cookie.parse().unwrap());
         headers
     };
-    let note = |cookie: &str, at: i64| worlds::note_request(&server.state, &Method::GET, COMMONS_VIEW, &page(cookie), at);
+    let note = |cookie: &str, at: i64| {
+        worlds::note_request(&server.state, &Method::GET, COMMONS_VIEW, &page(cookie), at)
+    };
     let t = now();
     // Watching and signed in, with nothing built yet, they're a person like anyone.
     note("ah_session=ann-session", t);
@@ -2376,9 +3049,15 @@ async fn a_player_on_the_street_is_a_person_or_an_agent() {
     server.act(&guest.token, COMMONS, wave.clone()).await.ok();
     let claimed = server.guest().await;
     server.act(&claimed.token, COMMONS, wave.clone()).await.ok();
-    server.post("/api/players/claim", json!({ "claim_code": claimed.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": claimed.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     let view = server.fresh_view(COMMONS).await;
-    let mut kinds: Vec<&str> = view["players"].as_array().unwrap().iter().map(|row| row[5].as_str().unwrap()).collect();
+    let mut kinds: Vec<&str> =
+        view["players"].as_array().unwrap().iter().map(|row| row[5].as_str().unwrap()).collect();
     kinds.sort_unstable();
     // Ann, and two agents: claiming one doesn't make it a person.
     assert_eq!(kinds, ["agent", "agent", "person"]);
@@ -2393,7 +3072,12 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     let ip = "203.0.113.77";
     server.get("/").ua(&long).ip(ip).send().await;
     server.get("/world/secret-path-8842").ua(&long).ip(ip).send().await;
-    server.get("/").ua("Mozilla/5.0 (compatible; ChatGPT-User/1.0) secret-agent-text-7731").ip(ip).send().await;
+    server
+        .get("/")
+        .ua("Mozilla/5.0 (compatible; ChatGPT-User/1.0) secret-agent-text-7731")
+        .ip(ip)
+        .send()
+        .await;
     let view = server.fresh_view(COMMONS).await;
     let text = view.to_string();
     for secret in ["secret-agent-text-7731", "secret-path-8842", ip, "x".repeat(40).as_str()] {
@@ -2411,11 +3095,7 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     kinds.sort_unstable();
     kinds.dedup();
     assert_eq!(kinds, ["chatgpt-user", "googlebot"]);
-    let googlebot: i64 = rows
-        .iter()
-        .filter(|row| row.0 == "googlebot")
-        .map(|row| row.1)
-        .sum();
+    let googlebot: i64 = rows.iter().filter(|row| row.0 == "googlebot").map(|row| row.1).sum();
     assert_eq!(googlebot, 2, "two visits");
     for secret in ["secret", ip] {
         for row in &rows {
@@ -2457,7 +3137,11 @@ async fn sightings_are_counted_per_kind_per_day_and_written_at_most_once_a_minut
     for n in 1..5 {
         worlds::note_request(&server.state, &Method::GET, "/", &headers, t + n);
     }
-    assert_eq!(server.state.db.sightings_on(day).unwrap()[0].1, 1, "not written again within the minute");
+    assert_eq!(
+        server.state.db.sightings_on(day).unwrap()[0].1,
+        1,
+        "not written again within the minute"
+    );
     worlds::housekeeping(&server.state, t + 30);
     assert_eq!(server.state.db.sightings_on(day).unwrap()[0].1, 1);
     worlds::housekeeping(&server.state, t + 61);
@@ -2479,14 +3163,30 @@ async fn sightings_are_counted_per_kind_per_day_and_written_at_most_once_a_minut
 async fn a_crawler_gets_exactly_the_page_a_browser_gets() {
     let server = Server::start().await;
     server.view(COMMONS).await;
-    for path in ["/", "/llms.txt", "/agents.md", "/robots.txt", "/sitemap.xml", "/worlds", "/world/commons", "/api/worlds/commons", "/api/worlds", "/style.css", "/nowhere"] {
+    for path in [
+        "/",
+        "/llms.txt",
+        "/agents.md",
+        "/robots.txt",
+        "/sitemap.xml",
+        "/worlds",
+        "/world/commons",
+        "/api/worlds/commons",
+        "/api/worlds",
+        "/style.css",
+        "/nowhere",
+    ] {
         let browser = server.get(path).ua(CHROME).send().await;
         for agent in [GOOGLEBOT, GPTBOT, CHATGPT_USER, GEMINI, "curl/8.5"] {
             let other = server.get(path).ua(agent).send().await;
             assert_eq!(other.status, browser.status, "{path} for {agent}");
             assert_eq!(other.text, browser.text, "{path} for {agent}");
             for header in ["content-type", "cache-control", "content-security-policy", "etag"] {
-                assert_eq!(other.headers.get(header), browser.headers.get(header), "{path} {header} for {agent}");
+                assert_eq!(
+                    other.headers.get(header),
+                    browser.headers.get(header),
+                    "{path} {header} for {agent}"
+                );
             }
             assert_eq!(other.headers.len(), browser.headers.len(), "{path} for {agent}");
         }
@@ -2499,7 +3199,14 @@ async fn a_crawler_gets_exactly_the_page_a_browser_gets() {
     assert_eq!(as_bot, as_browser);
     // MCP and the join route answer an agent the same way whatever it says it is.
     let one = server.rpc("tools/list", json!({})).await;
-    let two = server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} })).ua(GPTBOT).send().await;
+    let two = server
+        .post(
+            "/public/mcp",
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {} }),
+        )
+        .ua(GPTBOT)
+        .send()
+        .await;
     assert_eq!(one.text, two.text);
 }
 
@@ -2517,18 +3224,31 @@ async fn an_agent_working_for_someone_is_a_visitor_with_a_generated_name() {
     assert_eq!(visitors[0][0], world::visitor_name(n));
     let roads = world::Roads::from_tiles(&server.tiles(COMMONS));
     let (x, y) = world::visitor_position(n, view["step"].as_u64().unwrap(), &roads).unwrap();
-    assert_eq!((visitors[0][1].as_u64(), visitors[0][2].as_u64()), (Some(u64::from(x)), Some(u64::from(y))));
-    assert!(Map::from_view(&view).roads().contains(&(i64::from(x), i64::from(y))), "it wanders the roads");
+    assert_eq!(
+        (visitors[0][1].as_u64(), visitors[0][2].as_u64()),
+        (Some(u64::from(x)), Some(u64::from(y)))
+    );
+    assert!(
+        Map::from_view(&view).roads().contains(&(i64::from(x), i64::from(y))),
+        "it wanders the roads"
+    );
     // It is not a frog, not a player, and nothing it does is anything: no moves.
     assert_eq!(view["crawlers"], json!([]));
     assert_eq!(view["players"], json!([]));
     assert_eq!(view["places"], 0, "nothing was put up");
-    assert_eq!(view["tiles"].as_array().unwrap().len(), the_highway().len(), "the map is as it was");
+    assert_eq!(
+        view["tiles"].as_array().unwrap().len(),
+        the_highway().len(),
+        "the map is as it was"
+    );
     // A crawler is not a visitor.
     server.get("/").ua(GOOGLEBOT).ip("203.0.113.21").send().await;
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     // The visitor has no way to move: it has no token and the routes need one.
-    assert_eq!(server.act("", COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.act("", COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 // W41
@@ -2539,7 +3259,12 @@ async fn whatever_fetches_llms_agents_or_the_public_mcp_endpoint_is_a_visitor() 
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     server.get("/agents.md").ua("python-requests/2.31").ip("203.0.113.31").send().await;
     assert_eq!(server.state.worlds.visitors(now()).len(), 2);
-    server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).ua("MyOwnAgent/0.1").ip("203.0.113.32").send().await;
+    server
+        .post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+        .ua("MyOwnAgent/0.1")
+        .ip("203.0.113.32")
+        .send()
+        .await;
     assert_eq!(server.state.worlds.visitors(now()).len(), 3);
     // Even one calling itself a crawler: it's reading what only agents read.
     server.get("/llms.txt").ua(GOOGLEBOT).ip("203.0.113.33").send().await;
@@ -2561,7 +3286,12 @@ async fn one_agent_making_many_calls_is_one_visitor_for_ten_minutes() {
     let server = Server::start().await;
     for _ in 0..20 {
         server.get("/llms.txt").ua("curl/8.5").ip("203.0.113.40").send().await;
-        server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).ua("curl/8.5").ip("203.0.113.40").send().await;
+        server
+            .post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+            .ua("curl/8.5")
+            .ip("203.0.113.40")
+            .send()
+            .await;
     }
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     // Another address is another visitor. Another kind of agent from the same address is not,
@@ -2607,7 +3337,11 @@ async fn visitors_stay_ten_minutes_at_most_thirty_show_and_the_oldest_leave_firs
     assert!(!shown.contains(&first), "the oldest left first");
     // The 30 that are left are the last 30 to come.
     note(200, t + 2);
-    assert_eq!(server.state.worlds.visitors(t + 2), shown, "an agent that is already there doesn't change the list");
+    assert_eq!(
+        server.state.worlds.visitors(t + 2),
+        shown,
+        "an agent that is already there doesn't change the list"
+    );
     note(201, t + 2);
     let after = server.state.worlds.visitors(t + 2);
     assert_eq!(after.len(), 30);
@@ -2637,7 +3371,9 @@ async fn a_view_shows_at_most_thirty_visitors_and_the_page_is_the_same_for_all()
     assert_eq!(view["visitors"].as_array().unwrap().len(), 30);
     // The guide invites any agent to join and get a name of its own.
     let guide = server.get("/agents.md").ua(CHROME).send().await.text;
-    assert!(guide.contains("join") && guide.contains("no sign-up") && guide.contains("/public/mcp"));
+    assert!(
+        guide.contains("join") && guide.contains("no sign-up") && guide.contains("/public/mcp")
+    );
     let llms = server.get("/llms.txt").ua(CHROME).send().await.text;
     assert!(llms.contains("join") && llms.contains("/public/mcp"));
     assert_eq!(server.get("/agents.md").ua(GEMINI).send().await.text, guide);
@@ -2653,7 +3389,11 @@ async fn frogs_and_visitors_are_in_memory_only() {
     assert_eq!(server.state.worlds.visitors(now()).len(), 1);
     // A new process, on the same database, starts with an empty street: only the daily count was kept.
     let day = worlds::today(now());
-    let db_file = std::env::temp_dir().join(format!("agenthangout-street-{}-{}.db", std::process::id(), now()));
+    let db_file = std::env::temp_dir().join(format!(
+        "agenthangout-street-{}-{}.db",
+        std::process::id(),
+        now()
+    ));
     let path = db_file.to_str().unwrap().to_string();
     {
         let first = Server::boot(Db::open(&path).unwrap(), None, None).await;
@@ -2690,14 +3430,26 @@ async fn the_public_mcp_endpoint_needs_no_token_to_connect() {
     let tools = server.rpc("tools/list", json!({})).await;
     assert_eq!(tools.body["result"]["tools"].as_array().unwrap().len(), 7);
     // A notification has no reply; a bad request is an error; GET isn't allowed.
-    let note = server.req(Method::POST, "/public/mcp").json(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).send().await;
+    let note = server
+        .req(Method::POST, "/public/mcp")
+        .json(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
+        .send()
+        .await;
     assert_eq!(note.status, StatusCode::ACCEPTED);
     assert_eq!(server.rpc("nothing/here", json!({})).await.body["error"]["code"], -32601);
     assert_eq!(server.get("/public/mcp").send().await.status, StatusCode::METHOD_NOT_ALLOWED);
     // A page on another site can't use a visitor's browser to reach it.
-    let cross = server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).header("origin", "https://evil.example").send().await;
+    let cross = server
+        .post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+        .header("origin", "https://evil.example")
+        .send()
+        .await;
     assert_eq!(cross.status, StatusCode::FORBIDDEN);
-    let same = server.post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })).header("origin", &server.base).send().await;
+    let same = server
+        .post("/public/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+        .header("origin", &server.base)
+        .send()
+        .await;
     assert_eq!(same.status, StatusCode::OK);
 }
 
@@ -2723,7 +3475,9 @@ async fn the_player_token_is_an_argument_and_a_bearer_header_works_too() {
     assert!(reply.body["result"]["isError"].is_null(), "{}", reply.text);
     assert_eq!(reply.body["result"]["structuredContent"]["moves_left"], 29);
     // A wrong token, a missing one, and a private one are all the same refusal.
-    for args in [json!({ "player_token": "ah_guest_nothing" }), json!({}), json!({ "player_token": "" })] {
+    for args in
+        [json!({ "player_token": "ah_guest_nothing" }), json!({}), json!({ "player_token": "" })]
+    {
         let message = server.tool_refused("how_am_i_doing", args).await;
         assert!(message.contains("player_token"), "{message}");
     }
@@ -2738,7 +3492,10 @@ async fn an_agent_plays_through_the_public_endpoint_from_join_to_a_road() {
 
     // It reads the tools, joins, and looks.
     let listed = server.rpc("tools/list", json!({})).await;
-    assert!(listed.body["result"]["tools"][0]["description"].as_str().unwrap().contains("30 moves"));
+    assert!(listed.body["result"]["tools"][0]["description"]
+        .as_str()
+        .unwrap()
+        .contains("30 moves"));
     let joined = server.tool("join", json!({})).await;
     let token = joined["player_token"].as_str().unwrap().to_string();
     let name = joined["name"].as_str().unwrap().to_string();
@@ -2756,22 +3513,34 @@ async fn an_agent_plays_through_the_public_endpoint_from_join_to_a_road() {
     let map = Map::from_db(&server, COMMONS);
     let (first, last) = map.line_from_road(3).unwrap();
     let road = server.tool("build", json!({ "player_token": token, "type": "road", "x": last.0, "y": last.1, "x2": first.0, "y2": first.1 })).await;
-    assert_eq!((road["ok"].clone(), road["changed"].clone(), road["moves_left"].clone()), (json!(true), json!(3), json!(27)));
+    assert_eq!(
+        (road["ok"].clone(), road["changed"].clone(), road["moves_left"].clone()),
+        (json!(true), json!(3), json!(27))
+    );
     // A road is all an agent can build: a place is for a person, and a zone is gone.
     for what in ["house", "cafe", "homes", "shops", "workshops", "park"] {
-        server.tool_refused("build", json!({ "player_token": token, "type": what, "x": first.0, "y": first.1 })).await;
+        server
+            .tool_refused(
+                "build",
+                json!({ "player_token": token, "type": what, "x": first.0, "y": first.1 }),
+            )
+            .await;
     }
     let walked = server.tool("walk", json!({ "player_token": token, "x": 65, "y": 64 })).await;
     assert_eq!(walked["cost"], 1);
     server.tool("emote", json!({ "player_token": token, "emote": "cheer" })).await;
-    let clear = server.tool("bulldoze", json!({ "player_token": token, "x": last.0, "y": last.1 })).await;
+    let clear =
+        server.tool("bulldoze", json!({ "player_token": token, "x": last.0, "y": last.1 })).await;
     assert_eq!(clear["cost"], 1);
 
     // How is it doing?
     let how = server.tool("how_am_i_doing", json!({ "player_token": token })).await;
     assert_eq!(how["player"]["name"], name);
     assert_eq!(how["player"]["x"], 65);
-    assert_eq!(how["player"]["emote"], "cheer", "the emote came after the walk, so it is still showing");
+    assert_eq!(
+        how["player"]["emote"], "cheer",
+        "the emote came after the walk, so it is still showing"
+    );
     assert!(how["built"]["road"].as_i64().unwrap() >= 2);
     assert_eq!(how["kind"], "guest");
     assert!(how["world"]["population"].is_null() && how["world"]["jobs"].is_null());
@@ -2785,8 +3554,13 @@ async fn an_agent_plays_through_the_public_endpoint_from_join_to_a_road() {
     assert_eq!(server.tiles(COMMONS), before, "no growth");
     // The sums in a look come from the same one-second view everyone shares.
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    let after = server.tool("look", json!({ "player_token": token, "x": 64, "y": 64, "w": 32, "h": 32 })).await;
-    assert!(after["built"].as_array().unwrap().iter().all(|tile| tile[3].as_i64().unwrap() == 0), "nothing grew");
+    let after = server
+        .tool("look", json!({ "player_token": token, "x": 64, "y": 64, "w": 32, "h": 32 }))
+        .await;
+    assert!(
+        after["built"].as_array().unwrap().iter().all(|tile| tile[3].as_i64().unwrap() == 0),
+        "nothing grew"
+    );
     assert!(after["world"]["step"].as_i64().unwrap() >= 300);
     let doing = server.tool("how_am_i_doing", json!({ "player_token": token })).await;
     assert!(doing["world"]["roads"].as_i64().unwrap() > 0);
@@ -2810,7 +3584,9 @@ async fn the_agent_endpoints_agree_with_the_http_routes() {
     for _ in 0..27 {
         server.tool("emote", json!({ "player_token": guest.token, "emote": "think" })).await;
     }
-    let message = server.tool_refused("emote", json!({ "player_token": guest.token, "emote": "think" })).await;
+    let message = server
+        .tool_refused("emote", json!({ "player_token": guest.token, "emote": "think" }))
+        .await;
     assert!(message.contains("0 left") || message.contains("midnight"), "{message}");
 }
 
@@ -2835,9 +3611,17 @@ async fn a_person_signed_in_plays_as_themself_with_300_moves_and_no_join() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     // The first time they act, a player is made for them.
-    assert!(server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"].as_array().unwrap().is_empty());
+    assert!(server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     let house = place("house", building_spots(&Map::from_db(&server, COMMONS), 1)[0]);
-    let reply = server.post(&format!("/api/worlds/{COMMONS}/act"), house).cookie(&ann.cookie).send().await.ok();
+    let reply = server
+        .post(&format!("/api/worlds/{COMMONS}/act"), house)
+        .cookie(&ann.cookie)
+        .send()
+        .await
+        .ok();
     assert_eq!(reply["moves_left"], 299);
     let mine = server.get("/api/players/mine").cookie(&ann.cookie).send().await.ok();
     assert_eq!(mine["players"].as_array().unwrap().len(), 1);
@@ -2845,14 +3629,36 @@ async fn a_person_signed_in_plays_as_themself_with_300_moves_and_no_join() {
     assert_eq!(mine["players"][0]["moves_per_day"], 300);
     // The same player by owner key, and it doesn't make a second.
     server.act(&ann.key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
-    assert_eq!(server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        server.get("/api/players/mine").token(&ann.key).send().await.ok()["players"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(server.me(&ann.key, COMMONS).await["moves_left"], 298);
     // A person who is signed in doesn't join. It would only make a guest, so it says to just build.
     let reply = server.post("/api/public/join", json!({})).token(&ann.key).send().await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
     // Without anything, or with something nobody knows, the routes say 401.
-    assert_eq!(server.post(&format!("/api/worlds/{COMMONS}/act"), json!({ "action": "emote", "emote": "wave" })).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.act("ah_sess_nothing", COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server
+            .post(
+                &format!("/api/worlds/{COMMONS}/act"),
+                json!({ "action": "emote", "emote": "wave" })
+            )
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .act("ah_sess_nothing", COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 // W6
@@ -2867,34 +3673,62 @@ async fn a_walk_goes_to_any_tile_that_is_not_water_up_to_sixteen_away() {
     let dry = |x: i64, y: i64| land_at(x, y) != 'w';
     let east = (cx + 16, cy);
     let far = (cx + 17, cy);
-    assert!(server.act(&guest.token, COMMONS, json!({ "action": "walk", "x": far.0, "y": far.1 })).await.status.is_client_error());
-    assert!(server.act(&guest.token, COMMONS, json!({ "action": "walk", "x": cx, "y": cy })).await.status.is_client_error(), "already there");
+    assert!(server
+        .act(&guest.token, COMMONS, json!({ "action": "walk", "x": far.0, "y": far.1 }))
+        .await
+        .status
+        .is_client_error());
+    assert!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "walk", "x": cx, "y": cy }))
+            .await
+            .status
+            .is_client_error(),
+        "already there"
+    );
     if dry(east.0, east.1) {
-        server.act(&guest.token, COMMONS, json!({ "action": "walk", "x": east.0, "y": east.1 })).await.ok();
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "walk", "x": east.0, "y": east.1 }))
+            .await
+            .ok();
         assert_eq!(server.me(&guest.token, COMMONS).await["player"]["x"], 64 + 16);
         // And 16 from where it stands now, not from the middle.
-        let back = server.act(&guest.token, COMMONS, json!({ "action": "walk", "x": cx - 1, "y": cy })).await;
+        let back = server
+            .act(&guest.token, COMMONS, json!({ "action": "walk", "x": cx - 1, "y": cy }))
+            .await;
         assert!(back.status.is_client_error(), "{}", back.show());
     }
     // Diagonal counts as the larger of the two.
     let diagonal = (cx + 16, cy + 16);
     if dry(diagonal.0, diagonal.1) && dry(cx - 16, cy - 16) {
         let guest2 = server.guest().await;
-        server.act(&guest2.token, COMMONS, json!({ "action": "walk", "x": diagonal.0, "y": diagonal.1 })).await.ok();
+        server
+            .act(
+                &guest2.token,
+                COMMONS,
+                json!({ "action": "walk", "x": diagonal.0, "y": diagonal.1 }),
+            )
+            .await
+            .ok();
     }
     // Hills and forest can be walked on; water can't.
     let water = map.find('w').unwrap();
     let near_water = (cx, cy);
     let _ = near_water;
     let guest3 = server.guest().await;
-    let reply = server.act(&guest3.token, COMMONS, json!({ "action": "walk", "x": water.0, "y": water.1 })).await;
+    let reply = server
+        .act(&guest3.token, COMMONS, json!({ "action": "walk", "x": water.0, "y": water.1 }))
+        .await;
     assert!(reply.status.is_client_error());
     // A walk ends an emote.
     let guest4 = server.guest().await;
     server.act(&guest4.token, COMMONS, json!({ "action": "emote", "emote": "sleep" })).await.ok();
     assert_eq!(server.me(&guest4.token, COMMONS).await["player"]["emote"], "sleep");
     if dry(cx + 1, cy) {
-        server.act(&guest4.token, COMMONS, json!({ "action": "walk", "x": cx + 1, "y": cy })).await.ok();
+        server
+            .act(&guest4.token, COMMONS, json!({ "action": "walk", "x": cx + 1, "y": cy }))
+            .await
+            .ok();
         assert_eq!(server.me(&guest4.token, COMMONS).await["player"]["emote"], Value::Null);
     }
 }
@@ -2912,7 +3746,10 @@ async fn a_guest_stands_only_in_the_commons_and_a_frozen_world_takes_nobody() {
     assert_eq!(server.moves_left(&guest.token).await, 30, "a refused move costs nothing");
     // A player stands in the middle of The Commons until they walk, and is listed only there.
     assert_eq!(server.me(&guest.token, COMMONS).await["player"]["x"], 64);
-    assert!(server.fresh_view(&world).await["players"].as_array().unwrap().is_empty(), "nobody joined it");
+    assert!(
+        server.fresh_view(&world).await["players"].as_array().unwrap().is_empty(),
+        "nobody joined it"
+    );
     assert_eq!(server.view(COMMONS).await["players"].as_array().unwrap().len(), 1, "joined there");
     // The allowance is the player's, and moves in The Commons are all that spend it.
     let (first, last) = Map::from_db(&server, COMMONS).line_from_road(2).unwrap();
@@ -2940,7 +3777,20 @@ async fn the_list_is_the_busiest_worlds_with_the_documented_shape() {
     assert_eq!(cards[0]["players_active"], 2);
     for card in cards {
         let keys: HashSet<&str> = card.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, HashSet::from(["id", "name", "kind", "open", "places", "roads", "stage", "players_active"]), "{card}");
+        assert_eq!(
+            keys,
+            HashSet::from([
+                "id",
+                "name",
+                "kind",
+                "open",
+                "places",
+                "roads",
+                "stage",
+                "players_active"
+            ]),
+            "{card}"
+        );
     }
     let card_of = |id: &str| cards.iter().find(|card| card["id"] == id).unwrap();
     assert_eq!(card_of(&quiet)["players_active"], 0, "nobody moves in a frozen world");
@@ -2965,38 +3815,109 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners"])
+        HashSet::from([
+            "id",
+            "name",
+            "kind",
+            "open",
+            "size",
+            "seed",
+            "step",
+            "land",
+            "tiles",
+            "players",
+            "places",
+            "roads",
+            "stage",
+            "updated_at",
+            "crawlers",
+            "visitors",
+            "people",
+            "bots_out",
+            "owners"
+        ])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];
     assert!(tile[0].is_u64() && tile[1].is_u64() && tile[2].is_string() && tile[3].is_u64());
     let player = &view["players"][0];
-    assert!(player[0].is_i64() && player[1].is_string() && player[2].is_u64() && player[3].is_u64());
+    assert!(
+        player[0].is_i64() && player[1].is_string() && player[2].is_u64() && player[3].is_u64()
+    );
     assert_eq!(player[4], "cheer");
     assert_eq!(player[5], "agent");
     let frog = &view["crawlers"][0];
-    assert!(frog[0].is_string() && frog[1].is_string() && frog[2].is_u64() && frog[3].is_u64() && frog[4].is_i64());
+    assert!(
+        frog[0].is_string()
+            && frog[1].is_string()
+            && frog[2].is_u64()
+            && frog[3].is_u64()
+            && frog[4].is_i64()
+    );
     let visitor = &view["visitors"][0];
     assert!(visitor[0].is_string() && visitor[1].is_u64() && visitor[2].is_u64());
     // Tiles go row by row from the north, so a page can draw them in order.
-    let tiles: Vec<(i64, i64)> = view["tiles"].as_array().unwrap().iter().map(|tile| (tile[1].as_i64().unwrap(), tile[0].as_i64().unwrap())).collect();
+    let tiles: Vec<(i64, i64)> = view["tiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tile| (tile[1].as_i64().unwrap(), tile[0].as_i64().unwrap()))
+        .collect();
     let mut sorted = tiles.clone();
     sorted.sort();
     assert_eq!(tiles, sorted);
     // The land is the run-length rows: a count then a letter.
-    assert_eq!(world::decode_land(&view["land"].as_array().unwrap().iter().map(|row| row.as_str().unwrap().to_string()).collect::<Vec<_>>()).unwrap().size(), 128);
+    assert_eq!(
+        world::decode_land(
+            &view["land"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row.as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        )
+        .unwrap()
+        .size(),
+        128
+    );
 }
 
 // W2, W9
 #[tokio::test]
-async fn a_player_token_in_a_header_is_refused_for_a_world_it_is_not_valid_in_and_for_other_routes() {
+async fn a_player_token_in_a_header_is_refused_for_a_world_it_is_not_valid_in_and_for_other_routes()
+{
     let server = Server::start().await;
     let guest = server.guest().await;
-    assert_eq!(server.get("/api/worlds/nowhere/me").token(&guest.token).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.act(&guest.token, "nowhere", json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.post("/api/worlds/nowhere/act", json!({ "action": "zzz-secret" })).token(&guest.token).send().await.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        server.get("/api/worlds/nowhere/me").token(&guest.token).send().await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .act(&guest.token, "nowhere", json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server
+            .post("/api/worlds/nowhere/act", json!({ "action": "zzz-secret" }))
+            .token(&guest.token)
+            .send()
+            .await
+            .status,
+        StatusCode::BAD_REQUEST
+    );
     // 401 comes before anything about the body.
-    assert_eq!(server.req(Method::POST, "/api/worlds/commons/act").raw("text/plain", b"x").send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server
+            .req(Method::POST, "/api/worlds/commons/act")
+            .raw("text/plain", b"x")
+            .send()
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -3019,9 +3940,11 @@ async fn ids_in_paths_that_are_not_ids_are_not_echoed() {
         "/api/worlds/commons/players/%FFzzz-secret/remove",
     ] {
         for method in [Method::GET, Method::POST] {
-            let reply = server.req(method.clone(), path).token(&guest.token).json(json!({})).send().await;
+            let reply =
+                server.req(method.clone(), path).token(&guest.token).json(json!({})).send().await;
             assert!(!reply.text.contains("zzz-secret"), "{method} {path}: {}", reply.show());
-            let reply = server.req(method.clone(), path).token(&ann.key).json(json!({})).send().await;
+            let reply =
+                server.req(method.clone(), path).token(&ann.key).json(json!({})).send().await;
             assert!(!reply.text.contains("zzz-secret"), "{method} {path}: {}", reply.show());
         }
     }
@@ -3067,7 +3990,12 @@ async fn players_racing_for_one_tile_give_it_to_exactly_one_of_them() {
     paid.sort();
     assert_eq!(paid, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
     // The highway has no builder; the one road tile a player made has exactly one.
-    let owners: HashSet<_> = server.tiles(COMMONS).values().filter(|tile| tile.kind == Kind::Road && tile.player.is_some()).map(|tile| tile.player).collect();
+    let owners: HashSet<_> = server
+        .tiles(COMMONS)
+        .values()
+        .filter(|tile| tile.kind == Kind::Road && tile.player.is_some())
+        .map(|tile| tile.player)
+        .collect();
     assert_eq!(owners.len(), 1);
 }
 
@@ -3110,7 +4038,12 @@ async fn guests_nobody_came_back_for_are_cleared_out_after_a_month_and_what_they
     let lost = server.guest().await;
     let kept = server.guest().await;
     let bystander = server.guest().await;
-    server.post("/api/players/claim", json!({ "claim_code": kept.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": kept.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     let map = Map::from_db(&server, COMMONS);
     let (first, last) = map.line_from_road(2).unwrap();
     server.act(&lost.token, COMMONS, road_move(first, last)).await.ok();
@@ -3131,11 +4064,19 @@ async fn guests_nobody_came_back_for_are_cleared_out_after_a_month_and_what_they
     assert!(server.state.db.player(lost_id).unwrap().is_none(), "never came back, cleared out");
     assert!(server.state.db.player(kept_id).unwrap().is_some(), "claimed ones stay");
     assert!(server.state.db.player(own.id).unwrap().is_some(), "and a person's own");
-    assert_eq!(server.get("/api/worlds/commons/me").token(&lost.token).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&lost.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     assert!(server.state.db.player(bystander_id).unwrap().is_some(), "seen just now, so it stays");
     // What they built is still there, and now reads as left behind: anyone can clear it.
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(lost_id as u64)).count(), 2);
-    let cleared = server.act(&bystander.token, COMMONS, json!({ "action": "bulldoze", "x": first.0, "y": first.1 })).await;
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player == Some(lost_id as u64)).count(),
+        2
+    );
+    let cleared = server
+        .act(&bystander.token, COMMONS, json!({ "action": "bulldoze", "x": first.0, "y": first.1 }))
+        .await;
     assert_eq!(cleared.status, StatusCode::OK, "{}", cleared.show());
 }
 
@@ -3143,10 +4084,17 @@ async fn guests_nobody_came_back_for_are_cleared_out_after_a_month_and_what_they
 #[tokio::test]
 async fn a_removed_bot_player_cannot_join_again_and_a_barred_player_cannot_use_the_link() {
     let (server, keeper) = Server::start_with_keeper().await;
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let key = room["owner_key"].as_str().unwrap().to_string();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(&key)
         .send()
         .await
@@ -3156,8 +4104,16 @@ async fn a_removed_bot_player_cannot_join_again_and_a_barred_player_cannot_use_t
     let token = joined["player_token"].as_str().unwrap().to_string();
     server.act(&token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     let id = server.player_id(&token).await;
-    server.post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({})).token(&keeper.key).send().await.ok();
-    assert_eq!(server.get("/api/worlds/commons/me").token(&token).send().await.status, StatusCode::UNAUTHORIZED);
+    server
+        .post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({}))
+        .token(&keeper.key)
+        .send()
+        .await
+        .ok();
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     let again = server.post("/api/public/join", json!({})).token(&bot_token).send().await;
     assert_eq!(again.status, StatusCode::FORBIDDEN, "{}", again.show());
     assert!(!again.text.contains("player_token"));
@@ -3165,8 +4121,16 @@ async fn a_removed_bot_player_cannot_join_again_and_a_barred_player_cannot_use_t
     let bo_id = room["person"]["id"].as_str().unwrap().to_string();
     server.act(&key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
     let own = server.state.db.own_player(&bo_id, now()).unwrap();
-    server.post(&format!("/api/worlds/{COMMONS}/players/{}/remove", own.id), json!({})).token(&keeper.key).send().await.ok();
-    assert_eq!(server.act(&key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::FORBIDDEN);
+    server
+        .post(&format!("/api/worlds/{COMMONS}/players/{}/remove", own.id), json!({}))
+        .token(&keeper.key)
+        .send()
+        .await
+        .ok();
+    assert_eq!(
+        server.act(&key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status,
+        StatusCode::FORBIDDEN
+    );
 
     // In a world of someone's own, frozen with what the guest built there: barred, and the link
     // doesn't let them back.
@@ -3176,11 +4140,26 @@ async fn a_removed_bot_player_cannot_join_again_and_a_barred_player_cannot_use_t
     let guest_id = server.player_id(&guest.token).await;
     let (first, last) = Map::from_db(&server, &world).line_from_road(2).unwrap();
     server.built_by(&world, guest_id, &[first, last]);
-    let removed = server.post(&format!("/api/worlds/{world}/players/{guest_id}/remove"), json!({})).token(&ann.key).send().await.ok();
+    let removed = server
+        .post(&format!("/api/worlds/{world}/players/{guest_id}/remove"), json!({}))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     assert_eq!(removed["tiles_removed"], 2);
-    let back = server.post(&format!("/api/worlds/join/{code}"), json!({})).token(&guest.token).send().await;
+    let back = server
+        .post(&format!("/api/worlds/join/{code}"), json!({}))
+        .token(&guest.token)
+        .send()
+        .await;
     assert_eq!(back.status, StatusCode::FORBIDDEN, "{}", back.show());
-    assert_eq!(server.act(&guest.token, &world, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server
+            .act(&guest.token, &world, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
 }
 
 // W3
@@ -3192,7 +4171,12 @@ async fn the_person_who_claimed_a_player_can_end_it_and_what_it_built_stays() {
     let guest = server.guest().await;
     let other = server.guest().await;
     for claimed in [&guest, &other] {
-        server.post("/api/players/claim", json!({ "claim_code": claimed.claim })).token(&ann.key).send().await.ok();
+        server
+            .post("/api/players/claim", json!({ "claim_code": claimed.claim }))
+            .token(&ann.key)
+            .send()
+            .await
+            .ok();
     }
     let (first, last) = Map::from_db(&server, COMMONS).line_from_road(3).unwrap();
     server.act(&guest.token, COMMONS, road_move(first, last)).await.ok();
@@ -3202,36 +4186,85 @@ async fn the_person_who_claimed_a_player_can_end_it_and_what_it_built_stays() {
     let path = format!("/api/players/{id}");
 
     // Only the person who claimed it: nobody, a guest, another person and a bot are all refused.
-    let room = server.post("/api/hangouts", json!({ "name": "Crew" })).token(&ann.key).send().await.ok();
+    let room =
+        server.post("/api/hangouts", json!({ "name": "Crew" })).token(&ann.key).send().await.ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(&ann.key)
         .send()
         .await
         .ok();
     assert_eq!(server.req(Method::DELETE, &path).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.req(Method::DELETE, &path).token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.req(Method::DELETE, &path).token(&bo.key).send().await.status, StatusCode::NOT_FOUND);
-    assert_eq!(server.req(Method::DELETE, &path).token(bot["token"].as_str().unwrap()).send().await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        server.req(Method::DELETE, &path).token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.req(Method::DELETE, &path).token(&bo.key).send().await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        server.req(Method::DELETE, &path).token(bot["token"].as_str().unwrap()).send().await.status,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(server.me(&guest.token, COMMONS).await["moves_left"], 197, "nothing was ended");
 
     let ended = server.req(Method::DELETE, &path).token(&ann.key).send().await.ok();
     assert_eq!(ended["ok"], true);
     // Its token stops everywhere, and it can't be claimed again or listed.
-    assert_eq!(server.get("/api/worlds/commons/me").token(&guest.token).send().await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
-    assert_eq!(server.call("how_am_i_doing", json!({ "player_token": guest.token })).await["isError"], true);
-    assert_eq!(server.post("/api/players/claim", json!({ "claim_code": guest.claim })).token(&bo.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&guest.token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server
+            .act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" }))
+            .await
+            .status,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        server.call("how_am_i_doing", json!({ "player_token": guest.token })).await["isError"],
+        true
+    );
+    assert_eq!(
+        server
+            .post("/api/players/claim", json!({ "claim_code": guest.claim }))
+            .token(&bo.key)
+            .send()
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
     let mine = server.get("/api/players/mine").token(&ann.key).send().await.ok();
-    let listed: Vec<i64> = mine["players"].as_array().unwrap().iter().map(|player| player["id"].as_i64().unwrap()).collect();
+    let listed: Vec<i64> = mine["players"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|player| player["id"].as_i64().unwrap())
+        .collect();
     assert_eq!(listed, [other_id]);
     // It has left the street, but what it built has not left: three road tiles with its number on.
     let view = server.fresh_view(COMMONS).await;
-    let on_street: Vec<i64> = view["players"].as_array().unwrap().iter().map(|player| player[0].as_i64().unwrap()).collect();
+    let on_street: Vec<i64> = view["players"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|player| player[0].as_i64().unwrap())
+        .collect();
     assert_eq!(on_street, [other_id]);
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(), 3);
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        3
+    );
     // Ending it twice, or ending someone else's, finds nothing. The other one is untouched.
-    assert_eq!(server.req(Method::DELETE, &path).token(&ann.key).send().await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.req(Method::DELETE, &path).token(&ann.key).send().await.status,
+        StatusCode::NOT_FOUND
+    );
     assert_eq!(server.me(&other.token, COMMONS).await["moves_left"], 199);
 }
 
@@ -3241,21 +4274,34 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     server.act(&ann.key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
-    let room = server.post("/api/hangouts", json!({ "name": "Crew" })).token(&ann.key).send().await.ok();
+    let room =
+        server.post("/api/hangouts", json!({ "name": "Crew" })).token(&ann.key).send().await.ok();
     let bot = server
-        .post(&format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()), json!({ "name": "Scout" }))
+        .post(
+            &format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap()),
+            json!({ "name": "Scout" }),
+        )
         .token(&ann.key)
         .send()
         .await
         .ok();
-    let token = server.post("/api/public/join", json!({})).token(bot["token"].as_str().unwrap()).send().await.ok()["player_token"]
+    let token = server
+        .post("/api/public/join", json!({}))
+        .token(bot["token"].as_str().unwrap())
+        .send()
+        .await
+        .ok()["player_token"]
         .as_str()
         .unwrap()
         .to_string();
     let mine = server.get("/api/players/mine").token(&ann.key).send().await.ok();
     assert_eq!(mine["players"].as_array().unwrap().len(), 2);
     for player in mine["players"].as_array().unwrap() {
-        let reply = server.req(Method::DELETE, &format!("/api/players/{}", player["id"])).token(&ann.key).send().await;
+        let reply = server
+            .req(Method::DELETE, &format!("/api/players/{}", player["id"]))
+            .token(&ann.key)
+            .send()
+            .await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}: {}", player["kind"], reply.show());
     }
     // Both still play.
@@ -3263,7 +4309,8 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
     assert_eq!(server.me(&token, COMMONS).await["moves_left"], 200);
     // Ids that are not ids are just as much nothing, and nothing is echoed.
     for id in ["0", "-1", "zzz-secret", "9223372036854775808"] {
-        let reply = server.req(Method::DELETE, &format!("/api/players/{id}")).token(&ann.key).send().await;
+        let reply =
+            server.req(Method::DELETE, &format!("/api/players/{id}")).token(&ann.key).send().await;
         assert_eq!(reply.status, StatusCode::NOT_FOUND, "{id}: {}", reply.show());
         assert!(!reply.text.contains("zzz-secret"));
     }
@@ -3273,13 +4320,25 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
 #[tokio::test]
 async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it_built_stays() {
     let server = Server::start().await;
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let key = room["owner_key"].as_str().unwrap().to_string();
     let hangout = room["hangout"]["id"].as_str().unwrap().to_string();
     let mut bots = Vec::new();
     for name in ["Scout", "Rover"] {
-        let made = server.post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": name })).token(&key).send().await.ok();
-        bots.push((made["token"].as_str().unwrap().to_string(), made["agent"]["id"].as_str().unwrap().to_string()));
+        let made = server
+            .post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": name }))
+            .token(&key)
+            .send()
+            .await
+            .ok();
+        bots.push((
+            made["token"].as_str().unwrap().to_string(),
+            made["agent"]["id"].as_str().unwrap().to_string(),
+        ));
     }
     // The owner plays as themself too, which is a player with no token: the bots' must not clash.
     server.act(&key, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
@@ -3287,7 +4346,8 @@ async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it
     let mut players = Vec::new();
     for (bot_token, _) in &bots {
         let joined = server.post("/api/public/join", json!({})).token(bot_token).send().await.ok();
-        players.push((joined["player_token"].as_str().unwrap().to_string(), joined["name"].clone()));
+        players
+            .push((joined["player_token"].as_str().unwrap().to_string(), joined["name"].clone()));
     }
     server.act(&players[0].0, COMMONS, road_move(first, last)).await.ok();
     let id = server.player_id(&players[0].0).await;
@@ -3295,61 +4355,135 @@ async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it
     // Both are replaced. The old player tokens stop at once, and the owner's own player is as it was.
     let mut fresh = Vec::new();
     for (_, agent) in &bots {
-        let rotated = server.post(&format!("/api/agents/{agent}/rotate"), json!({})).token(&key).send().await.ok();
+        let rotated = server
+            .post(&format!("/api/agents/{agent}/rotate"), json!({}))
+            .token(&key)
+            .send()
+            .await
+            .ok();
         fresh.push(rotated["token"].as_str().unwrap().to_string());
     }
     for (token, _) in &players {
-        assert_eq!(server.get("/api/worlds/commons/me").token(token).send().await.status, StatusCode::UNAUTHORIZED);
-        assert_eq!(server.act(token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
-        assert_eq!(server.call("how_am_i_doing", json!({ "player_token": token })).await["isError"], true);
+        assert_eq!(
+            server.get("/api/worlds/commons/me").token(token).send().await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            server.act(token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            server.call("how_am_i_doing", json!({ "player_token": token })).await["isError"],
+            true
+        );
     }
-    assert_eq!(server.me(&key, COMMONS).await["moves_left"], 299, "the owner's own player is theirs still");
+    assert_eq!(
+        server.me(&key, COMMONS).await["moves_left"],
+        299,
+        "the owner's own player is theirs still"
+    );
     // The old bot token can't join, the new one can, and it is the same player: the same name, the
     // same tiles, and the moves it had already spent.
-    assert_eq!(server.post("/api/public/join", json!({})).token(&bots[0].0).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.post("/api/public/join", json!({})).token(&bots[0].0).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     let joined = server.post("/api/public/join", json!({})).token(&fresh[0]).send().await.ok();
     assert_eq!(joined["name"], players[0].1);
     let token = joined["player_token"].as_str().unwrap();
     assert_eq!(server.player_id(token).await, id);
     assert_eq!(server.me(token, COMMONS).await["moves_left"], 200 - 2);
-    assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(), 2);
+    assert_eq!(
+        server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(),
+        2
+    );
     // It stays as many players as there were: the owner's, and one for each bot.
-    assert_eq!(server.get("/api/players/mine").token(&key).send().await.ok()["players"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        server.get("/api/players/mine").token(&key).send().await.ok()["players"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 // W3
 #[tokio::test]
 async fn sending_a_bot_home_ends_its_player_token_and_the_bot_joins_again_with_its_own() {
     let server = Server::start().await;
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let key = room["owner_key"].as_str().unwrap().to_string();
     let hangout = room["hangout"]["id"].as_str().unwrap().to_string();
-    let made = server.post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": "Scout" })).token(&key).send().await.ok();
-    let (bot_token, agent) = (made["token"].as_str().unwrap().to_string(), made["agent"]["id"].as_str().unwrap().to_string());
-    let token = server.post("/api/public/join", json!({})).token(&bot_token).send().await.ok()["player_token"].as_str().unwrap().to_string();
+    let made = server
+        .post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": "Scout" }))
+        .token(&key)
+        .send()
+        .await
+        .ok();
+    let (bot_token, agent) = (
+        made["token"].as_str().unwrap().to_string(),
+        made["agent"]["id"].as_str().unwrap().to_string(),
+    );
+    let token = server.post("/api/public/join", json!({})).token(&bot_token).send().await.ok()
+        ["player_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
     server.act(&token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
 
-    let sent = server.req(Method::DELETE, &format!("/api/hangouts/{hangout}/agents/{agent}")).token(&key).send().await;
+    let sent = server
+        .req(Method::DELETE, &format!("/api/hangouts/{hangout}/agents/{agent}"))
+        .token(&key)
+        .send()
+        .await;
     assert_eq!(sent.status, StatusCode::OK, "{}", sent.show());
-    assert_eq!(server.get("/api/worlds/commons/me").token(&token).send().await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        server.get("/api/worlds/commons/me").token(&token).send().await.status,
+        StatusCode::UNAUTHORIZED
+    );
     // It still has its own token, and joining again gives it a player token again.
     let again = server.post("/api/public/join", json!({})).token(&bot_token).send().await.ok();
-    assert_eq!(server.me(again["player_token"].as_str().unwrap(), COMMONS).await["moves_left"], 199);
+    assert_eq!(
+        server.me(again["player_token"].as_str().unwrap(), COMMONS).await["moves_left"],
+        199
+    );
 }
 
 // W3
 #[tokio::test]
 async fn a_bot_deleted_from_the_database_leaves_a_player_that_cannot_play_on_as_a_claimed_one() {
-    let path = std::env::temp_dir().join(format!("agenthangout-bot-gone-{}-{}.db", std::process::id(), now()));
+    let path = std::env::temp_dir().join(format!(
+        "agenthangout-bot-gone-{}-{}.db",
+        std::process::id(),
+        now()
+    ));
     let path = path.to_str().unwrap().to_string();
     {
         let server = Server::boot(Db::open(&path).unwrap(), None, None).await;
-        let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+        let room = server
+            .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+            .send()
+            .await
+            .ok();
         let key = room["owner_key"].as_str().unwrap().to_string();
         let hangout = room["hangout"]["id"].as_str().unwrap().to_string();
-        let made = server.post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": "Scout" })).token(&key).send().await.ok();
-        let (bot_token, agent) = (made["token"].as_str().unwrap(), made["agent"]["id"].as_str().unwrap());
-        let token = server.post("/api/public/join", json!({})).token(bot_token).send().await.ok()["player_token"].as_str().unwrap().to_string();
+        let made = server
+            .post(&format!("/api/hangouts/{hangout}/agents"), json!({ "name": "Scout" }))
+            .token(&key)
+            .send()
+            .await
+            .ok();
+        let (bot_token, agent) =
+            (made["token"].as_str().unwrap(), made["agent"]["id"].as_str().unwrap());
+        let token = server.post("/api/public/join", json!({})).token(bot_token).send().await.ok()
+            ["player_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let (first, last) = Map::from_db(&server, COMMONS).line_from_road(2).unwrap();
         server.act(&token, COMMONS, road_move(first, last)).await.ok();
         let id = server.player_id(&token).await;
@@ -3360,10 +4494,25 @@ async fn a_bot_deleted_from_the_database_leaves_a_player_that_cannot_play_on_as_
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         assert_eq!(conn.execute("DELETE FROM agents WHERE id = ?", [agent]).unwrap(), 1);
 
-        assert_eq!(server.get("/api/worlds/commons/me").token(&token).send().await.status, StatusCode::UNAUTHORIZED);
-        assert_eq!(server.act(&token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status, StatusCode::UNAUTHORIZED);
-        assert!(server.state.db.players_of(room["person"]["id"].as_str().unwrap()).unwrap().is_empty());
-        assert_eq!(server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(), 2, "what it built stays");
+        assert_eq!(
+            server.get("/api/worlds/commons/me").token(&token).send().await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            server.act(&token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        assert!(server
+            .state
+            .db
+            .players_of(room["person"]["id"].as_str().unwrap())
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            server.tiles(COMMONS).values().filter(|tile| tile.player == Some(id as u64)).count(),
+            2,
+            "what it built stays"
+        );
     }
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{path}{suffix}"));
@@ -3381,7 +4530,12 @@ async fn a_whole_number_written_with_a_point_is_not_a_whole_number() {
         br#"{"action":"walk","x":"65","y":64}"#,
         br#"{"action":"walk","x":null,"y":64}"#,
     ] {
-        let reply = server.req(Method::POST, "/api/worlds/commons/act").token(&guest.token).raw("application/json", body).send().await;
+        let reply = server
+            .req(Method::POST, "/api/worlds/commons/act")
+            .token(&guest.token)
+            .raw("application/json", body)
+            .send()
+            .await;
         assert!(reply.status.is_client_error(), "{}", reply.show());
     }
     assert_eq!(server.moves_left(&guest.token).await, 30);
@@ -3398,26 +4552,44 @@ async fn a_new_commons_is_the_highway_and_nothing_else_and_nobody_can_bulldoze_i
     worlds::ensure_commons(&server.state).unwrap();
     let tiles = server.tiles(COMMONS);
     let highway = the_highway();
-    assert_eq!(tiles.keys().copied().collect::<HashSet<_>>(), highway, "the highway, and no founding town");
-    assert!(tiles.values().all(|tile| tile.kind == Kind::Road && tile.player.is_none()), "nobody built it");
+    assert_eq!(
+        tiles.keys().copied().collect::<HashSet<_>>(),
+        highway,
+        "the highway, and no founding town"
+    );
+    assert!(
+        tiles.values().all(|tile| tile.kind == Kind::Road && tile.player.is_none()),
+        "nobody built it"
+    );
     // The page and the list count it as roads, and there is no population or jobs.
     let view = server.view(COMMONS).await;
     assert_eq!(view["tiles"].as_array().unwrap().len(), highway.len());
-    assert_eq!((view["places"].as_u64(), view["roads"].as_u64()), (Some(0), Some(highway.len() as u64)));
+    assert_eq!(
+        (view["places"].as_u64(), view["roads"].as_u64()),
+        (Some(0), Some(highway.len() as u64))
+    );
     assert_eq!(view["stage"], "hamlet");
     assert_eq!(server.get("/api/worlds").send().await.ok()["worlds"][0]["places"], 0);
     // Nobody can take any of it down, however long they have been gone (W17), nor a tile of the old
     // city, which has no builder either.
     let old = Map::from_db(&server, COMMONS).find('g').unwrap();
-    server.write(COMMONS, &[Change::Set((old.0 as u16, old.1 as u16), Tile { kind: Kind::Homes, level: 1, player: None })]);
+    server.write(
+        COMMONS,
+        &[Change::Set(
+            (old.0 as u16, old.1 as u16),
+            Tile { kind: Kind::Homes, level: 1, player: None },
+        )],
+    );
     let kept = server.tiles(COMMONS);
     let guest = server.guest().await;
     let ann = server.person("Ann").await;
-    let mut targets: Vec<(i64, i64)> = Map::from_db(&server, COMMONS).roads().into_iter().take(8).collect();
+    let mut targets: Vec<(i64, i64)> =
+        Map::from_db(&server, COMMONS).roads().into_iter().take(8).collect();
     targets.push(old);
     for (x, y) in targets {
         for token in [&guest.token, &ann.key] {
-            let reply = server.act(token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y })).await;
+            let reply =
+                server.act(token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y })).await;
             assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
         }
     }
@@ -3427,7 +4599,11 @@ async fn a_new_commons_is_the_highway_and_nothing_else_and_nobody_can_bulldoze_i
 // W28
 #[tokio::test]
 async fn a_restart_leaves_the_commons_as_it_was() {
-    let path = std::env::temp_dir().join(format!("agenthangout-restart-{}-{}.db", std::process::id(), now()));
+    let path = std::env::temp_dir().join(format!(
+        "agenthangout-restart-{}-{}.db",
+        std::process::id(),
+        now()
+    ));
     let path = path.to_str().unwrap().to_string();
     {
         let first = Server::boot(Db::open(&path).unwrap(), None, None).await;
@@ -3462,7 +4638,9 @@ async fn after_the_highway_the_server_builds_nothing_in_the_commons_or_a_world_o
     // The Commons has the highway's tiles and not one more.
     let commons = server.tiles(COMMONS);
     assert_eq!(commons.keys().copied().collect::<HashSet<_>>(), the_highway());
-    assert!(commons.values().all(|tile| tile.kind == Kind::Road && tile.level == 0 && tile.player.is_none()));
+    assert!(commons
+        .values()
+        .all(|tile| tile.kind == Kind::Road && tile.level == 0 && tile.player.is_none()));
     // The other world has what it started with, and took no step to add to it.
     assert_eq!(server.tiles(&own), own_before, "something appeared in a world of someone's own");
     assert_eq!(server.state.db.world(&own).unwrap().unwrap().step, 0);
@@ -3479,7 +4657,9 @@ async fn a_step_leaves_what_a_player_has_built_as_theirs() {
     let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
     server.act(&ann.key, COMMONS, place("house", spot)).await.ok();
 
-    let theirs = || -> Vec<_> { server.tiles(COMMONS).into_iter().filter(|(_, tile)| tile.player.is_some()).collect() };
+    let theirs = || -> Vec<_> {
+        server.tiles(COMMONS).into_iter().filter(|(_, tile)| tile.player.is_some()).collect()
+    };
     let before = theirs();
     assert!(before.len() >= 9);
     for _ in 0..400 {
@@ -3493,10 +4673,18 @@ async fn a_step_leaves_what_a_player_has_built_as_theirs() {
     let roads = map.roads();
     let far = (0..map.size)
         .flat_map(|y| (0..map.size).map(move |x| (x, y)))
-        .find(|&(x, y)| map.open(x, y) && roads.iter().all(|&(rx, ry)| (rx - x).abs() > 5 || (ry - y).abs() > 5))
+        .find(|&(x, y)| {
+            map.open(x, y) && roads.iter().all(|&(rx, ry)| (rx - x).abs() > 5 || (ry - y).abs() > 5)
+        })
         .unwrap();
     let player = server.state.db.own_player(&ann.id, now()).unwrap();
-    server.write(COMMONS, &[Change::Set((far.0 as u16, far.1 as u16), Tile { kind: Kind::Homes, level: 2, player: Some(player.id as u64) })]);
+    server.write(
+        COMMONS,
+        &[Change::Set(
+            (far.0 as u16, far.1 as u16),
+            Tile { kind: Kind::Homes, level: 2, player: Some(player.id as u64) },
+        )],
+    );
     let before = theirs();
     assert!(before.len() >= 10);
     for _ in 0..6 {
@@ -3512,11 +4700,14 @@ async fn a_place_skips_the_tiles_kept_for_side_streets_and_says_why_and_a_road_m
     let guest = server.guest().await;
     let ann = server.person("Ann").await;
     let map = Map::from_db(&server, COMMONS);
-    let mut kept: Vec<(i64, i64)> = map.kept.iter().copied().filter(|&(x, y)| map.open(x, y)).collect();
+    let mut kept: Vec<(i64, i64)> =
+        map.kept.iter().copied().filter(|&(x, y)| map.open(x, y)).collect();
     kept.sort();
     assert!(kept.len() > 50, "{} tiles kept for side streets", kept.len());
     let roads: HashSet<(i64, i64)> = map.roads().into_iter().collect();
-    let beside = |(x, y): (i64, i64)| [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(move |(dx, dy)| (x + dx, y + dy));
+    let beside = |(x, y): (i64, i64)| {
+        [(1, 0), (-1, 0), (0, 1), (0, -1)].into_iter().map(move |(dx, dy)| (x + dx, y + dy))
+    };
     // A street starts beside a road: that tile.
     let start = kept.iter().copied().find(|&at| beside(at).any(|n| roads.contains(&n))).unwrap();
 
@@ -3528,17 +4719,22 @@ async fn a_place_skips_the_tiles_kept_for_side_streets_and_says_why_and_a_road_m
     assert_eq!(server.moves_left(&ann.key).await, 300);
     assert!(!server.tiles(COMMONS).contains_key(&(start.0 as u16, start.1 as u16)));
     // And a road may use it: that is what it is for.
-    let road = server.act(&guest.token, COMMONS, json!({ "action": "road", "x": start.0, "y": start.1 })).await.ok();
+    let road = server
+        .act(&guest.token, COMMONS, json!({ "action": "road", "x": start.0, "y": start.1 }))
+        .await
+        .ok();
     assert_eq!((road["cost"].as_i64(), road["moves_left"].as_i64()), (Some(1), Some(29)));
 }
 
 // W8, W47
 #[tokio::test]
-async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about_the_players_town() {
+async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about_the_players_town()
+{
     let server = Server::start().await;
     // Both ways in give the same tip to someone with nothing built.
     let joined = server.tool("join", json!({})).await;
-    let over_http = server.post("/api/public/join", json!({})).ip(&server.fresh_ip()).send().await.ok();
+    let over_http =
+        server.post("/api/public/join", json!({})).ip(&server.fresh_ip()).send().await.ok();
     for reply in [&joined, &over_http] {
         let tip = reply["tip"].as_str().unwrap();
         assert!(world::TIPS.contains(&tip), "{tip}");
@@ -3551,12 +4747,27 @@ async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about
     let map = Map::from_db(&server, COMMONS);
     let (first, last) = map.line_from_road(3).unwrap();
     server.tool("build", json!({ "player_token": token, "type": "road", "x": first.0, "y": first.1, "x2": last.0, "y2": last.1 })).await;
-    let tip_now = || async { server.tool("how_am_i_doing", json!({ "player_token": token })).await["tip"].as_str().unwrap().to_string() };
+    let tip_now = || async {
+        server.tool("how_am_i_doing", json!({ "player_token": token })).await["tip"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
     assert!(tip_now().await.starts_with("Roads give people somewhere to build"));
     // A person is told about their house, and then that more places come with time.
     let ann = server.person("Ann").await;
-    assert!(server.me(&ann.key, COMMONS).await["tip"].as_str().unwrap().starts_with("No house yet"));
-    server.act(&ann.key, COMMONS, place("house", building_spots(&Map::from_db(&server, COMMONS), 1)[0])).await.ok();
+    assert!(server.me(&ann.key, COMMONS).await["tip"]
+        .as_str()
+        .unwrap()
+        .starts_with("No house yet"));
+    server
+        .act(
+            &ann.key,
+            COMMONS,
+            place("house", building_spots(&Map::from_db(&server, COMMONS), 1)[0]),
+        )
+        .await
+        .ok();
     let housed = server.me(&ann.key, COMMONS).await["tip"].as_str().unwrap().to_string();
     assert!(housed.starts_with("More places come with time"), "{housed}");
     // Every tip it gives is on the list, and nothing the caller sent is in one.
@@ -3593,7 +4804,13 @@ async fn the_tool_descriptions_tell_a_fresh_agent_what_it_can_build_and_how_coor
         assert!(words.contains(needle), "the tools never say: {needle}");
     }
     // What went with the zones is gone from them.
-    for gone in ["homes need jobs", "shops need people", "workshops are the steady start", "park within 4", "12 settlers"] {
+    for gone in [
+        "homes need jobs",
+        "shops need people",
+        "workshops are the steady start",
+        "park within 4",
+        "12 settlers",
+    ] {
         assert!(!words.contains(gone), "the tools still say: {gone}");
     }
 }
@@ -3621,7 +4838,14 @@ async fn the_guides_tell_a_fresh_agent_what_it_can_build_and_what_comes_with_tim
     ] {
         assert!(commons.contains(needle), "the guide never says: {needle}");
     }
-    for gone in ["Homes need jobs", "shops need people", "12 settlers", "corner shop", "shop within 5 tiles", "park within 4"] {
+    for gone in [
+        "Homes need jobs",
+        "shops need people",
+        "12 settlers",
+        "corner shop",
+        "shop within 5 tiles",
+        "park within 4",
+    ] {
         assert!(!commons.contains(gone), "the guide still says: {gone}");
     }
     // The worked example uses the real format, and every call in it works.
@@ -3629,7 +4853,10 @@ async fn the_guides_tell_a_fresh_agent_what_it_can_build_and_what_comes_with_tim
     assert!(llms.contains("/public/mcp") && llms.contains("tip"));
     // No commercial game is named.
     for word in ["simcity", "sim city", "maxis", "cities: skylines", "sim-city"] {
-        assert!(!guide.to_lowercase().contains(word) && !llms.to_lowercase().contains(word), "{word}");
+        assert!(
+            !guide.to_lowercase().contains(word) && !llms.to_lowercase().contains(word),
+            "{word}"
+        );
     }
 }
 
@@ -3668,7 +4895,8 @@ fn branch_from_road(map: &Map, n: i64) -> ((i64, i64), (i64, i64)) {
         for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
             let stub: Vec<(i64, i64)> = (1..=n).map(|i| (rx + dx * i, ry + dy * i)).collect();
             let last = stub[stub.len() - 1];
-            let out_of_reach = roads.iter().all(|&(x, y)| (x - last.0).abs() > 5 || (y - last.1).abs() > 5);
+            let out_of_reach =
+                roads.iter().all(|&(x, y)| (x - last.0).abs() > 5 || (y - last.1).abs() > 5);
             if stub.iter().all(|&(x, y)| map.open(x, y))
                 && stub[1..].iter().all(|&spot| !beside_a_road(map, spot))
                 && out_of_reach
@@ -3701,11 +4929,20 @@ async fn only_a_person_can_place_a_building_and_only_in_the_commons() {
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
 
     let claimed = server.guest().await;
-    server.post("/api/players/claim", json!({ "claim_code": claimed.claim })).token(&ann.key).send().await.ok();
+    server
+        .post("/api/players/claim", json!({ "claim_code": claimed.claim }))
+        .token(&ann.key)
+        .send()
+        .await
+        .ok();
     let reply = server.act(&claimed.token, COMMONS, place("house", spot)).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
 
-    let room = server.post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" })).send().await.ok();
+    let room = server
+        .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
+        .send()
+        .await
+        .ok();
     let bo = room["owner_key"].as_str().unwrap().to_string();
     let path = format!("/api/hangouts/{}/agents", room["hangout"]["id"].as_str().unwrap());
     let scout = server.post(&path, json!({ "name": "Scout" })).token(&bo).send().await.ok();
@@ -3716,7 +4953,8 @@ async fn only_a_person_can_place_a_building_and_only_in_the_commons() {
         .send()
         .await
         .ok();
-    let reply = server.act(joined["player_token"].as_str().unwrap(), COMMONS, place("house", spot)).await;
+    let reply =
+        server.act(joined["player_token"].as_str().unwrap(), COMMONS, place("house", spot)).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.show());
     assert_eq!(tile_kind(&server, spot), None, "nothing was built");
 
@@ -3740,8 +4978,16 @@ async fn a_place_needs_open_land_with_a_road_beside_it() {
     let before = server.moves_left(&ann.key).await;
 
     let every = (0..map.size).flat_map(|y| (0..map.size).map(move |x| (x, y))).collect::<Vec<_>>();
-    let away = *every.iter().find(|&&spot| map.free(spot.0, spot.1) && !beside_a_road(&map, spot)).unwrap();
-    let kept = *every.iter().find(|&&spot| map.kept.contains(&spot) && map.open(spot.0, spot.1) && beside_a_road(&map, spot)).unwrap();
+    let away = *every
+        .iter()
+        .find(|&&spot| map.free(spot.0, spot.1) && !beside_a_road(&map, spot))
+        .unwrap();
+    let kept = *every
+        .iter()
+        .find(|&&spot| {
+            map.kept.contains(&spot) && map.open(spot.0, spot.1) && beside_a_road(&map, spot)
+        })
+        .unwrap();
     let road = map.roads()[0];
     let water = map.find('w').unwrap();
     for (what, body) in [
@@ -3753,7 +4999,10 @@ async fn a_place_needs_open_land_with_a_road_beside_it() {
         ("a kind that isn't a place", place("homes", away)),
         ("a word that isn't a kind", place("palace", away)),
         ("a road for a kind", place("road", away)),
-        ("a road move with a place's kind", json!({ "action": "road", "x": away.0, "y": away.1, "kind": "house" })),
+        (
+            "a road move with a place's kind",
+            json!({ "action": "road", "x": away.0, "y": away.1, "kind": "house" }),
+        ),
     ] {
         let reply = server.act(&ann.key, COMMONS, body).await;
         assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{what}: {}", reply.show());
@@ -3796,7 +5045,10 @@ async fn a_person_has_one_house_and_three_other_places() {
     assert_eq!(tile_kind(&server, spots[4]), Some(Kind::House));
 
     // Taking one down makes room for another.
-    server.act(&ann.key, COMMONS, json!({ "action": "bulldoze", "x": spots[0].0, "y": spots[0].1 })).await.ok();
+    server
+        .act(&ann.key, COMMONS, json!({ "action": "bulldoze", "x": spots[0].0, "y": spots[0].1 }))
+        .await
+        .ok();
     assert_eq!(tile_kind(&server, spots[0]), None);
     server.act(&ann.key, COMMONS, place("house", spots[5])).await.ok();
     assert_eq!(tile_kind(&server, spots[5]), Some(Kind::House));
@@ -3804,7 +5056,10 @@ async fn a_person_has_one_house_and_three_other_places() {
 
 fn temp_db() -> String {
     let unique = auth::new_id();
-    std::env::temp_dir().join(format!("agenthangout-test-{unique}.db")).to_string_lossy().into_owned()
+    std::env::temp_dir()
+        .join(format!("agenthangout-test-{unique}.db"))
+        .to_string_lossy()
+        .into_owned()
 }
 
 // W56
@@ -3852,15 +5107,33 @@ async fn a_place_stays_however_long_its_owner_is_away() {
 
     let player = server.player_row(server.player_id(&stranger.token).await);
     let later = now() + world::GONE_SECS * 52;
-    worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(spots[1].0), Some(spots[1].1)), later).unwrap();
+    worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(spots[1].0), Some(spots[1].1)),
+        later,
+    )
+    .unwrap();
     assert_eq!(tile_kind(&server, spots[1]), None, "the road was cleared");
-    let house = worlds::act(&server.state, &player, COMMONS, &mv("bulldoze", Some(spots[0].0), Some(spots[0].1)), later);
+    let house = worlds::act(
+        &server.state,
+        &player,
+        COMMONS,
+        &mv("bulldoze", Some(spots[0].0), Some(spots[0].1)),
+        later,
+    );
     assert!(house.is_err(), "a year away, and a stranger took the house down");
     assert_eq!(tile_kind(&server, spots[0]), Some(Kind::House));
 
     // W18: the keeper can, and it comes down with what else they built.
     let id = server.state.db.own_player(&ann.id, now()).unwrap().id;
-    server.post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({})).token(&keeper.key).send().await.ok();
+    server
+        .post(&format!("/api/worlds/{COMMONS}/players/{id}/remove"), json!({}))
+        .token(&keeper.key)
+        .send()
+        .await
+        .ok();
     assert_eq!(tile_kind(&server, spots[0]), None);
 }
 
@@ -3920,7 +5193,10 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
     assert_eq!(after["places"].as_u64().unwrap(), before["places"].as_u64().unwrap() + 1);
     assert_eq!(after["roads"], before["roads"]);
     let housed = server.me(&ann.key, COMMONS).await["your_town"].clone();
-    assert_eq!((housed["roads"].clone(), housed["places"].as_u64()), (town["roads"].clone(), Some(town["places"].as_u64().unwrap() + 1)));
+    assert_eq!(
+        (housed["roads"].clone(), housed["places"].as_u64()),
+        (town["roads"].clone(), Some(town["places"].as_u64().unwrap() + 1))
+    );
 
     let reply = server.act(&agent.token, COMMONS, cut).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.show());
@@ -3940,15 +5216,31 @@ async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     server.place_at(&ann, "studio", spot, now() + 2 * 86_400).unwrap();
 
     let view = server.fresh_view(COMMONS).await;
-    let tile = view["tiles"].as_array().unwrap().iter().find(|tile| tile[0] == spot.0 && tile[1] == spot.1).unwrap();
+    let tile = view["tiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tile| tile[0] == spot.0 && tile[1] == spot.1)
+        .unwrap();
     assert_eq!(*tile, json!([spot.0, spot.1, "studio", 0]));
 
     let path = format!("/api/worlds/{COMMONS}/look?x={}&y={}&w=8&h=8", spot.0, spot.1);
     let look = server.get(&path).send().await.ok();
-    assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
+    assert!(
+        look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])),
+        "{look}"
+    );
     // W71: the view names the owner in `owners`, and only there. Nothing says which account it is, and
     // `look` names nobody.
-    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold", "Marigold's Studio"])), "{view}");
+    assert!(
+        view["owners"].as_array().unwrap().contains(&json!([
+            spot.0,
+            spot.1,
+            "Marigold",
+            "Marigold's Studio"
+        ])),
+        "{view}"
+    );
     let mut rest = view.clone();
     rest.as_object_mut().unwrap().remove("owners");
     for text in [rest.to_string(), look.to_string()] {
@@ -3961,7 +5253,12 @@ async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     // There is no tool for it, and the build tool doesn't take one.
     let guest = server.guest().await;
     let spot = building_spots(&Map::from_db(&server, COMMONS), 1)[0];
-    server.tool_refused("build", json!({ "player_token": guest.token, "type": "house", "x": spot.0, "y": spot.1 })).await;
+    server
+        .tool_refused(
+            "build",
+            json!({ "player_token": guest.token, "type": "house", "x": spot.0, "y": spot.1 }),
+        )
+        .await;
 }
 
 // W28, and what deploy/wipe-commons.sh does
@@ -3987,7 +5284,8 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     let own_tiles = server.tiles(&own);
 
     let conn = rusqlite::Connection::open(&path).unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON; DELETE FROM worlds WHERE id = 'commons';").unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON; DELETE FROM worlds WHERE id = 'commons';")
+        .unwrap();
     let left: i64 = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM world_tiles WHERE world_id = 'commons')
@@ -4007,8 +5305,15 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     worlds::ensure_commons(&again.state).unwrap();
     assert_eq!(again.tiles(COMMONS), fresh, "the highway is back, and nothing else");
     assert_eq!(again.tiles(&own), own_tiles, "other worlds are as they were");
-    assert_eq!(again.get("/api/me").token(&ann.key).send().await.status, StatusCode::OK, "accounts stay");
-    assert!(again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES), "tokens still work");
+    assert_eq!(
+        again.get("/api/me").token(&ann.key).send().await.status,
+        StatusCode::OK,
+        "accounts stay"
+    );
+    assert!(
+        again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES),
+        "tokens still work"
+    );
     again.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
     let _ = std::fs::remove_file(&path);
 }
@@ -4025,8 +5330,12 @@ fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
     let (resize, _) = rest.split_once("\n  }").expect("resize ends");
     let wiped = resize.find("this.canvas.width = cw").expect("resize sizes the canvas");
     let camera = resize.find("this.clampCam()").expect("resize settles the camera");
-    let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
-    assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
+    let land =
+        resize.find("this.render()").expect("resize leaves the map blank until the next frame");
+    assert!(
+        wiped < land && camera < land,
+        "the land goes on after the wipe, with the camera settled"
+    );
     assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
 }
 
@@ -4037,14 +5346,26 @@ fn the_status_bar_under_the_map_stays_one_line_tall() {
     // resized the map each time, in a window of an ordinary size. Nothing here runs a browser, so this
     // reads the page. Rooms stack rows in the same bar and have no map, so they keep them.
     let app = include_str!("../web/app.js");
-    assert!(app.contains("frame.root.classList.add('wd-game', 'wd-map');"), "the map's window says it's the map");
+    assert!(
+        app.contains("frame.root.classList.add('wd-game', 'wd-map');"),
+        "the map's window says it's the map"
+    );
     let css = include_str!("../web/style.css");
-    assert!(css.contains(".wd-map > .wd-status { flex-wrap: nowrap; }"), "the bar is one row on a wide screen");
+    assert!(
+        css.contains(".wd-map > .wd-status { flex-wrap: nowrap; }"),
+        "the bar is one row on a wide screen"
+    );
     assert!(
         css.contains(".wd-map .wd-status .wd-seg[role=\"status\"], .wd-map .wd-status .wd-town { white-space: nowrap; overflow-wrap: normal; }"),
         "the two cells that say whole sentences stay on one line, on every screen",
     );
-    assert!(css.contains(".wd-map .wd-status .wd-town { order: 1; }"), "on a narrow screen the readout can't add a row");
-    assert!(app.contains("frame.message.title = text;"), "a message that doesn't fit can still be read");
+    assert!(
+        css.contains(".wd-map .wd-status .wd-town { order: 1; }"),
+        "on a narrow screen the readout can't add a row"
+    );
+    assert!(
+        app.contains("frame.message.title = text;"),
+        "a message that doesn't fit can still be read"
+    );
     assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
 }

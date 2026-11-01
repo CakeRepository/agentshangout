@@ -34,7 +34,8 @@ const PRIVATE_MOOD: &str = "flirty";
 /// I16: the one sign.
 pub const QUIET: &str = "quiet";
 /// I17. Fixed, so a refusal says nothing about the room or the words that were refused.
-pub const QUIET_REASON: &str = "this room has a quiet sign, so bots can't post here. You can still read.";
+pub const QUIET_REASON: &str =
+    "this room has a quiet sign, so bots can't post here. You can still read.";
 
 /// A box of grid cells.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -112,7 +113,18 @@ const fn piece(
     mood: Option<&'static str>,
     (w, h): (i64, i64),
 ) -> Kind {
-    Kind { kind, label, tier: tier.0, friends: tier.1, beauty, mood, holds_notes: false, sign: false, w, h }
+    Kind {
+        kind,
+        label,
+        tier: tier.0,
+        friends: tier.1,
+        beauty,
+        mood,
+        holds_notes: false,
+        sign: false,
+        w,
+        h,
+    }
 }
 
 /// I12: an item that holds notes.
@@ -228,7 +240,11 @@ pub fn pack_words() -> Vec<&'static str> {
 
 /// I11: the kinds that keep a floor from opening to the public.
 pub fn private_only() -> Vec<&'static str> {
-    CATALOG.iter().filter(|entry| entry.mood == Some(PRIVATE_MOOD)).map(|entry| entry.kind).collect()
+    CATALOG
+        .iter()
+        .filter(|entry| entry.mood == Some(PRIVATE_MOOD))
+        .map(|entry| entry.kind)
+        .collect()
 }
 
 /// I9: one sentence for each mood. It's a hint, so each says the owner's word comes first.
@@ -258,7 +274,10 @@ pub fn beauty_word(beauty: i64) -> &'static str {
 /// I8: worked out on read, so moving a sofa changes it and nothing can go stale.
 pub fn room_mood(items: &[FloorItem]) -> Option<&'static str> {
     let count = |mood: &str| {
-        items.iter().filter(|item| kind_of(&item.kind).is_some_and(|entry| entry.mood == Some(mood))).count()
+        items
+            .iter()
+            .filter(|item| kind_of(&item.kind).is_some_and(|entry| entry.mood == Some(mood)))
+            .count()
     };
     let most = MOODS.iter().map(|mood| count(mood)).max().unwrap_or(0);
     let mut top = MOODS.iter().filter(|mood| count(mood) == most);
@@ -300,7 +319,9 @@ fn check_fits(spot: &Cells, others: &[FloorItem]) -> ApiResult<()> {
         return Err(ApiError::conflict("that's off the floor"));
     }
     if FIXED.iter().any(|fixed| spot.overlaps(fixed)) {
-        return Err(ApiError::conflict("the table, couch, desk, door and nap spots stay where they are"));
+        return Err(ApiError::conflict(
+            "the table, couch, desk, door and nap spots stay where they are",
+        ));
     }
     if others.iter().filter_map(footprint_of).any(|other| spot.overlaps(&other)) {
         return Err(ApiError::conflict("something's already there"));
@@ -449,7 +470,9 @@ fn may_change(state: &AppState, caller: &Caller, place: &Place, item: &FloorItem
         return Err(ApiError::forbidden("only whoever runs the space can change a sign"));
     }
     if item.placed_by != caller.person_id {
-        return Err(ApiError::forbidden("only whoever placed it, or whoever runs the space, can change it"));
+        return Err(ApiError::forbidden(
+            "only whoever placed it, or whoever runs the space, can change it",
+        ));
     }
     Ok(())
 }
@@ -467,8 +490,14 @@ struct NewItem {
 }
 
 /// The caller is already known to be someone who may furnish this floor (`may_furnish`).
-fn place_item(state: &AppState, caller: &Caller, place: &Place, body: &NewItem) -> ApiResult<PlacedItem> {
-    let kind = kind_of(&body.kind).ok_or_else(|| ApiError::bad_request("that's not in the catalog"))?;
+fn place_item(
+    state: &AppState,
+    caller: &Caller,
+    place: &Place,
+    body: &NewItem,
+) -> ApiResult<PlacedItem> {
+    let kind =
+        kind_of(&body.kind).ok_or_else(|| ApiError::bad_request("that's not in the catalog"))?;
     check_facing(body.facing)?;
     if kind.sign && !place.runs {
         return Err(ApiError::forbidden("only whoever runs the space can place a sign"));
@@ -478,7 +507,9 @@ fn place_item(state: &AppState, caller: &Caller, place: &Place, body: &NewItem) 
         return Err(ApiError::forbidden("only someone on this floor can furnish it"));
     }
     // I19: worked out now, so there's nothing stored to buy, trade or give away.
-    if kind.friends > state.db.friend_count(&caller.person_id)? && !god_mode::is_on_for(state, caller)? {
+    if kind.friends > state.db.friend_count(&caller.person_id)?
+        && !god_mode::is_on_for(state, caller)?
+    {
         return Err(ApiError::forbidden(format!("that needs {}", friends_text(kind.friends))));
     }
     let id = store_item(state, caller, &place.floor.id, kind, (body.x, body.y, body.facing))??;
@@ -531,7 +562,12 @@ struct ItemChange {
 }
 
 /// I3: a move or a turn has to fit as a new item would, because turning changes what it stands on.
-fn change_item(state: &AppState, place: &Place, item: &FloorItem, body: &ItemChange) -> ApiResult<PlacedItem> {
+fn change_item(
+    state: &AppState,
+    place: &Place,
+    item: &FloorItem,
+    body: &ItemChange,
+) -> ApiResult<PlacedItem> {
     let (x, y) = (body.x.unwrap_or(item.x), body.y.unwrap_or(item.y));
     let facing = body.facing.unwrap_or(item.facing);
     check_facing(facing)?;
@@ -558,11 +594,18 @@ fn remove_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<()
 
 /// I27: a pack changes the look and the items, so this takes someone who could do both by hand. Who's
 /// asking comes before what they asked, as it does for an item.
-fn pack_for(state: &AppState, caller: &Caller, floor_id: &str, word: &str) -> ApiResult<(Place, &'static Pack)> {
+fn pack_for(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    word: &str,
+) -> ApiResult<(Place, &'static Pack)> {
     let place = place_of(state, caller, floor_id)?;
     may_furnish(state, caller, &place)?;
     if !place.runs {
-        return Err(ApiError::forbidden("only whoever runs the space can put a pack up or take it down"));
+        return Err(ApiError::forbidden(
+            "only whoever runs the space can put a pack up or take it down",
+        ));
     }
     if !state.db.is_member(&place.floor.id, &caller.person_id)? {
         return Err(ApiError::forbidden("only someone on this floor can furnish it"));
@@ -636,7 +679,9 @@ fn holder_of(item: &FloorItem) -> ApiResult<&'static Kind> {
 /// words are never its to take back, and neither are another bot's.
 fn may_remove_note(runs: bool, guest: bool, caller: &Caller, note: &ItemNote) -> bool {
     if caller.is_agent() {
-        return !guest && note.person_id == caller.person_id && note.via_agent.as_deref() == Some(caller.name.as_str());
+        return !guest
+            && note.person_id == caller.person_id
+            && note.via_agent.as_deref() == Some(caller.name.as_str());
     }
     runs || (!guest && note.person_id == caller.person_id)
 }
@@ -673,7 +718,12 @@ pub fn read_notes(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult
     }))
 }
 
-pub fn add_note(state: &AppState, caller: &Caller, item_id: &str, text: &str) -> ApiResult<ItemNote> {
+pub fn add_note(
+    state: &AppState,
+    caller: &Caller,
+    item_id: &str,
+    text: &str,
+) -> ApiResult<ItemNote> {
     let item = state.db.floor_item(item_id)?.ok_or_else(ApiError::not_found)?;
     if !state.in_room(caller, &item.hangout_id)? {
         return Err(ApiError::not_found());
@@ -710,7 +760,9 @@ fn remove_note(state: &AppState, caller: &Caller, note_id: &str) -> ApiResult<()
     let (item, place) = item_of(state, caller, &note.item_id)?;
     let guest = state.guest_visit(caller, &item.hangout_id)?.is_some();
     if !may_remove_note(place.runs, guest, caller, &note) {
-        return Err(ApiError::forbidden("only whoever wrote a note, or whoever runs the space, can remove it"));
+        return Err(ApiError::forbidden(
+            "only whoever wrote a note, or whoever runs the space, can remove it",
+        ));
     }
     ops::note_agent_write(state, caller)?;
     state.db.remove_item_note(&note.id)?;
