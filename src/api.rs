@@ -136,6 +136,7 @@ fn sign_in_routes() -> Router<AppState> {
     Router::new()
         .route("/api/sign-in", get(sign_in_sites))
         .route("/api/sign-in/finish", post(finish_sign_in))
+        .route("/api/sign-in/new-account", post(make_sign_in_account))
         .route("/api/sign-in/{site}", get(start_sign_in).delete(unlink_sign_in))
         .route("/api/sign-in/{site}/link", get(start_sign_in_link))
 }
@@ -598,8 +599,8 @@ async fn rotate_feed(State(state): State<AppState>, caller: Caller) -> ApiResult
 
 // Passkeys
 
-/// The JSON body of a passkey request. It's read only after the bot check, so a bot is turned
-/// away with a 403 whatever it sent.
+/// The JSON body of a passkey or sign-in request. It's read only after the bot check, so a bot is
+/// turned away with a 403 whatever it sent.
 fn passkey_body<T>(body: Result<Json<T>, JsonRejection>) -> ApiResult<T> {
     body.map(|Json(body)| body)
         .map_err(|_| ApiError::bad_request("that isn't a request this route understands"))
@@ -739,15 +740,24 @@ fn site_named(key: &str) -> ApiResult<Site> {
     Site::from_key(key).ok_or_else(ApiError::not_found)
 }
 
+#[derive(Deserialize)]
+struct StartSignIn {
+    /// A59: a sign-up, which shows the site's screen.
+    #[serde(default)]
+    new: bool,
+}
+
 async fn start_sign_in(
     State(state): State<AppState>,
     MaybeCaller(caller): MaybeCaller,
     Path(site): Path<String>,
+    Query(query): Query<StartSignIn>,
     request: HeaderMap,
 ) -> ApiResult<Response> {
     let site = site_named(&site)?;
+    let from = auth::client_ip(&request);
     let (url, browser) =
-        sign_in::start_sign_in(&state, caller.as_ref(), site, auth::client_ip(&request), now())?;
+        sign_in::start_sign_in(&state, caller.as_ref(), site, query.new, from, now())?;
     let cookie = sign_in_step_cookie(&state, &browser, passkey::CEREMONY_SECS)?;
     Ok(([(header::SET_COOKIE, cookie)], Redirect::to(&url)).into_response())
 }
@@ -767,21 +777,66 @@ async fn finish_sign_in(
     State(state): State<AppState>,
     MaybeCaller(caller): MaybeCaller,
     request: HeaderMap,
-    Json(body): Json<FinishElsewhere>,
+    body: Result<Json<FinishElsewhere>, JsonRejection>,
 ) -> ApiResult<Response> {
+    passkey::refuse_bots(caller.as_ref())?;
+    let body = passkey_body(body)?;
     let browser = auth::cookie(&request, sign_in::STEP_COOKIE);
+    let from = auth::client_ip(&request);
     let finished =
-        sign_in::finish(&state, caller.as_ref(), browser, &body.state, &body.code, now()).await?;
+        sign_in::finish(&state, caller.as_ref(), browser, from, &body.state, &body.code, now())
+            .await?;
     let mut headers = HeaderMap::new();
-    if let sign_in::Finished::SignedIn(person, site) = finished {
-        // Whatever session came in is ended, so signing in again doesn't leave it behind.
-        state.end_presented_sessions(&request)?;
-        let token = state.start_session(&person.id)?;
-        state.db.mark_sign_in_session(&auth::hash_secret(&token), site.key())?;
-        headers = session_headers(&state, &token, SESSION_SECS)?;
-        headers.append(header::SET_COOKIE, sign_in_step_cookie(&state, "", 0)?);
+    match finished {
+        sign_in::Finished::Linked | sign_in::Finished::AlreadyIn => {}
+        sign_in::Finished::SignedIn(person, site) => {
+            // Whatever session came in is ended, so signing in again doesn't leave it behind.
+            state.end_presented_sessions(&request)?;
+            let token = state.start_session(&person.id)?;
+            state.db.mark_sign_in_session(&auth::hash_secret(&token), site.key())?;
+            headers = session_headers(&state, &token, SESSION_SECS)?;
+            headers.append(header::SET_COOKIE, sign_in_step_cookie(&state, "", 0)?);
+        }
+        // A59: the cookie has to last as long as the offer does.
+        sign_in::Finished::Offered(offer) => {
+            let browser = browser.unwrap_or_default();
+            let cookie = sign_in_step_cookie(&state, browser, passkey::CEREMONY_SECS)?;
+            headers.insert(header::SET_COOKIE, cookie);
+            return Ok((headers, Json(json!({ "new_account": offer }))).into_response());
+        }
     }
     Ok((headers, Json(json!({ "ok": true }))).into_response())
+}
+
+#[derive(Deserialize)]
+struct NewAccount {
+    step: String,
+    your_name: String,
+}
+
+/// A59, A63: signs a new account in and shows its owner key once. The session isn't marked as a
+/// site's, because this reply holds the key. If it can't be started the key still goes out.
+async fn make_sign_in_account(
+    State(state): State<AppState>,
+    MaybeCaller(caller): MaybeCaller,
+    request: HeaderMap,
+    body: Result<Json<NewAccount>, JsonRejection>,
+) -> ApiResult<Response> {
+    passkey::refuse_bots(caller.as_ref())?;
+    let body = passkey_body(body)?;
+    let browser = auth::cookie(&request, sign_in::STEP_COOKIE);
+    let cleared = sign_in_step_cookie(&state, "", 0)?;
+    let (person, key) = sign_in::make_account(
+        &state,
+        caller.as_ref(),
+        browser,
+        &body.step,
+        &body.your_name,
+        now(),
+    )?;
+    let mut headers = cookie_for_new_key(&state, &person.id).unwrap_or_default();
+    headers.append(header::SET_COOKIE, cleared);
+    Ok((headers, Json(json!({ "person": person, "owner_key": key }))).into_response())
 }
 
 async fn unlink_sign_in(

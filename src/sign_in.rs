@@ -1,8 +1,9 @@
-//! Signing in with Discord or GitHub: the rules in docs/accounts-and-trust.md (A46 to A58).
+//! Signing in with Discord or GitHub: the rules in docs/accounts-and-trust.md (A46 to A64).
 //!
-//! The site proves an account, a person links it to theirs, and after that it signs them in. A link
-//! is a way into someone's account, so what matters here is who can't end up with one. Handlers in
-//! `api` only call these. Linking Discord to a bot is `discord`'s, and signs nobody in.
+//! The site proves an account, a person links it to theirs or makes their account with it, and after
+//! that it signs them in. A link is a way into someone's account, so what matters here is who can't
+//! end up with one. Handlers in `api` only call these. Linking Discord to a bot is `discord`'s, and
+//! signs nobody in.
 
 use std::{net::IpAddr, time::Duration};
 
@@ -17,7 +18,8 @@ use crate::{
     db::Person,
     discord,
     error::{ApiError, ApiResult},
-    notify, ops,
+    notify,
+    ops::{self, MAX_NAME_CHARS},
     passkey::{self, Pending},
     AppState,
 };
@@ -106,6 +108,10 @@ struct GitHubToken {
 pub enum Finished {
     Linked,
     SignedIn(Person, Site),
+    /// A64: they were in already, and stay as they are.
+    AlreadyIn,
+    /// A51: an account nobody has linked, and what to offer whoever proved it.
+    Offered(Value),
 }
 
 // Errors
@@ -130,14 +136,18 @@ fn unconfirmed(site: Site) -> ApiError {
     )
 }
 
-fn not_linked(site: Site) -> ApiError {
-    ApiError::new(
-        StatusCode::UNAUTHORIZED,
-        format!(
-            "that {} account isn't linked to anyone here; sign in another way and link it first",
-            site.name()
-        ),
+fn signed_in() -> ApiError {
+    ApiError::conflict(
+        "you're signed in: link that account from your home page, or sign out to make a new one",
     )
+}
+
+fn someone_else() -> ApiError {
+    ApiError::conflict("you're signed in as someone else: sign out to use that account")
+}
+
+fn needs_another_way_in(action: &str) -> ApiError {
+    ApiError::forbidden(format!("sign in with a passkey or your owner key to {action}"))
 }
 
 fn taken(site: Site) -> ApiError {
@@ -169,6 +179,11 @@ fn return_address(state: &AppState) -> String {
 /// Long enough for PKCE, which wants at least 43 characters.
 fn new_verifier() -> String {
     format!("{}{}", auth::new_ceremony_id(), auth::new_ceremony_id())
+}
+
+/// A50: whether this is the cookie the step was started with.
+fn same_browser(browser: Option<&str>, browser_hash: &str) -> bool {
+    browser.map(auth::hash_secret).as_deref() == Some(browser_hash)
 }
 
 /// Base64url with no padding, which is how PKCE writes a hash.
@@ -229,9 +244,7 @@ fn address(
 /// started any other way pass, and so does a key or a token, because `secret_hash` matches no mark.
 pub fn refuse_outside_session(state: &AppState, caller: &Caller, action: &str) -> ApiResult<()> {
     if state.db.is_sign_in_session(&caller.secret_hash)? {
-        return Err(ApiError::forbidden(format!(
-            "sign in with a passkey or your owner key to {action}"
-        )));
+        return Err(needs_another_way_in(action));
     }
     Ok(())
 }
@@ -300,6 +313,7 @@ pub fn start_sign_in(
     state: &AppState,
     caller: Option<&Caller>,
     site: Site,
+    new: bool,
     from: Option<IpAddr>,
     now: i64,
 ) -> ApiResult<(String, String)> {
@@ -313,7 +327,9 @@ pub fn start_sign_in(
         verifier: verifier.clone(),
     };
     let step = state.ceremonies.begin(pending, now, from).ok_or_else(busy)?;
-    Ok((address(state, site, &step, &verifier, "none")?, browser))
+    // A59: nobody makes an account without seeing the site's screen.
+    let prompt = if new { "consent" } else { "none" };
+    Ok((address(state, site, &step, &verifier, prompt)?, browser))
 }
 
 /// Finishes a step with what the site handed back. `browser` is the step cookie, if there is one.
@@ -321,6 +337,7 @@ pub async fn finish(
     state: &AppState,
     caller: Option<&Caller>,
     browser: Option<&str>,
+    from: Option<IpAddr>,
     step: &str,
     code: &str,
     now: i64,
@@ -346,16 +363,94 @@ pub async fn finish(
         Some(Pending::SignIn { site, browser_hash, verifier }) => {
             require_on(state, site)?;
             // A50: otherwise a link could sign you in to someone else's account.
-            if browser.map(auth::hash_secret).as_deref() != Some(browser_hash.as_str()) {
+            if !same_browser(browser, &browser_hash) {
                 return Err(lapsed());
             }
             let account = read_account(state, site, code, &verifier)
                 .await
                 .ok_or_else(|| unconfirmed(site))?;
             let person = state.db.person_by_sign_in(site.key(), &account.id, &account.name)?;
-            Ok(Finished::SignedIn(person.ok_or_else(|| not_linked(site))?, site))
+            match (person, caller) {
+                (None, _) => offer_account(state, caller, site, browser_hash, account, from, now),
+                (Some(person), None) => Ok(Finished::SignedIn(person, site)),
+                (Some(person), Some(caller)) if person.id == caller.person_id => {
+                    Ok(Finished::AlreadyIn)
+                }
+                (Some(_), Some(_)) => Err(someone_else()),
+            }
         }
         _ => Err(lapsed()),
+    }
+}
+
+/// A59: holds what the site proved until the person says yes, and says what to offer them.
+fn offer_account(
+    state: &AppState,
+    caller: Option<&Caller>,
+    site: Site,
+    browser_hash: String,
+    account: Account,
+    from: Option<IpAddr>,
+    now: i64,
+) -> ApiResult<Finished> {
+    if caller.is_some() {
+        return Err(signed_in());
+    }
+    if state.ceremonies.signups_full(now) {
+        return Err(passkey::too_many_signups());
+    }
+    let shown = account.name.clone();
+    let pending =
+        Pending::SignUp { site, browser_hash, account_id: account.id, account_name: account.name };
+    let step = state.ceremonies.begin(pending, now, from).ok_or_else(busy)?;
+    Ok(Finished::Offered(
+        json!({ "step": step, "site": site.key(), "name": site.name(), "account": shown }),
+    ))
+}
+
+/// Makes the account someone said yes to, with its link, and gives back its owner key (A59, A63).
+/// The name is read before the step is taken, so a bad one can be fixed (A60).
+pub fn make_account(
+    state: &AppState,
+    caller: Option<&Caller>,
+    browser: Option<&str>,
+    step: &str,
+    your_name: &str,
+    now: i64,
+) -> ApiResult<(Person, String)> {
+    passkey::refuse_bots(caller)?;
+    if caller.is_some() {
+        return Err(signed_in());
+    }
+    let name = ops::clean(your_name, "your name", MAX_NAME_CHARS)?;
+    let Some(Pending::SignUp { site, browser_hash, account_id, account_name }) =
+        state.ceremonies.take(step, now)
+    else {
+        return Err(lapsed());
+    };
+    if !same_browser(browser, &browser_hash) {
+        return Err(lapsed());
+    }
+    if !state.ceremonies.take_signup(now) {
+        return Err(passkey::too_many_signups());
+    }
+    let key = auth::new_owner_key();
+    let made = state.db.create_account_with_sign_in(
+        &auth::new_id(),
+        &name,
+        &auth::hash_secret(&key),
+        &auth::new_feed_token(),
+        site.key(),
+        &account_id,
+        &account_name,
+        now,
+    );
+    if !matches!(made, Ok(Some(_))) {
+        state.ceremonies.give_back_signup(now);
+    }
+    match made? {
+        Some(person) => Ok((person, key)),
+        None => Err(taken(site)),
     }
 }
 
@@ -363,6 +458,11 @@ pub async fn finish(
 /// ends the session doing it, if that site started that one.
 pub fn unlink(state: &AppState, caller: &Caller, site: Site) -> ApiResult<()> {
     ops::require_human(caller, "unlink an account")?;
+    // A54: a session a site started can give that site up, which ends it, but no other way in.
+    let started_by = state.db.sign_in_session_site(&caller.secret_hash)?;
+    if started_by.is_some_and(|key| key != site.key()) {
+        return Err(needs_another_way_in("unlink another site"));
+    }
     state.db.remove_sign_in_link(&caller.person_id, site.key())?;
     Ok(())
 }

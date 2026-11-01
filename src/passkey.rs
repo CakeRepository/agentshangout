@@ -31,7 +31,7 @@ pub const CEREMONY_SECS: i64 = 5 * 60;
 pub const MAX_OPEN_CEREMONIES: usize = 2_000;
 /// Most one address keeps waiting at once, so one source can't use up the server's.
 pub const MAX_OPEN_PER_ADDRESS: usize = 30;
-/// New accounts the whole server makes by passkey in an hour.
+/// New accounts the whole server makes in an hour, by passkey or with a site (A11, A62).
 pub const SIGNUPS_PER_HOUR: usize = 60;
 const SIGNUP_WINDOW_SECS: i64 = 60 * 60;
 /// Most passkeys one person keeps.
@@ -87,6 +87,14 @@ pub enum Pending {
         site: Site,
         browser_hash: String,
         verifier: String,
+    },
+    /// Someone who proved an account nobody has linked, deciding whether to make one with it. Nothing
+    /// about them exists until they say yes, from the same browser (A59).
+    SignUp {
+        site: Site,
+        browser_hash: String,
+        account_id: String,
+        account_name: String,
     },
 }
 
@@ -209,7 +217,7 @@ fn busy() -> ApiError {
     )
 }
 
-fn too_many_signups() -> ApiError {
+pub(crate) fn too_many_signups() -> ApiError {
     ApiError::too_many_requests("too many new accounts just now; try again later")
 }
 
@@ -355,7 +363,8 @@ pub fn finish_registration(
         Pending::Login(_)
         | Pending::Discord { .. }
         | Pending::SignInLink { .. }
-        | Pending::SignIn { .. } => return Err(lapsed()),
+        | Pending::SignIn { .. }
+        | Pending::SignUp { .. } => return Err(lapsed()),
         Pending::Add { person_id, label, registration } => match caller {
             Some(caller) if caller.person_id == person_id => {
                 (label, registration, Owner::Existing(person_id))

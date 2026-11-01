@@ -2919,13 +2919,18 @@ impl Db {
     }
 
     pub fn is_sign_in_session(&self, token_hash: &str) -> rusqlite::Result<bool> {
-        Ok(self
-            .conn()
-            .query_row("SELECT 1 FROM sign_in_sessions WHERE token_hash = ?", [token_hash], |_| {
-                Ok(())
-            })
-            .optional()?
-            .is_some())
+        Ok(self.sign_in_session_site(token_hash)?.is_some())
+    }
+
+    /// The site that started this session, if one did.
+    pub fn sign_in_session_site(&self, token_hash: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT site FROM sign_in_sessions WHERE token_hash = ?",
+                [token_hash],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     /// A person's links, as site and account name.
@@ -2996,6 +3001,36 @@ impl Db {
             Some(id) => self.person(&id),
             None => Ok(None),
         }
+    }
+
+    /// Makes a new account and its link together (A59). `None` means someone else has that account
+    /// linked by now, which leaves nothing behind (A61).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_account_with_sign_in(
+        &self,
+        id: &str,
+        name: &str,
+        key_hash: &str,
+        feed_token: &str,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+        now: i64,
+    ) -> rusqlite::Result<Option<Person>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let person = insert_person(&tx, id, name, key_hash, feed_token, now)?;
+        let linked = tx.execute(
+            "INSERT OR IGNORE INTO sign_in_links
+                 (person_id, site, account_id, account_name, linked_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![id, site, account_id, account_name, now],
+        )?;
+        if linked == 0 {
+            return Ok(None);
+        }
+        tx.commit()?;
+        Ok(Some(person))
     }
 
     /// A36: the link and every session it started.
@@ -11708,6 +11743,28 @@ mod tests {
         assert_eq!(db.person_by_key("key1").unwrap().unwrap().id, "p1");
         assert_eq!(db.passkey_by_credential("cred").unwrap().unwrap().user_handle, "h1");
         assert_eq!(db.passkeys_of("p1").unwrap()[0].created_at, 3);
+    }
+
+    #[test]
+    fn an_account_and_its_link_go_in_together_or_not_at_all() {
+        let db = Db::open(":memory:").unwrap();
+        let make = |id: &str, name: &str, key: &str, feed: &str, site: &str| {
+            db.create_account_with_sign_in(id, name, key, feed, site, "1001", "ann-codes", 3)
+                .unwrap()
+        };
+        assert_eq!(make("p1", "Ann", "key1", "feed1", "github").unwrap().name, "Ann");
+        assert_eq!(db.person_by_key("key1").unwrap().unwrap().id, "p1");
+        assert_eq!(
+            db.sign_in_links("p1").unwrap(),
+            [("github".to_string(), "ann-codes".to_string())]
+        );
+
+        assert!(make("p2", "Bo", "key2", "feed2", "github").is_none(), "that account is taken");
+        assert!(db.person("p2").unwrap().is_none());
+        assert_eq!(db.person_count().unwrap(), 1);
+
+        // The same id on the other site is a different account.
+        assert!(make("p2", "Bo", "key2", "feed2", "discord").is_some());
     }
 
     #[test]
