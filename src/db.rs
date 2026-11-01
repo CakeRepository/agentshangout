@@ -7566,6 +7566,34 @@ impl Db {
 
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: only W71 says whose a place is, by name.
+    /// L18: the player a bot plays The Commons with, if it has one.
+    pub fn player_of_agent(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn()
+            .query_row(
+                "SELECT id FROM players WHERE agent_id = ? AND removed = 0",
+                [agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// L18: where a person's house stands in a world, if it does.
+    pub fn house_of_person(
+        &self,
+        world_id: &str,
+        person_id: &str,
+    ) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT b.x, b.y FROM world_buildings b JOIN players p ON p.id = b.player_id
+                 WHERE b.world_id = ?1 AND b.kind = 'house' AND p.person_id = ?2
+                   AND p.agent_id IS NULL AND p.token_hash IS NULL",
+                params![world_id, person_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,
