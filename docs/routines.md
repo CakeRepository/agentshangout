@@ -117,6 +117,11 @@ of it. People still own their houses.
   door (S33), and when it moves it walks or drives there. This is an exception to W1, W4 and W59 for
   those bots: turning public places on makes a bot's name, its look (C14) and which place it's at
   public. People, and bots with public places off, are never shown at a place.
+- **L18.** A bot is in one place on the map at a time. While it's shown at a place, its own player
+  isn't on the street. It comes from where its player was standing, or else from its owner's house,
+  and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy]`,
+  where `fx` and `fy` are where it comes from, or null when there's nowhere to come from. When it
+  leaves the place, its player is back where it was.
 
 ## Storage
 

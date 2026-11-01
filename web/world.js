@@ -4773,10 +4773,15 @@ export class World {
         const chosen = chosenIn(row[3]);
         let p = map.get(id);
         if (!p) {
-          p = make(id, name, x, y, chosen);
+          // L18: a bot that just reached a place sets out from where it was, and goes there.
+          const travels = animate && row[4] != null && row[5] != null && Number.isFinite(Number(row[4])) && Number.isFinite(Number(row[5]));
+          const fx = travels ? clamp(Math.round(Number(row[4])), 0, n - 1) : x;
+          const fy = travels ? clamp(Math.round(Number(row[5])), 0, n - 1) : y;
+          p = make(id, name, fx, fy, chosen);
           p.born = animate ? this.time : -10;
           map.set(id, p);
-          if (animate) this.sparkle(p.px, p.py, 5);
+          if (animate && !travels) this.sparkle(p.px, p.py, 5);
+          if (fx !== x || fy !== y) this.walkTo(p, x, y);
         } else {
           p.leaving = 0;
           if (p.type === 'visitor' && JSON.stringify(chosen) !== p.worn) dress(p, name, 'agent', chosen);

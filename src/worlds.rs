@@ -1607,6 +1607,8 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 
 /// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
 type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str);
+/// L17, L18: `[name, x, y, look, fx, fy]` for a bot at a place.
+type BotOutRow = (String, u16, u16, crate::looks::Look, Option<u16>, Option<u16>);
 /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
 type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
 
@@ -1637,7 +1639,8 @@ struct ViewOut<'a> {
     owners: Option<Vec<(u16, u16, String, String)>>,
     /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
+    /// L18: and `fx, fy`, where it comes from, or nulls.
+    bots_out: Option<Vec<BotOutRow>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
 }
@@ -1720,7 +1723,7 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         .map(|(&(x, y), tile)| (x, y, tile.kind.as_str(), tile.level))
         .collect();
     tiles.sort_unstable_by_key(|&(x, y, _, _)| (y, x));
-    let players = snapshot
+    let mut players: Vec<PlayerOut> = snapshot
         .players
         .iter()
         .map(|player| {
@@ -1777,7 +1780,18 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             .collect();
         let visitors = on_the_street(state.worlds.visitors(now));
         let people = on_the_street(state.worlds.people(now));
-        let bots_out = crate::routines::bots_at_places(state, &snapshot.tiles, now)?;
+        // L18: a bot at a place isn't on the street too, and comes from where it stood.
+        let street = snapshot.players.iter().map(|player| (player.id, player.pos)).collect();
+        let at_places = crate::routines::bots_at_places(state, &snapshot.tiles, &street, now)?;
+        let inside: std::collections::HashSet<i64> =
+            at_places.iter().filter_map(|bot| bot.player).collect();
+        players.retain(|row| !inside.contains(&row.0));
+        let bots_out = at_places
+            .into_iter()
+            .map(|bot| {
+                (bot.name, bot.x, bot.y, bot.look, bot.from.map(|at| at.0), bot.from.map(|at| at.1))
+            })
+            .collect();
         (Some(crawlers), Some(visitors), Some(people), Some(bots_out))
     } else {
         (None, None, None, None)

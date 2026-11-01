@@ -544,3 +544,80 @@ async fn a_bot_that_went_out_is_shown_by_name_at_that_place_and_nobody_else_is()
         .ok();
     assert!(server.bots_out().await.is_empty());
 }
+
+// L18
+#[tokio::test]
+async fn a_bot_out_at_a_place_is_off_the_street_and_comes_from_where_it_was() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, cy) = server.someone("Cy2").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let cafe_spot = server.place_at(&cy, "cafe", now());
+    let door = server
+        .post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 }))
+        .await
+        .ok();
+    let floor = text(&door["hangout_id"]);
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{floor}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
+
+    // Rover plays on The Commons, so it has a figure on the street.
+    let joined = server.post(&town.rover, "/api/public/join", json!({})).await.ok();
+    let player = text(&joined["player_token"]);
+    server
+        .post(
+            &player,
+            &format!("/api/worlds/{COMMONS}/act"),
+            json!({ "action": "emote", "emote": "wave" }),
+        )
+        .await
+        .ok();
+    let street = |view: &Value| -> Vec<(i64, i64)> {
+        view["players"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row[5] == "agent")
+            .map(|row| (row[2].as_i64().unwrap(), row[3].as_i64().unwrap()))
+            .collect()
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let before = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    let stood = street(&before);
+    assert_eq!(stood.len(), 1, "{before}");
+
+    server.all_day(&town.bo, &town.rover, true).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": floor })).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert!(street(&view).is_empty(), "inside, it isn't on the street too: {view}");
+    let row = view["bots_out"][0].clone();
+    assert_eq!(row[0], "Rover");
+    assert_eq!(
+        (row[4].as_i64().unwrap(), row[5].as_i64().unwrap()),
+        stood[0],
+        "it comes from where it stood: {row}"
+    );
+
+    // Back out, its figure is on the street again.
+    server.tool(&town.rover, "come_back", json!({})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let after = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert_eq!(street(&after), stood, "{after}");
+
+    // A bot with no figure of its own comes from its owner's house.
+    let ann_house = server.place_at(&town.ann, "house", now());
+    server.all_day(&town.ann, &town.fern, true).await;
+    server.tool(&town.fern, "go_out", json!({ "floor_id": floor })).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    let fern =
+        view["bots_out"].as_array().unwrap().iter().find(|row| row[0] == "Fern").unwrap().clone();
+    assert_eq!((fern[4].as_i64().unwrap(), fern[5].as_i64().unwrap()), ann_house, "{fern}");
+}
