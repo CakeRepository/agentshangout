@@ -1,4 +1,4 @@
-//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W71). They
+//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W74). They
 //! drive a real server over HTTP. A comment such as `// W13` above a test names the rule it
 //! covers, so coverage can be checked by searching for it.
 //!
@@ -2384,6 +2384,7 @@ async fn a_player_on_the_street_is_a_person_or_an_agent() {
 #[tokio::test]
 async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     let server = Server::start().await;
+    let day = worlds::today(now());
     let long = format!("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html) secret-agent-text-7731 {}", "x".repeat(2000));
     let ip = "203.0.113.77";
     server.get("/").ua(&long).ip(ip).send().await;
@@ -2394,13 +2395,24 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     for secret in ["secret-agent-text-7731", "secret-path-8842", ip, "x".repeat(40).as_str()] {
         assert!(!text.contains(secret), "{secret}");
     }
-    // The database holds a kind, a day and a count, and nothing else.
-    worlds::housekeeping(&server.state, now() + 120);
-    let rows = server.state.db.sightings_on(worlds::today(now())).unwrap();
-    let kinds: Vec<&str> = rows.iter().map(|row| row.0.as_str()).collect();
+    // The database holds a kind, a day and a count, and nothing else. What was waiting goes on the
+    // day it's written, and two minutes on can be tomorrow.
+    let later = now() + 120;
+    worlds::housekeeping(&server.state, later);
+    let mut rows = Vec::new();
+    for day in day..=worlds::today(later) {
+        rows.extend(server.state.db.sightings_on(day).unwrap());
+    }
+    let mut kinds: Vec<&str> = rows.iter().map(|row| row.0.as_str()).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
     assert_eq!(kinds, ["chatgpt-user", "googlebot"]);
-    let googlebot = rows.iter().find(|row| row.0 == "googlebot").unwrap();
-    assert_eq!(googlebot.1, 2, "two visits");
+    let googlebot: i64 = rows
+        .iter()
+        .filter(|row| row.0 == "googlebot")
+        .map(|row| row.1)
+        .sum();
+    assert_eq!(googlebot, 2, "two visits");
     for secret in ["secret", ip] {
         for row in &rows {
             assert!(!row.0.contains(secret));
@@ -2410,6 +2422,21 @@ async fn a_user_agent_is_only_looked_at_and_nothing_of_a_visit_is_kept() {
     let late = format!("{}Googlebot", "a".repeat(600));
     server.get("/").ua(&late).send().await;
     assert!(server.state.worlds.frogs(now()).iter().all(|(crawler, _)| crawler.id != "ahrefsbot"));
+}
+
+// W39
+#[tokio::test]
+async fn sightings_still_waiting_at_midnight_go_on_the_day_they_are_written() {
+    let server = Server::start().await;
+    let day = worlds::today(1_700_000_000);
+    let t = (day + 1) * 86_400 - 60;
+    let mut headers = HeaderMap::new();
+    headers.insert("user-agent", GOOGLEBOT.parse().unwrap());
+    worlds::note_request(&server.state, &Method::GET, "/", &headers, t);
+    worlds::note_request(&server.state, &Method::GET, "/", &headers, t + 1);
+    worlds::housekeeping(&server.state, t + 120);
+    assert_eq!(server.state.db.sightings_on(day).unwrap()[0].1, 1);
+    assert_eq!(server.state.db.sightings_on(day + 1).unwrap()[0].1, 1);
 }
 
 // W39
@@ -3978,7 +4005,7 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     let _ = std::fs::remove_file(&path);
 }
 
-// W71
+// W73
 #[test]
 fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
     // Sizing a canvas wipes it, and a resize is heard after the frame is drawn, so the browser shows
@@ -3993,4 +4020,23 @@ fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
     let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
     assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
     assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
+}
+
+// W74
+#[test]
+fn the_status_bar_under_the_map_stays_one_line_tall() {
+    // The map gets the height the bar leaves, so a goal that wrapped when the mouse came onto the map
+    // resized the map each time, in a window of an ordinary size. Nothing here runs a browser, so this
+    // reads the page. Rooms stack rows in the same bar and have no map, so they keep them.
+    let app = include_str!("../web/app.js");
+    assert!(app.contains("frame.root.classList.add('wd-game', 'wd-map');"), "the map's window says it's the map");
+    let css = include_str!("../web/style.css");
+    assert!(css.contains(".wd-map > .wd-status { flex-wrap: nowrap; }"), "the bar is one row on a wide screen");
+    assert!(
+        css.contains(".wd-map .wd-status .wd-seg[role=\"status\"], .wd-map .wd-status .wd-town { white-space: nowrap; overflow-wrap: normal; }"),
+        "the two cells that say whole sentences stay on one line, on every screen",
+    );
+    assert!(css.contains(".wd-map .wd-status .wd-town { order: 1; }"), "on a narrow screen the readout can't add a row");
+    assert!(app.contains("frame.message.title = text;"), "a message that doesn't fit can still be read");
+    assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
 }

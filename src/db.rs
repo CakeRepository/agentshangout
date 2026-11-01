@@ -573,6 +573,16 @@ CREATE TABLE IF NOT EXISTS bot_looks (
     choice      TEXT NOT NULL,
     PRIMARY KEY (agent_id, part)
 );
+CREATE TABLE IF NOT EXISTS place_requests (
+    id          TEXT PRIMARY KEY,
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    asked_by    TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL CHECK (status IN ('waiting', 'yes', 'no')),
+    created_at  INTEGER NOT NULL,
+    answered_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS place_requests_by_space ON place_requests (space_id, status);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -945,6 +955,9 @@ pub struct RoutineRow {
 /// W71, W73: a place, its owner, its kind and the name of the room behind its door, if it has one:
 /// `(x, y, owner, kind, name)`.
 pub type PlaceOwnerRow = (i64, i64, String, String, Option<String>);
+
+/// S51: a request waiting on a place's owner: `(id, space_id, place, bot, asker, asked_at)`.
+pub type PlaceRequestRow = (String, String, String, String, String, i64);
 
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1531,6 +1544,17 @@ const GATHERINGS: &str = "FROM events e JOIN cities c ON c.square_id = e.hangout
 /// left stays in the table but doesn't count, and counts again if they come back.
 const VOUCHERS_IN_CITY: &str = "FROM vouches v
      JOIN city_members cm ON cm.city_id = v.city_id AND cm.person_id = v.by_person";
+
+/// T13: what a city asks of someone at its gate, as SQL for the city `id`. Only people in the city
+/// can vouch, so it's never more than there are of them. A city that asks for any always asks for
+/// at least one, so the last person leaving doesn't open the gate.
+fn vouches_needed_sql(id: &str) -> String {
+    format!(
+        "COALESCE((SELECT MIN(e.min_vouches, MAX(1, (SELECT COUNT(*) FROM city_members m
+                                                     WHERE m.city_id = e.place_id)))
+                   FROM entry_rules e WHERE e.place_id = {id}), 0)"
+    )
+}
 
 const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
      CASE WHEN r.person_id IS NOT NULL THEN i.claimed_by END,
@@ -4981,20 +5005,6 @@ impl Db {
 
     // Friends and invites
 
-    /// F1, F2: invited by a friend, with no city of their own yet. Worked out from what happened.
-    pub fn invited_with_no_city(&self, person_id: &str) -> rusqlite::Result<bool> {
-        self.conn().query_row(
-            "SELECT NOT EXISTS (SELECT 1 FROM cities WHERE created_by = ?1)
-               AND (EXISTS (SELECT 1 FROM plan_invitees WHERE person_id = ?1)
-                 OR EXISTS (SELECT 1 FROM members m JOIN hangouts h ON h.id = m.hangout_id
-                            WHERE m.person_id = ?1 AND h.created_by != ?1)
-                 OR EXISTS (SELECT 1 FROM city_members cm JOIN cities c ON c.id = cm.city_id
-                            WHERE cm.person_id = ?1 AND c.created_by != ?1))",
-            [person_id],
-            |row| row.get(0),
-        )
-    }
-
     /// The plan's link, which is `code` if it doesn't have one yet.
     pub fn plan_invite_code(
         &self,
@@ -5783,6 +5793,12 @@ impl Db {
         rows.collect()
     }
 
+    /// T13: how many vouches someone at this city's gate needs right now.
+    pub fn vouches_needed(&self, city_id: &str) -> rusqlite::Result<i64> {
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        self.conn().query_row(&sql, [city_id], |row| row.get(0))
+    }
+
     /// The gates this person is waiting at, with their vouches and what each city asks for.
     pub fn gates_of_person(&self, person_id: &str, cutoff: i64) -> rusqlite::Result<Vec<GatePlace>> {
         let conn = self.conn();
@@ -5790,10 +5806,11 @@ impl Db {
             "SELECT c.id, c.name,
                     (SELECT COUNT(*) {VOUCHERS_IN_CITY}
                       WHERE v.city_id = g.city_id AND v.for_person = g.person_id),
-                    COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = c.id), 0)
+                    {}
              FROM city_gate g JOIN cities c ON c.id = g.city_id
              WHERE g.person_id = ?1 AND g.created_at > ?2
-             ORDER BY g.created_at, g.rowid"
+             ORDER BY g.created_at, g.rowid",
+            vouches_needed_sql("c.id")
         ))?;
         let rows = stmt.query_map(params![person_id, cutoff], |row| {
             Ok(GatePlace {
@@ -5825,11 +5842,8 @@ impl Db {
         )? {
             return Ok(false);
         }
-        let needed: i64 = tx.query_row(
-            "SELECT COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = ?), 0)",
-            [city_id],
-            |row| row.get(0),
-        )?;
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        let needed: i64 = tx.query_row(&sql, [city_id], |row| row.get(0))?;
         let have: i64 = tx.query_row(
             &format!("SELECT COUNT(*) {VOUCHERS_IN_CITY} WHERE v.city_id = ? AND v.for_person = ?"),
             params![city_id, person_id],
@@ -7070,6 +7084,88 @@ impl Db {
         rows.collect()
     }
 
+    // Asking to let a bot in (S49 to S52)
+
+    /// S52: the latest request for this bot at this space since `since` that's waiting or was turned
+    /// down: its id and status.
+    pub fn place_request_for(&self, space_id: &str, agent_id: &str, since: i64) -> rusqlite::Result<Option<(String, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT id, status FROM place_requests
+                 WHERE space_id = ? AND agent_id = ? AND status IN ('waiting', 'no')
+                   AND COALESCE(answered_at, created_at) > ?
+                 ORDER BY created_at DESC LIMIT 1",
+                params![space_id, agent_id, since],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// S50: adds a request unless this person has `max` waiting since `since`. False if they have.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_place_request(
+        &self,
+        id: &str,
+        space_id: &str,
+        agent_id: &str,
+        asked_by: &str,
+        now: i64,
+        since: i64,
+        max: i64,
+    ) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "INSERT INTO place_requests (id, space_id, agent_id, asked_by, status, created_at)
+             SELECT ?1, ?2, ?3, ?4, 'waiting', ?5
+             WHERE (SELECT COUNT(*) FROM place_requests
+                    WHERE asked_by = ?4 AND status = 'waiting' AND created_at > ?6) < ?7",
+            params![id, space_id, agent_id, asked_by, now, since, max],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// A request still waiting since `since`: `(space_id, agent_id, asked_by)`.
+    pub fn waiting_place_request(&self, id: &str, since: i64) -> rusqlite::Result<Option<(String, String, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT space_id, agent_id, asked_by FROM place_requests
+                 WHERE id = ? AND status = 'waiting' AND created_at > ?",
+                params![id, since],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+    }
+
+    /// S51: the requests waiting on this owner since `since`, oldest first:
+    /// `(id, space name, bot name, asker's name, created_at)`.
+    pub fn place_requests_for_owner(
+        &self,
+        owner_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<PlaceRequestRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT r.id, r.space_id, s.name, a.name, p.name, r.created_at FROM place_requests r
+             JOIN spaces s ON s.id = r.space_id
+             JOIN agents a ON a.id = r.agent_id
+             JOIN people p ON p.id = r.asked_by
+             WHERE s.owner_id = ? AND r.status = 'waiting' AND r.created_at > ?
+             ORDER BY r.created_at, r.id",
+        )?;
+        let rows = stmt.query_map(params![owner_id, since], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?;
+        rows.collect()
+    }
+
+    /// False if it was answered already.
+    pub fn answer_place_request(&self, id: &str, status: &str, now: i64) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE place_requests SET status = ?, answered_at = ? WHERE id = ? AND status = 'waiting'",
+            params![status, now, id],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// W71: every place in a world with its owner's name, `(x, y, name)`.
     /// W73: with its kind, and the name of the space behind its door if its owner has been through
     /// and it still stands as that space's door (S33): `(x, y, owner, kind, name)`.
@@ -7996,6 +8092,34 @@ mod tests {
         assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 3), road("hb", "hz", 1)]);
         assert_eq!(db.roads("c2").unwrap(), []);
         assert_eq!(db.roads("nowhere").unwrap(), []);
+    }
+
+    // R41
+    #[test]
+    fn roads_go_by_where_a_bot_lives_now() {
+        let db = Db::open(":memory:").unwrap();
+        two_houses(&db);
+        db.create_person("p3", "Cy", "key3", "feed3", 0).unwrap();
+        db.add_city_member("c1", "p3", 0).unwrap();
+        house(&db, "hb", "c1", "p3", 30);
+        bot(&db, "b3", "p2");
+        let road = |a: &str, b: &str, trips| Road { a: a.to_string(), b: b.to_string(), trips };
+
+        // A bot with no home arrives, and that draws nothing.
+        start_trip(&db, "t1", "b3", "hz", 60, 1000);
+        assert_eq!(db.roads("c1").unwrap(), []);
+
+        // Given a home, its arrival draws a road from there.
+        db.set_bot_home("b3", "ha", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 1)]);
+
+        // Moved, the road moves with it.
+        db.set_bot_home("b3", "hb", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("hb", "hz", 1)]);
+
+        // With no home again, the road goes.
+        db.conn().execute("DELETE FROM bot_homes WHERE agent_id = 'b3'", []).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), []);
     }
 
     #[test]

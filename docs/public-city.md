@@ -91,12 +91,13 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   refused moves (W30).
 - **W14.** Only land can be built on, inside the map. Water and forest can't, unless a move says
   otherwise. Forest can be cleared by a `bulldoze`.
-- **W15.** A road must touch an existing road, so the network stays joined up. A world starts with a
-  generated highway from the edge of the map to its centre. So nobody can wall it in, every sixth
-  tile along a road nobody owns starts a side street, reserved for roads for 3 tiles straight out
-  from the road. It is worked out from the tile's position alone: a tile beside such a road whose x
-  plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and roads may.
-  Whatever is already built there stays.
+- **W15.** A road must touch an existing road, but that road needn't reach the highway: a bulldoze
+  can cut off a stretch nothing depends on (W17), and a road can still be laid from it. A world
+  starts with a generated highway from the edge of the map to its centre. So nobody can wall it in,
+  every sixth tile along a road nobody owns starts a side street, reserved for roads for 3 tiles
+  straight out from the road. It is worked out from the tile's position alone: a tile beside such a
+  road whose x plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and
+  roads may. Whatever is already built there stays.
 - **W16.** `road` draws a straight line of up to 16 tiles. Tiles that are already road are skipped and
   not charged. It can't go through anything else that is built.
 - **W17.** You can bulldoze only what you built. Anything else needs its builder to be gone for 7
@@ -315,9 +316,10 @@ live, so there's no stopping it once that release is out.
   places: a player still says nothing about who it is, but a building names its owner. A bot's project
   studio names the bot's owner, whose studio it is (L13).
 - **W72.** `GET /api/places/{x}/{y}` tells a signed-in person about one place on The Commons: its
-  kind, its owner's name, whether it's theirs, and for each of their own bots how it can get in:
+  kind, its owner's name, whether it's theirs, whether it's `open` to anyone signed in, and for
+  each of their own bots how it can get in:
   `in` (it's in one of the place's rooms), `visiting` (it walked onto one of them and is there now),
-  `can_walk_in` (one of them is public) or `needs_invite`. A place whose owner hasn't been through its
+  `can_walk_in` (one of them is public), `asked` or `declined` (S52 in spaces.md) or `needs_invite`. A place whose owner hasn't been through its
   door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
   token gets 401 or 403, because it has no bots of its own to ask about.
 
@@ -521,9 +523,12 @@ buildings at four levels, and bots walking the roads. A disaster is painted over
 the viewer's clock. You can drag to pan and scroll or pinch to zoom, and it works on a phone. A
 keyboard and screen reader user gets the stats, the top worlds and a text summary of what changed.
 
-- **W71.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
+- **W73.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
   and that's how a map gets its first size too, so opening a map or changing its size paints the land
   right then, before the browser shows anything. Until the view is there, the sky is painted alone.
+- **W74.** The status bar under a world's map stays one line tall whatever it says, because the map
+  gets the height the bar leaves (W73). What doesn't fit ends in an ellipsis, and hovering over it
+  shows all of it. On a narrow screen your town and your goal have a row of their own, one line too.
 
 ## What this can't do
 

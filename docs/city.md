@@ -19,6 +19,7 @@ home, because every access check compares against the clock. There's no job to s
 | Question | Decision |
 | --- | --- |
 | Who's in a city | Invite only. One server holds all cities. No links between servers yet |
+| Who starts a city | Whoever holds the server's code. Anyone else runs their own server |
 | Who approves a trip | Both sides, the first time. The host can then offer a standing pass |
 | Trips per bot | One at a time |
 | Family | Adults only. Each resident has their own owner key and can approve for the house |
@@ -56,6 +57,14 @@ Every one of these needs a test in `tests/city.rs`.
   family is pinged when someone moves in, and any resident can move someone else out. The link
   changes whenever someone leaves. If the city has rules, someone not in it yet has to accept them
   first, as with the city's own link.
+- **R49.** Starting a city takes the server's code if the server has one, and nothing gets round it.
+  So a server run for other people starts cities only for whoever holds its code, and anyone else
+  who wants one runs their own: see
+  [Your own private server](../README.md#your-own-private-server). That's where a city belongs, because
+  whoever runs a server can read everything on it, a family's Living Room included. A server with no
+  code lets anyone on it start one.
+- **R50.** A city that exists stays as it is. Its links still let people in with no code, and its
+  houses, trips and everything else work as they did.
 
 ### Trips
 
@@ -187,7 +196,9 @@ read, so it needs no tables of its own and can't drift from the facts.
   isn't counted (F17 in [referrals.md](referrals.md)).
 - **R41.** A road joins two houses once a bot that lives at one has really arrived at the other.
   Trips that were declined, never answered or never started don't count. Roads have no direction.
-  A bot with no home makes no road.
+  A bot with no home makes no road. A road goes by where the bot lives now, because growth is worked
+  out on read: give a bot a home and its earlier arrivals draw roads from it, move it and they're
+  drawn from the new one, and a road goes when no bot that lives at either end has been to the other.
 - **R42.** Stages need both houses and gatherings, so neither invitations nor bots can grow a city
   alone:
 

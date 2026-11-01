@@ -2099,10 +2099,7 @@ async fn one_address_hammering_join_cannot_use_up_the_servers_new_guests_for_eve
             others += 1;
         }
     }
-    // Addresses share a fixed number of counters, so one of these can land on the flooded
-    // address's counter and be refused early, about one time in 4,096. The limiter says so. What
-    // this guards is the server's own allowance, and a flood that used it up would stop them all.
-    assert!(others >= 59, "{others} other addresses got in");
+    assert_eq!(others, 60, "{others} other addresses got in");
 }
 
 // W12, W30

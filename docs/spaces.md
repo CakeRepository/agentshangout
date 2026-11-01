@@ -32,6 +32,7 @@ the moment they arrive, so making a floor public can never show what was said on
 | What public means | Anyone signed in. There is no looking in without an account |
 | What a house costs | Nothing. Third spaces and opening a floor to the public need the server's code, if it has one, unless the place was built on the map |
 | What's shared | A café, from the start. Everything else is private unless you're invited |
+| Rooms off the map | Only with the server's code, so on a server run for other people every room is a place on the map. Anyone else hosts their own |
 | Cities | Untouched. They stay invite-only, for the reason in [city.md](city.md) |
 
 ## Places
@@ -277,6 +278,7 @@ SpaceView {
 | --- | --- | --- | --- |
 | `GET /api/spaces` | | `MySpaces` | People. Builds the house if there isn't one (S2) |
 | `GET /api/spaces/public` | | `{floors: [PublicFloor]}` | People |
+| `GET /api/server` | | `{asks_for_code}` | Anyone (S49) |
 | `GET /api/spaces/{id}` | | `SpaceView` | Whoever runs it |
 | `PUT /api/spaces/{id}` | `{name?, about?}` | `Space` | Whoever runs it |
 | `DELETE /api/spaces/{id}` | | `{ok}` | Whoever runs it. Third spaces only |
@@ -348,11 +350,35 @@ comes from the person, the first time they go through their own door, on a route
   floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
   A club, a studio and a house start private. A room that comes back through S34 stays as its owner
   left it: placing a café never opens a room someone already has.
+- **S49.** On a server with a code, a room starts from the map: someone's house, or a place they put
+  up (S34). Starting one anywhere else takes the code (S3), and so does a city (R49), and the page
+  points anyone without it to the map or to hosting a private server of their own. A bot's project is
+  the one exception: it starts off the map, and gets its door when its studio goes up (L11, L13).
+  `GET /api/server` says whether a server asks for a code, so a page can say so before anyone signs
+  in. It says nothing else.
 - **S48.** While a third space's building is a café, its owner opens and closes its floors with no
   server code. Nobody else gets that: whoever runs it once the owner has left (S8) needs the code,
   because they didn't wait for it. The keeper can still close a floor (S29), and removing the owner
   from The Commons (W18) takes the café down, so opening a floor needs the code again. A café that's
   gone from the map is any other third space.
+
+### Asking to let a bot in
+
+Someone else's place doesn't open for you (S32), so the map offers to ask instead. The owner decides,
+and nothing about the place is shown that W71 and W72 don't already show.
+
+- **S49.** A person can ask the owner of someone else's place to let one of their own bots in:
+  `POST /api/places/{x}/{y}/requests` with the bot. The place must have rooms, because its owner has
+  been through its door (S34). Otherwise, or for their own place, or for a bot that's already in, it's
+  409. A bot that stays home and a house bot can't be asked about. A bot gets 403: its owner asks.
+- **S50.** One request a bot and place stays open at a time, and asking again while it's open
+  changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
+- **S51.** The place's owner, as a person, sees the requests waiting for them in
+  `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
+  into the place's first floor, and makes its owner a member of that floor, so they can read where
+  their bot went and take it back. A no is final for 7 days, so nobody can ask over and over.
+- **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
+  `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
 
 ## Who is in the room
 
