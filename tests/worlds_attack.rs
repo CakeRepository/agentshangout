@@ -503,6 +503,21 @@ impl Map {
             .find(|&(x, y)| self.ground(x, y) == Some(ground) && !self.built.contains_key(&(x, y)))
     }
 
+    /// W93: whether these new road tiles finish a 2 by 2 block of road with the roads there.
+    fn makes_a_block(&self, line: &[(i64, i64)]) -> bool {
+        let road = |at: (i64, i64)| {
+            line.contains(&at) || self.built.get(&at).is_some_and(|(kind, _)| kind == "road")
+        };
+        line.iter().any(|&(x, y)| {
+            [(0, 0), (1, 0), (0, 1), (1, 1)].iter().any(|&(dx, dy)| {
+                let (left, top) = (x - dx, y - dy);
+                [(left, top), (left + 1, top), (left, top + 1), (left + 1, top + 1)]
+                    .into_iter()
+                    .all(road)
+            })
+        })
+    }
+
     /// A straight run of `n` open tiles that starts beside a road: (first, last).
     fn line_from_road(&self, n: i64) -> Option<((i64, i64), (i64, i64))> {
         for (rx, ry) in self.roads() {
@@ -512,7 +527,11 @@ impl Map {
                     n <= world::LANE_TILES as i64
                         || self.on_streets.contains(&(rx + dx * i, ry + dy * i))
                 };
-                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i)) {
+                let line: Vec<(i64, i64)> = (1..=n).map(|i| (rx + dx * i, ry + dy * i)).collect();
+                // W93: and it doesn't run right alongside another road.
+                if (1..=n).all(|i| self.open(rx + dx * i, ry + dy * i) && along(i))
+                    && !self.makes_a_block(&line)
+                {
                     return Some(((rx + dx, ry + dy), (rx + dx * n, ry + dy * n)));
                 }
             }

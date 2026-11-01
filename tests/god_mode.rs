@@ -1138,3 +1138,34 @@ async fn placing_the_square_without_the_switch_is_refused_without_saying_why() {
     let reply = server.place(&ann, "square", spot).await.refused(StatusCode::FORBIDDEN);
     assert!(!reply.to_string().to_lowercase().contains("god"), "{reply}");
 }
+
+// W93: god mode lays roads anywhere, but not right alongside another.
+#[tokio::test]
+async fn god_mode_still_cant_lay_a_road_right_alongside_another() {
+    let (server, justin, _) = Server::start().await;
+    server.switch(&justin, true).await;
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let road =
+        |x: i64, y: i64| tiles.get(&(x as u16, y as u16)).is_some_and(|t| t.kind == Kind::Road);
+    let open = |x: i64, y: i64| {
+        let pos = (x as u16, y as u16);
+        !tiles.contains_key(&pos) && land.at(pos).is_some_and(|ground| ground.is_open())
+    };
+    // Two tiles of highway, one above the other, with open land to their right.
+    let (x, y) = tiles
+        .keys()
+        .map(|&(x, y)| (i64::from(x), i64::from(y)))
+        .find(|&(x, y)| {
+            road(x, y)
+                && road(x, y + 1)
+                && (y..=y + 1).all(|v| open(x + 1, v))
+                && !road(x + 1, y - 1)
+                && !road(x + 1, y + 2)
+        })
+        .expect("a straight bit of highway");
+    server.act(&justin.key, road_move((x + 1, y))).await.ok();
+    let refused = server.act(&justin.key, road_move((x + 1, y + 1))).await;
+    refused.refused(StatusCode::BAD_REQUEST);
+    assert_eq!(server.tile((x + 1, y + 1)), None);
+}
