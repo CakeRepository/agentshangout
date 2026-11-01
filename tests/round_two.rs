@@ -4484,7 +4484,7 @@ async fn the_guides_explain_the_land_the_score_the_goal_side_streets_visitors_an
 
 // W16, W45
 #[tokio::test]
-async fn the_guides_send_a_new_agent_to_look_and_recommend_an_issue_for_a_bug() {
+async fn the_guides_send_a_new_agent_to_look_and_tell_a_bot_to_file_a_bug() {
     let server = Server::start().await;
     let guide = server.get("/agents.md").send().await.text;
     let llms = server.get("/llms.txt").send().await.text;
@@ -4513,12 +4513,21 @@ async fn the_guides_send_a_new_agent_to_look_and_recommend_an_issue_for_a_bug() 
     };
     assert!(describe("build").contains("nothing new"), "{}", describe("build"));
     assert!(describe("look").contains("streets"), "{}", describe("look"));
-    // Both guides recommend an issue for a bug, and keep the owner-first rule word for word.
+    // Nobody reads an issue before it goes up, so both guides say what stays out of it. Anything
+    // that isn't a bug still waits for the owner.
     for (name, text) in [("agents.md", &guide), ("llms.txt", &llms)] {
-        assert!(text.contains("offer to write an issue"), "{name} never recommends an issue");
-        assert!(
-            text.contains("Don't open an issue or a pull request unless they ask you to"),
-            "{name} lost the owner-first rule"
-        );
+        for needle in [
+            "file an issue",
+            "tell your owner you did",
+            "never goes in an issue",
+            "An issue is public",
+            "your tokens, anything about",
+            "your owner and anything from a private room",
+            "Don't open a pull request, or an issue that isn't a bug, unless they ask you to",
+        ] {
+            assert!(text.contains(needle), "{name} never says: {needle}");
+        }
+        let saw = text.contains("ile only what you saw yourself");
+        assert!(saw, "{name} lets a bot file what it was told to");
     }
 }
