@@ -126,6 +126,16 @@ pub struct Posted {
     pub error: Option<&'static str>,
 }
 
+impl Posted {
+    fn nothing(error: &'static str) -> Self {
+        Self { status: None, body: String::new(), error: Some(error) }
+    }
+
+    fn accepted(&self) -> bool {
+        self.status.is_some_and(|status| (200..300).contains(&status))
+    }
+}
+
 /// POSTs a body the caller built, with the headers they named. Redirects are not followed.
 /// The URL is checked again here, the same way a saved notification is.
 pub async fn post_body(
@@ -218,15 +228,15 @@ fn blocked_header(name: &str) -> bool {
     )
 }
 
-/// Returns whether the far end accepted it, and whether trying again could help.
+/// Returns what came back, and whether trying again could help.
 async fn post_once(
     state: &AppState,
     url: &Url,
     notice: &Notice,
     auth: Option<&str>,
-) -> (bool, bool) {
+) -> (Posted, bool) {
     let Some(client) = client_for(state, url).await else {
-        return (false, false);
+        return (Posted::nothing("connection_refused"), false);
     };
     let room = (!notice.hangout_id.is_empty()).then_some(notice.hangout_id.as_str());
     let link = match room {
@@ -255,9 +265,12 @@ async fn post_once(
         }))
     };
     match request.send().await {
-        Ok(response) if response.status().is_success() => (true, false),
-        Ok(response) => (false, response.status().is_server_error()),
-        Err(_) => (false, true),
+        Ok(response) => {
+            let status = response.status();
+            let posted = Posted { status: Some(status.as_u16()), body: String::new(), error: None };
+            (posted, status.is_server_error())
+        }
+        Err(error) => (Posted::nothing(net_error(&error)), true),
     }
 }
 
@@ -267,8 +280,8 @@ async fn deliver(state: &AppState, url: &str, notice: &Notice, auth: Option<&str
     };
     for delay in RETRY_DELAYS {
         tokio::time::sleep(Duration::from_secs(delay)).await;
-        let (accepted, retry) = post_once(state, &url, notice, auth).await;
-        if accepted {
+        let (posted, retry) = post_once(state, &url, notice, auth).await;
+        if posted.accepted() {
             return true;
         }
         if !retry {
@@ -297,12 +310,48 @@ pub fn send(state: &AppState, owner_ids: &[String], notice: &Notice) {
 
 /// Sends once and waits, so the page can say whether the URL works.
 pub async fn send_test(state: &AppState, url: &str, hangout_id: &str) -> bool {
-    let notice = Notice {
+    deliver(state, url, &test_notice(hangout_id), None).await
+}
+
+fn test_notice(hangout_id: &str) -> Notice {
+    Notice {
         event: "test",
         hangout_id: hangout_id.to_string(),
         text: "Agents Hangout can reach you here.".to_string(),
+    }
+}
+
+/// E23: one try at a bot's wake-up URL with its key, and what came back in its owner's words.
+pub async fn test_wake_up(state: &AppState, url: &str, auth: Option<&str>) -> serde_json::Value {
+    let posted = match Url::parse(url) {
+        Ok(url) => post_once(state, &url, &test_notice(""), auth).await.0,
+        Err(_) => Posted::nothing("connection_refused"),
     };
-    deliver(state, url, &notice, None).await
+    json!({ "accepted": posted.accepted(), "status": posted.status, "says": in_words(&posted) })
+}
+
+fn in_words(posted: &Posted) -> String {
+    let Some(status) = posted.status else {
+        return match posted.error {
+            Some("timeout") => "It didn't answer in time.",
+            Some("tls_error") => "Its certificate failed, so nothing was sent.",
+            _ => "Nothing answered at that address.",
+        }
+        .to_string();
+    };
+    match status {
+        200..=299 => {
+            "It accepted the test. If this starts an agent, it should be running now.".into()
+        }
+        400 => "It refused the request (400). If this is a routine, check it isn't paused.".into(),
+        401 | 403 => {
+            format!("It refused the key ({status}). Copy it again: a new key replaces the old one.")
+        }
+        404 => "Nothing is at that address (404). Copy the URL again.".into(),
+        429 => "It's had too many requests (429). Try again in a minute.".into(),
+        500.. => format!("It had a problem of its own ({status}). Try again in a minute."),
+        _ => format!("It answered {status}."),
+    }
 }
 
 #[cfg(test)]
@@ -342,6 +391,24 @@ mod tests {
     }
 
     #[test]
+    fn a_test_says_what_came_back_in_words() {
+        let said =
+            |status| in_words(&Posted { status: Some(status), body: String::new(), error: None });
+        assert!(said(200).contains("accepted"));
+        assert!(said(204).contains("accepted"));
+        assert!(said(400).contains("paused"));
+        assert!(said(401).contains("key"));
+        assert!(said(403).contains("key"));
+        assert!(said(404).contains("URL"));
+        assert!(said(429).contains("too many"));
+        assert!(said(503).contains("503"));
+        assert!(said(418).contains("418"));
+        assert!(in_words(&Posted::nothing("timeout")).contains("in time"));
+        assert!(in_words(&Posted::nothing("tls_error")).contains("certificate"));
+        assert!(in_words(&Posted::nothing("connection_refused")).contains("Nothing answered"));
+    }
+
+    #[test]
     fn a_key_is_a_bearer_header_and_a_colon_is_the_header_they_named() {
         let (name, value) = auth_header("sk_live_abc").unwrap();
         assert_eq!(name, "Authorization");
@@ -350,6 +417,8 @@ mod tests {
         assert_eq!(value, "Bearer already");
         let (name, value) = auth_header("X-Api-Key: secret").unwrap();
         assert_eq!((name.as_str(), value.as_str()), ("X-Api-Key", "secret"));
+        let (name, value) = auth_header("Authorization: Bearer abc").unwrap();
+        assert_eq!((name.as_str(), value.as_str()), ("Authorization", "Bearer abc"));
         assert!(auth_header("Host: evil").is_err());
         assert!(auth_header("Bad Name: x").is_err());
         assert!(auth_header("X-Key:\nsecret").is_err());
