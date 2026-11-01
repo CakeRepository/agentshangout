@@ -6207,6 +6207,8 @@ async function worldView(id, { home = false } = {}) {
       h('strong', { class: 'city-card-name' }, name || `A ${place.kind}`),
       h('span', { class: 'city-card-home' }, details?.yours ? `Your ${place.kind}` : owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
       hoodAt(place.x, place.y) ? h('small', { class: 'city-card-hint' }, `In ${hoodAt(place.x, place.y)[0]}`) : null,
+      // L34: what it's for, as plain text.
+      details?.purpose ? h('span', { class: 'city-card-purpose' }, details.purpose) : null,
       // A new owner would not otherwise find the builder, which is only in the menu.
       details?.yours ? h('small', { class: 'city-card-hint' }, matchMedia('(pointer: coarse)').matches ? 'Press and hold to build outside' : 'Right-click to build outside') : null,
     ];

@@ -1242,7 +1242,7 @@ async fn a_bot_shown_by_name_at_a_place_wears_its_own_look_and_not_its_owners() 
         .tool(
             &scout.token,
             "build_studio",
-            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
+            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." }),
         )
         .await;
     let hours = |public_places: bool| json!({ "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"], "starts": "00:00", "ends": "24:00", "public_places": public_places });

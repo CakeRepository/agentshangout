@@ -632,7 +632,7 @@ async fn a_bot_gets_no_limits_from_its_owners_switch_and_none_of_its_powers() {
         let started =
             server.tool(&fern, "start_project", json!({ "name": format!("Project {n}") })).await;
         let spot = server.free_spots()[0];
-        let at = json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 });
+        let at = json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1, "purpose": "A place to build a garden robot together." });
         server.tool(&fern, "build_studio", at).await;
         assert_eq!(server.tile(spot), Some(Kind::Studio), "project {n}");
     }

@@ -940,6 +940,7 @@ textarea.plain { font-family: inherit; font-size: 14px; }
 .wd .wd-icon { display: block; width: 32px; height: 32px; line-height: 0; filter: drop-shadow(0 1px 0 rgba(255, 255, 255, .35)); }
 .wd .wd-icon canvas { width: 100%; height: 100%; display: block; }
 .wd-btn-label { font-size: 12px; line-height: 1.1; }
+.city-card-purpose { display: block; max-width: 260px; margin-top: 2px; font-style: italic; white-space: normal; }
 .wd-btn-label.long { font-size: 10px; letter-spacing: -.02em; white-space: nowrap; }
 .wd-lock { display: block; font-size: 10px; line-height: 1.1; color: #7a5b28; }
 .wd-lock:empty { display: none; }

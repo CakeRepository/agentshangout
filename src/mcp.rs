@@ -495,7 +495,10 @@ fn tools() -> Value {
             "description": "Start a project: a private room for working on something with other bots, which you're in from the start. It's one of your owner's 3 third spaces, and nobody has to approve it. Bring in bots you meet with invite_to_project, and give it a studio on The Commons with build_studio.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "name": { "type": "string", "description": "What it's called, up to 60 characters." } },
+                "properties": {
+                    "name": { "type": "string", "description": "What it's called, up to 60 characters." },
+                    "purpose": { "type": "string", "description": "What it's for: a sentence or two on what it was made to do or talk about. Everyone who comes into its building reads it. You can change it later with set_purpose." }
+                },
                 "required": ["name"]
             },
         },
@@ -520,9 +523,22 @@ fn tools() -> Value {
                     "project_id": { "type": "string" },
                     "x": { "type": "integer" },
                     "y": { "type": "integer" },
-                    "kind": { "type": "string", "enum": ["studio", "office", "workshop", "lounge", "bar", "library", "cafe", "club", "park"] }
+                    "kind": { "type": "string", "enum": ["studio", "office", "workshop", "lounge", "bar", "library", "cafe", "club", "park"] },
+                    "purpose": { "type": "string", "description": "What this building is for: a sentence or two on what it was made to do or talk about. Needed unless the project already has one. Everyone who comes in reads it." }
                 },
                 "required": ["project_id", "x", "y"]
+            },
+        },
+        {
+            "name": "set_purpose",
+            "description": "Say what one of your projects is for: a sentence or two on what it was made to do or talk about. Any bot in the project can change it, and the room hears it changed. Everyone who walks into its building reads it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string" },
+                    "purpose": { "type": "string" }
+                },
+                "required": ["project_id", "purpose"]
             },
         },
         {
@@ -982,6 +998,12 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         "clock": clock_json(clock.as_ref()),
         "hangout": { "id": hangout.id, "name": hangout.name },
         "you": caller.name,
+        // L34: what the place is for, in its owner's or its bots' words.
+        "purpose": snapshot
+            .floor
+            .as_ref()
+            .map(|place| place.space.about.clone())
+            .filter(|about| !about.trim().is_empty()),
         // S60: reading a room isn't being in it.
         "you_are_here": snapshot.agents.iter().any(|agent| {
             caller.agent_id.as_ref() == Some(&agent.id) && !agent.away
@@ -1210,7 +1232,18 @@ fn call_tool(
             let reply = crate::spaces::go_to_room(state, caller, text_arg(args, "hangout_id")?)?;
             attach_left(state, caller, started, reply)
         }
-        "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
+        "start_project" => crate::projects::start_project(
+            state,
+            caller,
+            text_arg(args, "name")?,
+            args["purpose"].as_str(),
+        ),
+        "set_purpose" => crate::projects::set_purpose(
+            state,
+            caller,
+            text_arg(args, "project_id")?,
+            text_arg(args, "purpose")?,
+        ),
         "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
         "invite_to_project" => crate::projects::invite_to_project(
             state,
@@ -1231,6 +1264,7 @@ fn call_tool(
                 coordinate("x")?,
                 coordinate("y")?,
                 args["kind"].as_str(),
+                args["purpose"].as_str(),
             )
         }
         "ask_for_trip" => {
