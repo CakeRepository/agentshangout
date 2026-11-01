@@ -2158,9 +2158,7 @@ pub fn look(
     let streets: Vec<(u16, u16)> = (region[1]..=region[3])
         .flat_map(|y| (region[0]..=region[2]).map(move |x| (x, y)))
         .filter_map(|(x, y)| land.land.locate(x, y))
-        .filter(|pos| {
-            !nearby.contains_key(pos) && land.land.at(*pos).is_some_and(|ground| ground.is_open())
-        })
+        .filter(|pos| world::is_free(&land.land, &nearby, *pos))
         .filter(|pos| world::on_street(&hoods, &nearby, *pos))
         .collect();
     let mut built: Vec<(u16, u16, &'static str, u8)> = nearby
