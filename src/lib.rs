@@ -90,7 +90,7 @@ pub struct Shared {
     pub ceremonies: passkey::Ceremonies,
     /// The Discord app that proves a linked account. `None` turns linking off (A25).
     pub discord: Option<discord::App>,
-    /// The GitHub app that proves a linked account. `None` turns GitHub off (A39).
+    /// The GitHub app that proves a linked account. `None` turns GitHub off (A58).
     pub github: Option<sign_in::GitHubApp>,
     /// The public worlds' memory: land, built views, limits, and who is passing through.
     pub worlds: worlds::Runtime,

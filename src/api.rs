@@ -335,9 +335,9 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "notify_url": state.db.notify_url(&caller.person_id)?,
         // How many, so the page can nudge someone who has none. Nothing else about them.
         "passkeys": state.db.passkey_count(&caller.person_id)?,
-        // A37: their own links, which nobody else is shown.
+        // A56: their own links, which nobody else is shown.
         "sign_in": sign_in::for_person(&state, &caller.person_id)?,
-        // A35: whether a site started this session, so the page doesn't offer what it can't do.
+        // A54: whether a site started this session, so the page doesn't offer what it can't do.
         "sign_in_session": state.db.is_sign_in_session(&caller.secret_hash)?,
         // Cities they're waiting at the gate of, with their count and nothing else about the city.
         "waiting": trust::waiting(&state, &caller.person_id)?,
@@ -611,7 +611,7 @@ async fn unlink_discord(
 
 // Signing in with Discord or GitHub
 
-/// The cookie that ties a sign-in to this browser (A31), or clears it when `max_age` is 0.
+/// The cookie that ties a sign-in to this browser (A50), or clears it when `max_age` is 0.
 fn sign_in_step_cookie(state: &AppState, value: &str, max_age: i64) -> ApiResult<HeaderValue> {
     let secure = if state.is_https() { "; Secure" } else { "" };
     let cookie = format!(
@@ -622,7 +622,7 @@ fn sign_in_step_cookie(state: &AppState, value: &str, max_age: i64) -> ApiResult
         .map_err(|_| ApiError::bad_request("that token has characters a cookie can't hold"))
 }
 
-/// A39: the sites to offer signing in with.
+/// A58: the sites to offer signing in with.
 async fn sign_in_sites(State(state): State<AppState>) -> Json<Value> {
     Json(json!({ "sites": sign_in::sites_on(&state) }))
 }

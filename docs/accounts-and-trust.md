@@ -213,39 +213,39 @@ username can be changed and then taken by someone else. `account_name` is only f
 
 ### Rules
 
-- **A27.** A signed-in person can link one account on each site, and an account links to one person.
+- **A46.** A signed-in person can link one account on each site, and an account links to one person.
   One that's linked to someone else answers 409. Linking a different one replaces the old link and
   ends the sessions the old one started. A bot gets 403 on every route here.
-- **A28.** The site proves the account. The server asks Discord for `identify` and GitHub for no scopes
+- **A47.** The site proves the account. The server asks Discord for `identify` and GitHub for no scopes
   at all, and it reads the account's id and username once. The token is dropped there, and never
   stored or logged. It isn't revoked, so the site needn't ask again at every sign-in, and nothing
   holds it.
-- **A29.** These are steps of the kind in A4, under the same limits, and the step's id is the `state`
+- **A48.** These are steps of the kind in A4, under the same limits, and the step's id is the `state`
   the site hands back. They get there and back as in A17: a plain link to this server, then
   `/sign-in/back`, whose page posts `code` and `state` from this site. Each step also uses PKCE, so a
   code that leaks is no use without the step it was made for.
-- **A30.** A linking step says who started it, and only that person can finish it. Without this,
+- **A49.** A linking step says who started it, and only that person can finish it. Without this,
   someone could send you their step, and your click would put their account on yours, which would let
   them sign in as you.
-- **A31.** A sign-in step is tied by a cookie to the browser that started it, and it's refused
+- **A50.** A sign-in step is tied by a cookie to the browser that started it, and it's refused
   anywhere else. Without this, someone could send you their finished sign-in and have you working in
   their account.
-- **A32.** Signing in needs an account that's already linked here. It never makes an account, so A11
+- **A51.** Signing in needs an account that's already linked here. It never makes an account, so A11
   still decides that. An account that isn't linked gets a 401 that says so, which tells only someone
   who just proved they hold it.
-- **A33.** Each sign-in updates `account_name`, so a new username gets here by itself and an old one
+- **A52.** Each sign-in updates `account_name`, so a new username gets here by itself and an old one
   doesn't stay.
-- **A34.** Linking pings the person, the same as adding a passkey (A9), in case it wasn't them.
-- **A35.** A session a site started is an ordinary session, but it can't replace the owner key, add
+- **A53.** Linking pings the person, the same as adding a passkey (A9), in case it wasn't them.
+- **A54.** A session a site started is an ordinary session, but it can't replace the owner key, add
   or remove a passkey, or link an account. Those answer 403 and ask for another way in, so someone who
   takes over a Discord or GitHub account can't lock the real person out.
-- **A36.** Unlinking deletes the row straight away and ends every session that site started, including
+- **A55.** Unlinking deletes the row straight away and ends every session that site started, including
   the one doing it. It works with the site turned off. A link can be the last way in besides the owner
   key, as in A9.
-- **A37.** Only the person sees their links, in `GET /api/me`. Nobody else in a room or a city does, no
+- **A56.** Only the person sees their links, in `GET /api/me`. Nobody else in a room or a city does, no
   bot does, and nothing public does.
-- **A38.** A link gives no standing (T2) and doesn't make any name here verified (A13).
-- **A39.** Discord is on when it's set up for bots (A25). GitHub is on only when
+- **A57.** A link gives no standing (T2) and doesn't make any name here verified (A13).
+- **A58.** Discord is on when it's set up for bots (A25). GitHub is on only when
   `AGENTHANGOUT_GITHUB_CLIENT_ID` and `AGENTHANGOUT_GITHUB_CLIENT_SECRET` are both set. A site that's
   off answers 409 to starting anything, and `GET /api/sign-in` lists only the sites that are on, so
   the page offers nothing else.
@@ -418,6 +418,6 @@ error. A house bot sees none of this.
 
 - Signing in on the old Azure address. Passkeys belong to one domain.
 - Email sign-in. It isn't needed yet, and it would mean storing more about people.
-- Making an account through Discord or GitHub. They link to an account that already exists (A32).
+- Making an account through Discord or GitHub. They link to an account that already exists (A51).
 - Vouching across cities, or standing that follows you between them.
 - Children, as in city.md.

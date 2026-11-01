@@ -1,4 +1,4 @@
-//! Signing in with Discord or GitHub: the rules in docs/accounts-and-trust.md (A27 to A39).
+//! Signing in with Discord or GitHub: the rules in docs/accounts-and-trust.md (A46 to A58).
 //!
 //! The site proves an account, a person links it to theirs, and after that it signs them in. A link
 //! is a way into someone's account, so what matters here is who can't end up with one. Handlers in
@@ -22,7 +22,7 @@ use crate::{
     AppState,
 };
 
-/// The cookie that ties a sign-in to the browser that started it (A31).
+/// The cookie that ties a sign-in to the browser that started it (A50).
 pub const STEP_COOKIE: &str = "ah_sign_in_step";
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// GitHub's API refuses a request that doesn't say who's asking.
@@ -70,7 +70,7 @@ pub struct GitHubApp {
 }
 
 impl GitHubApp {
-    /// The app these settings name. It takes both: without them GitHub is off (A39).
+    /// The app these settings name. It takes both: without them GitHub is off (A58).
     pub fn from_settings(client_id: Option<String>, client_secret: Option<String>) -> Option<Self> {
         Some(Self {
             client_id: client_id.filter(|id| !id.is_empty())?,
@@ -118,7 +118,7 @@ fn busy() -> ApiError {
     ApiError::too_many_requests("too many sign-ins are open right now; try again in a few minutes")
 }
 
-/// A30, A31: the same for a step that lapsed, was used, belongs elsewhere or isn't a step.
+/// A49, A50: the same for a step that lapsed, was used, belongs elsewhere or isn't a step.
 fn lapsed() -> ApiError {
     ApiError::bad_request("that sign-in step has lapsed or was already used; start again")
 }
@@ -188,7 +188,7 @@ fn challenge_for(verifier: &str) -> String {
     base64url(&Sha256::digest(verifier.as_bytes()))
 }
 
-/// The address a step sends the browser to. It asks for as little as each site lets it (A28).
+/// The address a step sends the browser to. It asks for as little as each site lets it (A47).
 /// `prompt` is Discord's: `consent` shows the screen, and `none` skips it for someone who said yes
 /// when they linked, which GitHub does by itself.
 fn address(
@@ -225,7 +225,7 @@ fn address(
     Ok(Url::parse_with_params(authorize_url, asked).map_err(|_| off(site))?.to_string())
 }
 
-/// A35: what a takeover of someone's Discord or GitHub account mustn't be able to do. Sessions
+/// A54: what a takeover of someone's Discord or GitHub account mustn't be able to do. Sessions
 /// started any other way pass, and so does a key or a token, because `secret_hash` matches no mark.
 pub fn refuse_outside_session(state: &AppState, caller: &Caller, action: &str) -> ApiResult<()> {
     if state.db.is_sign_in_session(&caller.secret_hash)? {
@@ -236,7 +236,7 @@ pub fn refuse_outside_session(state: &AppState, caller: &Caller, action: &str) -
     Ok(())
 }
 
-/// A34: someone whose account gets a new way in hears of it, in case it wasn't them. It isn't about
+/// A53: someone whose account gets a new way in hears of it, in case it wasn't them. It isn't about
 /// a room, so the link goes to the home page, where it can be undone.
 fn tell_linked(state: &AppState, site: Site, person_id: &str) {
     let text = format!(
@@ -249,8 +249,8 @@ fn tell_linked(state: &AppState, site: Site, person_id: &str) {
     notify::send(state, &[person_id.to_string()], &notice);
 }
 
-/// A37: a person's own links, for `GET /api/me`. One that's linked stays listed with its site off,
-/// because it can still be unlinked (A36).
+/// A56: a person's own links, for `GET /api/me`. One that's linked stays listed with its site off,
+/// because it can still be unlinked (A55).
 pub fn for_person(state: &AppState, person_id: &str) -> ApiResult<Vec<Value>> {
     let links = state.db.sign_in_links(person_id)?;
     Ok(Site::ALL
@@ -263,7 +263,7 @@ pub fn for_person(state: &AppState, person_id: &str) -> ApiResult<Vec<Value>> {
         .collect())
 }
 
-/// The sites that are on, for the page to offer (A39).
+/// The sites that are on, for the page to offer (A58).
 pub fn sites_on(state: &AppState) -> Vec<Value> {
     Site::ALL
         .into_iter()
@@ -329,7 +329,7 @@ pub async fn finish(
     match state.ceremonies.take(step, now) {
         Some(Pending::SignInLink { site, person_id, verifier }) => {
             require_on(state, site)?;
-            // A30: otherwise your yes could put someone else's account on yours.
+            // A49: otherwise your yes could put someone else's account on yours.
             if caller.is_none_or(|caller| caller.person_id != person_id) {
                 return Err(lapsed());
             }
@@ -345,7 +345,7 @@ pub async fn finish(
         }
         Some(Pending::SignIn { site, browser_hash, verifier }) => {
             require_on(state, site)?;
-            // A31: otherwise a link could sign you in to someone else's account.
+            // A50: otherwise a link could sign you in to someone else's account.
             if browser.map(auth::hash_secret).as_deref() != Some(browser_hash.as_str()) {
                 return Err(lapsed());
             }
@@ -359,7 +359,7 @@ pub async fn finish(
     }
 }
 
-/// A36: works with the site off, because taking a way in back shouldn't depend on a setting. It
+/// A55: works with the site off, because taking a way in back shouldn't depend on a setting. It
 /// ends the session doing it, if that site started that one.
 pub fn unlink(state: &AppState, caller: &Caller, site: Site) -> ApiResult<()> {
     ops::require_human(caller, "unlink an account")?;
@@ -368,7 +368,7 @@ pub fn unlink(state: &AppState, caller: &Caller, site: Site) -> ApiResult<()> {
 }
 
 /// Swaps a code for the account behind it. `None` means no account came of it, and nothing here
-/// logs a code or a token. The token goes no further than this (A28).
+/// logs a code or a token. The token goes no further than this (A47).
 async fn read_account(state: &AppState, site: Site, code: &str, verifier: &str) -> Option<Account> {
     let return_to = return_address(state);
     match site {

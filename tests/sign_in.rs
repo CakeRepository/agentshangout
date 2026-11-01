@@ -1,4 +1,4 @@
-//! A27 to A39: signing in with Discord or GitHub, against stand-ins for both that answer as the real
+//! A46 to A58: signing in with Discord or GitHub, against stand-ins for both that answer as the real
 //! ones do and write down everything they were sent. Almost everything here runs for each site.
 
 mod support;
@@ -371,7 +371,7 @@ impl Server {
     }
 }
 
-// A27
+// A46
 
 #[tokio::test]
 async fn a_person_links_an_account_and_can_then_sign_in_with_it() {
@@ -389,7 +389,7 @@ async fn a_person_links_an_account_and_can_then_sign_in_with_it() {
     }
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn a_person_can_have_one_of_each() {
     let server = Server::start().await;
@@ -406,7 +406,7 @@ async fn a_person_can_have_one_of_each() {
     );
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn an_account_on_one_site_says_nothing_about_the_same_id_on_the_other() {
     let server = Server::start().await;
@@ -424,7 +424,7 @@ async fn an_account_on_one_site_says_nothing_about_the_same_id_on_the_other() {
     );
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn an_account_links_to_one_person() {
     for site in Site::ALL {
@@ -444,7 +444,7 @@ async fn an_account_links_to_one_person() {
     }
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn linking_a_different_account_replaces_the_old_one_and_ends_what_it_started() {
     for site in Site::ALL {
@@ -465,7 +465,7 @@ async fn linking_a_different_account_replaces_the_old_one_and_ends_what_it_start
     }
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn a_bot_gets_403_on_every_route_here() {
     for site in Site::ALL {
@@ -479,7 +479,7 @@ async fn a_bot_gets_403_on_every_route_here() {
     }
 }
 
-// A27
+// A46
 #[tokio::test]
 async fn linking_takes_someone_signed_in_and_a_site_nobody_has_heard_of_is_a_404() {
     let server = Server::start().await;
@@ -488,7 +488,7 @@ async fn linking_takes_someone_signed_in_and_a_site_nobody_has_heard_of_is_a_404
     server.get("", "/api/sign-in/myspace").await.refused(StatusCode::NOT_FOUND);
 }
 
-// A28
+// A47
 
 #[tokio::test]
 async fn each_site_is_asked_for_as_little_as_it_allows() {
@@ -517,7 +517,7 @@ async fn each_site_is_asked_for_as_little_as_it_allows() {
     }
 }
 
-// A28
+// A47
 #[tokio::test]
 async fn it_goes_by_the_id_because_a_username_can_change_hands() {
     for site in Site::ALL {
@@ -529,7 +529,7 @@ async fn it_goes_by_the_id_because_a_username_can_change_hands() {
     }
 }
 
-// A28
+// A47
 #[tokio::test]
 async fn nothing_but_the_id_and_username_is_kept_and_no_token_is_revoked_or_stored() {
     for site in Site::ALL {
@@ -544,7 +544,7 @@ async fn nothing_but_the_id_and_username_is_kept_and_no_token_is_revoked_or_stor
     }
 }
 
-// A28
+// A47
 #[tokio::test]
 async fn github_is_told_who_is_asking() {
     let server = Server::start().await;
@@ -553,7 +553,7 @@ async fn github_is_told_who_is_asking() {
     assert_eq!(server.sites.lock().unwrap().agents, ["agentshangout"]);
 }
 
-// A28
+// A47
 #[tokio::test]
 async fn a_code_the_site_refuses_or_an_account_that_makes_no_sense_links_nothing() {
     for site in Site::ALL {
@@ -567,7 +567,7 @@ async fn a_code_the_site_refuses_or_an_account_that_makes_no_sense_links_nothing
     }
 }
 
-// A29
+// A48
 
 #[tokio::test]
 async fn each_step_proves_itself_with_pkce() {
@@ -601,7 +601,7 @@ async fn each_step_proves_itself_with_pkce() {
     }
 }
 
-// A29
+// A48
 #[tokio::test]
 async fn a_step_works_once_and_lapses() {
     for site in Site::ALL {
@@ -630,7 +630,7 @@ async fn a_step_works_once_and_lapses() {
     }
 }
 
-// A29
+// A48
 #[tokio::test]
 async fn steps_share_the_limit_on_what_one_address_can_keep_open() {
     let server = Server::start().await;
@@ -650,7 +650,7 @@ async fn steps_share_the_limit_on_what_one_address_can_keep_open() {
     assert_eq!(from_one_address().await, StatusCode::TOO_MANY_REQUESTS);
 }
 
-// A29
+// A48
 #[tokio::test]
 async fn the_address_a_site_sends_people_to_is_the_page_and_changes_nothing() {
     let server = Server::start().await;
@@ -668,7 +668,7 @@ async fn the_address_a_site_sends_people_to_is_the_page_and_changes_nothing() {
     server.finish(&ann.key, None, &step, "ann").await.ok();
 }
 
-// A29
+// A48
 #[tokio::test]
 async fn a_step_of_any_other_kind_gets_the_same_plain_400() {
     let server = Server::start().await;
@@ -689,7 +689,7 @@ async fn a_step_of_any_other_kind_gets_the_same_plain_400() {
     assert_eq!(server.exchanges(), 0, "the site is never asked");
 }
 
-// A30
+// A49
 
 #[tokio::test]
 async fn someone_elses_step_cant_put_their_account_on_yours() {
@@ -712,7 +712,7 @@ async fn someone_elses_step_cant_put_their_account_on_yours() {
     }
 }
 
-// A31
+// A50
 
 #[tokio::test]
 async fn a_sign_in_only_finishes_in_the_browser_that_started_it() {
@@ -740,7 +740,7 @@ async fn a_sign_in_only_finishes_in_the_browser_that_started_it() {
     }
 }
 
-// A31
+// A50
 #[tokio::test]
 async fn the_cookie_is_short_lived_and_scripts_cant_read_it() {
     let server = Server::start().await;
@@ -757,7 +757,7 @@ async fn the_cookie_is_short_lived_and_scripts_cant_read_it() {
     }
 }
 
-// A32
+// A51
 
 #[tokio::test]
 async fn signing_in_with_an_account_nobody_linked_makes_nothing_and_says_so() {
@@ -770,7 +770,7 @@ async fn signing_in_with_an_account_nobody_linked_makes_nothing_and_says_so() {
     }
 }
 
-// A32
+// A51
 #[tokio::test]
 async fn a_discord_link_on_a_bot_signs_nobody_in() {
     let server = Server::start().await;
@@ -786,7 +786,7 @@ async fn a_discord_link_on_a_bot_signs_nobody_in() {
     assert_eq!(server.linked_as(&ann, Site::Discord), None);
 }
 
-// A33
+// A52
 
 #[tokio::test]
 async fn each_sign_in_brings_a_new_username_here() {
@@ -800,7 +800,7 @@ async fn each_sign_in_brings_a_new_username_here() {
     }
 }
 
-// A34
+// A53
 
 #[tokio::test]
 async fn linking_pings_the_person_in_case_it_wasnt_them() {
@@ -827,7 +827,7 @@ async fn linking_pings_the_person_in_case_it_wasnt_them() {
     }
 }
 
-// A35
+// A54
 
 #[tokio::test]
 async fn a_session_a_site_started_cant_change_how_the_account_is_signed_in_to() {
@@ -857,7 +857,7 @@ async fn a_session_a_site_started_cant_change_how_the_account_is_signed_in_to() 
     }
 }
 
-// A35
+// A54
 #[tokio::test]
 async fn any_other_way_in_can_still_do_those() {
     for site in Site::ALL {
@@ -878,7 +878,7 @@ async fn any_other_way_in_can_still_do_those() {
     }
 }
 
-// A35
+// A54
 #[tokio::test]
 async fn signing_in_another_way_on_top_leaves_an_ordinary_session() {
     let server = Server::start().await;
@@ -899,7 +899,7 @@ async fn signing_in_another_way_on_top_leaves_an_ordinary_session() {
     server.post(&session, "/api/passkeys/register/start", json!({})).await.ok();
 }
 
-// A36
+// A55
 
 #[tokio::test]
 async fn unlinking_deletes_it_and_ends_only_the_sessions_that_site_started() {
@@ -922,7 +922,7 @@ async fn unlinking_deletes_it_and_ends_only_the_sessions_that_site_started() {
     server.delete(&other, &sign_in_path(Site::GitHub)).await.ok();
 }
 
-// A36
+// A55
 #[tokio::test]
 async fn a_session_a_site_started_can_unlink_and_that_ends_it_too() {
     for site in Site::ALL {
@@ -935,7 +935,7 @@ async fn a_session_a_site_started_can_unlink_and_that_ends_it_too() {
     }
 }
 
-// A36
+// A55
 #[tokio::test]
 async fn unlinking_works_with_the_site_turned_off() {
     for site in Site::ALL {
@@ -954,7 +954,7 @@ async fn unlinking_works_with_the_site_turned_off() {
     }
 }
 
-// A37
+// A56
 
 #[tokio::test]
 async fn only_the_person_sees_their_link() {
@@ -981,7 +981,7 @@ async fn only_the_person_sees_their_link() {
     }
 }
 
-// A38
+// A57
 
 #[tokio::test]
 async fn a_link_gives_no_standing_and_changes_no_name() {
@@ -999,7 +999,7 @@ async fn a_link_gives_no_standing_and_changes_no_name() {
     }
 }
 
-// A39
+// A58
 
 #[tokio::test]
 async fn with_no_app_set_up_nothing_is_offered() {
@@ -1013,7 +1013,7 @@ async fn with_no_app_set_up_nothing_is_offered() {
     }
 }
 
-// A39
+// A58
 #[tokio::test]
 async fn with_both_set_up_both_are_offered() {
     let server = Server::start().await;
@@ -1025,7 +1025,7 @@ async fn with_both_set_up_both_are_offered() {
     assert_eq!(server.get(&ann.key, "/api/me").await.ok()["sign_in"].as_array().unwrap().len(), 2);
 }
 
-// A39
+// A58
 #[test]
 fn it_takes_both_settings_to_turn_github_on() {
     assert!(GitHubApp::from_settings(None, None).is_none());

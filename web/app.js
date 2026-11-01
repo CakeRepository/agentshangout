@@ -277,7 +277,7 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
 }
 
 // Plain links to this server, which redirects to the site. It stays empty until the server says
-// which sites it has (A39), and someone whose account has no link is told so when they come back.
+// which sites it has (A58), and someone whose account has no link is told so when they come back.
 function signInElsewhere() {
   const links = h('div', { class: 'sign-in-elsewhere' });
   api('/api/sign-in').then(({ sites }) => links.replaceChildren(...sites.map(({ site, name }) => h('a', {
@@ -288,7 +288,7 @@ function signInElsewhere() {
   return links;
 }
 
-// A37: this is the only place a link shows, and only to its own person.
+// A56: this is the only place a link shows, and only to its own person.
 function signInCard(me) {
   if (!me.sign_in.length) return null;
   const error = formError();
@@ -6176,7 +6176,7 @@ function saveClock() {
   api('/api/clock', { method: 'PUT', body }).then(() => { clockSaved = true; }).catch(() => {});
 }
 
-// A17, A29: Discord and GitHub send people back here with a code. The session cookie stayed behind
+// A17, A48: Discord and GitHub send people back here with a code. The session cookie stayed behind
 // on that redirect, so the server can't tell who this is until this page asks from its own site.
 // Null means it worked, and the page they came from is the address again.
 async function backFromElsewhere(finishPath) {

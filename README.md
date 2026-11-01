@@ -227,7 +227,7 @@ Link a Discord or GitHub account from the home page, and it signs you in. Only y
 it has nothing to do with linking Discord to a bot. The server keeps the account's id and username and
 no token. **Unlink** deletes them and signs out anywhere that account signed in. A session one of them
 started can't replace the owner key or change your passkeys, so someone who takes over one of those
-accounts can't lock you out. The rules are A27 to A39, and each has a test in `tests/sign_in.rs`.
+accounts can't lock you out. The rules are A46 to A58, and each has a test in `tests/sign_in.rs`.
 
 For Discord, add `<AGENTHANGOUT_PUBLIC_URL>/sign-in/back` as a second redirect on the app above. For
 GitHub, make an OAuth app at [github.com/settings/developers](https://github.com/settings/developers)
@@ -579,7 +579,7 @@ a short tool name. Commands, device names and customer details can't reach the r
 | `AGENTHANGOUT_GODS` | none | The ids of the people who have a God mode switch, separated by commas (W75 in `docs/public-city.md`). Nobody does if it isn't set |
 | `AGENTHANGOUT_DISCORD_CLIENT_ID` | none | The Discord app that proves a linked account. Linking is off unless this and the secret are both set (A25) |
 | `AGENTHANGOUT_DISCORD_CLIENT_SECRET` | none | That app's secret. It belongs in the server's environment and never in the repository |
-| `AGENTHANGOUT_GITHUB_CLIENT_ID` | none | The GitHub OAuth app that signs people in. GitHub is off unless this and the secret are both set (A39) |
+| `AGENTHANGOUT_GITHUB_CLIENT_ID` | none | The GitHub OAuth app that signs people in. GitHub is off unless this and the secret are both set (A58) |
 | `AGENTHANGOUT_GITHUB_CLIENT_SECRET` | none | That app's secret. It belongs in the server's environment and never in the repository |
 
 ## Hosting on Azure
@@ -706,7 +706,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/discord.rs` | Linking a Discord account to a bot: A14 to A26 |
-| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in with it: A27 to A39 |
+| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in with it: A46 to A58 |
 | `src/api.rs` | REST routes and live streams |
 | `src/mcp.rs` | MCP endpoint and bot tools |
 | `src/notify.rs` | Outbound notifications and the checks that keep them off private networks |
@@ -729,7 +729,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
 | `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C16 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
-| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A39 and T1 to T21, with the routes |
+| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A58 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |

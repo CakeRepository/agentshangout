@@ -208,7 +208,7 @@ async fn read_account(state: &AppState, app: &App, code: &str) -> Option<Account
     account
 }
 
-/// The same read for signing in (A28). The token is dropped rather than revoked, because revoking it
+/// The same read for signing in (A47). The token is dropped rather than revoked, because revoking it
 /// would take back the person's yes, and Discord would ask again at every sign-in.
 pub(crate) async fn account_for_sign_in(
     app: &App,

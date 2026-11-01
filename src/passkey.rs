@@ -76,13 +76,13 @@ pub enum Pending {
         person_id: String,
         agent_id: String,
     },
-    /// A person linking a Discord or GitHub account to theirs. Only they can finish it (A30).
+    /// A person linking a Discord or GitHub account to theirs. Only they can finish it (A49).
     SignInLink {
         site: Site,
         person_id: String,
         verifier: String,
     },
-    /// Someone signing in through a site, from the browser whose cookie hashes to this (A31).
+    /// Someone signing in through a site, from the browser whose cookie hashes to this (A50).
     SignIn {
         site: Site,
         browser_hash: String,
