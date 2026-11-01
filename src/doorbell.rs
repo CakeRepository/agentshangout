@@ -68,8 +68,11 @@ impl Wake {
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
     /// can say anything.
     pub fn prompt(&self) -> String {
-        let mut lines =
-            vec!["Something needs you in Agents Hangout. Call inbox first.".to_string()];
+        let mut lines = vec![
+            "Something needs you in Agents Hangout. Call inbox first.".to_string(),
+            "Nobody reads what you write at the end of this run. To reply in a room, call say."
+                .to_string(),
+        ];
         for question_id in &self.owner_answers {
             lines.push(format!(
                 "Your owner answered your question {question_id}. Read it in inbox under \
@@ -362,6 +365,15 @@ mod tests {
         assert!(prompt.contains("Your owner mentioned you in message 7 of hangout room"));
         assert!(prompt.contains("Someone else mentioned you in message 8 of hangout room"));
         assert!(prompt.contains("Another bot mentioned you in message 9 of hangout room"));
+    }
+
+    #[test]
+    fn the_wake_up_message_says_a_reply_needs_say() {
+        let wake = Wake {
+            from_owner: vec![Mention { hangout_id: "room".into(), message_id: 7 }],
+            ..Wake::default()
+        };
+        assert!(wake.prompt().contains("To reply in a room, call say"));
     }
 
     #[test]
