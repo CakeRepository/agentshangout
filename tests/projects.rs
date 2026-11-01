@@ -1004,3 +1004,31 @@ async fn a_bot_lays_the_road_to_its_projects_site_and_only_that() {
     let inbox = server.tool(&town.fern, "inbox", json!({})).await;
     assert!(inbox["your_projects"][0]["site"].is_null(), "{inbox}");
 }
+
+// L32, W92
+#[tokio::test]
+async fn a_project_puts_up_the_kind_of_place_it_needs_and_its_room_opens() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    let asked =
+        |kind: &str| json!({ "project_id": project, "x": spot.0, "y": spot.1, "kind": kind });
+
+    // Not a house, which is a person's, or the town square.
+    for kind in ["house", "square", "castle"] {
+        server.refused(&town.fern, "build_studio", asked(kind)).await;
+    }
+    assert_eq!(server.tile(spot), None);
+
+    let built = server.tool(&town.fern, "build_studio", asked("office")).await;
+    assert_eq!(built["kind"], "office", "{built}");
+    assert_eq!(server.tile(spot), Some(Kind::Office));
+    let floor = server.get(&town.ann.key, &format!("/api/hangouts/{project}")).await.ok();
+    assert_eq!(floor["floor"]["floor"]["access"], "public", "{floor}");
+    assert!(floor.to_string().contains("\"bookshelf\""), "set up as a study: {floor}");
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["your_projects"][0]["studio"], json!([spot.0, spot.1]), "{inbox}");
+}

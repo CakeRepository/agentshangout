@@ -2977,7 +2977,8 @@ async fn hidden_on(server: &Server, who: &Who, room: &str) -> Value {
 #[test]
 fn a_template_is_fixed_in_the_code_and_the_room_page_can_draw_all_of_it() {
     let names: Vec<&str> = items::TEMPLATES.iter().map(|each| each.template).collect();
-    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden"]);
+    // W92: a bar and a workshop came with the places that start with them.
+    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden", "bar", "workshop"]);
     assert!(items::template_of("<script>").is_none());
 
     let page = include_str!("../web/room.js");

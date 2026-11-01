@@ -747,6 +747,22 @@ CREATE TABLE IF NOT EXISTS meet_calls (
     rung_at     INTEGER NOT NULL,
     PRIMARY KEY (agent_id, slot)
 );
+-- W90: the places that came after the first four. world_buildings lists the kinds it takes and
+-- existing tables don't change, so these have their own table, and a view puts them all together.
+-- A deploy that goes back reads world_places and doesn't see them until it comes forward again.
+CREATE TABLE IF NOT EXISTS world_more_places (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    built_at   INTEGER NOT NULL,
+    PRIMARY KEY (world_id, x, y)
+);
+CREATE INDEX IF NOT EXISTS world_more_places_by_player ON world_more_places (world_id, player_id);
+CREATE VIEW IF NOT EXISTS world_every_place AS
+    SELECT world_id, x, y, kind, player_id, built_at FROM world_places
+    UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -3924,7 +3940,7 @@ impl Db {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
         const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
-             JOIN world_places b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN world_every_place b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
              JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
                             AND pl.agent_id IS NULL AND pl.token_hash IS NULL
              JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
@@ -7938,7 +7954,7 @@ fn q_building_counts(
         "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
                 COALESCE(SUM(player_id = ?2 AND kind NOT IN ('house', 'square')), 0),
                 COUNT(*)
-         FROM world_places WHERE world_id = ?1",
+         FROM world_every_place WHERE world_id = ?1",
         params![world_id, player_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -7957,7 +7973,7 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
         None => {
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places WHERE world_id = ?1",
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place WHERE world_id = ?1",
             )?;
             let mut rows = stmt.query([world_id])?;
             while let Some(row) = rows.next()? {
@@ -7965,13 +7981,15 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
                     tiles.insert(pos, tile);
                 }
             }
+            crate::world::spread_places(&mut tiles);
         }
         Some([x0, y0, x1, y1]) => {
+            // W91: a big place stored just up or left of the box can reach into it.
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
-                 WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5",
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place
+                 WHERE world_id = ?1 AND x BETWEEN ?2 - 1 AND ?3 AND y BETWEEN ?4 - 1 AND ?5",
             )?;
             let mut rows = stmt.query(params![world_id, x0, x1, y0, y1])?;
             while let Some(row) = rows.next()? {
@@ -7979,6 +7997,10 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
                     tiles.insert(pos, tile);
                 }
             }
+            crate::world::spread_places(&mut tiles);
+            tiles.retain(|&(x, y), _| {
+                (x0..=x1).contains(&i64::from(x)) && (y0..=y1).contains(&i64::from(y))
+            });
         }
     }
     Ok(tiles)
@@ -8015,8 +8037,43 @@ fn q_write_changes(
     )?;
     let mut remove_square =
         conn.prepare_cached("DELETE FROM world_squares WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
+    // W90: the newer places, in their own table.
+    let mut set_more = conn.prepare_cached(
+        "INSERT INTO world_more_places (world_id, x, y, kind, player_id, built_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut remove_more = conn.prepare_cached(
+        "DELETE FROM world_more_places WHERE world_id = ?1 AND x = ?2 AND y = ?3",
+    )?;
+    // W91: taking any tile of a big place takes the place, which is stored on its first tile.
+    let remove_big = |x: u16, y: u16| -> rusqlite::Result<()> {
+        for (dx, dy) in [(1u16, 0u16), (0, 1), (1, 1)] {
+            let (Some(ax), Some(ay)) = (x.checked_sub(dx), y.checked_sub(dy)) else { continue };
+            conn.execute(
+                "DELETE FROM world_squares WHERE world_id = ?1 AND x = ?2 AND y = ?3",
+                params![world_id, ax, ay],
+            )?;
+            conn.execute(
+                "DELETE FROM world_more_places WHERE world_id = ?1 AND x = ?2 AND y = ?3
+                   AND kind = 'green'",
+                params![world_id, ax, ay],
+            )?;
+        }
+        Ok(())
+    };
     for change in changes {
         match change {
+            Change::Set((x, y), tile) if crate::world::NEWER_PLACES.contains(&tile.kind) => {
+                remove.execute(params![world_id, x, y])?;
+                set_more.execute(params![
+                    world_id,
+                    x,
+                    y,
+                    tile.kind.as_str(),
+                    tile.player.map(|player| player as i64),
+                    now
+                ])?;
+            }
             Change::Set((x, y), tile) if tile.kind == Kind::Square => {
                 remove.execute(params![world_id, x, y])?;
                 set_square.execute(params![
@@ -8042,6 +8099,8 @@ fn q_write_changes(
                 if tile.kind == Kind::Cleared {
                     remove_building.execute(params![world_id, x, y])?;
                     remove_square.execute(params![world_id, x, y])?;
+                    remove_more.execute(params![world_id, x, y])?;
+                    remove_big(*x, *y)?;
                 }
                 set.execute(params![
                     world_id,
@@ -8057,6 +8116,8 @@ fn q_write_changes(
                 remove.execute(params![world_id, x, y])?;
                 remove_building.execute(params![world_id, x, y])?;
                 remove_square.execute(params![world_id, x, y])?;
+                remove_more.execute(params![world_id, x, y])?;
+                remove_big(*x, *y)?;
             }
         }
     }
@@ -9210,7 +9271,7 @@ impl Db {
                     (SELECT s.name FROM space_plots d JOIN spaces s ON s.id = d.space_id
                      WHERE d.world_id = b.world_id AND d.x = b.x AND d.y = b.y
                        AND s.owner_id = pl.person_id AND (b.kind = 'house') = (s.kind = 'house'))
-             FROM world_places b
+             FROM world_every_place b
              JOIN players pl ON pl.id = b.player_id
              JOIN people pe ON pe.id = pl.person_id
              WHERE b.world_id = ?1
@@ -9281,6 +9342,22 @@ impl Db {
             .optional()
     }
 
+    /// W91: the tile a place is stored on, for any tile of a big one. Any other tile is itself.
+    pub fn place_anchor_at(&self, world_id: &str, x: i64, y: i64) -> rusqlite::Result<(i64, i64)> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT x, y FROM world_every_place
+                 WHERE world_id = ?1 AND kind IN ('square', 'green')
+                   AND x BETWEEN ?2 - 1 AND ?2 AND y BETWEEN ?3 - 1 AND ?3
+                 ORDER BY x DESC, y DESC LIMIT 1",
+                params![world_id, x, y],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((x, y)))
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,
@@ -9289,7 +9366,7 @@ impl Db {
     ) -> rusqlite::Result<Option<(String, Option<String>)>> {
         self.conn()
             .query_row(
-                "SELECT b.kind, p.person_id FROM world_places b
+                "SELECT b.kind, p.person_id FROM world_every_place b
                  JOIN players p ON p.id = b.player_id
                  WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
                 params![world_id, x, y],
@@ -9304,7 +9381,7 @@ impl Db {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
             "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
+             UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place
                        WHERE world_id = ?1 AND player_id = ?2",
         )?;
         let mut rows = stmt.query(params![world_id, player_id])?;
@@ -9535,6 +9612,9 @@ impl Db {
         )? + tx.execute(
             "DELETE FROM world_squares WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
+        )? + tx.execute(
+            "DELETE FROM world_more_places WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
@@ -9573,7 +9653,7 @@ impl Db {
             "SELECT 1 FROM world_players WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_members WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT 1 FROM world_places WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
+             UNION ALL SELECT 1 FROM world_every_place WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
             params![world_id, player_id],
         )
     }

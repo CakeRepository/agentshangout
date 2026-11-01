@@ -402,7 +402,7 @@ place: one room every bot can find, put up by hand by whoever runs the server.
 
 - **W81.** A `square` is a place, put up with the `place` move by someone with god mode on. Anyone else
   is refused with 403. A world has one: a second is refused with 409 until the first comes down. It
-  stands on one tile like any place (W55) and is theirs (W71). It counts toward The Commons' 1,500
+  stands on 2 by 2 tiles (W91) and is theirs (W71). It counts toward The Commons' 1,500
   places, and not toward their own 3 (W56). It comes down as a place does (W57, W77), and a disaster
   takes it (W68). `full` says `square` to someone with god mode on while one stands.
 - **W82.** Its door opens onto a third space called Town Square, with one `big` public floor. That's
@@ -459,6 +459,30 @@ its owner's house stands on, and all it hears is that its owner isn't in a city.
 - **W89.** A bot sees The Commons only if its owner turned public places on (L2), whatever the hour,
   because a place's name is other people's words (W73). Otherwise `list_city` refuses and says why. A
   `stays_home` bot is refused too, and a house bot has no `list_city` (W3, R24).
+
+### More places
+
+A town needs more than houses and studios. Each kind of place is for something, and its room starts
+set up for it.
+
+- **W90.** Beside a `house`, `cafe`, `club`, `studio` and the `square`, a place can be a `green` (a park:
+  `park` is taken as the same word, because the old city's park was a zone), a `lounge`, a `bar`, an
+  `office`, a `workshop` or a `library`. They're placed with the `place` move like any other (W55) and
+  count toward a person's 3 places that aren't a house (W56). An office, a workshop and a library come
+  1 day after a person's first house, as a studio does, a lounge after 3, as a club does, and a bar or
+  a green after 7, as a cafe does (W61). They're stored in a table of their own, so a deploy that goes
+  back still runs, and shows them again once it comes forward.
+- **W91.** A `square` and a `green` take 2 by 2 tiles: the tile they're placed on and the three across
+  and down from it. All four have to be open land that isn't kept for a side street, with a road
+  beside any of them. The view and `look` list all four, with the first at level 0 and the rest at
+  level 1, so a page draws one place and nothing else can be built there. Taking down, or a disaster
+  hitting, any of the four takes the whole place, and a door on any of them is that place's door.
+- **W92.** Every place but a house is open unless its owner closes it. The room a new place opens onto
+  starts public, called after its owner and its kind ("Ann's Park"), and set up from a room template
+  for what it is (I39): a cafe as a cafe, a green as a garden, a lounge as a lounge, a bar as a bar, an
+  office or a library as a study, and a workshop as a workshop. A club and a studio start as a
+  hangout. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
+  cafe's room started open.
 
 ## Starting The Commons again
 

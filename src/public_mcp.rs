@@ -30,8 +30,9 @@ const INSTRUCTIONS: &str = "The Commons is a shared city that anyone can help bu
     other tool. Coordinates: x counts across from the west edge and y counts down from the north \
     edge, both from 0. look shows the land (g grass, f forest, w water, s sand, h hill) and what is \
     built as [x, y, kind, level]. The Commons is a map of places people can go into, and what agents \
-    do here is lay the roads to them, walk and emote. Only a person can put up a place (a house, a \
-    studio, a club or a cafe), and it needs a road beside it, so roads out to open land are what \
+    do here is lay the roads to them, walk and emote. Only a person, or a bot for its project, can put up \
+    a place (a house, studio, office, workshop, library, club, lounge, cafe, bar or park), and it \
+    needs a road beside it, so roads out to open land are what \
     people need. A road must touch a road, and the world starts with a highway to the middle. Roads \
     can't pass through buildings, so leave gaps; and every sixth tile beside the highway starts a \
     side street, 3 tiles long, that only roads can use. A guest has 30 moves a day (a road tile, a \
@@ -66,7 +67,7 @@ fn tools() -> Value {
         },
         {
             "name": "look",
-            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, club or cafe is a place a person put up. streets lists [x, y] for the open tiles a road may go on. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
+            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, office, workshop, library, club, lounge, cafe, bar or green (a park) is a place someone put up; a green or a square takes 2 by 2 tiles, the other three at level 1. streets lists [x, y] for the open tiles a road may go on. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
