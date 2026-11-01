@@ -5757,6 +5757,15 @@ async function worldView(id, { home = false } = {}) {
       if (house) world.focus(house.x, house.y, { zoom: 1.5 });
       pick('bulldoze');
     },
+    outside: ({ house }) => {
+      if (house) {
+        world.focus(house.x, house.y, { zoom: 1.5 });
+        say('Right-click your place, or press and hold on a touch screen, and choose Build outside.');
+      } else {
+        pick('house');
+        say('Put up your house first.');
+      }
+    },
     look: () => panels.open('look'),
     rooms: () => panels.open('rooms'),
     agent: () => panels.open('agent'),

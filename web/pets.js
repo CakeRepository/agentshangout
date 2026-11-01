@@ -95,6 +95,7 @@ const USUAL = {
   parrot: '#3fae5a',
   frog: '#5aa84a',
   robot_dog: '#9aa3ad',
+  turkey: '#8a5a30',
 };
 const USUAL_COLLAR = '#d64545';
 
@@ -655,6 +656,67 @@ const ARTS = {
     ell(g, 1.4, 0.7, 0.55, 0.3, o.collar, 0.5);
     g.restore();
   },
+  turkey(g, o) {
+    const { pose, f } = o;
+    const low = pose === 'sit' || pose === 'lie';
+    const by = low ? -2.9 : -4.7;
+    const leg = '#c4664e';
+    const skin = '#8fb2cf';
+    const red = '#d4402e';
+    const tan = mix(o.coat, '#f2d9a0', 0.6);
+    const dk = mix(o.coat, '#000000', 0.3);
+    // The tail is a fan of feathers behind, tipped with tan. It spreads on a hop (fuss and dance) and
+    // otherwise hangs folded.
+    const feather = (a, len, wid, col) => {
+      g.save();
+      g.translate(-1.9, by - 0.4);
+      g.rotate(a);
+      ell(g, len * 0.55, 0, len * 0.55, wid, col);
+      ell(g, len * 0.95, 0, len * 0.18, wid * 0.85, tan);
+      g.restore();
+    };
+    if (pose === 'hop') {
+      for (let i = 0; i < 9; i++) {
+        const a = -3.05 + i * 0.3;
+        feather(a, 6.2, 0.95, i % 2 ? mix(o.coat, '#ffffff', 0.1) : dk);
+      }
+    } else {
+      for (const [a, len] of [[-2.75, 3.6], [3.05, 3.8], [2.7, 3.4]]) feather(a, low ? len - 0.6 : len, 0.85, dk);
+    }
+    if (!low) {
+      for (const [x, ph] of [[-0.4, 0.5], [1, 0]]) {
+        let fx = x;
+        let fy = 0;
+        if (pose === 'walk') {
+          const a = (f / 4 + ph) * TAU;
+          fx = x + Math.sin(a) * 1.1;
+          fy = -Math.max(0, Math.cos(a)) * 0.8;
+        }
+        limb(g, x, by + 1.8, fx, fy - 0.1, 0.6, leg);
+        limb(g, fx - 0.7, fy, fx + 1, fy, 0.5, leg);
+        limb(g, fx - 0.2, fy, fx + 0.8, fy - 0.5, 0.35, leg);
+      }
+    }
+    ball(g, 0, by, 3.2, 2.5, o.coat, 0.12);
+    // Breast feathers in scallops, and a folded wing.
+    ell(g, 1.2, by + 0.5, 1.6, 1.7, mix(o.coat, '#ffffff', 0.14));
+    for (const [x, y] of [[0.8, 0.1], [1.7, 0.2], [1.2, 1], [2.1, 1.1]]) ell(g, x, by + y, 0.55, 0.3, tan);
+    ell(g, -0.7, by + 0.1, 2, 1.35, mix(o.coat, '#000000', 0.2), 0.15);
+    for (const y of [-0.5, 0.2, 0.9]) limb(g, -2.2, by + y, 0.7, by + y + 0.1, 0.3, tan);
+    // The neck rises to a small bare head with a wattle.
+    const hx = pose === 'lie' ? 2.6 : 3.3;
+    const hy = pose === 'lie' ? by - 1.7 : low ? by - 3.4 : by - 4.1;
+    limb(g, 2.1, by - 0.7, hx - 0.1, hy + 0.6, 1.2, mix(skin, '#000000', 0.12));
+    limb(g, 2.6, by - 0.8, hx + 0.1, hy + 0.8, 0.5, o.coat);
+    ell(g, 2.3, by - 0.6, 0.6, 0.4, o.collar, 0.5);
+    ball(g, hx, hy, 1.15, 1.05, skin);
+    poly(g, '#e8b040', [hx + 0.9, hy - 0.2, hx + 2.1, hy + 0.2, hx + 0.9, hy + 0.5]);
+    ell(g, hx + 0.7, hy + 1.1, 0.4, 0.85, red);
+    ell(g, hx + 1.1, hy - 0.5, 0.4, 0.3, red);
+    eye(g, o, hx + 0.25, hy - 0.2, 0.3);
+    // The beard.
+    limb(g, 2.9, by + 0.5, 3, by + 1.5, 0.3, '#2a211d');
+  },
 };
 
 // Every picture is drawn once at SCALE times its size, to a small canvas, and then stamped.
@@ -745,7 +807,7 @@ function rand(p) {
 }
 
 // How fast a species goes, against a walking dog.
-const PACE = { turtle: 0.4, hedgehog: 0.7, sheep: 0.8, pig: 0.9, duck: 0.9, parrot: 0.9, rabbit: 1.3, fox: 1.2, frog: 0.9 };
+const PACE = { turtle: 0.4, hedgehog: 0.7, sheep: 0.8, pig: 0.9, duck: 0.9, parrot: 0.9, turkey: 0.9, rabbit: 1.3, fox: 1.2, frog: 0.9 };
 const HOPPERS = { rabbit: true, frog: true };
 
 // Only a species this table lists has a pace of its own. A word like `constructor` is on every object,

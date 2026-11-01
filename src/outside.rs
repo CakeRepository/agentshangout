@@ -64,11 +64,12 @@ const WATER: &str = "water";
 const SEATING: &str = "seating";
 const PLAY: &str = "play";
 const DECOR: &str = "decor";
+const FALL: &str = "fall";
 const SEASONAL: &str = "seasonal";
 const PETS: &str = "pets";
 
 /// In the order the catalog shows them, with what each is called there.
-pub const GROUPS: [(&str, &str); 18] = [
+pub const GROUPS: [(&str, &str); 19] = [
     (SIZE, "Size"),
     (WALLS, "Walls"),
     (ROOF, "Roof"),
@@ -85,6 +86,7 @@ pub const GROUPS: [(&str, &str); 18] = [
     (SEATING, "Seating and shade"),
     (PLAY, "Play"),
     (DECOR, "Decor"),
+    (FALL, "Fall"),
     (SEASONAL, "Seasonal"),
     (PETS, "Pets"),
 ];
@@ -297,7 +299,7 @@ pub const PARTS: [Part; 25] = [
         "Window boxes",
         WINDOWS,
         BUILDINGS,
-        &[NONE, ("flowers", "Flowers"), ("herbs", "Herbs"), ("ivy", "Ivy")],
+        &[NONE, ("flowers", "Flowers"), ("herbs", "Herbs"), ("ivy", "Ivy"), ("mums", "Mums")],
     ),
     part(
         "door",
@@ -361,6 +363,7 @@ pub const PARTS: [Part; 25] = [
             ("leaf", "Leaf"),
             ("bolt", "Lightning"),
             ("flower", "Flower"),
+            ("wreath", "Fall wreath"),
         ],
     )
     .colored(),
@@ -398,6 +401,7 @@ pub const PARTS: [Part; 25] = [
             ("festoon", "Festoon bulbs"),
             ("icicle", "Icicles"),
             ("neon", "Neon edge"),
+            ("garland", "Leaf garland"),
         ],
     )
     .colored(),
@@ -455,6 +459,7 @@ pub const PARTS: [Part; 25] = [
             ("moss", "Moss"),
             ("snow", "Snow"),
             ("tiles", "Tiles"),
+            ("leaves", "Fallen leaves"),
         ],
     )
     .colored(),
@@ -539,7 +544,7 @@ const fn paint(
 }
 
 /// Everything that can stand in a yard. A new kind is a line here and its art in `web/`.
-pub const YARD: [YardKind; 90] = [
+pub const YARD: [YardKind; 104] = [
     thing("oak", "Oak", TREES, (2, 2)),
     thing("pine", "Pine", TREES, (2, 2)),
     thing("birch", "Birch", TREES, (2, 2)),
@@ -567,12 +572,10 @@ pub const YARD: [YardKind; 90] = [
     thing("vegetable_patch", "Vegetable patch", GARDEN, (3, 2)),
     paint("planter", "Planter", GARDEN, (2, 1)),
     thing("compost_bin", "Compost bin", GARDEN, (1, 1)),
-    paint("wheelbarrow", "Wheelbarrow", GARDEN, (2, 1)),
     paint("greenhouse", "Greenhouse", GARDEN, (4, 3)),
     paint("garden_shed", "Garden shed", GARDEN, (3, 3)),
     thing("beehive", "Beehive", GARDEN, (1, 1)),
     paint("chicken_coop", "Chicken coop", GARDEN, (3, 2)),
-    thing("scarecrow", "Scarecrow", GARDEN, (1, 1)),
     paint("windmill", "Windmill", GARDEN, (2, 2)),
     thing("pond", "Pond", WATER, (3, 3)),
     thing("koi_pond", "Koi pond", WATER, (4, 3)),
@@ -621,6 +624,23 @@ pub const YARD: [YardKind; 90] = [
     paint("car", "Car", DECOR, (4, 2)),
     paint("boat", "Boat", DECOR, (4, 2)),
     paint("doghouse", "Doghouse", DECOR, (2, 2)),
+    thing("maple_tree", "Red maple", FALL, (2, 2)),
+    thing("birch_tree", "Golden birch", FALL, (2, 2)),
+    thing("leaf_pile", "Leaf pile", FALL, (2, 1)),
+    thing("rake", "Leaf rake", FALL, (1, 1)),
+    paint("mums", "Potted mums", FALL, (1, 1)),
+    thing("corn_stalks", "Corn stalks", FALL, (1, 1)),
+    thing("harvest_table", "Harvest table", FALL, (4, 2)),
+    thing("pumpkin_pie", "Pumpkin pie", FALL, (1, 1)),
+    thing("cornucopia", "Cornucopia", FALL, (2, 1)),
+    thing("apple_basket", "Apple basket", FALL, (1, 1)),
+    thing("cider_barrel", "Cider barrel", FALL, (2, 1)),
+    thing("gourds", "Pumpkins and gourds", FALL, (2, 1)),
+    thing("scarecrow", "Scarecrow", FALL, (1, 1)),
+    thing("hay_bale", "Hay bale", FALL, (2, 1)),
+    thing("turkey", "Turkey", FALL, (1, 1)),
+    thing("wreath", "Fall wreath", FALL, (1, 1)),
+    paint("wheelbarrow", "Wheelbarrow", FALL, (2, 1)),
     thing("pumpkin", "Jack-o'-lantern", SEASONAL, (1, 1)),
     thing("gravestone", "Gravestone", SEASONAL, (1, 1)),
     thing("skeleton", "Skeleton", SEASONAL, (1, 1)),
@@ -629,7 +649,6 @@ pub const YARD: [YardKind; 90] = [
     thing("snowman", "Snowman", SEASONAL, (1, 1)),
     thing("christmas_tree", "Christmas tree", SEASONAL, (2, 2)),
     paint("gift_pile", "Presents", SEASONAL, (1, 1)),
-    thing("hay_bale", "Hay bale", SEASONAL, (1, 1)),
 ];
 
 pub fn yard_kind_of(word: &str) -> Option<&'static YardKind> {
@@ -637,7 +656,7 @@ pub fn yard_kind_of(word: &str) -> Option<&'static YardKind> {
 }
 
 /// E18: what can live on a tile.
-pub const SPECIES: [(&str, &str); 14] = [
+pub const SPECIES: [(&str, &str); 15] = [
     ("dog", "Dog"),
     ("cat", "Cat"),
     ("rabbit", "Rabbit"),
@@ -652,6 +671,7 @@ pub const SPECIES: [(&str, &str); 14] = [
     ("parrot", "Parrot"),
     ("frog", "Frog"),
     ("robot_dog", "Robot dog"),
+    ("turkey", "Turkey"),
 ];
 
 /// E18, W7: names come from here, so nobody can type one.
@@ -858,6 +878,54 @@ fn template(
     Template { template, label, kinds, outside }
 }
 
+/// E33: decorations that go up and come down in one go, with nothing in them that anyone typed.
+#[derive(Clone, Debug, Serialize)]
+pub struct Pack {
+    pub pack: &'static str,
+    pub label: &'static str,
+    pub outside: Value,
+}
+
+/// E33: what can be put up. The places keep clear of the building of every kind and of a town square's
+/// middle, and of the path from every kind's door: x 4 to 10 along the front, and y 6 to 10 down the side.
+pub fn packs() -> Vec<Pack> {
+    vec![Pack {
+        pack: "fall",
+        label: "Fall",
+        outside: json!({
+            "parts": {
+                "ground": { "style": "leaves" },
+                "string_lights": { "style": "garland", "color": 0xff_d5_4f },
+                "window_boxes": { "style": "mums" },
+                "sign": { "style": "wreath" },
+            },
+            "items": [
+                // The trees, standing up behind the roof.
+                { "kind": "maple_tree", "x": 1, "y": 1 },
+                { "kind": "birch_tree", "x": 13, "y": 1 },
+                // The harvest, on the left of the front.
+                { "kind": "scarecrow", "x": 1, "y": 13 },
+                { "kind": "corn_stalks", "x": 3, "y": 13 },
+                { "kind": "wheelbarrow", "x": 0, "y": 14 },
+                { "kind": "gourds", "x": 0, "y": 15 },
+                { "kind": "hay_bale", "x": 2, "y": 15 },
+                // Somewhere for dinner, on the right of the front, with the food in front of it.
+                { "kind": "harvest_table", "x": 12, "y": 13 },
+                { "kind": "cornucopia", "x": 11, "y": 15 },
+                { "kind": "pumpkin_pie", "x": 13, "y": 15 },
+                { "kind": "turkey", "x": 14, "y": 15 },
+                { "kind": "mums", "x": 15, "y": 15 },
+                // Down the side, clear of a door on that wall.
+                { "kind": "leaf_pile", "x": 13, "y": 11 },
+                { "kind": "rake", "x": 15, "y": 11 },
+                { "kind": "cider_barrel", "x": 13, "y": 4 },
+                { "kind": "apple_basket", "x": 14, "y": 5 },
+                { "kind": "wreath", "x": 15, "y": 5 },
+            ],
+        }),
+    }]
+}
+
 /// E23: every way a place can start out. E24 has each of them pass the checks on an empty tile.
 pub fn templates() -> Vec<Template> {
     vec![
@@ -1011,8 +1079,8 @@ pub fn templates() -> Vec<Template> {
                 "items": [
                     { "kind": "vegetable_patch", "x": 0, "y": 13 },
                     { "kind": "chicken_coop", "x": 12, "y": 13, "color": 0xb8_3a_2c },
-                    { "kind": "scarecrow", "x": 3, "y": 13 },
-                    { "kind": "hay_bale", "x": 14, "y": 2 },
+                    { "kind": "beehive", "x": 3, "y": 13 },
+                    { "kind": "compost_bin", "x": 14, "y": 2 },
                 ],
                 "pets": [{
                     "species": "chicken",
@@ -1069,35 +1137,32 @@ pub fn templates() -> Vec<Template> {
             }),
         ),
         template(
-            "haunted",
-            "Haunted",
+            "harvest",
+            "Harvest",
             BUILDINGS,
             json!({
                 "parts": {
-                    "walls": { "style": "stone", "color": 0x4a_44_5c },
-                    "roof": { "style": "gambrel", "color": 0x2a_24_36, "number": 3 },
-                    "roofing": { "style": "slate" },
-                    "door": { "style": "arched", "color": 0x3e_27_23 },
-                    "windows": { "style": "stained", "number": 2 },
-                    "glow": { "style": "few", "color": 0x8f_e3_7a },
-                    "fence": { "style": "iron", "color": 0x21_21_21, "number": 15 },
-                    "gate": { "style": "iron", "color": 0x21_21_21 },
-                    "ground": { "style": "dirt", "color": 0x4f_3a_26 },
-                    "path": { "style": "cobbles" },
+                    "walls": { "style": "timber", "color": 0x8c_4a_2a },
+                    "trim": { "style": "bold", "color": 0x3e_2a_1c },
+                    "roof": { "style": "gable", "color": 0x6b_3a_22, "number": 2 },
+                    "roofing": { "style": "shakes" },
+                    "door": { "style": "dutch", "color": 0x3e_2a_1c },
+                    "windows": { "style": "paned", "number": 2 },
+                    "shutters": { "style": "board", "color": 0x3e_2a_1c },
+                    "window_boxes": { "style": "mums" },
+                    "sign": { "style": "wreath" },
+                    "chimney": { "style": "stone" },
+                    "string_lights": { "style": "garland", "color": 0xff_d5_4f },
+                    "fence": { "style": "rail", "color": 0x3e_2a_1c, "number": 15 },
+                    "gate": { "style": "wooden", "color": 0x3e_2a_1c },
+                    "ground": { "style": "leaves" },
+                    "path": { "style": "gravel" },
                 },
                 "items": [
-                    { "kind": "dead_tree", "x": 1, "y": 1 },
-                    { "kind": "gravestone", "x": 13, "y": 13 },
-                    { "kind": "gravestone", "x": 14, "y": 11 },
-                    { "kind": "pumpkin", "x": 1, "y": 13 },
-                    { "kind": "cauldron", "x": 3, "y": 14 },
+                    { "kind": "apple_tree", "x": 1, "y": 13 },
+                    { "kind": "log_pile", "x": 13, "y": 13 },
+                    { "kind": "barrel", "x": 15, "y": 13, "color": 0x7b_4a_2a },
                 ],
-                "pets": [{
-                    "species": "cat",
-                    "name": "inky",
-                    "coat": 0x21_21_21,
-                    "rules": [{ "when": "night", "do": "patrol" }, { "when": "someone_near", "do": "hide" }],
-                }],
             }),
         ),
         template(
@@ -1555,6 +1620,7 @@ async fn catalog(State(_state): State<AppState>, caller: Caller) -> ApiResult<Js
             }).collect::<Vec<_>>(),
         },
         "templates": templates(),
+        "packs": packs(),
         "swatches": SWATCHES,
         "limits": {
             "grid": GRID,

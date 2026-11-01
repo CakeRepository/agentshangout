@@ -1092,6 +1092,146 @@ async fn a_template_can_be_saved_on_a_place_of_a_kind_it_lists() {
     }
 }
 
+const KINDS: [&str; 5] = ["house", "cafe", "club", "studio", "square"];
+
+/// E34: the pack's parts that a place of `kind` has, and all its items, as a document.
+fn pack_on(pack: &outside::Pack, kind: &str) -> Value {
+    let parts: serde_json::Map<String, Value> = pack.outside["parts"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(word, _)| {
+            outside::PARTS
+                .iter()
+                .any(|part| part.part == word.as_str() && part.kinds.contains(&kind))
+        })
+        .map(|(word, chosen)| (word.clone(), chosen.clone()))
+        .collect();
+    json!({ "parts": parts, "items": pack.outside["items"] })
+}
+
+// E33
+#[tokio::test]
+async fn there_is_one_pack_and_the_catalog_lists_it_for_people() {
+    let packs = outside::packs();
+    assert_eq!(packs.len(), 1);
+    assert_eq!(packs[0].pack, "fall");
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let catalog = server.get(&ann.key, "/api/outside").await.ok();
+    let listed = catalog["packs"].as_array().expect("packs");
+    assert_eq!(listed.len(), 1, "{catalog}");
+    assert_eq!(listed[0]["pack"], "fall");
+    assert_eq!(listed[0]["outside"], packs[0].outside);
+    // Nothing in it that anyone typed: every value is a number or a listed word.
+    for (word, chosen) in packs[0].outside["parts"].as_object().unwrap() {
+        assert!(chosen.as_object().unwrap().values().all(|value| !value.is_array()), "{word}");
+    }
+}
+
+// E34: a pack saved on an empty tile of any kind is accepted, with the parts that kind has.
+#[tokio::test]
+async fn a_pack_the_page_puts_up_is_taken_as_any_other_change() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let house = server.house(&ann);
+    let square = server.square(&ann);
+    for pack in outside::packs() {
+        for (kind, spot) in [("house", house), ("square", square)] {
+            let document = pack_on(&pack, kind);
+            let answer = server.save(&ann, spot, document.clone()).await.ok();
+            assert_eq!(
+                answer["outside"]["items"].as_array().map(Vec::len),
+                document["items"].as_array().map(Vec::len)
+            );
+        }
+    }
+}
+
+// E34, E35: a pack passes the checks on an empty tile of every kind, with the parts that kind has.
+#[test]
+fn every_pack_passes_the_checks_on_an_empty_tile_of_every_kind() {
+    for pack in outside::packs() {
+        for kind in KINDS {
+            let document = parse(pack_on(&pack, kind));
+            if let Err(error) = outside::check(kind, &document) {
+                panic!("{} on a {kind}: {} {}", pack.pack, error.status, error.message);
+            }
+        }
+        // A square has no sign, no window boxes: those are left out and nothing else is.
+        let on_a_square = pack_on(&pack, "square");
+        assert!(on_a_square["parts"].get("window_boxes").is_none());
+        assert!(on_a_square["parts"].get("sign").is_none());
+        assert!(on_a_square["parts"].get("ground").is_some());
+        assert!(pack_on(&pack, "house")["parts"].get("window_boxes").is_some());
+    }
+}
+
+// E35: a kind is in one pack and no template, and every word is in the catalog.
+#[test]
+fn a_kind_in_a_pack_is_in_one_pack_and_no_template() {
+    let packs = outside::packs();
+    let mut seen: Vec<String> = Vec::new();
+    for pack in &packs {
+        let items = pack.outside["items"].as_array().unwrap();
+        assert!(!items.is_empty(), "{}", pack.pack);
+        let mut mine: HashSet<String> = HashSet::new();
+        for item in items {
+            let kind = text(&item["kind"]);
+            assert!(
+                outside::YARD.iter().any(|yard| yard.kind == kind),
+                "{kind} is not in the catalog"
+            );
+            mine.insert(kind);
+        }
+        for kind in &mine {
+            assert!(!seen.contains(kind), "{kind} is in two packs");
+        }
+        seen.extend(mine);
+        for (word, chosen) in pack.outside["parts"].as_object().unwrap() {
+            let part = outside::PARTS
+                .iter()
+                .find(|part| part.part == word)
+                .unwrap_or_else(|| panic!("{word} is not a part"));
+            if let Some(style) = chosen.get("style") {
+                assert!(
+                    part.styles.iter().any(|(each, _)| *each == style.as_str().unwrap()),
+                    "{word} {style}"
+                );
+            }
+        }
+    }
+    for template in outside::templates() {
+        for item in template.outside["items"].as_array().into_iter().flatten() {
+            let kind = text(&item["kind"]);
+            assert!(
+                !seen.contains(&kind),
+                "{kind} is in a pack and in the {} template",
+                template.template
+            );
+        }
+    }
+}
+
+// E34: a template that is offered is in season, and Halloween is over.
+#[tokio::test]
+async fn harvest_is_offered_as_a_template_and_haunted_is_not() {
+    let words: Vec<&str> = outside::templates().iter().map(|template| template.template).collect();
+    assert!(words.contains(&"harvest"), "{words:?}");
+    assert!(!words.contains(&"haunted"), "{words:?}");
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let catalog = server.get(&ann.key, "/api/outside").await.ok();
+    let offered: Vec<String> = catalog["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|each| text(&each["template"]))
+        .collect();
+    assert!(offered.iter().any(|word| word == "harvest"), "{offered:?}");
+    assert!(!offered.iter().any(|word| word == "haunted"), "{offered:?}");
+}
+
 // E26
 #[tokio::test]
 async fn the_view_says_how_many_outsides_there_are_and_a_stamp_that_changes_with_each() {
@@ -2426,6 +2566,34 @@ fn the_map_paints_an_outside_into_the_tile_and_draws_a_pet_like_anyone_on_the_st
     assert!(map.contains("scale >= PET_SCALE"), "pets are drawn at every zoom");
 }
 
+// E34: the page reads the packs and says what pressing one does.
+#[test]
+fn the_builder_offers_packs_and_puts_them_up_and_takes_them_down() {
+    let page = web("outside.js").replace("\r\n", "\n");
+    assert!(page.contains("catalog.packs"));
+    assert!(page.contains("catalogGroup('Packs'"));
+    for words in ["Press to put it up", "Up now. Press to take it down", "didn't fit"] {
+        assert!(page.contains(words), "{words}");
+    }
+    // Up is any of the pack's kinds in the yard, with nothing recorded.
+    assert!(page.contains("const isUp = (pack, doc = shown) => (doc.items || []).some("));
+    // Putting up sets only the parts this kind of place has and adds items where they fit.
+    let body_of = |name: &str| {
+        let start = format!("function {name}(");
+        page.split(start.as_str()).nth(1).unwrap().split("\n  }\n").next().unwrap().to_string()
+    };
+    let up = body_of("putUp");
+    assert!(up.contains("part.kinds.includes(kind)"));
+    assert!(up.contains("nearestSpot(doc, item.kind, item)"));
+    assert!(!up.contains("pets"));
+    // Taking down removes the pack's kinds and a part only while it has the pack's style, and
+    // touches no pet.
+    let down = body_of("takeDown");
+    assert!(down.contains("gone.has(item.kind)"));
+    assert!(down.contains("=== chosen.style"));
+    assert!(!down.contains("pets"));
+}
+
 // Each rule in docs/outside.md has a test above that names it.
 #[test]
 fn every_rule_in_the_outside_doc_is_named_by_a_test() {
@@ -2437,7 +2605,10 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
             line.trim_start().strip_prefix("- **E")?.split_once(".**")?.0.parse().ok()
         })
         .collect();
-    assert_eq!(rules, (1..=32).collect::<Vec<u32>>(), "the rules should be E1 to E32 in order");
+    // E33 to E35 are written beside the templates, so this only wants every number once.
+    let mut sorted = rules.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted, (1..=35).collect::<Vec<u32>>(), "the rules should be E1 to E35");
 
     let tests = std::fs::read_to_string(format!("{root}/tests/outside.rs")).unwrap();
     let mut named: HashSet<u32> = HashSet::new();

@@ -154,6 +154,24 @@ what the map already shows.
   E2 to E19 as any other change.
 - **E24.** Every template passes those checks on an empty tile of each kind it lists.
 
+### Packs
+
+A pack is for a time of year: it decorates a place whatever it looks like, and comes down again in one
+press. It's a room's pack (I26 to I30) for the outside, and it uses the same kinds, so a place can be
+dressed for fall inside and out.
+
+- **E33.** A pack is a fixed set in the code: parts, and yard items with their cells, with nothing in it
+  that anyone typed. There is one: `fall`. `GET /api/outside` lists them as `packs`.
+- **E34.** Pressing a pack in the catalog puts it up. Every part a place of its kind has is set, and each
+  item goes in if it fits around what's there, so what's already in the yard stays. Pressing it again takes
+  it down: every item of the pack's kinds comes out, whoever put it there, and a part that still has the
+  pack's `style` goes back to how that place would otherwise look. Pets stay. That happens on the page, and
+  what's saved goes through E2 to E19 as any other change. Nothing records that a pack went up: it's up
+  while any of its kinds is in the yard, as for a room (I30).
+- **E35.** A kind belongs to one pack and to no template, because taking a pack down takes all of that
+  kind. Every part of a pack fits every kind that has that part, and every item in it fits an empty tile
+  of every kind of place, because a pack is for anyone who owns one.
+
 ### Showing it
 
 - **E25.** `PUT /api/places/{x}/{y}/outside` replaces the whole document, and the answer is what was

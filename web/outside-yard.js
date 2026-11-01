@@ -124,7 +124,26 @@ const colorIn = (item, fallback) => hexOf(item.color, fallback);
 const GROUND_COLORS = {
   grass: '#74a141', clover: '#6fa046', meadow: '#84a84a', dirt: '#8d6c46', gravel: '#b9b3a4', sand: '#dcc488',
   paving: '#d6ccb1', cobbles: '#a9a597', boards: '#a77a4a', moss: '#5f8a3c', snow: '#eef3f8', tiles: '#9aa3b5',
+  leaves: '#7a8f3e',
 };
+
+// The fall palette the leaves, the garland and the trees share: russet, gold, deep red and walnut.
+const FALL_LEAVES = ['#b5471f', '#d98a22', '#a42a1f', '#e0b030', '#8f3a1c', '#c9621f', '#e8a23a', '#7a2a18'];
+
+// One pointed leaf lying on a surface, from its stalk at (x, y), `s` long and turned to `a`. `squash` flattens
+// it for something lying on the ground.
+function fallLeaf(g, fill, x, y, a, s, squash = 1) {
+  const ca = Math.cos(a);
+  const sa = Math.sin(a) * squash;
+  const mx = x + (ca * s) / 2;
+  const my = y + (sa * s) / 2;
+  g.beginPath();
+  g.moveTo(x, y);
+  g.quadraticCurveTo(mx - sa * s * 0.4, my + ca * s * 0.4 * squash, x + ca * s, y + sa * s);
+  g.quadraticCurveTo(mx + sa * s * 0.4, my - ca * s * 0.4 * squash, x, y);
+  g.fillStyle = fill;
+  g.fill();
+}
 
 function wash(g, base, rand, blobs = 24, k = 0.3) {
   g.fillStyle = grad(g, -32, 0, 32, 32, lite(base, 0.03), dark(base, 0.05));
@@ -353,6 +372,29 @@ const GROUNDS = {
       rr(g, 'rgba(255,255,255,.95)', x, y, 0.55, 0.5);
     }
     grain(g, 0.03);
+  },
+  leaves(g, base, rand) {
+    wash(g, base, rand, 22, 0.3);
+    blades(g, rand, base, 50);
+    // A russet carpet under the drifts, deepest at the edges.
+    for (let i = 0; i < 20; i++) {
+      const edge = rand() < 0.5 ? 0 : 32;
+      const [x, y] = rand() < 0.5 ? P(edge + (rand() - 0.5) * 6, rand() * 32) : P(rand() * 32, edge + (rand() - 0.5) * 6);
+      const r = 2.5 + rand() * 3.5;
+      ell(g, rgba(i % 2 ? '#8f3a1c' : '#a85a22', 0.4), x, y, r * 1.8, r * 0.9);
+    }
+    // Thick at the edges and thin in the middle: a leaf is kept more often the nearer the edge it fell.
+    for (let i = 0; i < 1100; i++) {
+      const u = -1 + rand() * 34;
+      const v = -1 + rand() * 34;
+      const edge = Math.min(1, Math.max(Math.abs(u - 16), Math.abs(v - 16)) / 16);
+      if (rand() > 0.16 + 0.84 * edge * edge) continue;
+      const [x, y] = P(u, v);
+      const c = mixHex(FALL_LEAVES[Math.floor(rand() * FALL_LEAVES.length)], base, 0.1);
+      fallLeaf(g, rand() < 0.5 ? dark(c, 0.18) : c, x, y, rand() * TAU, 1.7 + rand() * 1.5, 0.55);
+      if (rand() < 0.3) ell(g, rgba(lite(c, 0.4), 0.55), x + 0.3, y - 0.15, 0.4, 0.2);
+    }
+    grain(g, 0.05);
   },
   tiles(g, base, rand) {
     g.fillStyle = dark(base, 0.5);
@@ -1195,7 +1237,7 @@ export function paintCenterpiece(S, outside) {
 // String lights (E10): round the town square, from post to post. Each is an unlit fitting by day and
 // glows at night.
 
-const LIGHT_COLORS = { eaves: '#ffe3a0', fairy: '#ffe3a0', festoon: '#ffe3a0', icicle: '#dff4ff', neon: '#ff6fb0' };
+const LIGHT_COLORS = { eaves: '#ffe3a0', fairy: '#ffe3a0', festoon: '#ffe3a0', icicle: '#dff4ff', neon: '#ff6fb0', garland: '#ffd54f' };
 const STRING_LOOP = [[3, 3], [16, 3], [29, 3], [29, 16], [29, 29], [16, 29], [3, 29], [3, 16]];
 const POST_TOP = 15;
 
@@ -1290,6 +1332,36 @@ const STRINGS = {
         glow(g, x, y + len, 3, c, 0.45);
         line(g, lite(c, 0.4), 0.55, x, y, x, y + len);
         ell(g, '#ffffff', x, y + len, 0.45, 0.45);
+      }
+    }
+  },
+  garland(S, a, b, c) {
+    const g = S.g;
+    const sag = 1.8;
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    // The bulbs hang below the rope, a few to each run.
+    const bulbs = Math.max(2, Math.round(len / 4.6));
+    if (S.day) {
+      const rand = seeded(Math.round(a[0] * 7 + a[1] * 13 + b[0] * 3));
+      wire(g, '#5a3a22', 0.8, a, b, sag);
+      const n = Math.max(6, Math.round(len / 0.8));
+      for (let i = 0; i <= n; i++) {
+        const [x, y] = along(a, b, sag, i / n);
+        for (let k = 0; k < 2; k++) {
+          const col = FALL_LEAVES[Math.floor(rand() * FALL_LEAVES.length)];
+          fallLeaf(g, k ? col : dark(col, 0.2), x, y + (k ? 0.5 : -0.2), rand() * TAU, 1.5 + rand() * 1.1);
+        }
+      }
+    }
+    for (let i = 1; i <= bulbs; i++) {
+      const [x, y] = along(a, b, sag, i / (bulbs + 1));
+      if (S.day) {
+        line(g, '#5a3a22', 0.4, x, y, x, y + 1);
+        ell(g, mixHex(c, '#8a7050', 0.35), x, y + 1.9, 0.8, 1);
+        ell(g, 'rgba(255,255,255,.5)', x - 0.25, y + 1.5, 0.28, 0.35);
+      } else {
+        glow(g, x, y + 1.9, 5, c, 0.55);
+        ell(g, lite(c, 0.5), x, y + 1.9, 0.85, 1.05);
       }
     }
   },
@@ -2270,27 +2342,67 @@ const GARDEN = {
   scarecrow(S, item) {
     if (!S.day) return;
     const { g, x, y } = where(S, item);
-    shadow(S, [item.u0, item.v0, item.u1, item.v1], 14);
-    pool(g, item.u, item.v, 1.4, 0.24);
-    rr(g, '#7a5a38', x - 0.5, y - 14, 1, 14);
-    // The arms along a pole, in a plaid shirt.
-    stroke(g, '#7a5a38', 0.9, [[x - 5, y - 10.6], [x + 5, y - 10.6]]);
-    quad(g, '#3f6fb0', [x - 2.2, y - 11.8], [x + 2.2, y - 11.8], [x + 2.6, y - 6.2], [x - 2.6, y - 6.2]);
-    quad(g, '#3f6fb0', [x - 5, y - 11.4], [x - 2.2, y - 11.8], [x - 2.2, y - 9.6], [x - 5, y - 9.8]);
-    quad(g, '#3f6fb0', [x + 5, y - 11.4], [x + 2.2, y - 11.8], [x + 2.2, y - 9.6], [x + 5, y - 9.8]);
-    for (const dy of [-10.4, -8.4, -6.8]) rr(g, 'rgba(230,200,90,.7)', x - 2.5, y + dy, 5, 0.5);
-    for (const dx of [-1, 0.6]) rr(g, 'rgba(230,200,90,.7)', x + dx, y - 11.6, 0.5, 5.4);
-    rr(g, '#c9a64a', x - 2.4, y - 6.4, 4.8, 0.9);
-    // Straw out of the sleeves and the hem.
-    for (const s of [-1, 1]) for (let k = 0; k < 4; k++) stroke(g, '#e6c75a', 0.4, [[x + s * 5, y - 10.6 + k * 0.3], [x + s * (6.2 + k * 0.3), y - 11.2 + k * 0.9]]);
-    for (let k = -2; k <= 2; k++) stroke(g, '#e6c75a', 0.4, [[x + k * 0.9, y - 6.2], [x + k * 1.0, y - 4.9]]);
-    ell(g, '#d9c08a', x, y - 14.2, 1.9, 2.1);
-    rr(g, '#3a2a1c', x - 1, y - 14.8, 0.5, 0.5);
-    rr(g, '#3a2a1c', x + 0.5, y - 14.8, 0.5, 0.5);
-    stroke(g, '#3a2a1c', 0.3, [[x - 0.9, y - 13.3], [x, y - 13], [x + 0.9, y - 13.3]]);
-    ell(g, '#c9a64a', x, y - 16, 3.6, 0.9);
-    quad(g, '#b88a3a', [x - 1.9, y - 16], [x + 1.9, y - 16], [x + 1.3, y - 18.6], [x - 1.3, y - 18.6]);
-    rr(g, '#7a3a2c', x - 1.9, y - 16.6, 3.8, 0.6);
+    // The room's scarecrow (web/room.js): a post and crossbar, a red flannel shirt, a burlap head with button
+    // eyes, a floppy straw hat with a leaf in the band, straw at the cuffs and a crow on one arm. About as
+    // tall as a person on the map, and no wider than its arms.
+    const plaid = ['#b33a1f', '#8c2a1e', '#d4502a'];
+    const straw = ['#a8843f', '#c9a86a', '#e3c987'];
+    const wood = ['#3f2a1c', '#6b4628', '#8a5c37'];
+    const flip = item.facing % 2 ? -1 : 1;
+    shadow(S, [item.u0, item.v0, item.u1, item.v1], 12);
+    pool(g, item.u, item.v, 1.2, 0.24);
+    // Drawn full size, then brought down so it stands under the eaves of a one-floor house.
+    g.save();
+    g.translate(x, y);
+    g.scale(0.68, 0.68);
+    g.translate(-x, -y);
+    // The post, with a little straw round its foot.
+    rr(g, wood[1], x - 0.6, y - 24, 1.2, 24);
+    rr(g, wood[2], x - 0.6, y - 24, 0.45, 24);
+    for (const k of [-1.6, -0.6, 0.6, 1.6]) stroke(g, k < 0 ? straw[1] : straw[0], 0.45, [[x + k * 0.4, y], [x + k * 1.2, y - 1.8 - Math.abs(k) * 0.3]]);
+    // The crossbar, then the shirt over it.
+    rr(g, wood[1], x - 6.2, y - 18.4, 12.4, 1);
+    // The sleeves, the body and the dark checks of the flannel.
+    quad(g, plaid[0], [x - 6, y - 19.2], [x - 2.6, y - 19.8], [x - 2.6, y - 16.2], [x - 6, y - 16.6]);
+    quad(g, plaid[0], [x + 6, y - 19.2], [x + 2.6, y - 19.8], [x + 2.6, y - 16.2], [x + 6, y - 16.6]);
+    quad(g, grad(g, x - 3, 0, x + 3, 0, plaid[2], plaid[0], plaid[1]), [x - 3, y - 20], [x + 3, y - 20], [x + 3.4, y - 9.6], [x - 3.4, y - 9.6]);
+    for (const dx of [-1.8, 0, 1.8]) rr(g, rgba(plaid[1], 0.8), x + dx - 0.25, y - 19.8, 0.5, 10);
+    for (const dy of [-17.8, -14.6, -11.8]) rr(g, rgba(plaid[1], 0.8), x - 3.3, y + dy, 6.6, 0.5);
+    for (const sx of [-1, 1]) rr(g, rgba(plaid[1], 0.8), x + sx * 4.3 - 0.25, y - 19.4, 0.5, 3);
+    rr(g, '#f6d98a', x - 0.35, y - 15.8, 0.7, 0.7);
+    rr(g, '#f6d98a', x - 0.35, y - 12.8, 0.7, 0.7);
+    // Straw out of the cuffs and the hem.
+    for (const s of [-1, 1]) for (let k = 0; k < 3; k++) stroke(g, straw[k % 3], 0.45, [[x + s * 5.9, y - 18.3 + k * 0.8], [x + s * (7.3 + k * 0.4), y - 19.3 + k * 1.4]]);
+    for (let k = -2; k <= 2; k++) stroke(g, straw[(k + 2) % 3], 0.45, [[x + k * 1.3, y - 9.6], [x + k * 1.5, y - 7.8 - (k % 2 ? 0.5 : 0)]]);
+    // The burlap head: button eyes, rosy cheeks and a stitched smile.
+    ell(g, straw[0], x + 0.2, y - 22.1, 2.6, 2.7);
+    ell(g, grad(g, x - 2, 0, x + 2, 0, straw[2], straw[1]), x, y - 22.3, 2.5, 2.6);
+    rr(g, wood[0], x - 1.6, y - 22.9, 0.9, 0.9);
+    rr(g, wood[0], x + 0.7, y - 22.9, 0.9, 0.9);
+    rr(g, '#f4f1e8', x - 1.6, y - 22.9, 0.35, 0.35);
+    rr(g, '#f4f1e8', x + 0.7, y - 22.9, 0.35, 0.35);
+    ell(g, rgba('#d4502a', 0.55), x - 1.9, y - 21.2, 0.6, 0.4);
+    ell(g, rgba('#d4502a', 0.55), x + 1.9, y - 21.2, 0.6, 0.4);
+    stroke(g, wood[0], 0.3, [[x - 1.1, y - 20.9], [x - 0.4, y - 20.4], [x + 0.4, y - 20.4], [x + 1.1, y - 20.9]]);
+    // The floppy hat, with a leaf and a band.
+    ell(g, straw[0], x, y - 24.1, 4.4, 1.15);
+    ell(g, straw[1], x, y - 24.3, 4.2, 1);
+    quad(g, straw[1], [x - 2.1, y - 24.4], [x + 2.1, y - 24.4], [x + 1.6, y - 27.6], [x + 0.4, y - 28.1], [x - 1.2, y - 27.8]);
+    rr(g, straw[2], x - 1.8, y - 27.2, 0.7, 2.8);
+    rr(g, plaid[1], x - 2.1, y - 25.4, 4.2, 0.9);
+    fallLeaf(g, '#e8802a', x + 0.6, y - 24.6, -0.9, 2, 0.8);
+    // The crow on the right arm, with its beak to the post.
+    const cx = x + 4.6 * flip;
+    const cy = y - 19.3;
+    ell(g, '#2b2430', cx, cy - 1.1, 1.5, 1.1);
+    ell(g, '#4a4052', cx - 0.3 * flip, cy - 1.5, 0.8, 0.5);
+    quad(g, '#2b2430', [cx + 1.1 * flip, cy - 1.4], [cx + 2.6 * flip, cy - 0.4], [cx + 1.2 * flip, cy - 0.5]);
+    ell(g, '#2b2430', cx - 1 * flip, cy - 2.4, 0.8, 0.8);
+    quad(g, '#d9a520', [cx - 1.6 * flip, cy - 2.5], [cx - 2.4 * flip, cy - 2.2], [cx - 1.6 * flip, cy - 2]);
+    rr(g, '#f4f1e8', cx - 1.2 * flip - 0.15, cy - 2.6, 0.3, 0.3);
+    rr(g, '#d9a520', cx - 0.5, cy - 0.1, 0.3, 0.5);
+    rr(g, '#d9a520', cx + 0.4, cy - 0.1, 0.3, 0.5);
+    g.restore();
   },
   windmill(S, item) {
     if (!S.day) return;
@@ -2630,9 +2742,181 @@ const WATER = {
   },
 };
 
+// ---------------------------------------------------------------------------------------------
+// The Fall pack (E33): trees, a bundle of corn, mums and a heap of leaves.
+
+const RED_MAPLE = ['#6e1414', '#ac2219', '#d83a26', '#f56d3a'];
+const GOLD_BIRCH = ['#a8761c', '#d6a32a', '#efc84a', '#fbe69a'];
+
+const FALL = {
+  maple_tree(S, item) {
+    if (!S.day) return;
+    tree(S, item, 0.66, RED_MAPLE, {
+      shadow: 30,
+      rx: 18,
+      ry: 15,
+      n: 20,
+      trunk: ['#7a5436', '#3e2a1a'],
+      under: (g, x, y, rand) => {
+        litter(g, x, y, rand, ['#ac2219', '#d83a26', '#e8803a', '#f7b865'], 22, 10);
+        for (let i = 0; i < 5; i++) fallLeaf(g, i % 2 ? '#c4301f' : '#e8803a', x + (rand() - 0.5) * 20, y + 1 + rand() * 5, rand() * TAU, 1.8, 0.55);
+      },
+      dress: (g, rand) => {
+        // A few gold leaves where the sun catches the crown.
+        for (let i = 0; i < 9; i++) {
+          const a = rand() * TAU;
+          const d = Math.sqrt(rand());
+          ell(g, rgba('#f7b865', 0.85), Math.cos(a) * d * 11, -29 + Math.sin(a) * d * 8, 1.1, 0.8);
+        }
+      },
+    });
+  },
+  birch_tree(S, item) {
+    if (!S.day) return;
+    tree(S, item, 0.58, GOLD_BIRCH, {
+      shadow: 26,
+      trunk: ['#f4f0e6', '#bab2a2'],
+      cy: -30,
+      rx: 14,
+      ry: 14,
+      n: 16,
+      mark: (g) => {
+        for (const [yy, w] of [[-2.5, 3.2], [-6, 2], [-9.5, 3.4], [-13, 2.2], [-15, 1.6]]) rr(g, '#2e2a2a', -w / 2 - 0.4, yy, w, 1.2);
+      },
+      under: (g, x, y, rand) => {
+        litter(g, x, y, rand, ['#d6a32a', '#efc84a', '#fbe69a', '#c98a22'], 16, 8);
+        for (let i = 0; i < 3; i++) fallLeaf(g, i % 2 ? '#efc84a' : '#d6a32a', x + (rand() - 0.5) * 16, y + 1 + rand() * 4, rand() * TAU, 1.7, 0.55);
+      },
+      dress: (g, rand) => {
+        for (let i = 0; i < 7; i++) {
+          const a = rand() * TAU;
+          const d = Math.sqrt(rand());
+          ell(g, rgba('#fff2b8', 0.8), Math.cos(a) * d * 9, -30 + Math.sin(a) * d * 8, 1, 0.7);
+        }
+      },
+    });
+  },
+  corn_stalks(S, item) {
+    if (!S.day) return;
+    const { g, x, y } = where(S, item);
+    const rand = seeded(ih(item.x, item.y, 61));
+    shadow(S, [item.u0, item.v0, item.u1, item.v1], 14);
+    pool(g, item.u, item.v, 1.3, 0.26);
+    ell(g, '#6b5232', x, y + 0.2, 2.2, 0.8);
+    // A bundle about as tall as a door, so it stays small beside a scarecrow and a table.
+    g.save();
+    g.translate(x, y);
+    g.scale(0.62, 0.62);
+    g.translate(-x, -y);
+    // The stalks lean in to the tie, back ones first.
+    const stalks = [];
+    for (let i = 0; i < 8; i++) stalks.push([-2.6 + (i / 7) * 5.2, rand()]);
+    stalks.sort((p, q) => Math.abs(q[0]) - Math.abs(p[0]));
+    for (const [bx, r] of stalks) {
+      const top = [x + bx * 0.28 + (r - 0.5) * 1.2, y - 18 - r * 3];
+      const knot = [x + bx * 0.5, y - 8];
+      const col = r < 0.5 ? '#c9a85a' : '#b88f45';
+      g.strokeStyle = dark(col, 0.25);
+      g.lineWidth = 1.1;
+      g.beginPath();
+      g.moveTo(x + bx, y);
+      g.quadraticCurveTo(knot[0], knot[1], top[0], top[1]);
+      g.stroke();
+      g.strokeStyle = col;
+      g.lineWidth = 0.7;
+      g.stroke();
+      // Long dry blades drooping from the nodes, and the dry tassel at the top.
+      for (const [t, side] of [[0.38, 1], [0.58, -1], [0.78, 1]]) {
+        const nx = lerp(x + bx, top[0], t) + 0.2;
+        const ny = lerp(y, top[1], t);
+        const len = 5.5 - t * 2;
+        g.strokeStyle = r < 0.5 ? '#d8bd70' : '#a8924a';
+        g.lineWidth = 0.9;
+        g.beginPath();
+        g.moveTo(nx, ny);
+        g.quadraticCurveTo(nx + side * len * 0.7, ny - 1.4, nx + side * len, ny + len * 0.45);
+        g.stroke();
+      }
+      line(g, '#d7b86a', 0.5, top[0], top[1], top[0] + (r - 0.5) * 2, top[1] - 2.2);
+      if (r > 0.45) {
+        const ex = lerp(x + bx, top[0], 0.52) + 0.9;
+        const ey = lerp(y, top[1], 0.52);
+        ell(g, '#d9c27a', ex, ey, 0.9, 1.9);
+        ell(g, '#e3a928', ex + 0.1, ey - 1.6, 0.6, 0.8);
+      }
+    }
+    // The twine that holds the bundle together.
+    rr(g, '#6a4524', x - 2.3, y - 8.5, 4.6, 0.9);
+    ell(g, '#8a5a30', x + 0.3, y - 8, 0.8, 0.8);
+    line(g, '#6a4524', 0.5, x + 0.3, y - 7.6, x + 1.2, y - 5.8);
+    g.restore();
+  },
+  mums(S, item) {
+    if (!S.day) return;
+    const { g, x, y } = where(S, item);
+    const col = colorIn(item, '#7a3a66');
+    shadow(S, [item.u0, item.v0, item.u1, item.v1], 5);
+    pool(g, item.u, item.v, 1.2, 0.26);
+    // A terracotta pot, wider at the rim.
+    fp(g, grad(g, x - 1.6, 0, x + 1.6, 0, '#cf7a4a', '#b4623a', '#7c3f24'), [[x - 1.6, y - 2.8], [x + 1.6, y - 2.8], [x + 1.05, y], [x - 1.05, y]]);
+    rr(g, '#c9774a', x - 1.85, y - 3.4, 3.7, 0.9);
+    rr(g, 'rgba(255,230,200,.35)', x - 1.85, y - 3.4, 3.7, 0.28);
+    // Dark green behind the blooms, as in the room, then the mound of round blooms, mostly the pot's colour with gold mixed in.
+    ell(g, '#5f6b2e', x, y - 4.6, 2.8, 1.9);
+    ell(g, '#7f8c3a', x - 2.4, y - 3.4, 0.8, 0.5);
+    ell(g, '#7f8c3a', x + 2.5, y - 3.3, 0.8, 0.5);
+    const blooms = [[-1, -5.6, 0.95], [1.1, -5.7, 0.95], [-1.9, -4.5, 1], [0, -5, 1.15], [1.9, -4.5, 1], [-0.9, -3.8, 0.95], [1, -3.7, 0.95]];
+    blooms.forEach(([dx, dy, r], i) => {
+      const c = i % 3 === 1 ? '#d9a520' : i % 3 === 0 ? lite(col, 0.14) : dark(col, 0.14);
+      ell(g, dark(c, 0.35), x + dx + 0.2, y + dy + 0.35, r * 1.12, r * 1.05);
+      ell(g, c, x + dx, y + dy, r, r * 0.95);
+      for (const [px, py] of [[-0.45, -0.3], [0.4, -0.15], [0, 0.4]]) ell(g, rgba(lite(c, 0.4), 0.8), x + dx + px * r, y + dy + py * r, r * 0.3, r * 0.22);
+      ell(g, '#e8b431', x + dx, y + dy, r * 0.22, r * 0.2);
+    });
+  },
+  leaf_pile(S, item) {
+    if (!S.day) return;
+    const { g } = where(S, item);
+    const rand = seeded(ih(item.x, item.y, 43));
+    const f = frame(item);
+    shadow(S, [item.u0, item.v0, item.u1, item.v1], 3);
+    const cu = f.L / 2;
+    const cv = f.W / 2;
+    // The peak sits towards one end, so turning the pile turns it.
+    const peak = f.L * 0.42;
+    const hmax = Math.min(3, f.W * 1.1 + 0.6);
+    const ringPts = Array.from({ length: 16 }, (_, i) => {
+      const a = (i / 16) * TAU;
+      return [cu + Math.cos(a) * cu * 0.96, cv + Math.sin(a) * cv * 0.94, 0];
+    });
+    fq(g, 'rgba(60,30,10,.32)', f, ...ringPts);
+    const leaves = [];
+    for (let i = 0; i < 190; i++) {
+      const a = rand() * TAU;
+      const d = Math.sqrt(rand());
+      const aa = cu + Math.cos(a) * d * cu * 0.92;
+      const bb = cv + Math.sin(a) * d * cv * 0.9;
+      const dist = Math.hypot((aa - peak) / (f.L * 0.62), (bb - cv) / (f.W * 0.62));
+      const z = Math.max(0, hmax * (1 - Math.min(1, dist) ** 2)) + rand() * 0.5;
+      leaves.push([aa, bb, z, rand(), rand()]);
+    }
+    leaves.sort((p, q) => p[2] - q[2]);
+    const low = ['#8f3a1c', '#a42a1f', '#7a2a18', '#b5471f'];
+    const high = ['#d98a22', '#e0b030', '#e8a23a', '#c9621f'];
+    for (const [aa, bb, z, r1, r2] of leaves) {
+      const [x, y] = pt(f, aa, bb, z);
+      const pickFrom = z > hmax * 0.55 ? high : r1 < 0.25 ? high : low;
+      const c = pickFrom[Math.floor(r2 * 4) % 4];
+      fallLeaf(g, r1 < 0.5 ? c : dark(c, 0.16), x, y, r1 * TAU, 1.6 + r2 * 0.9, 0.7);
+      if (r2 > 0.8) ell(g, rgba(lite(c, 0.45), 0.6), x + 0.3, y - 0.2, 0.35, 0.2);
+    }
+  },
+};
+
 // E15: every kind in `YARD` that this file draws, by its catalog word.
 export const YARD_ART = {
   ...TREES,
+  ...FALL,
   ...PLANTS,
   ...FLOWERS,
   ...GARDEN,

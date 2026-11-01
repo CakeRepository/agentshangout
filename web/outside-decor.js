@@ -281,6 +281,46 @@ function gift(K, a0, b0, a1, b1, z0, z1, col, ribbon) {
   ell(K.g, dark(ribbon, 0.15), x, y - 0.3, 0.28, 0.25);
 }
 
+// The Fall pack's colours, the same toasted russets and walnut as the room's.
+const FALL_WOOD = ['#3f2a1c', '#6b4628', '#8a5c37', '#a0703f'];
+const FALL_STRAW = ['#a8843f', '#c9a86a', '#e3c987'];
+const FALL_LEAVES = ['#b33a1f', '#e8802a', '#d9a520', '#7f8c3a', '#d4502a', '#f0a03c', '#8c2a1e', '#c8641e'];
+const FALL_CREAM = '#f4f1e8';
+
+// One leaf lying or hung at a slant, with a rib down it.
+function leaf(g, x, y, rx, ry, col, rot) {
+  g.save();
+  g.translate(x, y);
+  g.rotate(rot);
+  g.beginPath();
+  g.ellipse(0, 0, rx, ry, 0, 0, TAU);
+  g.fillStyle = col;
+  g.fill();
+  line(g, dark(col, 0.3), 0.15, -rx * 0.8, 0, rx * 0.8, 0);
+  g.restore();
+}
+
+// A pumpkin or gourd sitting on the ground at (x, y), with ribs and a stem.
+function squash(g, x, y, rx, ry, col, stem = '#4f6a2a') {
+  ell(g, 'rgba(30,24,50,.22)', x + rx * 0.2, y, rx * 1.05, ry * 0.4);
+  ball(g, x, y - ry * 0.9, rx, col, rx, ry * 0.9);
+  for (const k of [-0.5, 0.5]) {
+    g.strokeStyle = rgba(dark(col, 0.45), 0.55);
+    g.lineWidth = 0.18;
+    g.beginPath();
+    g.moveTo(x + rx * k * 0.3, y - ry * 1.75);
+    g.quadraticCurveTo(x + rx * k * 1.15, y - ry * 0.9, x + rx * k * 0.3, y - ry * 0.05);
+    g.stroke();
+  }
+  line(g, stem, Math.max(0.35, rx * 0.2), x, y - ry * 1.75, x + rx * 0.15, y - ry * 2.15);
+}
+
+// An apple, with its stalk.
+function apple(g, x, y, r, col) {
+  ball(g, x, y, r, col);
+  line(g, '#4a3220', 0.2, x, y - r * 0.8, x + 0.1, y - r * 1.3);
+}
+
 export const DECOR_ART = {
   // --- Seating and shade ---------------------------------------------------------------------
 
@@ -707,7 +747,7 @@ export const DECOR_ART = {
     const K = kit(S, item);
     const plank = hexOf(item.color, '#e5b53a');
     shadow(S, K.rect(0.2), 5);
-    K.contact(0.5);
+    K.contact(0.3);
     const lo = [0.4, 1.0];
     const hi = [5.6, 4.9];
     const z = (a) => lo[1] + ((a - lo[0]) / (hi[0] - lo[0])) * (hi[1] - lo[1]);
@@ -1643,11 +1683,383 @@ export const DECOR_ART = {
     const K = kit(S, item);
     const straw = '#d8b050';
     shadow(S, K.rect(0.3), 3);
+    K.contact(0.8);
+    // The room's bale (web/room.js): square bales tied with twine, two side by side and one on top, with
+    // straw sticking out at the edges. A round roll read as a pair of logs at this size.
+    const twine = '#8a5d33';
+    const bale = (a0, a1, z0, z1) => {
+      K.box(a0, 0.15, a1, 1.85, z0, z1, straw);
+      for (const t of [0.27, 0.73]) {
+        const x = a0 + (a1 - a0) * t;
+        K.seg(twine, 0.2, [x, 0.15, z1], [x, 1.85, z1]);
+        K.seg(twine, 0.2, [x, 1.85, z1], [x, 1.85, z0]);
+        K.seg(twine, 0.2, [x, 0.15, z1], [x, 0.15, z0]);
+      }
+      for (const [b, d] of [[0.5, 0.2], [0.95, -0.15], [1.4, 0.1]]) K.seg(dark(straw, 0.2), 0.14, [a0 + 0.2, b, z1], [a1 - 0.2, b + d * 0.3, z1]);
+      for (const [b, z] of [[1.85, 0.3], [1.85, 0.8]]) K.seg(lite(straw, 0.4), 0.14, [a0 + 0.15, b, z0 + z], [a1 - 0.15, b, z0 + z + 0.05]);
+      K.seg(lite(straw, 0.45), 0.16, [a1, 0.3, z1], [a1 + 0.2, 0.2, z1 + 0.35]);
+      K.seg(lite(straw, 0.45), 0.16, [a1, 1.5, z1 - 0.2], [a1 + 0.2, 1.65, z1 + 0.1]);
+    };
+    K.parts([
+      [1, 1, () => bale(0.1, 1.95, 0, 1.4)],
+      [3, 1, () => bale(2.05, 3.9, 0, 1.4)],
+      [2, 1, () => bale(1.1, 2.95, 1.4, 2.8), 1],
+    ]);
+    // A few loose stalks at the front.
+    for (const [a, b, z] of [[0.6, 1.95, 0], [2.4, 1.97, 0], [3.4, 1.95, 0]]) K.seg(lite(straw, 0.3), 0.2, [a - 0.2, b, z], [a + 0.3, b + 0.25, z + 0.1]);
+  },
+
+  rake(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.2), 3);
     K.contact(0.5);
-    // A round bale lying on its side: strands wound over the roll, and a swirl on the end.
-    K.log(1, 0.1, 1, 1.9, 0, 0.95, straw);
-    for (const [a, z] of [[0.4, 1.7], [1.3, 2], [0.7, 0.6], [1.6, 0.9], [0.3, 1.0]]) K.seg(dark(straw, 0.25), 0.18, [a, 0.4, z], [a + 0.1, 1.5, z - 0.05]);
-    for (const [a, z] of [[0.5, 1.4], [1.5, 1.5]]) K.seg(lite(straw, 0.45), 0.18, [a, 0.3, z], [a - 0.1, 1.3, z + 0.05]);
-    K.seg('#8a5d33', 0.18, [0.5, 0.1, 0.1], [0.5, 1.9, 0.1]);
+    const iron = '#6d6a62';
+    // The handle leans back from the head, which rests in the leaves.
+    K.seg(dark(FALL_WOOD[3], 0.1), 0.55, [0.9, 1.5, 0.5], [1.5, 0.5, 7.4]);
+    K.seg(lite(FALL_WOOD[3], 0.2), 0.2, [0.9, 1.5, 0.6], [1.5, 0.5, 7.4]);
+    K.seg(iron, 0.5, [0.2, 1.7, 0.35], [1.3, 1.3, 0.35]);
+    for (const t of [0.2, 0.45, 0.7, 0.95]) K.seg(iron, 0.3, [0.2 + t, 1.7 - t * 0.35, 0.35], [0.1 + t, 1.9 - t * 0.35, 0]);
+    // The heap it has gathered.
+    const [x, y] = at(1.2, 1.2, 0);
+    ell(g, 'rgba(30,24,50,.18)', x + 0.3, y + 0.3, 3, 1.4);
+    const cols = FALL_LEAVES;
+    ell(g, '#b8651c', x, y - 0.6, 2.6, 1.1);
+    ell(g, '#d9902a', x - 0.3, y - 1.0, 1.8, 0.8);
+    for (let i = 0; i < 16; i++) {
+      const t = i / 16;
+      const lx = x + (((i * 37) % 11) - 5) * 0.42;
+      const ly = y - 0.4 - (1 - Math.abs(lx - x) / 2.4) * 1.3 - (i % 3) * 0.3;
+      leaf(g, lx, ly, 0.9, 0.5, cols[(i * 3) % 8], t * 5);
+    }
+    for (const [dx, dy, c] of [[2.6, 0.7, 1], [-2.7, 0.9, 4], [1.3, 1.7, 2], [3.2, 0.1, 0], [-1.4, 1.5, 5]]) leaf(g, x + dx, y + dy, 0.7, 0.4, cols[c], dx);
+  },
+
+  harvest_table(S, item) {
+    const K = kit(S, item);
+    const { g, at } = K;
+    const top = 5;
+    const wood = FALL_WOOD[2];
+    const flames = [[2, 2], [6, 2]];
+    if (!S.day) {
+      for (const [a, b] of flames) {
+        const [x, y] = at(a, b, top + 1.8);
+        pool(g, x, y + 1.5, 7, '#ffb347', 0.4);
+        glow(g, x, y - 0.4, 4.2, '#ffc766', 0.7);
+        flame(g, x, y + 0.9, 1.9, 0.5);
+      }
+      return;
+    }
+    shadow(S, K.rect(0.2), 5);
+    K.contact(0.5);
+    const bench = (b0) => () => {
+      for (const a of [0.8, 7.2]) K.box(a - 0.25, b0, a + 0.25, b0 + 0.6, 0, 2.3, FALL_WOOD[1]);
+      K.box(0.3, b0 - 0.05, 7.7, b0 + 0.65, 2.3, 2.85, FALL_WOOD[3]);
+    };
+    const leg = (a, b) => () => K.box(a - 0.3, b - 0.3, a + 0.3, b + 0.3, 0, top - 0.5, FALL_WOOD[1]);
+    K.parts([
+      [4, 0.4, bench(0.15)],
+      [0.5, 1.2, leg(0.6, 1.25)],
+      [7.5, 1.2, leg(7.4, 1.25)],
+      [0.5, 2.8, leg(0.6, 2.75)],
+      [7.5, 2.8, leg(7.4, 2.75)],
+      [4, 3.6, bench(3.25)],
+      [4, 2, () => {
+        K.box(0.1, 0.95, 7.9, 3.05, top - 0.6, top, wood);
+        for (const b of [1.5, 2, 2.5]) K.seg(dark(wood, 0.25), 0.15, [0.1, b, top], [7.9, b, top]);
+        // The runner: cream cloth with a gold edge and russet stripes at the ends, hanging a little over.
+        K.flat(FALL_CREAM, [0.4, 1.35, top + 0.02], [7.6, 1.35, top + 0.02], [7.6, 2.65, top + 0.02], [0.4, 2.65, top + 0.02]);
+        K.flat('#d9a520', [0.4, 1.35, top + 0.03], [7.6, 1.35, top + 0.03], [7.6, 1.5, top + 0.03], [0.4, 1.5, top + 0.03]);
+        K.flat('#d9a520', [0.4, 2.5, top + 0.03], [7.6, 2.5, top + 0.03], [7.6, 2.65, top + 0.03], [0.4, 2.65, top + 0.03]);
+        for (const [a0, a1] of [[0.55, 1.1], [6.9, 7.45]]) K.flat('#b33a1f', [a0, 1.55, top + 0.04], [a1, 1.55, top + 0.04], [a1, 2.45, top + 0.04], [a0, 2.45, top + 0.04]);
+        K.q(FALL_CREAM, [0, 1, 0], [0.4, 2.65, top], [7.6, 2.65, top], [7.6, 2.65, top - 0.9], [0.4, 2.65, top - 0.9]);
+      }, 1],
+      // Plates and napkins along the near and far sides.
+      ...[1.7, 4, 6.3].flatMap((a) => [1.1, 2.9].map((b) => [a, b, () => {
+        K.disc(a, b, 0.55, '#f1ead8', top + 0.04);
+        K.disc(a, b, 0.32, '#d8c7a3', top + 0.06);
+        K.disc(a - 0.6, b, 0.2, '#b33a1f', top + 0.06);
+      }, 2])),
+      [2.9, 2.1, () => {
+        // A bowl of apples.
+        const [x, y] = at(2.9, 2.1, top);
+        ell(g, '#8a5c37', x, y, 1.5, 0.75);
+        apple(g, x - 0.7, y - 0.6, 0.65, '#b33a1f');
+        apple(g, x + 0.6, y - 0.5, 0.65, '#d4502a');
+        apple(g, x, y - 1.1, 0.65, '#a3a84a');
+      }, 3],
+      [5.2, 2, () => {
+        const [x, y] = at(5.2, 2, top);
+        squash(g, x - 0.4, y, 0.7, 0.55, '#7a3a66', '#4a3220');
+        squash(g, x + 0.5, y - 0.1, 0.55, 0.45, '#d9a520');
+      }, 3],
+      [4, 2, () => {
+        // The pumpkin in the middle, with leaves round it.
+        const [x, y] = at(4, 2, top);
+        for (let i = 0; i < 6; i++) leaf(g, x + Math.cos(i * 1.05) * 1.9, y + 0.1 + Math.sin(i * 1.05) * 0.8, 0.7, 0.35, FALL_LEAVES[(i * 3 + 1) % 8], i * 1.3);
+        squash(g, x, y, 1.45, 1.2, '#e8802a');
+      }, 4],
+      ...flames.map(([a, b]) => [a, b, () => {
+        // A candle in a little brass holder; its flame is for the night.
+        const [x, y] = at(a, b, top);
+        ell(g, '#c9a24a', x, y, 0.75, 0.38);
+        K.rod(a, b, top, top + 1.6, 0.8, FALL_CREAM);
+        const [fx, fy] = at(a, b, top + 1.6);
+        ell(g, '#d8c7a3', fx, fy, 0.4, 0.2);
+        line(g, '#2a211d', 0.15, fx, fy, fx, fy - 0.5);
+      }, 5]),
+    ]);
+  },
+
+  pumpkin_pie(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.3), 3);
+    K.contact(0.4);
+    // A round stump to stand it on, with its cut top and rings.
+    K.cyl(1, 1, 0.9, 0, 1.2, FALL_WOOD[2], 0.85);
+    const [x, y] = at(1, 1, 1.2);
+    ell(g, FALL_WOOD[3], x, y, 0.85 * 1.414, 0.85 * 0.707);
+    strokeArc(g, FALL_WOOD[1], 0.15, x, y, 0.5 * 1.414, 0.5 * 0.707, 0, TAU);
+    strokeArc(g, FALL_WOOD[1], 0.15, x, y, 0.22 * 1.414, 0.22 * 0.707, 0, TAU);
+    // The pie: a crust, the filling, and a slice taken from the front.
+    K.cyl(1, 1, 0.98, 1.2, 2.0, '#d9a24a');
+    const z = 2.0;
+    K.flat('#e08a2a', ...Array.from({ length: 14 }, (_, i) => [1 + Math.cos((i / 14) * TAU) * 0.82, 1 + Math.sin((i / 14) * TAU) * 0.82, z + 0.02]));
+    K.flat('#f0a03c', ...Array.from({ length: 8 }, (_, i) => [0.8 + Math.cos((i / 8) * TAU) * 0.4, 0.8 + Math.sin((i / 8) * TAU) * 0.4, z + 0.03]));
+    // The gap, showing the dark tin and the cut edge of the filling.
+    K.flat('#6b4628', [1, 1, z + 0.04], [1.95, 0.6, z + 0.04], [1.9, 1.7, z + 0.04]);
+    K.flat('#e08a2a', [1, 1, z + 0.05], [1.6, 0.75, z + 0.05], [1.58, 1.4, z + 0.05]);
+    K.seg('#c8641e', 0.2, [1, 1, z], [1.9, 0.62, z]);
+    K.seg('#c8641e', 0.2, [1, 1, z], [1.85, 1.68, z]);
+    for (const t of [0.15, 0.35, 0.55, 0.75, 0.95]) {
+      const [px, py] = at(1 + Math.cos(t * 6.2) * 0.9, 1 + Math.sin(t * 6.2) * 0.9, z - 0.1);
+      ell(g, '#b8870f', px, py, 0.2, 0.2);
+    }
+    // A dollop of cream.
+    const [cx, cy] = at(0.7, 0.9, z + 0.1);
+    ball(g, cx, cy - 0.3, 0.5, FALL_CREAM, 0.6, 0.45);
+  },
+
+  cornucopia(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.2), 3);
+    K.contact(0.7);
+    const [mu, mv] = K.dir(1, 0);
+    const mouthSeen = mu + mv > 0;
+    K.parts([
+      [1.2, 1, () => {
+        // A woven horn lying with its tip curled up at the back and its mouth to the right.
+        const N = 9;
+        for (let i = 0; i < N; i++) {
+          const t = i / (N - 1);
+          const w = 0.9 + t * 2.3;
+          const a = 0.3 + t * 1.9;
+          const b = 0.5 + t * 0.5 + Math.sin(t * 3) * 0.2;
+          const z = 0.3 + w * 0.3 + (1 - t) * (1 - t) * 2.6;
+          const [x, y] = at(a, b, z);
+          ell(g, FALL_STRAW[i % 2 ? 0 : 1], x, y, w * 0.75, w * 0.55);
+          ell(g, FALL_STRAW[2], x - w * 0.12, y - w * 0.16, w * 0.4, w * 0.2);
+          line(g, FALL_STRAW[0], 0.2, x - w * 0.4, y - w * 0.35, x + w * 0.1, y + w * 0.5);
+        }
+        const [x, y] = at(2.2, 1, 0.3 + 3.2 * 0.3);
+        if (mouthSeen) ell(g, FALL_WOOD[0], x + 0.2, y, 1.3, 1.1);
+        else {
+          // Turned away, the mouth still opens upward: a woven rim with the dark inside seen from above.
+          ell(g, FALL_STRAW[0], x, y, 1.4, 1.2);
+          ell(g, FALL_STRAW[2], x, y - 0.1, 1.25, 1.05);
+          ell(g, FALL_WOOD[0], x, y - 0.35, 1.0, 0.7);
+          ell(g, FALL_WOOD[1], x, y - 0.1, 0.8, 0.4);
+        }
+      }],
+      // What spills from it.
+      [2.5, 0.7, () => { const [x, y] = at(2.6, 0.7, 0); squash(g, x, y, 0.95, 0.8, '#e8802a'); }],
+      [3, 1.3, () => { const [x, y] = at(3.1, 1.3, 0.8); apple(g, x, y, 0.7, '#b33a1f'); }],
+      [3.5, 0.9, () => { const [x, y] = at(3.5, 0.8, 0); squash(g, x, y, 0.7, 0.6, '#d9a520'); }],
+      [3.3, 1.6, () => { const [x, y] = at(3.4, 1.65, 0); squash(g, x, y, 0.65, 0.5, '#7f8c3a', '#4a3220'); }],
+      [2.8, 1.7, () => { const [x, y] = at(2.8, 1.7, 0.4); for (const [dx, dy] of [[-0.4, 0], [0.3, -0.1], [0, -0.6]]) ell(g, '#7a3a66', x + dx, y + dy, 0.4, 0.4); }, 1],
+      [3.6, 1.8, () => { const [x, y] = at(3.65, 1.8, 0.7); apple(g, x, y, 0.6, '#d4502a'); }, 1],
+    ]);
+  },
+
+  apple_basket(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.3), 3);
+    K.contact(0.4);
+    const wick = FALL_STRAW[1];
+    // The handle, over the top.
+    K.seg(FALL_STRAW[0], 0.45, [0.25, 1, 1.7], [0.45, 1, 3.4]);
+    K.seg(FALL_STRAW[0], 0.45, [0.45, 1, 3.4], [1.55, 1, 3.4]);
+    K.seg(FALL_STRAW[0], 0.45, [1.55, 1, 3.4], [1.75, 1, 1.7]);
+    K.cyl(1, 1, 0.7, 0, 1.9, wick, 0.88);
+    const [x, y] = at(1, 1, 0);
+    for (const z of [0.5, 1.0, 1.5]) strokeArc(g, rgba(FALL_STRAW[0], 0.85), 0.25, x, y - z, (0.7 + z * 0.1) * 1.414, (0.7 + z * 0.1) * 0.707, 0, Math.PI);
+    for (const dx of [-0.6, 0, 0.6]) line(g, rgba(FALL_STRAW[0], 0.6), 0.2, x + dx, y - 1.8, x + dx * 0.9, y - 0.1);
+    ell(g, FALL_STRAW[0], x, y - 1.9, 0.88 * 1.414, 0.88 * 0.707);
+    ell(g, '#7a4a2a', x, y - 1.95, 0.8 * 1.414, 0.8 * 0.707);
+    for (const [dx, dy, r, c] of [[-0.8, -2.3, 0.7, '#b33a1f'], [0.7, -2.3, 0.7, '#d4502a'], [0, -2.1, 0.7, '#8c2a1e'], [-0.3, -3.0, 0.7, '#d4502a'], [0.5, -3.0, 0.65, '#a3a84a']]) {
+      apple(g, x + dx, y + dy, r, c);
+    }
+    leaf(g, x + 0.2, y - 3.7, 0.55, 0.3, '#5f8a2e', 0.6);
+    const [ax, ay] = at(1.9, 1.9, 0.6);
+    apple(g, ax, ay, 0.6, '#b33a1f');
+  },
+
+  cider_barrel(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    const [du, dv] = K.dir(1, 0);
+    const nearEnd = du + dv > 0 ? 3.4 : 0.6;
+    shadow(S, K.rect(0.2), 4);
+    K.contact(0.7);
+    const r = 1.0;
+    // A cradle under it, then the barrel on its side along the length.
+    K.parts([
+      [1.2, 1, () => K.box(0.9, 0.3, 1.5, 1.7, 0, 1.0, FALL_WOOD[1])],
+      [2.8, 1, () => K.box(2.5, 0.3, 3.1, 1.7, 0, 1.0, FALL_WOOD[1])],
+      [2, 1, () => {
+        K.log(0.6, 1, 3.4, 1, 0.55, r, FALL_WOOD[3], false);
+        // Hoops round it, and staves along it.
+        for (const a of [0.95, 1.9, 2.15, 3.05]) {
+          const [x, y] = at(a, 1, r);
+          line(g, '#3a3d4a', 0.3, x + r * 0.45, y - r * 0.9, x - r * 0.45, y + r * 0.9);
+        }
+        for (const z of [0.9, 1.4]) K.seg(rgba('#000000', 0.12), 0.15, [0.7, 1, z + 0.55], [3.3, 1, z + 0.55]);
+      }, 1],
+      [nearEnd, 1, () => {
+        // The tap on the end that faces you, and a drip in a mug.
+        const sign = nearEnd > 2 ? 1 : -1;
+        const [x, y] = at(nearEnd + sign * 0.1, 1, 0.9);
+        line(g, '#d9a520', 0.55, x, y, x + sign * 0.2, y + 0.4);
+        line(g, '#b8870f', 0.4, x, y + 0.1, x + sign * 0.8, y + 0.1);
+        ell(g, '#f0a03c', x + sign * 0.8, y + 0.7, 0.18, 0.28);
+        const [mx, my] = at(nearEnd + sign * 0.5, 1.6, 0);
+        ell(g, '#8a5c37', mx, my - 0.5, 0.55, 0.5);
+        ell(g, '#f0a03c', mx, my - 0.9, 0.4, 0.2);
+      }, 2],
+    ]);
+    // A red apple on the top.
+    const [px, py] = at(2, 1, r * 2 + 0.3);
+    apple(g, px, py, 0.55, '#b33a1f');
+  },
+
+  gourds(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.2), 3);
+    K.contact(0.8);
+    // A little straw underneath, then the heap from the back.
+    K.parts([
+      [2, 1, () => {
+        const [x, y] = at(2, 1, 0);
+        for (let i = 0; i < 12; i++) line(g, FALL_STRAW[i % 3], 0.25, x - 3.4 + i * 0.6, y + 0.5, x - 3.5 + i * 0.6, y - 0.1 - (i % 3) * 0.2);
+      }, -1],
+      [2.4, 0.5, () => { const [x, y] = at(2.4, 0.5, 0); squash(g, x, y, 1.45, 1.2, '#e8802a'); }],
+      [1, 0.8, () => { const [x, y] = at(0.9, 0.8, 0); squash(g, x, y, 1, 0.85, '#d9701c'); }],
+      [3.3, 0.7, () => { const [x, y] = at(3.3, 0.7, 0); squash(g, x, y, 0.85, 1.0, '#7f8c3a', '#4a3220'); }],
+      [1.9, 1.3, () => { const [x, y] = at(1.9, 1.4, 0); squash(g, x, y, 0.95, 0.75, FALL_CREAM, '#7f8c3a'); }],
+      [0.8, 1.5, () => { const [x, y] = at(0.7, 1.5, 0); squash(g, x, y, 0.75, 0.6, '#d9a520'); }],
+      [3.1, 1.5, () => {
+        // A striped gourd with a crooked neck.
+        const [x, y] = at(3.1, 1.5, 0);
+        ball(g, x, y - 0.7, 0.9, '#d9a520', 0.9, 0.7);
+        for (const dx of [-0.4, 0, 0.4]) line(g, '#7f8c3a', 0.2, x + dx, y - 1.3, x + dx * 1.1, y - 0.2);
+        ell(g, '#d9a520', x + 0.3, y - 1.8, 0.4, 0.6);
+        line(g, '#7f8c3a', 0.3, x + 0.4, y - 2.3, x + 0.6, y - 2.6);
+      }],
+      [2.5, 1.7, () => { const [x, y] = at(2.5, 1.75, 0); squash(g, x, y, 0.55, 0.45, '#e8802a'); }],
+    ]);
+  },
+
+  turkey(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g } = K;
+    shadow(S, K.rect(0.3), 4);
+    K.contact(0.5);
+    const bronze = '#7a4a24';
+    const tan = '#e3c987';
+    K.figure(1, 1, () => {
+      // The tail fanned out behind, in bands, with a tan tip on every feather.
+      for (let i = 0; i < 11; i++) {
+        const a = -3.14 + (i + 0.5) * 0.28;
+        const col = i % 2 ? '#8c4a20' : '#5b3a20';
+        g.save();
+        g.translate(0, -3.6);
+        g.rotate(a);
+        ell(g, col, 3.4, 0, 3.2, 0.78);
+        ell(g, '#c8641e', 4.1, 0, 1.6, 0.6);
+        ell(g, tan, 5.5, 0, 1.3, 0.7);
+        g.restore();
+      }
+      for (const s of [-1, 1]) {
+        line(g, '#c46a3a', 0.45, s * 0.9, -1.5, s * 1, -0.1);
+        line(g, '#c46a3a', 0.35, s * 1, -0.1, s * 1.9, 0.1);
+        line(g, '#c46a3a', 0.35, s * 1, -0.1, s * 0.2, 0.15);
+      }
+      // A plump body, a lighter breast, wings folded at the sides.
+      ball(g, 0, -3.1, 2.4, bronze, 2.4, 2.5);
+      ell(g, '#9a6234', 0, -2.6, 1.5, 1.7);
+      for (const [x, y] of [[-0.7, -3], [0.6, -3.1], [0, -2.1], [-0.8, -2], [0.8, -2.1]]) ell(g, tan, x, y, 0.5, 0.28);
+      for (const s of [-1, 1]) {
+        ell(g, '#5b3a20', s * 2, -3, 0.75, 1.7);
+        line(g, tan, 0.2, s * 2.2, -3.6, s * 2.1, -1.9);
+      }
+      // The head, bare and blue, with a red wattle and snood.
+      line(g, '#6f98bd', 1, 0, -5, 0, -6.3);
+      ball(g, 0, -7, 0.85, '#8fb2cf', 0.85, 0.9);
+      ell(g, '#d4402e', 0.1, -5.8, 0.4, 0.8);
+      ell(g, '#d4402e', 0.1, -8, 0.3, 0.5);
+      fp(g, '#e8b040', [[-0.2, -6.8], [0.2, -6.8], [0, -6.2]]);
+      ell(g, '#1b1b1b', -0.4, -7.2, 0.15, 0.15);
+      ell(g, '#1b1b1b', 0.4, -7.2, 0.15, 0.15);
+    }, 0.55);
+  },
+
+  wreath(S, item) {
+    if (!S.day) return;
+    const K = kit(S, item);
+    const { g, at } = K;
+    shadow(S, K.rect(0.4), 3);
+    K.contact(0.4);
+    // A little easel of wood to stand it on.
+    const wood = FALL_WOOD[2];
+    K.seg(dark(wood, 0.2), 0.55, [1, 1.5, 0], [1, 1.1, 5.6]);
+    K.seg(wood, 0.6, [0.35, 0.8, 0], [1, 1.1, 5.6]);
+    K.seg(wood, 0.6, [1.65, 0.8, 0], [1, 1.1, 5.6]);
+    K.seg(dark(wood, 0.1), 0.45, [0.55, 0.9, 1], [1.45, 0.9, 1]);
+    // The ring of turning leaves, seen from either side.
+    const cz = 3.9;
+    const R = 1.75;
+    for (let i = 0; i < 18; i++) {
+      const t = (i / 18) * TAU;
+      const [x, y] = at(1 + Math.cos(t) * R, 1.15, cz + Math.sin(t) * R);
+      leaf(g, x, y, 0.8, 0.42, FALL_LEAVES[(i * 3) % 8], t + 1.57);
+    }
+    for (let i = 0; i < 12; i++) {
+      const t = (i / 12) * TAU + 0.26;
+      const [x, y] = at(1 + Math.cos(t) * R * 0.98, 1.2, cz + Math.sin(t) * R * 0.98);
+      leaf(g, x, y, 0.6, 0.32, FALL_LEAVES[(i * 5 + 2) % 8], t + 1);
+    }
+    // Berries, a tiny gourd and a bow.
+    for (const [t, c] of [[0.6, '#7a3a66'], [1.0, '#b33a1f'], [4.1, '#7a3a66']]) {
+      const [x, y] = at(1 + Math.cos(t) * R, 1.25, cz + Math.sin(t) * R);
+      ell(g, c, x, y, 0.38, 0.38);
+    }
+    const [gx, gy] = at(1 + Math.cos(3.7) * R, 1.25, cz + Math.sin(3.7) * R);
+    ball(g, gx, gy, 0.6, '#e8802a', 0.6, 0.5);
+    const [bx, by] = at(1, 1.3, cz - R);
+    for (const s of [-1, 1]) leaf(g, bx + s * 0.8, by, 0.8, 0.4, '#b33a1f', s * -0.4);
+    ell(g, '#8c2a1e', bx, by, 0.35, 0.35);
+    line(g, '#b33a1f', 0.3, bx, by, bx - 0.4, by + 1.1);
+    line(g, '#b33a1f', 0.3, bx, by, bx + 0.4, by + 1.1);
   },
 };

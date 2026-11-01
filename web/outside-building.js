@@ -453,6 +453,22 @@ const BOX_ART = {
       if (tall === 0) circle(g, '#f6f6e8', x + 0.3 + k, -z - 0.8, 0.45);
     }
   },
+  mums(g, x, z, w) {
+    // The room's mums (web/room.js): mostly plum with gold ones mixed through, on dark green.
+    const cols = ['#7a3a66', '#d9a520', '#a3608f', '#5a2a4c'];
+    // Dark green leaves behind, then the round blooms along the box.
+    for (let k = 0.3; k < w + 1; k += 1.1) ell(g, k % 2.2 < 1.1 ? '#5f6b2e' : '#7f8c3a', x - 0.2 + k, -z + 1, 0.9, 0.7);
+    let n = 0;
+    for (let k = 0; k < w + 1; k += 1.6) {
+      const c = cols[n++ % 4];
+      const bx = x - 0.2 + k;
+      const by = -z + 0.1 - (ih(Math.round(k * 5), Math.round(x), 4) % 2) * 0.5;
+      ell(g, dark(c, 0.35), bx + 0.15, by + 0.3, 1.25, 1.2);
+      ell(g, c, bx, by, 1.2, 1.1);
+      ell(g, rgba(lite(c, 0.45), 0.75), bx - 0.4, by - 0.35, 0.5, 0.35);
+      ell(g, '#e8b431', bx, by, 0.28, 0.26);
+    }
+  },
   ivy(g, x, z, w) {
     for (let k = 0; k < w + 1; k += 0.9) {
       ell(g, k % 1.8 < 0.9 ? '#3f8a3c' : '#58a64a', x - 0.2 + k, -z + 0.5, 0.95, 0.9);
@@ -464,6 +480,23 @@ const BOX_ART = {
     }
   },
 };
+
+// The fall palette for leaves on a garland, a window box and a wreath: russet, gold and deep red.
+const FALL_LEAVES = ['#b5471f', '#d98a22', '#a42a1f', '#e0b030', '#8f3a1c', '#c9621f', '#e8a23a', '#7a2a18'];
+
+// One pointed leaf from its stalk at (x, y), `s` long and turned to `a`.
+function leafAt(g, fill, x, y, a, s) {
+  const ca = Math.cos(a);
+  const sa = Math.sin(a);
+  const mx = x + (ca * s) / 2;
+  const my = y + (sa * s) / 2;
+  g.beginPath();
+  g.moveTo(x, y);
+  g.quadraticCurveTo(mx - sa * s * 0.4, my + ca * s * 0.4, x + ca * s, y + sa * s);
+  g.quadraticCurveTo(mx + sa * s * 0.4, my - ca * s * 0.4, x, y);
+  g.fillStyle = fill;
+  g.fill();
+}
 
 // One window, in the plane of the wall it is on. `o` says what it is made of: its style, its glass, the frame
 // round it, and what hangs at it. By day it's painted whole. At night only the lit ones glow, and which
@@ -2075,6 +2108,38 @@ const SIGN_ART = {
     g.fill();
     line(g, plate, 0.4, -0.7, 2.4, 0.8, -1.4);
   },
+  wreath(g, ink, plate) {
+    // At night the plate hands over a see-through colour, and the wreath shines warm in it.
+    const night = ink.startsWith('rgba');
+    // A dim warm ring in a soft glow, not a pale disc, so it reads as leaves and not as a speech bubble.
+    if (night) glowAt(g, 0, 0, 4.6, '#ff9a3a', 0.2);
+    const cols = night ? ['rgba(255,120,30,.36)', 'rgba(255,170,50,.34)', 'rgba(230,80,30,.38)'] : FALL_LEAVES.slice(0, 6);
+    if (!night) {
+      g.beginPath();
+      g.arc(0, -0.2, 1.75, 0, TAU);
+      stroke(g, '#5a3a1e', 1.1);
+    }
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * TAU;
+      const c = cols[i % cols.length];
+      leafAt(g, night ? c : i % 2 ? c : dark(c, 0.16), Math.cos(a) * 1.8, Math.sin(a) * 1.8 - 0.2, a + 1.6, 1.3);
+    }
+    for (const [dx, dy] of night ? [] : [[-1.7, -0.9], [1.5, 0.6], [0.2, -1.9]]) circle(g, '#d93a3a', dx, dy - 0.2, 0.32);
+    if (night) {
+      // A small knot with two short tails, dim so it doesn't outshine the leaves.
+      circle(g, 'rgba(220,100,60,.5)', 0, 1.9, 0.45);
+      for (const s of [-1, 1]) line(g, 'rgba(220,100,60,.45)', 0.45, 0, 2, s * 0.9, 3.1);
+      return;
+    }
+    // A red ribbon, so it shows on a plate of any colour.
+    const bow = '#c0392b';
+    const edge = '#6e1414';
+    for (const s of [-1, 1]) {
+      fp(g, edge, [[0, 1.9], [s * 1.5, 1.1], [s * 1.7, 2.7]]);
+      fp(g, bow, [[0, 1.9], [s * 1.3, 1.3], [s * 1.4, 2.5]]);
+    }
+    circle(g, bow, 0, 1.9, 0.4);
+  },
   bolt(g, ink) {
     fp(g, ink, [[0.9, -2.5], [-1.7, 0.3], [-0.1, 0.3], [-0.9, 2.5], [1.8, -0.5], [0.2, -0.5]]);
   },
@@ -2101,10 +2166,10 @@ function signPlate(B, x, z, col) {
   const cy = top + 1.6 + hpl / 2;
   if (!S.day) {
     glowAt(g, cx, cy, 8, lite(col, 0.2), 0.34);
-    rr(g, rgba(lite(col, 0.5), 0.55), x, top + 1.6, wpl, hpl);
+    rr(g, rgba(lite(col, 0.5), word === 'wreath' ? 0.16 : 0.55), x, top + 1.6, wpl, hpl);
     g.save();
     g.translate(cx, cy);
-    art(g, 'rgba(255,255,255,.9)', rgba(lite(col, 0.5), 0.55));
+    art(g, 'rgba(255,255,255,.9)', rgba(lite(col, 0.5), word === 'wreath' ? 0.16 : 0.55));
     g.restore();
     return;
   }
@@ -2200,6 +2265,32 @@ const STRING_ART = {
       const my = (y + hy) / 2 + 2.2;
       if (S.day) rr(g, '#3a3f4a', mx - 0.4, my, 0.8, 0.9);
       bulb(g, S.day, mx, my + 1.9, 1.3, cs[Math.abs(Math.round(x)) % 2], 4.2);
+    });
+  },
+  garland(B, pts, col) {
+    const { g, S } = B;
+    const c = col || '#ffd54f';
+    if (S.day) {
+      // A rope of leaves in fall colours: two or three at each step, turned every way.
+      trail(g, '#5a3a22', 0.8, pts.map(P3));
+      edgeWalk(pts, 0.7, (x, y) => {
+        const h = ih(Math.round(x * 4), Math.round(y * 4), 6);
+        for (let k = 0; k < 3; k++) {
+          const col2 = FALL_LEAVES[(h + k * 3) % FALL_LEAVES.length];
+          leafAt(g, k === 1 ? col2 : dark(col2, 0.2), x, y + 0.2 + k * 0.4, ((h >> (k * 3)) % 16) * 0.4, 1.9 + (h % 4) * 0.3);
+        }
+      });
+    }
+    // The warm bulbs hang under it, a few units apart.
+    edgeWalk(pts, 4.2, (x, y) => {
+      if (S.day) {
+        line(g, '#5a3a22', 0.4, x, y + 0.4, x, y + 1.2);
+        circle(g, mixHex(c, '#8a7050', 0.35), x, y + 2, 0.85);
+        circle(g, 'rgba(255,255,255,.4)', x - 0.25, y + 1.7, 0.28);
+      } else {
+        glowAt(g, x, y + 2, 4.6, c, 0.5);
+        circle(g, lite(c, 0.55), x, y + 2, 0.8);
+      }
     });
   },
   icicle(B, pts, col) {

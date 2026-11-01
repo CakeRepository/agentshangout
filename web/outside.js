@@ -1508,6 +1508,76 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     });
   }
 
+  // E34: a pack is up while any of its kinds is in the yard, and nothing else records it.
+  const kindsOf = (pack) => new Set((pack.outside.items || []).map((item) => item.kind));
+  const isUp = (pack, doc = shown) => (doc.items || []).some((item) => kindsOf(pack).has(item.kind));
+
+  // E34: puts `pack` up on `doc`. Each part this kind of place has is set, and each item goes in where
+  // it fits around what's there. Says how many went up and how many didn't.
+  function putUp(doc, pack) {
+    const have = new Set(catalog.parts.filter((part) => part.kinds.includes(kind)).map((part) => part.part));
+    doc.parts ||= {};
+    for (const [word, chosen] of Object.entries(pack.outside.parts || {})) if (have.has(word)) doc.parts[word] = clone(chosen);
+    doc.items ||= [];
+    let placed = 0;
+    let skipped = 0;
+    for (const item of pack.outside.items || []) {
+      const spot = doc.items.length < limits().items && nearestSpot(doc, item.kind, item);
+      if (!spot) {
+        skipped += 1;
+        continue;
+      }
+      doc.items.push({ ...item, x: spot.x, y: spot.y });
+      placed += 1;
+    }
+    return { placed, skipped };
+  }
+
+  // E34: takes out every item of the pack's kinds, whoever put it there, and a part that still has the
+  // pack's style goes, so the place looks as it otherwise would. Pets stay.
+  function takeDown(doc, pack) {
+    const gone = kindsOf(pack);
+    const before = (doc.items || []).length;
+    doc.items = (doc.items || []).filter((item) => !gone.has(item.kind));
+    for (const [word, chosen] of Object.entries(pack.outside.parts || {})) {
+      if (doc.parts && Object.hasOwn(doc.parts, word) && styleIn(doc.parts[word]) === chosen.style) delete doc.parts[word];
+    }
+    return before - doc.items.length;
+  }
+
+  function packPicture(pack) {
+    const doc = clone(shown);
+    delete doc.pets;
+    putUp(doc, pack);
+    return lazyPicture(`pack:${pack.pack}`, `${placeKey()}|pack|${pack.pack}|${keyOf(doc)}`, 168, 120, () => snapshot(doc, WHOLE, 168, 120), true);
+  }
+
+  function packTile(pack) {
+    const up = isUp(pack);
+    return catalogTile({
+      name: `pack-${pack.pack}`,
+      whole: packPicture(pack),
+      label: `${pack.label} pack`,
+      lines: [up ? 'Up now. Press to take it down' : 'Press to put it up'],
+      pressed: up,
+      onclick: () => {
+        if (up) {
+          let removed = 0;
+          const next = edit((doc) => {
+            removed = takeDown(doc, pack);
+          });
+          return commit(next, `Took down ${removed} from the ${pack.label} pack.`);
+        }
+        let result = { placed: 0, skipped: 0 };
+        const next = edit((doc) => {
+          result = putUp(doc, pack);
+        });
+        const left = result.skipped ? `, and ${result.skipped} didn't fit` : '';
+        return commit(next, `Put up the ${pack.label} pack: ${result.placed} went up${left}.`);
+      },
+    });
+  }
+
   function yardTile(entry) {
     const full = (shown.items?.length || 0) >= limits().items;
     const button = catalogTile({
@@ -1556,6 +1626,8 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     const sections = [];
     const templates = catalog.templates.filter((each) => each.kinds.includes(kind));
     if (templates.length) sections.push(catalogGroup('Templates', tilesOf(templates.map(templateTile), true)));
+    const packs = (catalog.packs || []).filter((pack) => pack && pack.outside);
+    if (packs.length) sections.push(catalogGroup('Packs', tilesOf(packs.map(packTile), true)));
     for (const { group, label } of catalog.groups) {
       const mine = parts.filter((part) => part.group === group);
       const yard = catalog.yard.filter((entry) => entry.group === group);

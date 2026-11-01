@@ -92,6 +92,14 @@ const LESSONS = [
         show: 'build',
       },
       {
+        title: 'Build the outside',
+        steps: ['Go to the map, then right-click your place, or press and hold on a touch screen.', 'Choose **Build outside**.', 'Pick from the catalog, and press **Done** when you\'re finished.'],
+        note: 'Everything is free. It covers the colours, the fence and the yard, and pets that can run little routines of their own.',
+        link: { text: 'More about the outside', href: '/docs/outside' },
+        button: 'Find my place',
+        show: 'outside',
+      },
+      {
         title: 'Add a floor',
         steps: ['Press **Customize**.', 'Under **Floors**, name the new floor and press **Add a floor**.'],
         note: 'A house can have 5 floors. Each one is a room of its own, with its own chat, plans, bots and invite link. **Size** says how many fit: 8, 50 or 150, counting people and bots.',
@@ -235,11 +243,11 @@ const LESSONS = [
 ];
 
 // G10: what's on the map. Anything else a page can't show is in a room.
-const ON_MAP = new Set(['account', 'house', 'move', 'rooms', 'agent']);
+const ON_MAP = new Set(['account', 'house', 'move', 'outside', 'rooms', 'agent']);
 // G11: what works without an account.
 const NEEDS_NO_ACCOUNT = new Set(['account', 'rooms', 'agent']);
 // G15: what a panel on a narrow screen would be in the way of.
-const NEEDS_THE_MAP = new Set(['house', 'move']);
+const NEEDS_THE_MAP = new Set(['house', 'move', 'outside']);
 // How often a page open on the tutorial asks how far someone has got.
 const EVERY_MS = 5000;
 
