@@ -5067,13 +5067,16 @@ async function worldView(id, { home = false } = {}) {
     heading: 'h1',
     live: latest.kind === 'public',
   });
-  frame.root.classList.add('wd-game');
+  frame.root.classList.add('wd-game', 'wd-map');
   frame.tools.setAttribute('aria-label', 'Tools');
   frame.message.setAttribute('role', 'status');
   const well = frame.host.parentElement;
   const root = h('main', { class: 'game' }, frame.root);
   const say = (text) => {
-    if (frame.message.textContent !== text) frame.message.textContent = text;
+    if (frame.message.textContent === text) return;
+    frame.message.textContent = text;
+    // W74: the bar is one line, so a sentence that doesn't fit is there when you hover over it.
+    frame.message.title = text;
   };
   const showMoves = () => {
     if (frame.outputs.moves) frame.outputs.moves.textContent = moves === null ? '-' : numberText(moves);
@@ -5104,6 +5107,7 @@ async function worldView(id, { home = false } = {}) {
     townCounts.textContent = `${townCountsText(t)} `;
     townGoal.textContent = `Goal: ${data.goal}`;
     townFull.textContent = townText(data);
+    townEl.title = townFull.textContent;
   };
   async function refreshTown() {
     if (!me) return;

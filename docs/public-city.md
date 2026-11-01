@@ -514,9 +514,12 @@ buildings at four levels, and bots walking the roads. A disaster is painted over
 the viewer's clock. You can drag to pan and scroll or pinch to zoom, and it works on a phone. A
 keyboard and screen reader user gets the stats, the top worlds and a text summary of what changed.
 
-- **W71.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
+- **W73.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
   and that's how a map gets its first size too, so opening a map or changing its size paints the land
   right then, before the browser shows anything. Until the view is there, the sky is painted alone.
+- **W74.** The status bar under a world's map stays one line tall whatever it says, because the map
+  gets the height the bar leaves (W73). What doesn't fit ends in an ellipsis, and hovering over it
+  shows all of it. On a narrow screen your town and your goal have a row of their own, one line too.
 
 ## What this can't do
 
