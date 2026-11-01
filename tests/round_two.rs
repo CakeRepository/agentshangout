@@ -31,6 +31,10 @@ use agenthangout::{
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode};
 use reqwest::Client;
 use serde_json::{json, Value};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 const COMMONS: &str = "commons";
 
@@ -2381,6 +2385,103 @@ async fn a_broken_request_to_any_route_gets_no_server_error_and_no_path_no_sql_a
 
 fn made_up_token() -> String {
     format!("ah_guest_{}", "q".repeat(40))
+}
+
+/// The start of a POST as it goes over the wire, with no body yet.
+fn raw_post(path: &str, length: usize) -> Vec<u8> {
+    format!(
+        "POST {path} HTTP/1.1\r\nhost: test\r\ncontent-type: application/json\r\n\
+         content-length: {length}\r\n\r\n"
+    )
+    .into_bytes()
+}
+
+/// Reads one whole answer off a socket and says its status.
+async fn read_answer(stream: &mut TcpStream) -> std::io::Result<u16> {
+    let mut read = Vec::new();
+    let mut piece = [0; 4096];
+    loop {
+        if let Some(end) = read.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&read[..end]).to_lowercase();
+            let length = head.lines().find_map(|line| line.strip_prefix("content-length: "));
+            if read.len() >= end + 4 + length.map_or(0, |value| value.parse().unwrap()) {
+                return Ok(head.split(' ').nth(1).unwrap().parse().unwrap());
+            }
+        }
+        match stream.read(&mut piece).await? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            count => read.extend_from_slice(&piece[..count]),
+        }
+    }
+}
+
+// W88
+#[tokio::test]
+async fn a_refused_request_gets_its_answer_while_the_rest_of_its_body_is_still_coming() {
+    let server = Server::start().await;
+    let address = server.base.trim_start_matches("http://");
+    let cases = [
+        ("/api/status", 5_000, 401),
+        ("/api/status", 70_000, 401),
+        ("/api/worlds/commons/act", 70_000, 401),
+        ("/api/passkeys/login/start", 70_000, 409),
+        ("/no/such/route", 70_000, 404),
+        ("/api/public/join", 200_000, 413),
+    ];
+    for (path, length, wanted) in cases {
+        let what = format!("POST {path} with {length} bytes");
+        let body = vec![b'z'; length];
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        stream.write_all(&[raw_post(path, length), body[..1000].to_vec()].concat()).await.unwrap();
+        // A body comes in pieces over a real network, so this answer can be ready before the rest
+        // has arrived.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        stream
+            .write_all(&body[1000..])
+            .await
+            .unwrap_or_else(|e| panic!("{what}: cut off while sending: {e}"));
+        let status = read_answer(&mut stream)
+            .await
+            .unwrap_or_else(|e| panic!("{what}: cut off before the answer: {e}"));
+        assert_eq!(status, wanted, "{what}");
+        // All of it was read, so the connection is as good as it was.
+        stream.write_all(b"GET /robots.txt HTTP/1.1\r\nhost: test\r\n\r\n").await.unwrap();
+        assert_eq!(read_answer(&mut stream).await.unwrap(), 200, "{what}: the next request");
+    }
+}
+
+// W88
+#[tokio::test]
+async fn a_sender_that_stops_or_never_stops_is_answered_and_let_go() {
+    let server = Server::start().await;
+    let address = server.base.trim_start_matches("http://");
+
+    // It says a million bytes are coming, sends a thousand and goes quiet.
+    let mut stopped = TcpStream::connect(address).await.unwrap();
+    stopped.write_all(&raw_post("/api/status", 1_000_000)).await.unwrap();
+    stopped.write_all(&[b'z'; 1000]).await.unwrap();
+    let answer = tokio::time::timeout(Duration::from_secs(20), read_answer(&mut stopped));
+    assert_eq!(answer.await.expect("left hanging").unwrap(), 401);
+    let mut after = [0; 64];
+    let last = tokio::time::timeout(Duration::from_secs(20), stopped.read(&mut after));
+    let last = last.await.expect("left hanging");
+    assert!(matches!(last, Ok(0) | Err(_)), "the connection stays open: {last:?}");
+
+    // It would send far more than anyone reads. What goes before the server stops is the 1 MB it
+    // takes and what the two systems will hold for it.
+    let length = 256 * 1024 * 1024;
+    let mut flood = TcpStream::connect(address).await.unwrap();
+    flood.write_all(&raw_post("/api/status", length)).await.unwrap();
+    let piece = vec![b'z'; 64 * 1024];
+    let sending = async {
+        let mut sent = 0;
+        while sent < length && flood.write_all(&piece).await.is_ok() {
+            sent += piece.len();
+        }
+        sent
+    };
+    let sent = tokio::time::timeout(Duration::from_secs(20), sending).await.expect("left hanging");
+    assert!(sent < 32 * 1024 * 1024, "the server read {sent} bytes of a refused body");
 }
 
 // W2
