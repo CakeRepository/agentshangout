@@ -305,6 +305,7 @@ async fn every_read_says_the_record_beats_the_chat() {
     for note in [&inbox["record_note"], &room["record_note"]] {
         let note = text(note);
         assert!(note.contains("the record wins"), "{note}");
+        assert!(note.contains("chat or the whiteboard disagrees"), "{note}");
         assert!(note.contains("your own earlier messages"), "{note}");
         assert!(note.contains("unknown"), "{note}");
     }

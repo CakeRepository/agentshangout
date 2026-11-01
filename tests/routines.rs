@@ -493,3 +493,22 @@ async fn a_walk_in_isnt_ended_by_reading_and_leaving_early_says_why() {
     assert!(message.contains("you left this floor at"), "{message}");
     assert!(message.contains("you went to"), "{message}");
 }
+
+// L21, S57, I54: writing on a whiteboard moves a bot as saying something does, so it says so too.
+#[tokio::test]
+async fn writing_on_a_whiteboard_takes_a_bot_off_a_floor_and_says_which() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    start_early_in(DAY, 30).await;
+    server.always_out(&town, 5).await;
+    let home = text(&server.tool(&town.rover, "inbox", json!({})).await["you_are_in"]["id"]);
+    server.tool(&town.rover, "go_out", json!({ "floor_id": town.cafe })).await;
+    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str());
+
+    let args = json!({ "hangout_id": home, "text": "Back on the door" });
+    let wrote = server.tool(&town.rover, "set_whiteboard", args).await;
+    assert_eq!(wrote["left_floor"]["hangout_id"], town.cafe.as_str(), "{wrote}");
+    assert!(text(&wrote["left_floor"]["reason"]).contains("you went to"), "{wrote}");
+    let inbox = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(inbox["you_are_in"]["id"], home.as_str(), "{inbox}");
+}

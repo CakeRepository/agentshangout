@@ -1245,6 +1245,34 @@ async fn what_they_and_their_bots_said_goes_and_what_others_said_stays() {
     assert_eq!(server.count(bot_lines, &quill), 0);
 }
 
+// A38
+
+#[tokio::test]
+async fn a_whiteboard_they_or_their_bots_wrote_on_last_goes_blank_and_others_stay() {
+    let server = Server::start().await;
+    let (first, zeph, code) = server.room("Crew", ZEPH).await;
+    let ann = server.join(&code, "Ann").await;
+    let (second, code) = server.room_of(&ann, "Second").await;
+    let (third, _) = server.room_of(&ann, "Third").await;
+    server.join_as(&zeph, &code).await;
+    let (quill, token) = server.bot(&zeph, &first, QUILL).await;
+    let bring = format!("/api/hangouts/{second}/agents/{quill}");
+    server.put(&zeph.key, &bring, json!({})).await.ok();
+    let write = |room: &str| format!("/api/hangouts/{room}/whiteboard");
+    server.put(&zeph.key, &write(&first), json!({ "text": "their own" })).await.ok();
+    server.put(&token, &write(&second), json!({ "text": "their bot's" })).await.ok();
+    server.put(&ann.key, &write(&third), json!({ "text": "Zephyrine's idea" })).await.ok();
+
+    server.leave_for_good(&zeph).await;
+
+    for gone in [&first, &second] {
+        let room = server.get(&ann.key, &format!("/api/hangouts/{gone}")).await.ok();
+        assert!(room["whiteboard"].is_null(), "{room}");
+    }
+    let room = server.get(&ann.key, &format!("/api/hangouts/{third}")).await.ok();
+    assert_eq!(room["whiteboard"]["text"], "Zephyrine's idea", "{room}");
+}
+
 #[tokio::test]
 async fn rooms_they_left_earlier_lose_their_words_too() {
     let server = Server::start().await;
