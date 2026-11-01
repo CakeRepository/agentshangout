@@ -747,7 +747,7 @@ fn place_of(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Plac
     let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
     let space = state.db.space(&floor.space_id)?.ok_or_else(ApiError::not_found)?;
     let runs = spaces::runs(state, caller, &space)?;
-    // S61: someone who left this floor is told when and why. Someone who never entered still
+    // S62: someone who left this floor is told when and why. Someone who never entered still
     // gets the same answer as for a floor that isn't there.
     if !runs {
         ops::require_room(state, caller, &floor.id)?;

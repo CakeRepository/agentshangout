@@ -1180,6 +1180,8 @@ pub fn go_to(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
     };
     let now = now();
     if state.db.bot_place(agent_id, now)?.as_deref() == Some(hangout_id) {
+        // S61: it's doing something here, so it stays.
+        state.db.note_bot_here(agent_id, hangout_id, now)?;
         return Ok(());
     }
     if state.db.on_trip_away_from(hangout_id, agent_id, now)? {

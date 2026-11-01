@@ -4,7 +4,11 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use agenthangout::{app, db::Db, now, spaces, worlds, AppState, Config};
+use agenthangout::{
+    app,
+    db::{self, Db},
+    now, spaces, worlds, AppState, Config,
+};
 use reqwest::{Client, Method, StatusCode};
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -1399,7 +1403,7 @@ async fn going_private_ends_every_walk_in_and_reopening_doesnt_bring_them_back()
         .contains("said while it was private"));
 }
 
-// S61
+// S62
 
 #[tokio::test]
 async fn a_floor_a_bot_left_says_when_and_why() {
@@ -1965,6 +1969,133 @@ async fn sent_home_from_the_room_its_in_a_bot_is_in_its_first_room() {
     assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
 }
 
+// S61
+
+/// Bo's bot Rover, brought in first to Ann's private room and then to Bo's own: the order that used
+/// to leave it in Ann's room for good. It's in Ann's room now.
+async fn bot_visiting_a_private_room(
+    server: &Server,
+) -> (Who, Who, String, String, String, String) {
+    let (private, ann) = server.someone("Ann").await;
+    let (own, bo) = server.someone("Bo").await;
+    let code = server.invite_code(&ann, &private).await;
+    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let (bot, token) = server.bot(&bo, &private, "Rover").await;
+    let bring = |room: &str| format!("/api/hangouts/{room}/agents/{bot}");
+    server.put(&bo.key, &bring(&own), json!({})).await.ok();
+    server.put(&bo.key, &bring(&private), json!({})).await.ok();
+    (ann, bo, private, own, bot, token)
+}
+
+/// Makes it as if the bot last did anything in that room this long ago.
+fn last_did_something(server: &Server, bot: &str, room: &str, ago: i64) {
+    server.state.db.set_bot_place(bot, room, now() - ago).unwrap();
+}
+
+#[tokio::test]
+async fn a_bot_with_nothing_to_do_leaves_a_private_room_and_goes_home() {
+    let server = Server::start().await;
+    let (ann, bo, private, own, bot, _) = bot_visiting_a_private_room(&server).await;
+    let (just_inside, just_over) = (db::BOT_STAY_SECS - 60, db::BOT_STAY_SECS + 60);
+
+    // It's there, and stays while the half hour lasts.
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [private.as_str()]);
+    last_did_something(&server, &bot, &private, just_inside);
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [private.as_str()]);
+
+    // Nothing for a half hour, and it's gone home, whoever is still in the room.
+    server.say(&ann.key, &private, "Still here").await.ok();
+    last_did_something(&server, &bot, &private, just_over);
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [own.as_str()]);
+    assert_eq!(server.snapshot(&ann.key, &private).await.ok()["stats"]["bots"], 0);
+    // It still belongs, and it's still reached there.
+    let listed = server.snapshot(&ann.key, &private).await.ok();
+    assert_eq!(listed["agents"][0]["id"], json!(bot), "{listed}");
+    assert_eq!(listed["agents"][0]["away"], true, "{listed}");
+}
+
+#[tokio::test]
+async fn doing_something_in_a_room_starts_the_half_hour_again() {
+    let server = Server::start().await;
+    let (_, bo, private, own, bot, token) = bot_visiting_a_private_room(&server).await;
+
+    last_did_something(&server, &bot, &private, db::BOT_STAY_SECS - 60);
+    server.say(&token, &private, "Still working").await.ok();
+    let since = server.state.db.bot_place_since(&bot).unwrap().unwrap();
+    assert!(since >= now() - 5, "{since}");
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [private.as_str()]);
+
+    // Reading isn't doing anything there.
+    last_did_something(&server, &bot, &private, db::BOT_STAY_SECS + 60);
+    server.snapshot(&token, &private).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [own.as_str()]);
+
+    // Saying something brings it straight back.
+    server.say(&token, &private, "Back").await.ok();
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [private]);
+}
+
+#[tokio::test]
+async fn at_home_a_bot_stays_however_long_it_does_nothing() {
+    let server = Server::start().await;
+    let (_, bo, private, own, bot, token) = bot_visiting_a_private_room(&server).await;
+
+    server.say(&token, &own, "Home").await.ok();
+    last_did_something(&server, &bot, &own, 30 * 86_400);
+    assert_eq!(rooms_it_is_in(&server, &bo, &[&private, &own], &bot).await, [own]);
+}
+
+#[tokio::test]
+async fn home_is_its_owners_house_before_any_other_room_of_theirs() {
+    let server = Server::start().await;
+    let (private, ann) = server.someone("Ann").await;
+    let (own, bo) = server.someone("Bo").await;
+    let code = server.invite_code(&ann, &private).await;
+    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let (bot, _) = server.bot(&bo, &own, "Rover").await;
+    let bring = |room: &str| format!("/api/hangouts/{room}/agents/{bot}");
+    server.put(&bo.key, &bring(&private), json!({})).await.ok();
+
+    // Bo's house goes up, and its door opens onto a room Rover is brought to last of all.
+    let mut house = None;
+    for at in server.beside_roads().await {
+        if server.place(&bo, "house", at).await.status == StatusCode::OK {
+            house = Some(at);
+            break;
+        }
+    }
+    let (x, y) = house.expect("somewhere to build");
+    let door = server.post(&bo.key, "/api/spaces/door", json!({ "x": x, "y": y })).await.ok();
+    let home = text(&door["hangout_id"]);
+    assert_ne!(home, own);
+    server.put(&bo.key, &bring(&home), json!({})).await.ok();
+
+    last_did_something(&server, &bot, &private, db::BOT_STAY_SECS + 60);
+    let rooms = [private.as_str(), own.as_str(), home.as_str()];
+    assert_eq!(rooms_it_is_in(&server, &bo, &rooms, &bot).await, [home.as_str()]);
+}
+
+#[tokio::test]
+async fn a_bot_with_no_home_is_in_no_room_until_it_goes_to_one() {
+    let server = Server::start().await;
+    let (private, ann) = server.someone("Ann").await;
+    let (_, bo) = server.someone("Bo").await;
+    let code = server.invite_code(&ann, &private).await;
+    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    // Rover has only ever been in Ann's room, and Bo runs none it belongs to.
+    let (bot, token) = server.bot(&bo, &private, "Rover").await;
+    let rooms = [private.as_str()];
+    assert_eq!(rooms_it_is_in(&server, &ann, &rooms, &bot).await, [private.as_str()]);
+
+    last_did_something(&server, &bot, &private, db::BOT_STAY_SECS + 60);
+    assert!(rooms_it_is_in(&server, &ann, &rooms, &bot).await.is_empty());
+    let inbox = server.tool(&token, "inbox", json!({})).await;
+    assert!(inbox["structuredContent"]["you_are_in"].is_null(), "{inbox}");
+
+    server.say(&token, &private, "Here again").await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &rooms, &bot).await, [private.as_str()]);
+}
+
 // docs/spaces.md, Starting fresh: a person runs this script on the live database and it can't be taken
 // back, so it has to take exactly what it says and leave a site that still works.
 
@@ -1978,11 +2109,13 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 29] = [
+const KEPT_BY_THE_WIPE: [&str; 31] = [
     "people",
     "passkey_users",
     "passkeys",
     "sessions",
+    "sign_in_links",
+    "sign_in_sessions",
     "person_clocks",
     "owner_notes",
     "bot_marks",

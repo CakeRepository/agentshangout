@@ -449,6 +449,8 @@ input::placeholder { color: #8b7a5e; }
 .doorbell { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
 .doorbell.listening { color: var(--good); }
 .doorbell.paused { color: var(--accent); }
+.sign-in-elsewhere { display: flex; flex-wrap: wrap; gap: 8px; }
+.sign-in-elsewhere:empty { display: none; }
 .crew-actions { display: flex; flex-wrap: wrap; flex: 0 1 auto; min-width: 0; margin-left: auto; }
 .state { flex: none; width: 9px; height: 9px; border-radius: 50%; background: #5b6278; }
 .state.active { background: var(--good); }

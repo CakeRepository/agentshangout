@@ -4537,6 +4537,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
     ];
     let new_tables = [
         "discord_links",
+        "sign_in_links",
+        "sign_in_sessions",
         "cities",
         "city_members",
         "houses",
@@ -4674,6 +4676,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
             "pass_keys",
             "owner_notes",
             "discord_links",
+            "sign_in_sessions",
+            "sign_in_links",
         ] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }

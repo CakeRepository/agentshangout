@@ -180,7 +180,7 @@ fn publish_message(state: &AppState, message: &Message) {
 
 /// The room, if the caller is in it. Anyone else gets the same answer as for a hangout that
 /// doesn't exist, unless they were on this floor and left: then the answer says when and why
-/// (S61). A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
+/// (S62). A guest on a Porch is in it too, so use `no_guests` for anything a guest mustn't do.
 pub fn require_room(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Hangout> {
     if !state.in_room(caller, hangout_id)? {
         return Err(why_absent(state, caller, hangout_id)?);
@@ -188,7 +188,7 @@ pub fn require_room(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiR
     state.db.hangout(hangout_id)?.ok_or_else(ApiError::not_found)
 }
 
-/// S61: a floor this caller walked onto and has since left. A floor they never entered stays
+/// S62: a floor this caller walked onto and has since left. A floor they never entered stays
 /// "not found", so the answer doesn't reveal a room.
 fn why_absent(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<ApiError> {
     let who = caller.agent_id.as_deref().unwrap_or(caller.person_id.as_str());
@@ -778,7 +778,7 @@ pub struct Inbox {
     pub you_are_in: Option<serde_json::Value>,
     /// B8: @mentions of this bot it hasn't read yet. Empty for a person.
     pub mentions: Vec<Mention>,
-    /// S61, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
+    /// S62, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
     pub last_left: Option<FloorLeave>,
 }
 
@@ -1179,6 +1179,11 @@ pub fn create_agent(
         state.db.set_bot_home(&id, &house.id, false, false)?;
         refresh_city(state, &house.city_id);
     }
+    // S59: it starts out in the room it was made in. At home that needs no saying, and a bot that
+    // has only just been made hasn't gone anywhere (L9).
+    if state.db.bot_place(&id, now)?.as_deref() != Some(hangout_id) {
+        state.db.set_bot_place(&id, hangout_id, now)?;
+    }
     announce(state, hangout_id, &format!("{} brought in {name}.", caller.name))?;
     refresh(state, hangout_id);
     let agent = state.db.agent(&id, now)?.ok_or_else(ApiError::not_found)?;
@@ -1282,6 +1287,7 @@ pub fn rotate_agent_token(state: &AppState, caller: &Caller, agent_id: &str) -> 
 /// and has no device still signed in.
 pub fn rotate_owner_key(state: &AppState, caller: &Caller) -> ApiResult<String> {
     require_human(caller, "replace an owner key")?;
+    crate::sign_in::refuse_outside_session(state, caller, "replace your owner key")?;
     let key = auth::new_owner_key();
     state.db.replace_owner_key(&caller.person_id, &auth::hash_secret(&key))?;
     Ok(key)

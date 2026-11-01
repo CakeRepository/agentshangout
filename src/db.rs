@@ -16,6 +16,8 @@ pub const ACTIVE_SECS: i64 = 10 * 60;
 pub const IDLE_SECS: i64 = 24 * 60 * 60;
 /// A doorbell checks every 15 seconds, so one that's been quiet this long has stopped.
 pub const LISTENING_SECS: i64 = 60;
+/// S61: how long a bot stays away from home with nothing to do.
+pub const BOT_STAY_SECS: i64 = 30 * 60;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS people (
@@ -601,6 +603,19 @@ CREATE TABLE IF NOT EXISTS discord_links (
     discord_name  TEXT NOT NULL,
     linked_at     INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sign_in_links (
+    person_id     TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    site          TEXT NOT NULL,
+    account_id    TEXT NOT NULL,
+    account_name  TEXT NOT NULL,
+    linked_at     INTEGER NOT NULL,
+    PRIMARY KEY (person_id, site),
+    UNIQUE (site, account_id)
+);
+CREATE TABLE IF NOT EXISTS sign_in_sessions (
+    token_hash  TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+    site        TEXT NOT NULL
+);
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
@@ -889,7 +904,7 @@ pub enum WalkedIn {
     OnTrip,
 }
 
-/// A floor a bot left, and why. S61.
+/// A floor a bot left, and why. S62.
 #[derive(Clone, Debug, Serialize)]
 pub struct FloorLeave {
     pub hangout_id: String,
@@ -2619,6 +2634,110 @@ impl Db {
     pub fn delete_session(&self, token_hash: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM sessions WHERE token_hash = ?", [token_hash])?;
         Ok(())
+    }
+
+    pub fn mark_sign_in_session(&self, token_hash: &str, site: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO sign_in_sessions (token_hash, site) VALUES (?, ?)",
+            params![token_hash, site],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_sign_in_session(&self, token_hash: &str) -> rusqlite::Result<bool> {
+        Ok(self
+            .conn()
+            .query_row("SELECT 1 FROM sign_in_sessions WHERE token_hash = ?", [token_hash], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some())
+    }
+
+    /// A person's links, as site and account name.
+    pub fn sign_in_links(&self, person_id: &str) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt =
+            conn.prepare("SELECT site, account_name FROM sign_in_links WHERE person_id = ?")?;
+        let rows = stmt.query_map([person_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Links an account to this person. False if someone else has it, which leaves theirs as it was
+    /// (A27). A different account takes the old one's place, and what that one started ends.
+    pub fn set_sign_in_link(
+        &self,
+        person_id: &str,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let holder: Option<String> = tx
+            .query_row(
+                "SELECT person_id FROM sign_in_links WHERE site = ? AND account_id = ?",
+                [site, account_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if holder.is_some_and(|holder| holder != person_id) {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM sessions WHERE person_id = ?1
+               AND token_hash IN (SELECT token_hash FROM sign_in_sessions WHERE site = ?2)
+               AND EXISTS (SELECT 1 FROM sign_in_links l
+                   WHERE l.person_id = ?1 AND l.site = ?2 AND l.account_id <> ?3)",
+            [person_id, site, account_id],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO sign_in_links
+                 (person_id, site, account_id, account_name, linked_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![person_id, site, account_id, account_name, now],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Who this account signs in as, with their username brought up to date (A33).
+    pub fn person_by_sign_in(
+        &self,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+    ) -> rusqlite::Result<Option<Person>> {
+        let person_id: Option<String> = self
+            .conn()
+            .query_row(
+                "UPDATE sign_in_links SET account_name = ?3 WHERE site = ?1 AND account_id = ?2
+                 RETURNING person_id",
+                [site, account_id, account_name],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match person_id {
+            Some(id) => self.person(&id),
+            None => Ok(None),
+        }
+    }
+
+    /// A36: the link and every session it started.
+    pub fn remove_sign_in_link(&self, person_id: &str, site: &str) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM sessions WHERE person_id = ?1
+               AND token_hash IN (SELECT token_hash FROM sign_in_sessions WHERE site = ?2)",
+            [person_id, site],
+        )?;
+        tx.execute(
+            "DELETE FROM sign_in_links WHERE person_id = ? AND site = ?",
+            [person_id, site],
+        )?;
+        tx.commit()
     }
 
     pub fn session_count(&self, person_id: &str) -> rusqlite::Result<i64> {
@@ -4361,7 +4480,7 @@ impl Db {
                     stmt.query_map(params![change.id, change.keep_bots_of], |row| row.get(0))?;
                 taken_off = names.collect::<rusqlite::Result<Vec<String>>>()?;
             }
-            // S25, S61: the bots this takes off can be told why the room then says they've gone.
+            // S25, S62: the bots this takes off can be told why the room then says they've gone.
             tx.execute(
                 "INSERT INTO floor_leaves (who, hangout_id, left_at, reason)
                  SELECT a.id, ?1, ?3, 'you were sent home when this floor opened to the public'
@@ -4536,13 +4655,16 @@ impl Db {
     }
 
     /// S56: the one room a bot is in now, whatever else it belongs to. A trip comes first, because
-    /// only going home ends one (S39), and then a walk-in. A bot in no room at all has no place.
+    /// only going home ends one (S39), and then a walk-in. Then the room it last went to, until
+    /// S61 sends it home. A bot with no home and nowhere to be has no place.
     pub fn bot_place(&self, agent_id: &str, now: i64) -> rusqlite::Result<Option<String>> {
         let conn = self.conn();
-        let went: Option<String> = conn
-            .query_row("SELECT hangout_id FROM bot_places WHERE agent_id = ?", [agent_id], |row| {
-                row.get(0)
-            })
+        let went: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT hangout_id, since FROM bot_places WHERE agent_id = ?",
+                [agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .optional()?;
         let porch: Option<String> = conn
             .query_row(
@@ -4555,7 +4677,7 @@ impl Db {
         if let Some(porch) = porch {
             // H10: it's in the Living Room only if it went there, and it still has the key.
             return Ok(match went {
-                Some(room) if guest_on_trip(&conn, &room, agent_id, now)? => Some(room),
+                Some((room, _)) if guest_on_trip(&conn, &room, agent_id, now)? => Some(room),
                 _ => Some(porch),
             });
         }
@@ -4571,10 +4693,25 @@ impl Db {
         if walked.is_some() {
             return Ok(walked);
         }
+        // S61: the room it's doing something in, or else home: the house it lives in, its owner's
+        // house, or the first room it was brought into that its owner runs.
+        let staying = went.filter(|(_, since)| now - since < BOT_STAY_SECS).map(|(room, _)| room);
         conn.query_row(
-            "SELECT hangout_id FROM room_agents WHERE agent_id = ?1
-             ORDER BY hangout_id = ?2 DESC, rowid LIMIT 1",
-            params![agent_id, went],
+            "SELECT r.hangout_id FROM room_agents r
+             JOIN agents a ON a.id = r.agent_id
+             JOIN hangouts h ON h.id = r.hangout_id
+             LEFT JOIN floors f ON f.hangout_id = r.hangout_id
+             LEFT JOIN spaces s ON s.id = f.space_id
+             LEFT JOIN bot_homes b ON b.agent_id = r.agent_id
+             LEFT JOIN houses ho ON ho.id = b.house_id
+                                AND r.hangout_id IN (ho.living_room, ho.porch)
+             WHERE r.agent_id = ?1
+               AND (r.hangout_id = ?2 OR ho.id IS NOT NULL
+                    OR COALESCE(s.owner_id, h.created_by) = a.owner_id)
+             ORDER BY r.hangout_id = ?2 DESC, r.hangout_id = ho.living_room DESC,
+                      ho.id IS NOT NULL DESC, s.kind = 'house' DESC, r.rowid
+             LIMIT 1",
+            params![agent_id, staying],
             |row| row.get(0),
         )
         .optional()
@@ -4589,6 +4726,23 @@ impl Db {
     ) -> rusqlite::Result<()> {
         self.conn().execute(
             "INSERT INTO bot_places (agent_id, hangout_id, since) VALUES (?1, ?2, ?3)
+             ON CONFLICT (agent_id) DO UPDATE SET hangout_id = excluded.hangout_id, since = excluded.since",
+            params![agent_id, hangout_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// S61: a bot doing something in a room it belongs to starts its half hour there again. A room
+    /// it's only a guest in isn't one to come back to, so nothing changes for those.
+    pub fn note_bot_here(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_places (agent_id, hangout_id, since)
+             SELECT agent_id, hangout_id, ?3 FROM room_agents WHERE agent_id = ?1 AND hangout_id = ?2
              ON CONFLICT (agent_id) DO UPDATE SET hangout_id = excluded.hangout_id, since = excluded.since",
             params![agent_id, hangout_id, now],
         )?;
@@ -4629,7 +4783,7 @@ impl Db {
         Ok(())
     }
 
-    /// Ends a walk-in and remembers why, so a later read can say so (S61). `who` is the bot's id.
+    /// Ends a walk-in and remembers why, so a later read can say so (S62). `who` is the bot's id.
     pub fn end_visit_as(
         &self,
         hangout_id: &str,

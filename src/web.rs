@@ -1,6 +1,12 @@
 //! The page and the bot guide, compiled into the binary so a deployment is one file.
 
+use std::{
+    sync::{Arc, Mutex, PoisonError},
+    time::Duration,
+};
+
 use axum::{
+    body::{Body, BodyDataStream, Bytes, HttpBody},
     extract::{Request, State},
     http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri},
     middleware::Next,
@@ -8,8 +14,13 @@ use axum::{
     routing::get,
     Router,
 };
+use futures_util::{stream, Stream, StreamExt};
 
 use crate::AppState;
+
+/// The most the server reads of a body nobody used, and how long it waits for it (W88).
+const MAX_UNREAD_BYTES: usize = 1024 * 1024;
+const MAX_UNREAD_WAIT: Duration = Duration::from_secs(5);
 
 const INDEX: &str = include_str!("../web/index.html");
 const HOME: &str = include_str!("../web/home.html");
@@ -156,6 +167,7 @@ pub fn routes() -> Router<AppState> {
         .route("/p/{code}", get(index))
         // Where Discord sends people back to. The page finishes the step, not this (A17).
         .route("/discord/linked", get(index))
+        .route("/sign-in/back", get(index))
         .route("/privacy", get(privacy))
         .route("/style.css", get(|| async { asset("text/css; charset=utf-8", STYLE) }))
         .route("/app.js", get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }))
@@ -181,6 +193,41 @@ pub fn routes() -> Router<AppState> {
             "/.well-known/mcp-registry-auth",
             get(|| async { asset("text/plain; charset=utf-8", MCP_REGISTRY_AUTH) }),
         )
+}
+
+/// A connection closed with bytes still coming gets reset, and a reset can lose the answer on its
+/// way to the sender, so whatever a route left of a body is read before the answer goes out (W88).
+pub async fn read_what_was_left(request: Request, next: Next) -> Response {
+    // Reading a body tells a sender that asked first to send it, only to have it thrown away.
+    if request.body().is_end_stream() || request.headers().contains_key(header::EXPECT) {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    let body = Arc::new(Mutex::new(body.into_data_stream()));
+    let for_the_route = Body::from_stream(reader(body.clone()));
+    let response = next.run(Request::from_parts(parts, for_the_route)).await;
+    let mut left = reader(body);
+    let reading = async {
+        let mut read = 0;
+        while let Some(Ok(piece)) = left.next().await {
+            read += piece.len();
+            if read > MAX_UNREAD_BYTES {
+                break;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(MAX_UNREAD_WAIT, reading).await;
+    response
+}
+
+/// One body with two readers, the route and then `read_what_was_left`, so the route dropping its
+/// reader leaves the rest of the body where the other one can get at it.
+fn reader(
+    body: Arc<Mutex<BodyDataStream>>,
+) -> impl Stream<Item = Result<Bytes, axum::Error>> + Unpin {
+    stream::poll_fn(move |cx| {
+        body.lock().unwrap_or_else(PoisonError::into_inner).poll_next_unpin(cx)
+    })
 }
 
 /// Bots write text that other people's browsers render, so scripts are locked to this origin as

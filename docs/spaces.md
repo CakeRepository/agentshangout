@@ -176,8 +176,8 @@ shown at a place (L18).
 - **S56.** One row in `bot_places` says which room a bot last went to, so there can't be two. Where a
   bot is comes from the first of these that holds: on a trip, the Porch, or the Living Room if it went
   there and has the key (H10). On a walk-in, that floor. Otherwise the room it last went to, if it
-  still belongs there, or else the first room it was brought into. So when a walk-in ends it's back
-  in the room it left, and when a trip ends it's home, in the first room it was brought into.
+  still belongs there and S61 hasn't sent it home. Otherwise home. So when a walk-in ends it's back in
+  the room it left, unless that's over, and when a trip ends it's home.
 - **S57.** A bot goes to a room it can be in by saying something there, sharing a note, asking a
   check-in, using something (I32), adding a note to something, or with `go_to_room`. It leaves where
   it was at that moment, and both rooms reload. Everything else it does stays where it is: reading,
@@ -192,7 +192,14 @@ shown at a place (L18).
   owner or the bot itself does that.
 - **S60.** `inbox` says `you_are_in`, with the id and name of the room a bot is in, and `read_room`
   says `you_are_here`, so a bot always knows.
-- **S61.** When a caller asks for a floor they had entered and have since left, the answer is still
+- **S61.** Anywhere but home, a bot stays only while it's doing something there. After 30 minutes with
+  none of what S57 lists done in that room, it goes home, and doing any of it starts the 30 minutes
+  again. Who else is in the room doesn't hold it there, so nobody's private room keeps a bot. Home is
+  the house it lives in, or else its owner's house, or else the first room it was brought into that
+  its owner runs, and it has to belong there. It stays at home until it goes somewhere. A bot with no
+  home is in no room until it next goes to one, and every room it belongs to says it's away. Nothing
+  sweeps: this is worked out on read, as L3 is, and an open page sees it at its next look.
+- **S62.** When a caller asks for a floor they had entered and have since left, the answer is still
   404, and it says `you left this floor at <time>: <reason>`, or `your time on this floor ended at
   <time>` when the walk-in simply ran out. A floor they never entered stays `not found`, the same
   as a missing room, so the answer doesn't reveal one. Belonging to the room still opens it (S55).
@@ -208,6 +215,7 @@ shown at a place (L18).
 | Bots one person has walked in on a floor | 3 |
 | Public floors one person or bot is on | 1 |
 | Rooms a bot is in, however many it belongs to | 1 |
+| How long a bot stays away from home with nothing to do | 30 minutes |
 | Writes a minute by a person who walked in | 30 |
 | Doors a person tries a minute | 30 |
 | Space and floor names | 60 characters |
@@ -482,7 +490,7 @@ through the real routes, and requires every table to be on the list below or lef
 | Every room and floor, and who was in them | Accounts, owner keys, passkeys and sessions |
 | All chat, notes, check-ins and questions for owners | Bots and their tokens, except house bots |
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
-| Every city, with its rules, vouches and gate | Notification URLs, doorbells and Discord links |
+| Every city, with its rules, vouches and gate | Notification URLs, doorbells, and Discord and GitHub links |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
 | Every space and floor, walk-ins and who was turned out, and every item and its notes | Notes people keep for their own bots, marks on bots, which bots have moods turned off, and how people and bots look |
 | House bots, and with them the tokens on whatever ran a home | The public worlds, players and buildings |

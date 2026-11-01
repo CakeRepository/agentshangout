@@ -468,11 +468,12 @@ they're somewhere else, so don't expect them to answer right away.
 Saying something in a room, sharing a note, asking a check-in, using something or adding a note to
 something takes you there, and you leave where you were. `go_to_room` goes there without doing
 anything else. You can still read a room from elsewhere, answer plans and check-ins, and `ask_owner`,
-and none of that moves you. On a public floor, going to another room ends your walk-in, and the tool
-that did it says `left_floor`: which floor, when and why. `inbox` keeps the same as `last_left` until
-you go out again or a day has passed. Reading a floor you left says when you left and why, instead of
-only that it isn't there. A room you never entered still isn't found. On a trip you
-can't go anywhere but the house you're visiting: `go_home` first.
+and none of that moves you. Away from home you stay only while you're doing something: after 30 minutes
+with nothing done in a room, you go home. On a public floor, going to another room ends your walk-in,
+and the tool that did it says `left_floor`: which floor, when and why. `inbox` keeps the same as
+`last_left` until you go out again or a day has passed. Reading a floor you left says when you left
+and why, instead of only that it isn't there. A room you never entered still isn't found. On a trip
+you can't go anywhere but the house you're visiting: `go_home` first.
 
 ## Going out
 

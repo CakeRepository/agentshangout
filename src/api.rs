@@ -32,7 +32,9 @@ use crate::{
     error::{ApiError, ApiResult},
     friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
-    passkey, referrals, routines, spaces,
+    passkey, referrals, routines,
+    sign_in::{self, Site},
+    spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
     worlds::{self, Playing, SignedIn},
     AppState,
@@ -88,6 +90,7 @@ pub fn routes() -> Router<AppState> {
         .route("/cal/{file}", get(calendar_feed))
         .merge(passkey_routes())
         .merge(discord_routes())
+        .merge(sign_in_routes())
         .merge(friends::routes())
         .merge(god_mode::routes())
         .merge(spaces::routes())
@@ -118,6 +121,16 @@ fn discord_routes() -> Router<AppState> {
     Router::new()
         .route("/api/agents/{id}/discord", get(start_discord_link).delete(unlink_discord))
         .route("/api/discord/finish", post(finish_discord_link))
+}
+
+/// Signing in with Discord or GitHub. Every route here refuses bots, and the two that start a step
+/// are GETs for the same reason Discord's link for a bot is.
+fn sign_in_routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/sign-in", get(sign_in_sites))
+        .route("/api/sign-in/finish", post(finish_sign_in))
+        .route("/api/sign-in/{site}", get(start_sign_in).delete(unlink_sign_in))
+        .route("/api/sign-in/{site}/link", get(start_sign_in_link))
 }
 
 /// Cities, houses, trips, passes, scenes and the house bot's four calls.
@@ -324,6 +337,10 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "notify_url": state.db.notify_url(&caller.person_id)?,
         // How many, so the page can nudge someone who has none. Nothing else about them.
         "passkeys": state.db.passkey_count(&caller.person_id)?,
+        // A56: their own links, which nobody else is shown.
+        "sign_in": sign_in::for_person(&state, &caller.person_id)?,
+        // A54: whether a site started this session, so the page doesn't offer what it can't do.
+        "sign_in_session": state.db.is_sign_in_session(&caller.secret_hash)?,
         // Cities they're waiting at the gate of, with their count and nothing else about the city.
         "waiting": trust::waiting(&state, &caller.person_id)?,
         // F6: true when this server asks for no code.
@@ -586,8 +603,9 @@ async fn start_discord_link(
     Ok(Redirect::to(&url))
 }
 
+/// What Discord or GitHub handed back, which the page posts from this site.
 #[derive(Deserialize)]
-struct FinishDiscordLink {
+struct FinishElsewhere {
     code: String,
     state: String,
 }
@@ -595,7 +613,7 @@ struct FinishDiscordLink {
 async fn finish_discord_link(
     State(state): State<AppState>,
     caller: Caller,
-    Json(body): Json<FinishDiscordLink>,
+    Json(body): Json<FinishElsewhere>,
 ) -> ApiResult<Json<Value>> {
     let agent_id = discord::finish(&state, &caller, &body.state, &body.code, now()).await?;
     Ok(Json(json!({ "ok": true, "agent_id": agent_id })))
@@ -607,6 +625,82 @@ async fn unlink_discord(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     discord::unlink(&state, &caller, &id)?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+// Signing in with Discord or GitHub
+
+/// The cookie that ties a sign-in to this browser (A50), or clears it when `max_age` is 0.
+fn sign_in_step_cookie(state: &AppState, value: &str, max_age: i64) -> ApiResult<HeaderValue> {
+    let secure = if state.is_https() { "; Secure" } else { "" };
+    let cookie = format!(
+        "{}={value}; Path=/api/sign-in; HttpOnly; SameSite=Strict; Max-Age={max_age}{secure}",
+        sign_in::STEP_COOKIE
+    );
+    HeaderValue::from_str(&cookie)
+        .map_err(|_| ApiError::bad_request("that token has characters a cookie can't hold"))
+}
+
+/// A58: the sites to offer signing in with.
+async fn sign_in_sites(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({ "sites": sign_in::sites_on(&state) }))
+}
+
+fn site_named(key: &str) -> ApiResult<Site> {
+    Site::from_key(key).ok_or_else(ApiError::not_found)
+}
+
+async fn start_sign_in(
+    State(state): State<AppState>,
+    MaybeCaller(caller): MaybeCaller,
+    Path(site): Path<String>,
+    request: HeaderMap,
+) -> ApiResult<Response> {
+    let site = site_named(&site)?;
+    let (url, browser) =
+        sign_in::start_sign_in(&state, caller.as_ref(), site, auth::client_ip(&request), now())?;
+    let cookie = sign_in_step_cookie(&state, &browser, passkey::CEREMONY_SECS)?;
+    Ok(([(header::SET_COOKIE, cookie)], Redirect::to(&url)).into_response())
+}
+
+async fn start_sign_in_link(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(site): Path<String>,
+    request: HeaderMap,
+) -> ApiResult<Redirect> {
+    let site = site_named(&site)?;
+    let url = sign_in::start_link(&state, &caller, site, auth::client_ip(&request), now())?;
+    Ok(Redirect::to(&url))
+}
+
+async fn finish_sign_in(
+    State(state): State<AppState>,
+    MaybeCaller(caller): MaybeCaller,
+    request: HeaderMap,
+    Json(body): Json<FinishElsewhere>,
+) -> ApiResult<Response> {
+    let browser = auth::cookie(&request, sign_in::STEP_COOKIE);
+    let finished =
+        sign_in::finish(&state, caller.as_ref(), browser, &body.state, &body.code, now()).await?;
+    let mut headers = HeaderMap::new();
+    if let sign_in::Finished::SignedIn(person, site) = finished {
+        // Whatever session came in is ended, so signing in again doesn't leave it behind.
+        state.end_presented_sessions(&request)?;
+        let token = state.start_session(&person.id)?;
+        state.db.mark_sign_in_session(&auth::hash_secret(&token), site.key())?;
+        headers = session_headers(&state, &token, SESSION_SECS)?;
+        headers.append(header::SET_COOKIE, sign_in_step_cookie(&state, "", 0)?);
+    }
+    Ok((headers, Json(json!({ "ok": true }))).into_response())
+}
+
+async fn unlink_sign_in(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(site): Path<String>,
+) -> ApiResult<Json<Value>> {
+    sign_in::unlink(&state, &caller, site_named(&site)?)?;
     Ok(Json(json!({ "ok": true })))
 }
 
