@@ -1177,7 +1177,8 @@ struct Place {
 fn place_of(state: &AppState, caller: &Caller, floor_id: &str) -> ApiResult<Place> {
     let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
     let space = state.db.space(&floor.space_id)?.ok_or_else(ApiError::not_found)?;
-    let runs = spaces::runs(state, caller, &space)?;
+    let runs = spaces::runs(state, caller, &space)?
+        || crate::house_editing::may_edit_room(state, caller, &space)?;
     // S62: someone who left this floor is told when and why. Someone who never entered still
     // gets the same answer as for a floor that isn't there.
     if !runs {
@@ -1196,6 +1197,16 @@ fn item_of(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<(Floor
 /// is on the floor or runs the space, and never a bot or someone who walked in.
 fn may_furnish(state: &AppState, caller: &Caller, place: &Place) -> ApiResult<()> {
     ops::require_human(caller, "furnish a room")?;
+    let space = state.db.space(&place.floor.space_id)?.ok_or_else(ApiError::not_found)?;
+    if space.kind == "house" {
+        ops::no_house_bot(caller)?;
+        if !crate::house_editing::may_edit_room(state, caller, &space)? {
+            return Err(ApiError::forbidden(
+                "only the house owner and approved people and their bots can furnish it",
+            ));
+        }
+        return Ok(());
+    }
     if !place.runs && !state.db.is_member(&place.floor.id, &caller.person_id)? {
         return Err(ApiError::forbidden("someone who walked in can't change anything here"));
     }

@@ -1462,6 +1462,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/outside", get(catalog))
         .route("/api/places/{x}/{y}/outside", get(read).put(change).delete(clear))
         .route("/api/worlds/{id}/outsides", get(world_outsides))
+        .route("/api/places/{x}/{y}/editors", get(editors))
+        .route(
+            "/api/places/{x}/{y}/editors/{person_id}",
+            axum::routing::put(approve_editor).delete(remove_editor),
+        )
 }
 
 /// The place on a tile of The Commons, or 404 (E6).
@@ -1512,6 +1517,7 @@ async fn read(
         "kind": place.kind,
         "outside": outside,
         "yours": place.owner_id.as_deref() == Some(caller.person_id.as_str()),
+        "can_edit": may_edit_house(&state, &caller, &place)? || place.owner_id.as_deref() == Some(caller.person_id.as_str()),
     })))
 }
 
@@ -1525,10 +1531,20 @@ async fn change(
 ) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "change an outside")?;
     let place = standing(&state, x, y)?;
-    if place.owner_id.as_deref() != Some(caller.person_id.as_str()) {
-        return Err(ApiError::forbidden("only the owner of a place can change its outside"));
+    if place.owner_id.as_deref() != Some(caller.person_id.as_str())
+        && !may_edit_house(&state, &caller, &place)?
+    {
+        return Err(ApiError::forbidden(
+            "only the owner or an approved house editor can change its outside",
+        ));
     }
-    allow_change(&state, &caller)?;
+    allow_change(
+        &state,
+        &Caller {
+            person_id: place.owner_id.clone().unwrap_or_else(|| caller.person_id.clone()),
+            ..caller.clone()
+        },
+    )?;
     let Json(body) = body.map_err(|rejection| refuse(rejection.body_text()))?;
     let outside: Outside =
         serde_json::from_value(body).map_err(|error| refuse(format!("not an outside: {error}")))?;
@@ -1567,6 +1583,86 @@ async fn clear(
     state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
     state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
+}
+
+/// E37: grants belong to the owning player, never to whichever building next uses this tile.
+fn may_edit_house(state: &AppState, caller: &Caller, place: &Standing) -> ApiResult<bool> {
+    if place.kind != "house" {
+        return Ok(false);
+    }
+    Ok(place.owner_id.as_deref() == Some(&caller.person_id)
+        || state.db.house_editor(place.player_id, &caller.person_id)?)
+}
+
+fn own_house(state: &AppState, caller: &Caller, x: i64, y: i64) -> ApiResult<Standing> {
+    ops::require_human(caller, "choose approved house editors")?;
+    let place = standing(state, x, y)?;
+    if place.kind != "house" || place.owner_id.as_deref() != Some(&caller.person_id) {
+        return Err(ApiError::forbidden("only the house owner chooses approved editors"));
+    }
+    Ok(place)
+}
+
+async fn editors(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((x, y)): Path<(i64, i64)>,
+) -> ApiResult<Json<Value>> {
+    let place = own_house(&state, &caller, x, y)?;
+    Ok(Json(json!({"editors":state.db.house_editors(place.player_id)?})))
+}
+
+async fn approve_editor(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((x, y, person_id)): Path<(i64, i64, String)>,
+) -> ApiResult<Json<Value>> {
+    let place = own_house(&state, &caller, x, y)?;
+    if state.db.person(&person_id)?.is_none() {
+        return Err(ApiError::not_found());
+    }
+    allow_change(&state, &caller)?;
+    state.db.set_house_editor(place.player_id, &person_id, true)?;
+    Ok(Json(json!({"ok":true})))
+}
+
+async fn remove_editor(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((x, y, person_id)): Path<(i64, i64, String)>,
+) -> ApiResult<Json<Value>> {
+    let place = own_house(&state, &caller, x, y)?;
+    allow_change(&state, &caller)?;
+    state.db.set_house_editor(place.player_id, &person_id, false)?;
+    Ok(Json(json!({"ok":true})))
+}
+
+pub fn decorate_house(
+    state: &AppState,
+    caller: &Caller,
+    x: i64,
+    y: i64,
+    outside: Option<&Value>,
+) -> ApiResult<Value> {
+    ops::no_house_bot(caller)?;
+    if caller.agent_id.is_none() {
+        return Err(ApiError::forbidden("this tool is for bots"));
+    }
+    let place = standing(state, x, y)?;
+    if !may_edit_house(state, caller, &place)? {
+        return Err(ApiError::forbidden(
+            "only the house owner's bots and approved people's bots may edit this house",
+        ));
+    }
+    let Some(value) = outside else {
+        return Ok(json!({"x":place.x,"y":place.y,"outside":current(state,place.x,place.y)?}));
+    };
+    ops::note_agent_write(state, caller)?;
+    let outside: Outside = serde_json::from_value(value.clone())
+        .map_err(|error| refuse(format!("not an outside: {error}")))?;
+    let owner = place.owner_id.as_deref().ok_or_else(ApiError::not_found)?;
+    save_for_project(state, owner, place.x, place.y, &outside)?;
+    Ok(json!({"ok":true,"outside":outside}))
 }
 
 /// E27: every outside that has its place, for anyone, limited like a view. Only The Commons has any.

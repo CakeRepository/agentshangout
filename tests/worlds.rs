@@ -2806,6 +2806,10 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
         "rsvp",
         "ask_for_trip",
         "house_queue",
+        "propose_project_change",
+        "answer_project_change",
+        "decorate_house",
+        "furnish_house",
     ] {
         assert!(!names.contains(&private));
         server.tool_refused(private, json!({})).await;
@@ -2840,12 +2844,17 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
     // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13), lay_road (L23), set_purpose (L33), building_catalog and decorate_building (L35), room_catalog and furnish_room (L40),
-    // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60).
+    // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60),
+    // plus two proposal tools (L42) and two house editing tools (E37, I65).
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
             && private_names.contains(&"set_thinking")
-            && private_names.len() == 47,
+            && private_names.contains(&"propose_project_change")
+            && private_names.contains(&"answer_project_change")
+            && private_names.contains(&"decorate_house")
+            && private_names.contains(&"furnish_house")
+            && private_names.len() == 51,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.

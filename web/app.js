@@ -6134,7 +6134,11 @@ async function worldView(id, { home = false } = {}) {
     // W72: a private floor you're on opens for you too, so it isn't only yours or open ones.
     if (details.can_go_in) own.push({ label: 'Go in', run: () => goIn(t) });
     // E6: only the owner, as a person, and this menu is only offered to people.
-    if (details.yours) own.push({ label: 'Build outside', run: () => outsideBuild.open(t) });
+    let canBuildOutside = details.yours;
+    if (!canBuildOutside && details.kind === 'house') {
+      try { canBuildOutside = (await api(`/api/places/${encodeURIComponent(t.x)}/${encodeURIComponent(t.y)}/outside`)).can_edit; } catch (_) { /* the server decides */ }
+    }
+    if (canBuildOutside) own.push({ label: 'Build outside', run: () => outsideBuild.open(t) });
     for (const bot of details.bots || []) {
       if (bot.access === 'needs_invite') {
         own.push({ label: `Ask to let ${bot.name} in`, run: () => askIn(t, bot) });

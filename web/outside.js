@@ -140,6 +140,8 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
   const undoButton = dockButton('Undo', () => undoLast());
   const nightButton = dockButton('See it at night', () => setNight(!night));
   const doneButton = dockButton('Done', () => finish());
+  const editorsButton = dockButton('Approved people', () => approvedPeople());
+  editorsButton.hidden = true;
   const nudges = h('span', { class: 'build-nudge', role: 'group', 'aria-label': 'Move it one cell' },
     NUDGES.map(([glyph, word, dx, dy]) => h('button', {
       type: 'button',
@@ -149,7 +151,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     }, glyph)));
   const dock = h('div', { class: 'wd-bar build-dock outside-dock', role: 'toolbar', 'aria-label': 'Build outside', hidden: true },
     sayHere,
-    h('span', { class: 'build-dock-buttons' }, nudges, turnButton, putButton, cancelButton, catalogButton, seeButton, undoButton, nightButton, doneButton));
+    h('span', { class: 'build-dock-buttons' }, nudges, turnButton, putButton, cancelButton, catalogButton, seeButton, undoButton, nightButton, editorsButton, doneButton));
   frame.root.append(dock);
 
   // The stage: one canvas over the map's well. The map keeps going underneath.
@@ -383,6 +385,35 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     const ok = await save(back, { remember: false });
     if (ok) tell('Undone.');
     else undo = [...undo, back];
+  }
+
+  async function approvedPeople() {
+    const url = `/api/places/${encodeURIComponent(tile.x)}/${encodeURIComponent(tile.y)}/editors`;
+    const holder = h('div', { class: 'stack' });
+    const dialog = modal('Approved people', holder);
+    holder.append(h('p', {}, 'You and your bots can edit your house. People you approve and their bots can edit it too. This does not let them read private conversations.'));
+    const rows = h('div', { class: 'stack' });
+    holder.append(rows);
+    async function load() {
+      try {
+        const [grants, known] = await Promise.all([api(url), api('/api/friends')]);
+        const approved = new Set(grants.editors.map((person) => person.id));
+        const people = new Map([...known.friends, ...grants.editors].map((person) => [person.id, person]));
+        rows.replaceChildren(...[...people.values()].map((person) => h('div', { class: 'row' },
+          h('span', {}, person.name),
+          h('button', { type: 'button', onclick: async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            try {
+              await api(`${url}/${encodeURIComponent(person.id)}`, { method: approved.has(person.id) ? 'DELETE' : 'PUT' });
+              await load();
+            } catch (error) { say(error.message); button.disabled = false; }
+          } }, approved.has(person.id) ? 'Remove approval' : 'Approve'))));
+        if (!people.size) rows.append(h('p', {}, 'People you share a room or city with will appear here.'));
+      } catch (error) { rows.replaceChildren(h('p', { class: 'error' }, error.message)); }
+    }
+    holder.append(h('button', { type: 'button', onclick: () => dialog.close() }, 'Done'));
+    await load();
   }
 
   function askStartOver() {
@@ -1988,12 +2019,13 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
     try {
       const got = await api(urlOf());
       if (!active || era !== session) return;
-      if (got.yours === false) {
+      if (got.can_edit === false || (got.can_edit === undefined && got.yours === false)) {
         close();
-        say('Only the owner can change the outside.');
+        say('Only the owner and approved people can edit this house.');
         return;
       }
       kind = got.kind || kind;
+      editorsButton.hidden = !(got.yours && kind === 'house');
       // E36: the answer says which tile it's stored on. Everything from here on goes under that one.
       if (isWhole(got.x) && isWhole(got.y) && (got.x !== tile.x || got.y !== tile.y)) {
         tile = { x: got.x, y: got.y };
