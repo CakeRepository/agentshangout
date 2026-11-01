@@ -107,14 +107,24 @@ impl Server {
 
     async fn someone(&self, name: &str) -> (String, Who) {
         let made = self
-            .post("", "/api/hangouts", json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }))
+            .post(
+                "",
+                "/api/hangouts",
+                json!({ "name": format!("{name}'s room"), "your_name": name, "create_code": CODE }),
+            )
             .await
             .ok();
-        (text(&made["hangout"]["id"]), Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) })
+        (
+            text(&made["hangout"]["id"]),
+            Who { key: text(&made["owner_key"]), id: text(&made["person"]["id"]) },
+        )
     }
 
     async fn bot(&self, owner: &Who, room: &str, name: &str) -> (String, String) {
-        let made = self.post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name })).await.ok();
+        let made = self
+            .post(&owner.key, &format!("/api/hangouts/{room}/agents"), json!({ "name": name }))
+            .await
+            .ok();
         (text(&made["agent"]["id"]), text(&made["token"]))
     }
 
@@ -124,15 +134,33 @@ impl Server {
         let (bo_room, bo) = self.someone("Bo").await;
         let (rover_id, rover) = self.bot(&bo, &bo_room, "Rover").await;
         let (cafe, cy) = self.someone("Cy").await;
-        self.put(&cy.key, &format!("/api/floors/{cafe}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+        self.put(
+            &cy.key,
+            &format!("/api/floors/{cafe}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
         Town { ann, bo, cafe, fern, rover, rover_id }
     }
 
     /// Both bots' owners send them onto Cy's public floor, where they meet.
     async fn meet(&self, town: &Town) {
         let fern_id = text(&self.get(&town.fern, "/api/me").await.ok()["agent_id"]);
-        self.post(&town.ann.key, &format!("/api/floors/{}/walk-in", town.cafe), json!({ "agent_id": fern_id })).await.ok();
-        self.post(&town.bo.key, &format!("/api/floors/{}/walk-in", town.cafe), json!({ "agent_id": town.rover_id })).await.ok();
+        self.post(
+            &town.ann.key,
+            &format!("/api/floors/{}/walk-in", town.cafe),
+            json!({ "agent_id": fern_id }),
+        )
+        .await
+        .ok();
+        self.post(
+            &town.bo.key,
+            &format!("/api/floors/{}/walk-in", town.cafe),
+            json!({ "agent_id": town.rover_id }),
+        )
+        .await
+        .ok();
     }
 
     async fn call(&self, token: &str, name: &str, arguments: Value) -> Value {
@@ -167,7 +195,9 @@ impl Server {
             .into_iter()
             .filter(|&(x, y)| {
                 let pos = (x as u16, y as u16);
-                !tiles.contains_key(&pos) && !world::is_reserved(&tiles, pos) && land.at(pos).is_some_and(|ground| ground.is_open())
+                !tiles.contains_key(&pos)
+                    && !world::is_reserved(&tiles, pos)
+                    && land.at(pos).is_some_and(|ground| ground.is_open())
             })
             .collect()
     }
@@ -177,7 +207,15 @@ impl Server {
         let at = now() - 2 * DAY;
         let player = self.state.db.own_player(&who.id, at).unwrap();
         let (x, y) = self.free_spots()[0];
-        let mv = Move { action: "place".into(), x: Some(x), y: Some(y), x2: None, y2: None, kind: Some("house".into()), emote: None };
+        let mv = Move {
+            action: "place".into(),
+            x: Some(x),
+            y: Some(y),
+            x2: None,
+            y2: None,
+            kind: Some("house".into()),
+            emote: None,
+        };
         worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
     }
 
@@ -185,7 +223,15 @@ impl Server {
     fn place_at(&self, who: &Who, kind: &str, at: i64) -> (i64, i64) {
         let player = self.state.db.own_player(&who.id, at).unwrap();
         let (x, y) = self.free_spots()[0];
-        let mv = Move { action: "place".into(), x: Some(x), y: Some(y), x2: None, y2: None, kind: Some(kind.into()), emote: None };
+        let mv = Move {
+            action: "place".into(),
+            x: Some(x),
+            y: Some(y),
+            x2: None,
+            y2: None,
+            kind: Some(kind.into()),
+            emote: None,
+        };
         worlds::act(&self.state, &player, COMMONS, &mv, at).unwrap();
         (x, y)
     }
@@ -203,7 +249,11 @@ impl Server {
         let view = self.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
         view["bots_out"]
             .as_array()
-            .map(|rows| rows.iter().map(|row| (text(&row[0]), row[1].as_i64().unwrap(), row[2].as_i64().unwrap())).collect())
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| (text(&row[0]), row[1].as_i64().unwrap(), row[2].as_i64().unwrap()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -226,7 +276,8 @@ async fn a_bot_starts_a_project_that_counts_as_one_of_its_owners_third_spaces() 
 
     // Ann's own room was one, the project is two, so one more fits and then no more.
     server.tool(&town.fern, "start_project", json!({ "name": "Kite" })).await;
-    let message = server.refused(&town.fern, "start_project", json!({ "name": "One too many" })).await;
+    let message =
+        server.refused(&town.fern, "start_project", json!({ "name": "One too many" })).await;
     assert!(message.contains("3"), "{message}");
     server.refused(&town.fern, "start_project", json!({ "name": "  " })).await;
 }
@@ -241,18 +292,29 @@ async fn a_bot_in_a_project_brings_in_a_bot_it_is_with_and_its_owner_can_take_it
     let floor = text(&started["floor_id"]);
 
     // Not together yet, so Fern can't bring Rover in.
-    let message = server.refused(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" })).await;
+    let message = server
+        .refused(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
+        .await;
     assert!(message.contains("Rover"), "{message}");
 
     server.meet(&town).await;
-    server.refused(&town.rover, "invite_to_project", json!({ "project_id": project, "bot": "Fern" })).await;
-    server.tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "rover" })).await;
+    server
+        .refused(&town.rover, "invite_to_project", json!({ "project_id": project, "bot": "Fern" }))
+        .await;
+    server
+        .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "rover" }))
+        .await;
     server.tool(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
-    server.tool(&town.rover, "say", json!({ "hangout_id": floor, "text": "I can wire the sensors." })).await;
+    server
+        .tool(&town.rover, "say", json!({ "hangout_id": floor, "text": "I can wire the sensors." }))
+        .await;
 
     // Bo can read it, and take Rover back.
     server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.ok();
-    server.delete(&town.bo.key, &format!("/api/hangouts/{floor}/agents/{}", town.rover_id)).await.ok();
+    server
+        .delete(&town.bo.key, &format!("/api/hangouts/{floor}/agents/{}", town.rover_id))
+        .await
+        .ok();
     server.refused(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
 }
 
@@ -271,7 +333,10 @@ async fn a_bot_cant_bring_back_the_bot_of_someone_turned_out() {
     let turn_out = format!("/api/spaces/{project}/people/{}/turn-out", town.bo.id);
     server.post(&town.ann.key, &turn_out, json!({})).await.ok();
     server.refused(&town.fern, "invite_to_project", bring_in.clone()).await;
-    assert_eq!(server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.status,
+        StatusCode::NOT_FOUND
+    );
     server.refused(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
 
     // Let back, Bo is anyone again, and a bot can bring Rover in as it could before.
@@ -287,15 +352,24 @@ async fn a_full_floor_takes_no_bot_being_brought_in() {
     let town = server.town().await;
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
     let floor = text(&started["floor_id"]);
-    server.put(&town.ann.key, &format!("/api/floors/{floor}"), json!({ "size": "small" })).await.ok();
+    server
+        .put(&town.ann.key, &format!("/api/floors/{floor}"), json!({ "size": "small" }))
+        .await
+        .ok();
     // Ann and Fern are two of its eight.
     for number in 0..6 {
         let person = format!("person-{number}");
-        server.state.db.create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0).unwrap();
+        server
+            .state
+            .db
+            .create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0)
+            .unwrap();
         server.state.db.add_member(&floor, &person, now()).unwrap();
     }
     server.meet(&town).await;
-    let message = server.refused(&town.fern, "invite_to_project", json!({ "project_id": floor, "bot": "Rover" })).await;
+    let message = server
+        .refused(&town.fern, "invite_to_project", json!({ "project_id": floor, "bot": "Rover" }))
+        .await;
     assert!(message.contains("full"), "{message}");
 }
 
@@ -319,22 +393,41 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
     let spot = server.free_spots()[0];
     let at = json!({ "project_id": project, "x": spot.0, "y": spot.1 });
     server.meet(&town).await;
-    server.tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" })).await;
+    server
+        .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
+        .await;
     server.refused(&town.rover, "build_studio", at.clone()).await;
     server.tool(&town.fern, "build_studio", at.clone()).await;
     assert_eq!(server.tile(spot), Some(Kind::Studio));
     // W73: the studio is called what the project is.
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
     let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
-    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Ann", "Garden robot"])), "{view}");
+    assert!(
+        view["owners"].as_array().unwrap().contains(&json!([
+            spot.0,
+            spot.1,
+            "Ann",
+            "Garden robot"
+        ])),
+        "{view}"
+    );
 
     // It's Ann's, so her door opens onto the project's room.
-    let door = server.post(&town.ann.key, "/api/spaces/door", json!({ "x": spot.0, "y": spot.1 })).await.ok();
+    let door = server
+        .post(&town.ann.key, "/api/spaces/door", json!({ "x": spot.0, "y": spot.1 }))
+        .await
+        .ok();
     assert_eq!(door["hangout_id"], floor.as_str(), "{door}");
 
     // One studio a project, and a bot can't move it.
     let elsewhere = server.free_spots()[0];
-    let message = server.refused(&town.fern, "build_studio", json!({ "project_id": project, "x": elsewhere.0, "y": elsewhere.1 })).await;
+    let message = server
+        .refused(
+            &town.fern,
+            "build_studio",
+            json!({ "project_id": project, "x": elsewhere.0, "y": elsewhere.1 }),
+        )
+        .await;
     assert!(message.contains("already"), "{message}");
 }
 
@@ -363,7 +456,9 @@ async fn a_bot_reads_its_projects_in_inbox() {
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
     let project = text(&started["project_id"]);
     server.meet(&town).await;
-    server.tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" })).await;
+    server
+        .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
+        .await;
 
     let fern = server.tool(&town.fern, "inbox", json!({})).await;
     let listed = &fern["your_projects"][0];
@@ -389,7 +484,13 @@ async fn in_its_hours_a_bot_is_shown_by_name_at_its_projects_studio() {
     server.house_two_days_ago(&town.ann);
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
     let spot = server.free_spots()[0];
-    server.tool(&town.fern, "build_studio", json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 })).await;
+    server
+        .tool(
+            &town.fern,
+            "build_studio",
+            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
+        )
+        .await;
 
     // No social hours, so it isn't shown.
     assert!(!shown_at(&server.bots_out().await, "Fern", spot));
@@ -409,9 +510,19 @@ async fn a_bot_that_went_out_is_shown_by_name_at_that_place_and_nobody_else_is()
     let (_, cy) = server.someone("Cy2").await;
     server.place_at(&cy, "house", now() - 8 * DAY);
     let cafe_spot = server.place_at(&cy, "cafe", now());
-    let door = server.post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 })).await.ok();
+    let door = server
+        .post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 }))
+        .await
+        .ok();
     let floor = text(&door["hangout_id"]);
-    server.put(&cy.key, &format!("/api/floors/{floor}"), json!({ "access": "public", "create_code": CODE })).await.ok();
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{floor}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
 
     server.all_day(&town.bo, &town.rover, true).await;
     server.tool(&town.rover, "go_out", json!({ "floor_id": floor })).await;
@@ -422,6 +533,13 @@ async fn a_bot_that_went_out_is_shown_by_name_at_that_place_and_nobody_else_is()
     // Sent in by its owner with public places off, it isn't shown.
     server.tool(&town.rover, "come_back", json!({})).await;
     server.all_day(&town.bo, &town.rover, false).await;
-    server.post(&town.bo.key, &format!("/api/floors/{floor}/walk-in"), json!({ "agent_id": town.rover_id })).await.ok();
+    server
+        .post(
+            &town.bo.key,
+            &format!("/api/floors/{floor}/walk-in"),
+            json!({ "agent_id": town.rover_id }),
+        )
+        .await
+        .ok();
     assert!(server.bots_out().await.is_empty());
 }

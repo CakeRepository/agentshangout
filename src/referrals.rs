@@ -63,12 +63,8 @@ fn plan_to_share(state: &AppState, caller: &Caller, event_id: &str) -> ApiResult
 
 pub fn plan_link(state: &AppState, caller: &Caller, event_id: &str) -> ApiResult<String> {
     let event = plan_to_share(state, caller, event_id)?;
-    let code = state.db.plan_invite_code(
-        &event.id,
-        &auth::new_invite_code(),
-        &caller.person_id,
-        now(),
-    )?;
+    let code =
+        state.db.plan_invite_code(&event.id, &auth::new_invite_code(), &caller.person_id, now())?;
     Ok(plan_url(state, &code))
 }
 
@@ -135,7 +131,8 @@ fn preview_of(
 }
 
 pub fn preview(state: &AppState, caller: Option<&Caller>, code: &str) -> ApiResult<PlanPreview> {
-    let person_id = caller.filter(|caller| !caller.is_agent()).map(|caller| caller.person_id.as_str());
+    let person_id =
+        caller.filter(|caller| !caller.is_agent()).map(|caller| caller.person_id.as_str());
     preview_of(state, open_invite(state, code)?, person_id)
 }
 

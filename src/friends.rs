@@ -144,7 +144,9 @@ fn send(
 ) -> ApiResult<Json<Value>> {
     let now = now();
     if state.db.friend_invites_sent_since(&caller.person_id, now - DAY_SECS)? >= INVITES_PER_DAY {
-        return Err(ApiError::too_many_requests("that's a lot of invites for one day: try again tomorrow"));
+        return Err(ApiError::too_many_requests(
+            "that's a lot of invites for one day: try again tomorrow",
+        ));
     }
     let id = auth::new_id();
     let fresh = state.db.add_friend_invite(

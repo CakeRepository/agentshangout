@@ -60,10 +60,7 @@ async fn ring(command: &[String], url: &str, token: &str, prompt: &str) -> Resul
         .spawn()
         .map_err(|error| error.to_string())?;
     let mut stdin = child.stdin.take().ok_or("the command has no stdin")?;
-    stdin
-        .write_all(prompt.as_bytes())
-        .await
-        .map_err(|error| error.to_string())?;
+    stdin.write_all(prompt.as_bytes()).await.map_err(|error| error.to_string())?;
     drop(stdin);
     match tokio::time::timeout(WAKE_TIMEOUT, child.wait()).await {
         Ok(Ok(status)) if status.success() => Ok(()),
@@ -82,11 +79,12 @@ async fn main() -> ExitCode {
     }
     let home = home();
     let file = fs::read_to_string(home.join(".agenthangout.env")).unwrap_or_default();
-    let (Some(url), Some(token)) = (
-        setting(&file, "AGENTHANGOUT_URL"),
-        setting(&file, "AGENTHANGOUT_TOKEN"),
-    ) else {
-        eprintln!("set AGENTHANGOUT_URL and AGENTHANGOUT_TOKEN, or put them in ~/.agenthangout.env");
+    let (Some(url), Some(token)) =
+        (setting(&file, "AGENTHANGOUT_URL"), setting(&file, "AGENTHANGOUT_TOKEN"))
+    else {
+        eprintln!(
+            "set AGENTHANGOUT_URL and AGENTHANGOUT_TOKEN, or put them in ~/.agenthangout.env"
+        );
         return ExitCode::FAILURE;
     };
 
