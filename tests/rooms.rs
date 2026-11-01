@@ -4716,3 +4716,34 @@ async fn an_owners_bot_can_furnish_its_house() {
         .await
         .refused(StatusCode::NOT_FOUND);
 }
+
+// I66: rooms needn't look alike. Every paint has a rug of its own, and a bot working through another
+// tool sits at whatever serves as a desk when the floor has none.
+#[test]
+fn every_paint_has_its_own_rug_and_a_desk_can_be_anything_that_serves() {
+    let page = include_str!("../web/room.js").replace("\r\n", "\n");
+    let rugs = page.split_once("const RUGS = {").unwrap().1.split_once("};").unwrap().0;
+    let mut seen = std::collections::HashSet::new();
+    for paint in spaces::PAINTS {
+        let line = rugs.lines().find(|line| line.trim_start().starts_with(&format!("{paint}:")));
+        let line = line.unwrap_or_else(|| panic!("no rug for {paint}"));
+        assert!(
+            seen.insert(line.split_once(':').unwrap().1.trim().to_string()),
+            "{paint} shares a rug"
+        );
+    }
+    assert!(page.contains("paintRug(g, look.paint)"));
+    assert!(page.contains("this.claim(hidden.includes('desk') ? this.deskSpots : DESKS, 'desk')"));
+    for kind in ["computer", "workbench"] {
+        assert!(page.contains(&format!("'{kind}'")), "{kind} isn't a desk");
+    }
+    // The templates that used to keep the desk have desks of their own instead.
+    for name in ["study", "workshop", "office"] {
+        let each = items::template_of(name).unwrap();
+        assert!(each.hidden.contains(&"desk"), "{name}");
+        assert!(
+            each.items.iter().any(|part| ["computer", "workbench"].contains(&part.kind)),
+            "{name}"
+        );
+    }
+}

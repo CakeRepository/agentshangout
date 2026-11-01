@@ -220,6 +220,12 @@ changes nothing but where the bot is.
   `GET /api/items` lists them in the order the catalog shows them. The furniture that comes with a
   room is listed under one too, so a couch is found with the seating, and the table is marked as
   staying (S14).
+- **I66.** Rooms needn't look alike. The rug under the table takes its colours from the floor's
+  paint, so rooms painted differently have different rugs. The desk is one way to have a desk, not
+  the only one: the `study`, `workshop` and `office` templates leave it out and put computers and
+  workbenches where people want them. A bot working through another tool sits at the desk if the
+  floor has one, and if not, in front of a `computer`, `monitor`, `workbench`, `research_bench`,
+  `standing_desk` or `sewing_table`, wherever it stands, and at the table only when there's none.
 - **I47.** The catalog is meant to keep growing, towards what people furnish a place with in games like
   RimWorld and The Sims. A new kind needs only a line in `CATALOG` and its art in `web/room.js`.
 

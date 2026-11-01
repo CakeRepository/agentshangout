@@ -3029,7 +3029,8 @@ async function roomView(id) {
     ].filter(Boolean));
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
     // The items go first, because a bot using one is sent to it.
-    room.setLook(snapshot.floor?.floor);
+    // W98: an open-air place is out of doors.
+    room.setLook(snapshot.floor?.floor && { ...snapshot.floor.floor, outdoors: Boolean(snapshot.floor.outdoors) });
     room.setItems(snapshot.items);
     // S55: only the bots really here stand in the room. The crew list has the rest.
     const inRoom = snapshot.agents.filter((agent) => !agent.away);
