@@ -572,3 +572,15 @@ async fn someone_let_onto_a_private_floor_is_told_they_can_go_in_and_the_door_op
     let menu = &page[start..start + page[start..].find("\n  }\n").unwrap()];
     assert!(menu.contains("if (details.can_go_in) own.push({ label: 'Go in'"), "{menu}");
 }
+
+// W72: a place's menu is what you can do with it. Nothing can be built on one, so the build tools
+// aren't offered there.
+#[test]
+fn a_places_menu_offers_no_build_tools() {
+    let page = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = page.find("function tileMenu(t)").expect("the tile menu");
+    let menu = &page[start..start + page[start..].find("\n  }\n").unwrap()];
+    let tools = menu.find("BUILD_TOOLS.filter").expect("the build tools");
+    let guard = menu.find("if (!BUILDING_KINDS.has(t.kind)) {").expect("a guard for places");
+    assert!(guard < tools, "{menu}");
+}

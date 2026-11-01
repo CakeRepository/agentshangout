@@ -6067,13 +6067,16 @@ async function worldView(id, { home = false } = {}) {
       if ((t.kind && t.kind !== 'cleared') || (!t.kind && t.land === 'forest')) {
         items.push({ label: 'Clear', cost: '1 move', run: () => send({ action: 'bulldoze', x: t.x, y: t.y }) });
       }
-      items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze' && toolShown(key)).map(([key, label]) => ({
-        label,
-        icon: menuIcon(key),
-        cost: (placesFull.has(key) ? 'Max' : lockOf(key)) || undefined,
-        checked: tool === key,
-        run: () => pick(key),
-      })));
+      // Nothing can be built on a place, so a place's menu is only what you can do with it.
+      if (!BUILDING_KINDS.has(t.kind)) {
+        items.push(null, ...BUILD_TOOLS.filter(([key]) => key !== 'bulldoze' && toolShown(key)).map(([key, label]) => ({
+          label,
+          icon: menuIcon(key),
+          cost: (placesFull.has(key) ? 'Max' : lockOf(key)) || undefined,
+          checked: tool === key,
+          run: () => pick(key),
+        })));
+      }
     }
     return { title: `Tile ${t.x}, ${t.y}`, sub: what, items };
   }
