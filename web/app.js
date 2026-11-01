@@ -280,7 +280,7 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
 // which sites it has (A39), and someone whose account has no link is told so when they come back.
 function signInElsewhere() {
   const links = h('div', { class: 'sign-in-elsewhere' });
-  api('/api/server').then((server) => links.replaceChildren(...server.sign_in_with.map(({ site, name }) => h('a', {
+  api('/api/sign-in').then(({ sites }) => links.replaceChildren(...sites.map(({ site, name }) => h('a', {
     class: 'button',
     href: `/api/sign-in/${site}`,
     onclick: leaving,

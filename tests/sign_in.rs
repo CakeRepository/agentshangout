@@ -1006,7 +1006,7 @@ async fn with_no_app_set_up_nothing_is_offered() {
     for site in Site::ALL {
         let server = Server::with(false).await;
         let (_, ann, _) = server.someone("Ann").await;
-        assert_eq!(server.get("", "/api/server").await.ok()["sign_in_with"], json!([]));
+        assert_eq!(server.get("", "/api/sign-in").await.ok()["sites"], json!([]));
         assert_eq!(server.get(&ann.key, "/api/me").await.ok()["sign_in"], json!([]));
         server.get(&ann.key, &link_path(site)).await.refused(StatusCode::CONFLICT);
         server.get("", &sign_in_path(site)).await.refused(StatusCode::CONFLICT);
@@ -1019,7 +1019,7 @@ async fn with_both_set_up_both_are_offered() {
     let server = Server::start().await;
     let (_, ann, _) = server.someone("Ann").await;
     assert_eq!(
-        server.get("", "/api/server").await.ok()["sign_in_with"],
+        server.get("", "/api/sign-in").await.ok()["sites"],
         json!([{ "site": "discord", "name": "Discord" }, { "site": "github", "name": "GitHub" }])
     );
     assert_eq!(server.get(&ann.key, "/api/me").await.ok()["sign_in"].as_array().unwrap().len(), 2);

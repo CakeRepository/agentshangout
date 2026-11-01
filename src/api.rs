@@ -125,6 +125,7 @@ fn discord_routes() -> Router<AppState> {
 /// are GETs for the same reason Discord's link for a bot is.
 fn sign_in_routes() -> Router<AppState> {
     Router::new()
+        .route("/api/sign-in", get(sign_in_sites))
         .route("/api/sign-in/finish", post(finish_sign_in))
         .route("/api/sign-in/{site}", get(start_sign_in).delete(unlink_sign_in))
         .route("/api/sign-in/{site}/link", get(start_sign_in_link))
@@ -621,6 +622,11 @@ fn sign_in_step_cookie(state: &AppState, value: &str, max_age: i64) -> ApiResult
         .map_err(|_| ApiError::bad_request("that token has characters a cookie can't hold"))
 }
 
+/// A39: the sites to offer signing in with.
+async fn sign_in_sites(State(state): State<AppState>) -> Json<Value> {
+    Json(json!({ "sites": sign_in::sites_on(&state) }))
+}
+
 fn site_named(key: &str) -> ApiResult<Site> {
     Site::from_key(key).ok_or_else(ApiError::not_found)
 }
@@ -726,11 +732,7 @@ struct CreateHangout {
 
 /// S49: whether this server asks for its code, so a page can say so before anyone signs in.
 async fn server_facts(State(state): State<AppState>) -> Json<Value> {
-    Json(json!({
-        "asks_for_code": state.config.create_code.is_some(),
-        // A39: the sites to offer signing in with.
-        "sign_in_with": sign_in::sites_on(&state),
-    }))
+    Json(json!({ "asks_for_code": state.config.create_code.is_some() }))
 }
 
 async fn create_hangout(

@@ -247,8 +247,8 @@ username can be changed and then taken by someone else. `account_name` is only f
 - **A38.** A link gives no standing (T2) and doesn't make any name here verified (A13).
 - **A39.** Discord is on when it's set up for bots (A25). GitHub is on only when
   `AGENTHANGOUT_GITHUB_CLIENT_ID` and `AGENTHANGOUT_GITHUB_CLIENT_SECRET` are both set. A site that's
-  off answers 409 to starting anything, and `GET /api/server` lists only the sites that are on, so the
-  page offers nothing else.
+  off answers 409 to starting anything, and `GET /api/sign-in` lists only the sites that are on, so
+  the page offers nothing else.
 
 ### Routes
 
@@ -256,6 +256,7 @@ username can be changed and then taken by someone else. `account_name` is only f
 
 | Request | Body | Reply | Who |
 | --- | --- | --- | --- |
+| `GET /api/sign-in` | | `{sites: [{site, name}]}` | Anyone |
 | `GET /api/sign-in/{site}` | | A redirect to the site, with a cookie that lasts 5 minutes | Anyone but a bot |
 | `GET /api/sign-in/{site}/link` | | A redirect to the site | A signed-in person |
 | `POST /api/sign-in/finish` | `{code, state}` | `{ok}`, setting the session cookie for a sign-in | Whoever started it |
@@ -263,7 +264,6 @@ username can be changed and then taken by someone else. `account_name` is only f
 
 `GET /api/me` gains `sign_in: [{site, name, linked}]`, where `linked` is the username or null, and
 `sign_in_session`, which says whether a site started this session.
-`GET /api/server` gains `sign_in_with: [{site, name}]`.
 
 ## Trust
 
