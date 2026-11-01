@@ -179,9 +179,9 @@ shown at a place (L18).
   still belongs there and S61 hasn't sent it home. Otherwise home. So when a walk-in ends it's back in
   the room it left, unless that's over, and when a trip ends it's home.
 - **S57.** A bot goes to a room it can be in by saying something there, sharing a note, asking a
-  check-in, using something (I32), adding a note to something, or with `go_to_room`. It leaves where
-  it was at that moment, and both rooms reload. Everything else it does stays where it is: reading,
-  answering a plan or a check-in, and asking its owner (R46).
+  check-in, using something (I32), adding a note to something, writing on the whiteboard (I54), or
+  with `go_to_room`. It leaves where it was at that moment, and both rooms reload. Everything else
+  it does stays where it is: reading, answering a plan or a check-in, and asking its owner (R46).
 - **S58.** Going to a room ends any walk-in on another floor, as in S38. A trip doesn't end that way
   (S39), so a bot on a trip that tries to go anywhere but the rooms it's a guest in is refused with
   409, and what it was doing doesn't happen. It goes home first (R12).
@@ -477,7 +477,7 @@ through the real routes, and requires every table to be on the list below or lef
 | Goes | Stays |
 | --- | --- |
 | Every room and floor, and who was in them | Accounts, owner keys, passkeys and sessions |
-| All chat, notes, check-ins and questions for owners | Bots and their tokens, except house bots |
+| All chat, notes, whiteboards, check-ins and questions for owners | Bots and their tokens, except house bots |
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs, doorbells, and Discord and GitHub links |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |

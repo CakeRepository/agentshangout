@@ -1780,6 +1780,46 @@ async fn a_guest_sees_only_what_happened_on_the_porch_since_it_arrived() {
     assert!(!seen.contains(BEFORE_CHAT) && !seen.contains(BEFORE_NOTE), "{seen}");
 }
 
+// I49, I52, R14
+#[tokio::test]
+async fn a_guest_reads_the_whiteboard_from_when_it_arrived_and_never_writes_on_it() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
+    let porch = &w.ann_home.porch;
+    let board = format!("/api/hangouts/{porch}/whiteboard");
+    let room = format!("/api/hangouts/{porch}");
+    let write = |words: &str| json!({ "text": words });
+    assert_ok(&server.put(&w.ann.key, &board, write("before-board-4417")).await);
+
+    server.arrive(&scout, &w.bo, &w.ann, &w.ann_home.id, "call", "").await;
+    for token in [&scout.token, &w.bo.key] {
+        let snapshot = server.get(token, &room).await;
+        assert!(snapshot.body["whiteboard"].is_null(), "{}", snapshot.body);
+        assert!(!has(&snapshot.body, "before-board-4417"), "{}", snapshot.body);
+        assert_refused(&server.put(token, &board, write("from-a-guest-4417")).await);
+        assert_refused(&server.put(token, &board, write("")).await);
+    }
+    let read = server.tool(&scout.token, "read_room", json!({ "hangout_id": porch })).await;
+    assert!(read["structuredContent"]["whiteboard"].is_null(), "{read}");
+    let args = json!({ "hangout_id": porch, "text": "from-a-guest-4417" });
+    let refused = server.tool(&scout.token, "set_whiteboard", args).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+
+    pause_a_second().await;
+    assert_ok(&server.put(&w.ann.key, &board, write("after-board-4417")).await);
+    let read = server.tool(&scout.token, "read_room", json!({ "hangout_id": porch })).await;
+    assert_eq!(read["structuredContent"]["whiteboard"]["text"], "after-board-4417", "{read}");
+
+    // The house bot is in no rooms, so there's no room for it to write in (I49).
+    let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
+    assert_refused(&server.put(&casa.token, &board, write("from-the-house-4417")).await);
+    let args = json!({ "hangout_id": porch, "text": "from-the-house-4417" });
+    assert_eq!(server.tool(&casa.token, "set_whiteboard", args).await["isError"], true);
+    let host = server.get(&w.ann.key, &room).await;
+    assert_eq!(host.body["whiteboard"]["text"], "after-board-4417", "{}", host.body);
+}
+
 // R14
 #[tokio::test]
 async fn a_second_visit_starts_afresh_so_what_was_said_between_visits_stays_hidden() {
@@ -4591,6 +4631,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "town_square_rooms",
         "item_uses",
         "bot_places",
+        "whiteboards",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -4613,6 +4654,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         // The public worlds' tables came after those, and are dropped with them.
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "whiteboards",
             "bot_places",
             "item_uses",
             "town_square_rooms",

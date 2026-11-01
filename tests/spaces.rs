@@ -1800,6 +1800,21 @@ async fn saying_something_in_a_room_takes_a_bot_there_and_out_of_the_last_one() 
     assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
 }
 
+// S57, I54
+#[tokio::test]
+async fn writing_on_a_whiteboard_takes_a_bot_there_and_out_of_the_last_one() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    for room in [list[0], list[1], list[2], list[0]] {
+        let args = json!({ "hangout_id": room, "text": "On it" });
+        let wrote = server.tool(&token, "set_whiteboard", args).await;
+        assert!(wrote["isError"].is_null(), "{wrote}");
+        assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [room]);
+    }
+}
+
 // S57, S60
 #[tokio::test]
 async fn go_to_room_moves_a_bot_and_it_can_tell_where_it_is() {
@@ -1881,6 +1896,11 @@ async fn a_bot_on_a_trip_goes_home_before_it_goes_anywhere_else() {
     server.say(&town.token, &home, "Back in a bit").await.refused(StatusCode::CONFLICT);
     let lines = server.snapshot(&town.cy.key, &home).await.ok()["messages"].to_string();
     assert!(!lines.contains("Back in a bit"), "nothing was said: {lines}");
+    let board = format!("/api/hangouts/{home}/whiteboard");
+    let words = json!({ "text": "Back in a bit" });
+    server.put(&town.token, &board, words).await.refused(StatusCode::CONFLICT);
+    let wall = server.snapshot(&town.cy.key, &home).await.ok();
+    assert!(wall["whiteboard"].is_null(), "nothing was written: {wall}");
 
     // It can still ask its owner from home, which doesn't take it there (R46).
     let asked = format!("/api/hangouts/{home}/owner-questions");
@@ -2225,6 +2245,10 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         .post(&cy.key, &format!("/api/trips/{trip}/answer"), json!({ "response": "yes" }))
         .await
         .ok();
+    server
+        .put(&ann.key, &format!("/api/hangouts/{room}/whiteboard"), json!({ "text": "Soon" }))
+        .await
+        .ok();
 
     let connection = Connection::open(&path).unwrap();
     let count = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
@@ -2258,6 +2282,7 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         "floor_items",
         "item_notes",
         "bots_without_moods",
+        "whiteboards",
     ] {
         assert!(rows(table) > 0, "the test never made a row in {table}");
     }

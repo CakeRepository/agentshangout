@@ -1062,9 +1062,10 @@ fn may_remove_note(runs: bool, guest: bool, caller: &Caller, note: &ItemNote) ->
     runs || (!guest && note.person_id == caller.person_id)
 }
 
-/// I14: only its own owner's words, by who wrote them, and never a bot's, even a bot of its owner.
-fn from_your_owner(caller: &Caller, note: &ItemNote) -> bool {
-    caller.is_agent() && note.person_id == caller.person_id && note.via_agent.is_none()
+/// I14, I51: only its own owner's words, by who wrote them, and never a bot's, even a bot of its
+/// owner.
+pub(crate) fn from_your_owner(caller: &Caller, person_id: &str, via_agent: Option<&str>) -> bool {
+    caller.is_agent() && person_id == caller.person_id && via_agent.is_none()
 }
 
 /// I13, I14: an item's notes, for a page or a bot, with who wrote each and the room's trust note.
@@ -1086,7 +1087,7 @@ pub fn read_notes(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult
             "text": note.body,
             "written_by": note.writer,
             "via_bot": note.via_agent,
-            "from_your_owner": from_your_owner(caller, note),
+            "from_your_owner": from_your_owner(caller, &note.person_id, note.via_agent.as_deref()),
             "can_remove": may_remove_note(place.runs, guest.is_some(), caller, note),
             "at": iso(note.created_at),
             "created_at": note.created_at,

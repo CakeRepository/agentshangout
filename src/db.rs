@@ -631,6 +631,15 @@ CREATE TABLE IF NOT EXISTS bot_places (
     since       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS room_agents_by_bot ON room_agents (agent_id);
+CREATE TABLE IF NOT EXISTS whiteboards (
+    hangout_id  TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    body        TEXT NOT NULL,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE CASCADE,
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS whiteboards_by_person ON whiteboards (person_id);
+CREATE INDEX IF NOT EXISTS whiteboards_by_bot ON whiteboards (agent_id);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -850,6 +859,18 @@ pub struct NewItemNote<'a> {
     pub person_id: &'a str,
     pub via_agent: Option<&'a str>,
     pub now: i64,
+}
+
+/// What a room's whiteboard says (I48). `person_id` is who wrote it last, and `agent_id` the bot that
+/// wrote it for them, so that a bot's words are never mistaken for its owner's (I51).
+#[derive(Clone, Debug, Serialize)]
+pub struct Whiteboard {
+    pub text: String,
+    pub person_id: String,
+    pub written_by: String,
+    pub agent_id: Option<String>,
+    pub via_bot: Option<String>,
+    pub updated_at: i64,
 }
 
 /// A public floor as the list shows it: nothing about who is there or what was said.
@@ -7960,6 +7981,53 @@ impl Db {
 
     pub fn stop_using_item(&self, agent_id: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM item_uses WHERE agent_id = ?", [agent_id])?;
+        Ok(())
+    }
+
+    /// What's on a room's whiteboard. A blank board has no row (I48).
+    pub fn whiteboard(&self, hangout_id: &str) -> rusqlite::Result<Option<Whiteboard>> {
+        self.conn()
+            .query_row(
+                "SELECT w.body, w.person_id, p.name, w.agent_id, a.name, w.updated_at
+                 FROM whiteboards w JOIN people p ON p.id = w.person_id
+                 LEFT JOIN agents a ON a.id = w.agent_id
+                 WHERE w.hangout_id = ?",
+                [hangout_id],
+                |row| {
+                    Ok(Whiteboard {
+                        text: row.get(0)?,
+                        person_id: row.get(1)?,
+                        written_by: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        via_bot: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// Replaces what a room's whiteboard says (I49).
+    pub fn write_whiteboard(
+        &self,
+        hangout_id: &str,
+        body: &str,
+        person_id: &str,
+        agent_id: Option<&str>,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO whiteboards (hangout_id, body, person_id, agent_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (hangout_id) DO UPDATE
+             SET body = ?2, person_id = ?3, agent_id = ?4, updated_at = ?5",
+            params![hangout_id, body, person_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn wipe_whiteboard(&self, hangout_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM whiteboards WHERE hangout_id = ?", [hangout_id])?;
         Ok(())
     }
 

@@ -60,6 +60,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/hangouts/{id}/stream", get(stream_room))
         .route("/api/hangouts/{id}/messages", get(list_messages).post(post_message))
         .route("/api/hangouts/{id}/notes", post(post_note))
+        .route("/api/hangouts/{id}/whiteboard", put(set_whiteboard))
         .route("/api/hangouts/{id}/events", post(propose_event))
         .route("/api/hangouts/{id}/check-ins", post(create_check_in))
         .route("/api/check-ins/{id}/answer", post(answer_check_in))
@@ -885,6 +886,16 @@ async fn post_note(
 ) -> ApiResult<Json<Value>> {
     let message = ops::post_message(&state, &caller, &id, "note", &body.text)?;
     Ok(Json(json!(message)))
+}
+
+async fn set_whiteboard(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(body): Json<PostText>,
+) -> ApiResult<Json<Value>> {
+    ops::set_whiteboard(&state, &caller, &id, &body.text)?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 async fn propose_event(
