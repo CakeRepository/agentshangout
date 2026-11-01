@@ -5901,7 +5901,8 @@ async function worldView(id, { home = false } = {}) {
   for (const [name, label, hint] of frozen ? [] : BUILD_TOOLS) {
     const button = h('button', { type: 'button', class: 'wd-btn', 'aria-pressed': 'false', 'aria-label': label, title: hint, onclick: () => pick(name === tool ? null : name) },
       h('span', { class: 'wd-icon', 'aria-hidden': 'true' }, toolIcon(name, 32)),
-      h('span', { class: 'wd-btn-label' }, label),
+      // A long one-word name, like Workshop, is set smaller so it fits the button whole.
+      h('span', { class: label.length > 7 && !label.includes(' ') ? 'wd-btn-label long' : 'wd-btn-label' }, label),
       BUILDING_KINDS.has(name) ? h('small', { class: 'wd-lock' }) : null);
     buttons.set(name, button);
     frame.tools.append(button);

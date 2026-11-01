@@ -1238,6 +1238,25 @@ fn the_map_keeps_the_level_of_a_big_places_tiles() {
     assert!(kept.contains("isBig(k)"), "a big place's level is read as 0: {kept}");
 }
 
+// W90: every tool on the toolbar is one the map takes. The newer places were missing from the map's
+// list, so picking one picked nothing: no highlight, and a click placed nothing.
+#[test]
+fn every_tool_on_the_toolbar_is_one_the_map_takes() {
+    let app = include_str!("../web/app.js").replace("\r\n", "\n");
+    let map = include_str!("../web/world.js").replace("\r\n", "\n");
+    let tools = &app[app.find("const BUILD_TOOLS = [").unwrap()..];
+    let tools = &tools[..tools.find("];").unwrap()];
+    let colors = &map[map.find("const TOOL_COLOR = {").unwrap()..];
+    let colors = &colors[..colors.find("};").unwrap()];
+    let mut seen = 0;
+    for line in tools.lines().filter(|line| line.trim_start().starts_with("['")) {
+        let name = line.trim_start().trim_start_matches("['").split('\'').next().unwrap();
+        assert!(colors.contains(&format!("  {name}: '")), "the map doesn't take the {name} tool");
+        seen += 1;
+    }
+    assert!(seen >= 13, "{seen} tools");
+}
+
 // W91: a big place is one place to look at. Hovering any tile outlines all four, and the square is
 // one design across them, with one jet, not a fountain on each tile.
 #[test]
