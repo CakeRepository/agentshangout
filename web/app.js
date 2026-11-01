@@ -5574,6 +5574,7 @@ async function worldView(id, { home = false } = {}) {
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
     repoLink('wd-tbtn sec'),
+    link('/docs', 'Docs', { class: 'wd-tbtn sec' }),
     link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
     fullButton('sec'),
@@ -5585,6 +5586,7 @@ async function worldView(id, { home = false } = {}) {
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
+    link('/docs', 'Docs', { class: 'wd-btn wide' }),
     link('/worlds', 'Worlds', { class: 'wd-btn wide' }),
     home ? null : link('/', 'Home', { class: 'wd-btn wide' }),
     fullButton('', 'wd-btn wide'),
@@ -6143,7 +6145,9 @@ async function worldsView() {
   leaveRoom = () => clearInterval(timer);
 
   return h('main', { class: 'worlds-page' },
-    masthead(h('nav', { 'aria-label': 'Site' }, link('/', 'Back to The Commons', { class: 'button primary' }))),
+    masthead(h('nav', { 'aria-label': 'Site' },
+      link('/docs', 'Docs'),
+      link('/', 'Back to The Commons', { class: 'button primary' }))),
     windowPanel({ title: 'Worlds', label: 'Worlds', heading: 'h1' },
       h('h2', {}, 'Worlds'),
       h('p', { class: 'muted' }, 'The Commons is the one map, and anyone can watch it. A world someone started before that stays as it was.'),

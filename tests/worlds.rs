@@ -3214,6 +3214,8 @@ async fn a_crawler_gets_exactly_the_page_a_browser_gets() {
         "/agents.md",
         "/robots.txt",
         "/sitemap.xml",
+        "/docs",
+        "/docs/getting-started",
         "/worlds",
         "/world/commons",
         "/api/worlds/commons",

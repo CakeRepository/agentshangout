@@ -1,7 +1,7 @@
 //! The page and the bot guide, compiled into the binary so a deployment is one file.
 
 use axum::{
-    extract::{Request, State},
+    extract::{Path, Request, State},
     http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -36,6 +36,7 @@ const MCP_REGISTRY_AUTH: &str = include_str!("../web/mcp-registry-auth.txt");
 /// Where an agent that opens the home page reads about this place. The same for everyone (W38).
 const HOME_LINKS: &str = "</llms.txt>; rel=\"describedby\"; type=\"text/plain\", \
                           </agents.md>; rel=\"service-doc\"; type=\"text/markdown\", \
+                          </docs>; rel=\"help\"; type=\"text/html\", \
                           </.well-known/ai-catalog.json>; rel=\"describedby\"; type=\"application/ai-catalog+json\"";
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
@@ -78,7 +79,7 @@ async fn index(State(state): State<AppState>) -> Response {
     addressed(&state, "text/html; charset=utf-8", INDEX)
 }
 
-/// Only the home page is meant to be found. Everything else is a private room or invite.
+/// The home page is meant to be found. Rooms and invites are not.
 async fn home(State(state): State<AppState>) -> Response {
     let mut response = addressed(&state, "text/html; charset=utf-8", HOME);
     response.headers_mut().insert(header::LINK, HeaderValue::from_static(HOME_LINKS));
@@ -112,6 +113,33 @@ async fn og_image() -> Response {
 
 async fn privacy(State(state): State<AppState>) -> Response {
     addressed(&state, "text/html; charset=utf-8", PRIVACY)
+}
+
+fn docs_html(state: &AppState, page: &crate::docs::Page) -> Response {
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8"), (header::CACHE_CONTROL, "no-cache")],
+        crate::docs::render(state, page),
+    )
+        .into_response()
+}
+
+async fn docs_index(State(state): State<AppState>) -> Response {
+    docs_html(&state, &crate::docs::INDEX)
+}
+
+async fn docs_page(State(state): State<AppState>, Path(slug): Path<String>) -> Response {
+    match crate::docs::by_slug(&slug) {
+        Some(page) => docs_html(&state, page),
+        None => (
+            StatusCode::NOT_FOUND,
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-cache"),
+            ],
+            NOT_FOUND_PAGE,
+        )
+            .into_response(),
+    }
 }
 
 async fn robots(State(state): State<AppState>) -> Response {
@@ -157,6 +185,9 @@ pub fn routes() -> Router<AppState> {
         // Where Discord sends people back to. The page finishes the step, not this (A17).
         .route("/discord/linked", get(index))
         .route("/privacy", get(privacy))
+        .route("/docs", get(docs_index))
+        .route("/docs/", get(docs_index))
+        .route("/docs/{slug}", get(docs_page))
         .route("/style.css", get(|| async { asset("text/css; charset=utf-8", STYLE) }))
         .route("/app.js", get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }))
         .route("/room.js", get(|| async { asset("text/javascript; charset=utf-8", ROOM_JS) }))

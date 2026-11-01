@@ -9,6 +9,7 @@ pub mod clock;
 pub mod closeness;
 pub mod db;
 pub mod discord;
+pub mod docs;
 pub mod doorbell;
 pub mod error;
 pub mod friends;
