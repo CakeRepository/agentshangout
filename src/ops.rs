@@ -256,6 +256,7 @@ pub fn post_message(
         now: now(),
     })?;
     publish_message(state, &message);
+    crate::events::note_message(state, &message);
     Ok(message)
 }
 
@@ -393,7 +394,26 @@ pub fn propose_event(
     )?;
     settle(state, &id)?;
     refresh(state, hangout_id);
-    state.db.event(&id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(&id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "proposed",
+        caller.agent_id.as_deref(),
+        Some("yes"),
+        Some(&caller.person_id),
+    );
+    if event.status == "confirmed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "confirmed",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    }
+    Ok(event)
 }
 
 pub fn rsvp(
@@ -432,11 +452,40 @@ pub fn rsvp(
         }
     }
     note_agent_write(state, caller)?;
+    let before = event.status.clone();
     let via_agent = caller.is_agent().then_some(caller.name.as_str());
     state.db.upsert_rsvp(event_id, &caller.person_id, response, via_agent, &note, now())?;
     settle(state, event_id)?;
     refresh(state, &event.hangout_id);
-    state.db.event(event_id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(event_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "answered",
+        caller.agent_id.as_deref(),
+        Some(response),
+        Some(&caller.person_id),
+    );
+    if before == "proposed" && event.status == "confirmed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "confirmed",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    } else if before == "confirmed" && event.status == "proposed" {
+        crate::events::note_plan(
+            state,
+            &event,
+            "reopened",
+            caller.agent_id.as_deref(),
+            None,
+            Some(&caller.person_id),
+        );
+    }
+    Ok(event)
 }
 
 /// Moves an event on or off the calendar to match its yes count.
@@ -486,7 +535,16 @@ pub fn cancel_event(state: &AppState, caller: &Caller, event_id: &str) -> ApiRes
         &format!("{} cancelled \"{}\".", caller.name, event.title),
     )?;
     refresh(state, &event.hangout_id);
-    state.db.event(event_id)?.ok_or_else(ApiError::not_found)
+    let event = state.db.event(event_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_plan(
+        state,
+        &event,
+        "cancelled",
+        caller.agent_id.as_deref(),
+        None,
+        Some(&caller.person_id),
+    );
+    Ok(event)
 }
 
 // Check-ins: asking the room before acting. The server records the answer; it can't stop a bot
@@ -567,7 +625,9 @@ pub fn create_check_in(
         None => notify_others(state, hangout_id, &caller.person_id, "check_in.waiting", &text)?,
     }
     refresh(state, hangout_id);
-    state.db.check_in(&id, now)?.ok_or_else(ApiError::not_found)
+    let check_in = state.db.check_in(&id, now)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_check_in(state, &check_in, caller.agent_id.as_deref());
+    Ok(check_in)
 }
 
 pub fn answer_check_in(
@@ -611,7 +671,9 @@ pub fn answer_check_in(
     announce_in_house_only(state, &check_in.hangout_id, &text)?;
     notify_side(state, &check_in.hangout_id, &check_in.asked_by, "check_in.answered", &text)?;
     refresh(state, &check_in.hangout_id);
-    state.db.check_in(check_in_id, now)?.ok_or_else(ApiError::not_found)
+    let check_in = state.db.check_in(check_in_id, now)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_check_in(state, &check_in, caller.agent_id.as_deref());
+    Ok(check_in)
 }
 
 // Questions for a bot's owner. These are between a bot and the person who owns it, so nothing about
@@ -707,7 +769,9 @@ pub fn answer_owner_question(
     };
     notify::send(state, std::slice::from_ref(&question.agent_id), &notice);
     refresh_for_owner(state, &question.hangout_id)?;
-    state.db.owner_question(question_id)?.ok_or_else(ApiError::not_found)
+    let answered = state.db.owner_question(question_id)?.ok_or_else(ApiError::not_found)?;
+    crate::events::note_owner_answer(state, &answered);
+    Ok(answered)
 }
 
 /// Everything waiting on this caller's side, across its rooms. It's the one call a bot needs when
@@ -844,17 +908,61 @@ pub fn set_doorbell_paused(
     Ok(())
 }
 
+/// What to do with a bot's saved wake-up key. Leaving it out keeps the key already saved.
+pub enum NotifyAuth<'a> {
+    Keep,
+    Clear,
+    Set(&'a str),
+}
+
 pub fn set_agent_notify(
     state: &AppState,
     caller: &Caller,
     agent_id: &str,
-    url: Option<&str>,
+    url: NotifyAuth<'_>,
+    auth: NotifyAuth<'_>,
 ) -> ApiResult<()> {
     own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
-    let url = url.map(str::trim).filter(|url| !url.is_empty());
-    let url = url.map(|url| notify::clean_url(state, url)).transpose()?;
+    // Leaving the URL out keeps the one already saved. An empty one removes the ping and the key.
+    let url = match url {
+        NotifyAuth::Keep => state.db.notify_url(agent_id)?,
+        NotifyAuth::Clear => None,
+        NotifyAuth::Set(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(notify::clean_url(state, text)?)
+            }
+        }
+    };
+    if url.is_none() {
+        state.db.set_notify_url(agent_id, None)?;
+        state.db.set_notify_auth(agent_id, None)?;
+        return Ok(());
+    }
     state.db.set_notify_url(agent_id, url.as_deref())?;
+    match auth {
+        NotifyAuth::Keep => {}
+        NotifyAuth::Clear => state.db.set_notify_auth(agent_id, None)?,
+        NotifyAuth::Set(secret) => {
+            notify::auth_header(secret)?;
+            state.db.set_notify_auth(agent_id, Some(secret.trim()))?;
+        }
+    }
     Ok(())
+}
+
+/// The URL, and whether a key is saved. The key itself stays on the server.
+pub fn agent_notify(
+    state: &AppState,
+    caller: &Caller,
+    agent_id: &str,
+) -> ApiResult<serde_json::Value> {
+    own_agent(state, caller, agent_id, "see a bot's wake-up URL")?;
+    let url = state.db.notify_url(agent_id)?;
+    let auth = state.db.notify_auth(agent_id)?.is_some();
+    Ok(serde_json::json!({ "url": url, "auth": auth }))
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {
@@ -1178,13 +1286,18 @@ pub fn bring_agent(
             )));
         }
     }
+    let was = state.db.bot_place(agent_id, now())?;
     // S59: a bot that already belongs here is only being called over, so the room hears nothing.
     if !state.db.agents_in(hangout_id, now())?.iter().any(|bot| bot.id == agent_id) {
         spaces::check_fits(state, hangout_id)?;
         state.db.add_agent_to_room(hangout_id, agent_id)?;
         announce(state, hangout_id, &format!("{} brought in {}.", caller.name, agent.name))?;
     }
-    spaces::place_bot(state, agent_id, hangout_id)
+    spaces::place_bot(state, agent_id, hangout_id)?;
+    if was.as_deref() != Some(hangout_id) {
+        crate::events::note_place(state, agent_id, hangout_id, "moved");
+    }
+    Ok(())
 }
 
 pub fn remove_agent(
@@ -1195,6 +1308,7 @@ pub fn remove_agent(
 ) -> ApiResult<()> {
     let agent = own_agent(state, caller, agent_id, "remove a bot")?;
     no_guests(state, caller, hangout_id, "remove a bot")?;
+    let was_here = state.db.agents_in(hangout_id, now())?.iter().any(|bot| bot.id == agent_id);
     state.db.remove_agent_from_room(hangout_id, agent_id)?;
     // L17: a bot taken out of a project leaves its studio on The Commons.
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
@@ -1203,6 +1317,9 @@ pub fn remove_agent(
     state.db.end_bot_player_token(agent_id)?;
     announce(state, hangout_id, &format!("{} sent {} home.", caller.name, agent.name))?;
     refresh(state, hangout_id);
+    if was_here {
+        crate::events::note_place(state, agent_id, hangout_id, "removed");
+    }
     spaces::refresh_bot_place(state, agent_id)
 }
 

@@ -2666,6 +2666,7 @@ async fn over_mcp_the_house_bot_sees_three_tools_and_any_other_name_is_an_error(
     for tool in [
         "list_hangouts",
         "inbox",
+        "events_since",
         "check_in",
         "answer_check_in",
         "ask_owner",
@@ -4589,6 +4590,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "town_square_rooms",
         "item_uses",
         "bot_places",
+        "bot_events",
+        "event_subscriptions",
+        "notify_auth",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -4611,6 +4615,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         // The public worlds' tables came after those, and are dropped with them.
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "notify_auth",
+            "event_subscriptions",
+            "bot_events",
             "bot_places",
             "item_uses",
             "town_square_rooms",

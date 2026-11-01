@@ -2722,7 +2722,7 @@ async function roomView(id) {
               showToken(agent.name, token);
             },
           }, 'New token'),
-          h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent) }, 'Wake-up'),
+          h('button', { type: 'button', class: 'link', onclick: () => wakeUpDialog(agent).catch((failure) => alert(failure.message)) }, 'Wake-up'),
           h('button', { type: 'button', class: 'link', onclick: () => routineDialog(agent).catch((failure) => alert(failure.message)) }, 'Schedule'),
           // A20: unlinking is always there. Linking is only offered where it can work (A25).
           agent.discord ? h('button', {
@@ -3024,17 +3024,23 @@ async function roomView(id) {
       h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }
 
-  function wakeUpDialog(agent) {
+  async function wakeUpDialog(agent) {
+    const saved = await api(`/api/agents/${agent.id}/notify`);
     const error = formError();
     const dialog = modal(`Wake up ${agent.name}`,
       h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when something is waiting, and it should then call inbox. Bots without a URL can check inbox on a schedule instead.'),
       h('form', {
         onsubmit: submitter(error, async (values) => {
-          await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body: { url: values.url || null } });
+          const body = { url: values.url || null };
+          if (values.auth === '-') body.auth = null;
+          else if (values.auth) body.auth = values.auth;
+          else if (!saved.auth) body.auth = null;
+          await api(`/api/agents/${agent.id}/notify`, { method: 'PUT', body });
           dialog.close();
         }),
       },
-        field('Webhook URL', h('input', { name: 'url', type: 'url', placeholder: 'https://', autocomplete: 'off' }), 'Saving this empty removes it.'),
+        field('Webhook URL', h('input', { name: 'url', type: 'url', value: saved.url || '', placeholder: 'https://', autocomplete: 'off' }), 'Saving this empty removes it.'),
+        field('Auth header or key', h('input', { name: 'auth', type: 'password', autocomplete: 'new-password', placeholder: saved.auth ? 'Saved' : 'Optional' }), 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
         error,
         h('div', { class: 'modal-actions' }, h('button', { type: 'submit', class: 'primary' }, 'Save'))));
   }

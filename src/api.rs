@@ -17,7 +17,7 @@ use axum::{
     Json, Router,
 };
 use futures_util::stream::{self, Stream};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Value};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -30,7 +30,7 @@ use crate::{
     db::{Pass, Person, PlanItem, Scene, SceneRequest, Trip},
     discord,
     error::{ApiError, ApiResult},
-    friends, god_mode, households, items, looks, now,
+    events, friends, god_mode, households, items, looks, now,
     ops::{self, CheckInInput, EventInput, MAX_NAME_CHARS},
     passkey, referrals, routines, spaces,
     trust::{self, CityRulesInput, HouseRulesInput},
@@ -50,6 +50,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/doorbell", post(doorbell_check))
         .route("/api/clock", put(set_clock))
         .route("/api/inbox", get(inbox))
+        .route("/api/events", get(bot_events))
         .route("/api/notify", put(set_notify))
         .route("/api/notify/test", post(test_notify))
         .route("/api/hangouts", post(create_hangout))
@@ -70,7 +71,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/invites/{code}", get(invite_preview))
         .route("/api/invites/{code}/join", post(join))
         .route("/api/agents/{id}/rotate", post(rotate_agent))
-        .route("/api/agents/{id}/notify", put(set_agent_notify))
+        .route("/api/agents/{id}/notify", get(agent_notify).put(set_agent_notify))
         .route("/api/agents/{id}/doorbell", put(set_doorbell))
         .route("/api/events/{id}/rsvp", post(rsvp))
         .route("/api/events/{id}/cancel", post(cancel_event))
@@ -362,14 +363,84 @@ async fn set_notify(
     Ok(Json(json!({ "ok": true })))
 }
 
+/// A field the owner left out keeps what is saved. Null or blank clears it.
+#[derive(Default)]
+enum NotifyField {
+    #[default]
+    Keep,
+    Clear,
+    Set(String),
+}
+
+impl<'de> Deserialize<'de> for NotifyField {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Option::<String>::deserialize(deserializer)?;
+        Ok(match value {
+            None => NotifyField::Clear,
+            Some(text) if text.trim().is_empty() => NotifyField::Clear,
+            Some(text) => NotifyField::Set(text),
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct AgentNotifyBody {
+    #[serde(default)]
+    url: NotifyField,
+    #[serde(default)]
+    auth: NotifyField,
+}
+
+fn notify_update(field: &NotifyField) -> ops::NotifyAuth<'_> {
+    match field {
+        NotifyField::Keep => ops::NotifyAuth::Keep,
+        NotifyField::Clear => ops::NotifyAuth::Clear,
+        NotifyField::Set(text) => ops::NotifyAuth::Set(text),
+    }
+}
+
+async fn agent_notify(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    Ok(Json(ops::agent_notify(&state, &caller, &id)?))
+}
+
 async fn set_agent_notify(
     State(state): State<AppState>,
     caller: Caller,
     Path(id): Path<String>,
-    Json(body): Json<NotifyUrl>,
+    Json(body): Json<AgentNotifyBody>,
 ) -> ApiResult<Json<Value>> {
-    ops::set_agent_notify(&state, &caller, &id, body.url.as_deref())?;
+    ops::set_agent_notify(
+        &state,
+        &caller,
+        &id,
+        notify_update(&body.url),
+        notify_update(&body.auth),
+    )?;
     Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    since: Option<String>,
+    wait: Option<u64>,
+    hangout_id: Option<String>,
+}
+
+async fn bot_events(
+    State(state): State<AppState>,
+    caller: Caller,
+    Query(query): Query<EventsQuery>,
+) -> ApiResult<Json<Value>> {
+    let args = json!({
+        "since": query.since,
+        "wait_seconds": query.wait.unwrap_or(0),
+        "hangout_id": query.hangout_id,
+    });
+    Ok(Json(events::since_tool(&state, &caller, &args).await?))
 }
 
 async fn doorbell_check(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {

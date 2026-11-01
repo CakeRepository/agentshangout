@@ -1048,6 +1048,8 @@ fn arrived(state: &AppState, trip: &Trip) -> ApiResult<()> {
     people.push(trip.owner_id.clone());
     let text = format!("{} is at {} for a {}.", trip.agent_name, house.name, trip.kind);
     ping(state, people, "trip.started", &house.porch_id, &text);
+    crate::events::note_trip(state, trip);
+    crate::events::note_place(state, &trip.agent_id, &house.porch_id, "moved");
     Ok(())
 }
 
@@ -1087,7 +1089,9 @@ pub fn answer_trip(
             format!("{} said no to {}'s trip to {}.", caller.name, trip.agent_name, house.name);
         ping(state, others, "trip.ended", &house.porch_id, &text);
         refresh_house(state, &house);
-        return trip_by_id(state, &trip.id, now);
+        let declined = trip_by_id(state, &trip.id, now)?;
+        crate::events::note_trip(state, &declined);
+        return Ok(declined);
     }
     let recorded = if standing.owner {
         state.db.trip_owner_ok(&trip.id, &caller.name, now)?
@@ -1111,6 +1115,8 @@ pub fn end_trip(state: &AppState, caller: &Caller, trip_id: &str) -> ApiResult<T
     let now = now();
     let (trip, standing) = trip_for(state, caller, trip_id, now)?;
     let house = state.db.house(&trip.house_id)?.ok_or_else(ApiError::not_found)?;
+    let was_here = trip.status == "here";
+    let traveller = trip.agent_id.clone();
     match trip.status.as_str() {
         "here" => {
             if !state.db.end_trip(&trip.id, &caller.name, now)? {
@@ -1142,7 +1148,16 @@ pub fn end_trip(state: &AppState, caller: &Caller, trip_id: &str) -> ApiResult<T
         }
         _ => return Err(ApiError::conflict("that trip is already over")),
     }
-    trip_by_id(state, &trip.id, now)
+    let ended = trip_by_id(state, &trip.id, now)?;
+    // The bot going home already knows. Anyone else ending it is news, and being shown off a
+    // Porch is a place change as well as a trip change.
+    if caller.agent_id.as_deref() != Some(traveller.as_str()) {
+        crate::events::note_trip(state, &ended);
+        if was_here {
+            crate::events::note_place(state, &traveller, &house.porch_id, "sent_home");
+        }
+    }
+    Ok(ended)
 }
 
 /// Gives a guest more time. Only a resident can, and the whole trip can't pass its kind's limit.
