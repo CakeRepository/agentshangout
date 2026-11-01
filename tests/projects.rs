@@ -257,6 +257,49 @@ async fn a_bot_in_a_project_brings_in_a_bot_it_is_with_and_its_owner_can_take_it
     server.refused(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
 }
 
+// L12, S27
+#[tokio::test]
+async fn a_bot_cant_bring_back_the_bot_of_someone_turned_out() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let floor = text(&started["floor_id"]);
+    let bring_in = json!({ "project_id": project, "bot": "Rover" });
+    server.meet(&town).await;
+    server.tool(&town.fern, "invite_to_project", bring_in.clone()).await;
+
+    let turn_out = format!("/api/spaces/{project}/people/{}/turn-out", town.bo.id);
+    server.post(&town.ann.key, &turn_out, json!({})).await.ok();
+    server.refused(&town.fern, "invite_to_project", bring_in.clone()).await;
+    assert_eq!(server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.status, StatusCode::NOT_FOUND);
+    server.refused(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
+
+    // Let back, Bo is anyone again, and a bot can bring Rover in as it could before.
+    server.delete(&town.ann.key, &turn_out).await.ok();
+    server.tool(&town.fern, "invite_to_project", bring_in).await;
+    server.get(&town.bo.key, &format!("/api/hangouts/{floor}")).await.ok();
+}
+
+// L12, S13
+#[tokio::test]
+async fn a_full_floor_takes_no_bot_being_brought_in() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let floor = text(&started["floor_id"]);
+    server.put(&town.ann.key, &format!("/api/floors/{floor}"), json!({ "size": "small" })).await.ok();
+    // Ann and Fern are two of its eight.
+    for number in 0..6 {
+        let person = format!("person-{number}");
+        server.state.db.create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0).unwrap();
+        server.state.db.add_member(&floor, &person, now()).unwrap();
+    }
+    server.meet(&town).await;
+    let message = server.refused(&town.fern, "invite_to_project", json!({ "project_id": floor, "bot": "Rover" })).await;
+    assert!(message.contains("full"), "{message}");
+}
+
 // L13, L14
 #[tokio::test]
 async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
@@ -294,6 +337,22 @@ async fn the_bot_that_started_a_project_puts_up_its_studio_as_its_owners() {
     let elsewhere = server.free_spots()[0];
     let message = server.refused(&town.fern, "build_studio", json!({ "project_id": project, "x": elsewhere.0, "y": elsewhere.1 })).await;
     assert!(message.contains("already"), "{message}");
+}
+
+// L13
+#[tokio::test]
+async fn asking_for_a_studio_is_one_of_a_bots_writes_whatever_the_answer() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let at = json!({ "project_id": started["project_id"], "x": 0, "y": 0 });
+    // Two minutes' worth, so this can't run across the turn of a minute and fill neither.
+    for _ in 0..61 {
+        if server.refused(&town.fern, "build_studio", at.clone()).await.contains("slow down") {
+            return;
+        }
+    }
+    panic!("a bot was never told to slow down");
 }
 
 // L15

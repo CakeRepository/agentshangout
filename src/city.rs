@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{self, Caller},
     db::{
-        Agent, Arrival, BotPlace, City, House, HouseStatus, NewCity, NewHouse, NewPass,
+        Agent, Arrival, BotPlace, City, House, HouseStatus, MoveIn, NewCity, NewHouse, NewPass,
         NewSceneRequest, NewTrip, Pass, Person, QueueItem, Road, Scene, SceneRequest, Trip,
     },
     error::{ApiError, ApiResult},
@@ -589,14 +589,14 @@ pub fn join_house(
         trust::check_rules_accepted(state, &city, accept_rules)?;
     }
     let family = resident_ids(state, &house.id)?;
-    // R5: a link works once, so one person gets past here however many use it at the same moment.
-    // The others get what a used link gets.
-    if !state.db.take_house_invite(&house.id, code, &auth::new_invite_code())? {
-        return Err(ApiError::not_found());
-    }
     // Joining the city here also ends any wait they had at its gate.
-    if !state.db.add_resident(&house.id, &person.id, now)? {
-        return Err(ApiError::conflict("you already live in this city: leave that house first"));
+    match state.db.move_in(&house.id, &person.id, code, &auth::new_invite_code(), now)? {
+        MoveIn::Moved => {}
+        // R5: a link works once, so the others at the same moment get what a used link gets.
+        MoveIn::LinkGone => return Err(ApiError::not_found()),
+        MoveIn::LivesElsewhere => {
+            return Err(ApiError::conflict("you already live in this city: leave that house first"))
+        }
     }
     let text = format!("{} moved into {}.", person.name, house.name);
     ping(state, family, "house.joined", &house.living_room_id, &text);
@@ -633,7 +633,7 @@ pub fn leave_house(state: &AppState, caller: &Caller, house_id: &str) -> ApiResu
     ops::announce(state, &house.living_room_id, &format!("{} moved out.", caller.name))?;
     state.db.remove_resident(&house.id, &caller.person_id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
-    end_passes_from(state, caller, &caller.name, &house)?;
+    end_what_they_agreed(state, caller, &caller.person_id, &caller.name, &house)?;
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
     Ok(())
@@ -657,11 +657,17 @@ pub fn remove_resident(
         .into_iter()
         .find(|person| person.id == person_id)
         .ok_or_else(ApiError::not_found)?;
+    // R5: a newcomer can't clear out the people already there, so a leaked link can't take a house.
+    if !state.db.moved_in_before(&house.id, &caller.person_id, &person.id)? {
+        return Err(ApiError::forbidden("you can only move out someone who moved in after you"));
+    }
     let line = format!("{} moved {} out.", caller.name, person.name);
     ops::announce(state, &house.living_room_id, &line)?;
     state.db.remove_resident(&house.id, &person.id)?;
     state.db.set_house_invite(&house.id, &auth::new_invite_code())?;
-    end_passes_from(state, caller, &person.name, &house)?;
+    end_what_they_agreed(state, caller, &person.id, &person.name, &house)?;
+    let text = format!("{} moved you out of {}.", caller.name, house.name);
+    ping(state, vec![person.id.clone()], "house.moved_out", "", &text);
     refresh_house(state, &house);
     ops::refresh_city(state, &house.city_id);
     Ok(())
@@ -869,6 +875,11 @@ pub fn create_trip(state: &AppState, caller: &Caller, input: &TripInput) -> ApiR
         .db
         .pass_for_bot(&house.id, agent_id)?
         .filter(|pass| pass.accepted_by.is_some() && minutes <= pass.max_minutes);
+    // R7: a pass left behind by someone who no longer lives here does nothing.
+    let pass = match pass {
+        Some(pass) if state.db.has_resident_named(&house.id, &pass.granted_by)? => Some(pass),
+        _ => None,
+    };
     // A trip a pass covers starts at once, so it's no request and waits behind none (R33).
     if pass.is_none() && state.db.open_ask(agent_id, &house.id, now)?.is_some() {
         return Err(ApiError::conflict(format!(
@@ -1222,6 +1233,7 @@ pub fn cancel_pass(state: &AppState, caller: &Caller, pass_id: &str) -> ApiResul
 
 /// Ends a pass, and at once any trip it's covering, in the name of whoever `by` is.
 fn end_pass(state: &AppState, by: &Caller, pass: &Pass, house: &House, now: i64) -> ApiResult<()> {
+    decline_scenes_on_key(state, pass, house, now)?;
     let ended = state.db.end_trip_for_pass(&pass.id, &by.name, now)?;
     state.db.delete_pass(&pass.id)?;
     if ended > 0 {
@@ -1236,16 +1248,53 @@ fn end_pass(state: &AppState, by: &Caller, pass: &Pass, house: &House, now: i64)
     Ok(())
 }
 
-/// R7, H12: a pass or a key is one resident's yes, so it goes when they do. `granted_by` is a name,
-/// and names never change. Two residents with one name can lose what can be given again.
-fn end_passes_from(state: &AppState, by: &Caller, name: &str, house: &House) -> ApiResult<()> {
+/// H12: a scene this pass's key approved that hasn't run goes with the key.
+fn decline_scenes_on_key(state: &AppState, pass: &Pass, house: &House, now: i64) -> ApiResult<()> {
+    if let Some(giver) = state.db.key_giver(&pass.agent_id, &house.id, "scenes")? {
+        state.db.decline_scenes_on_key(&house.id, &pass.agent_name, &giver, now)?;
+    }
+    Ok(())
+}
+
+/// R7, H12, R44: what someone said yes to goes when they do. Passes, keys and scenes hold a name,
+/// and names never change, so they stay while someone of that name still lives here: anyone who
+/// could keep one alive that way could give it again.
+fn end_what_they_agreed(
+    state: &AppState,
+    by: &Caller,
+    person_id: &str,
+    name: &str,
+    house: &House,
+) -> ApiResult<()> {
     let now = now();
-    for pass in state.db.passes_for_house(&house.id)? {
-        if pass.granted_by == name {
-            end_pass(state, by, &pass, house, now)?;
+    if !state.db.has_resident_named(&house.id, name)? {
+        for pass in state.db.passes_for_house(&house.id)? {
+            if pass.granted_by == name {
+                end_pass(state, by, &pass, house, now)?;
+            }
+        }
+        state.db.remove_keys_given_by(&house.id, name)?;
+        state.db.decline_scenes_approved_by(&house.id, name, now)?;
+    }
+    // Not the bot's doing, so it doesn't count as being sent home.
+    for trip_id in state.db.live_trips_agreed_by(&house.id, person_id, now)? {
+        let trip = trip_by_id(state, &trip_id, now)?;
+        if state.db.end_trip(&trip.id, &by.name, now)? {
+            trust::note_trip_ended(state, &trip.id, false, now)?;
+            let line = format!("{} went home.", trip.agent_name);
+            ops::announce(state, &house.porch_id, &line)?;
+            let mut others = resident_ids(state, &house.id)?;
+            others.push(trip.owner_id.clone());
+            ping(state, others, "trip.ended", &house.porch_id, &line);
+            ops::refresh_city(state, &house.city_id);
         }
     }
-    state.db.remove_keys_given_by(&house.id, name)?;
+    if state.db.house_bot(&house.id, now)?.is_some_and(|bot| bot.owner_id == person_id) {
+        let text = format!(
+            "{name} made this house's bot and has moved out. If they kept its token they can still use it, so replace it."
+        );
+        ping(state, resident_ids(state, &house.id)?, "house.bot_maker_left", &house.living_room_id, &text);
+    }
     Ok(())
 }
 
@@ -1295,6 +1344,9 @@ pub fn take_key(state: &AppState, caller: &Caller, pass_id: &str, key: &str) -> 
     ops::require_human(caller, "take a key back")?;
     if !KEYS.contains(&key) {
         return Err(ApiError::bad_request("key must be living_room or scenes"));
+    }
+    if key == "scenes" {
+        decline_scenes_on_key(state, &pass, &house, now())?;
     }
     state.db.remove_pass_key(&pass.id, key)?;
     refresh_house(state, &house);

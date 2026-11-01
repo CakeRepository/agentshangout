@@ -3333,11 +3333,13 @@ async fn a_flood_of_user_agents_and_addresses_keeps_only_a_kind_a_day_and_a_coun
         }
     }
     worlds::housekeeping(&server.state, t + 400);
-    let rows = server.state.db.sightings_on(worlds::today(t)).unwrap();
     let allowed: HashSet<&str> = world::CRAWLERS.iter().map(|c| c.id).chain(world::FETCHERS.iter().map(|f| f.id)).collect();
-    assert!(rows.len() <= allowed.len());
-    for row in &rows {
-        assert!(allowed.contains(row.0.as_str()), "{} isn't on a list", row.0);
+    for day in worlds::today(t)..=worlds::today(t + 400) {
+        let rows = server.state.db.sightings_on(day).unwrap();
+        assert!(rows.len() <= allowed.len());
+        for row in &rows {
+            assert!(allowed.contains(row.0.as_str()), "{} isn't on a list", row.0);
+        }
     }
     assert!(server.state.worlds.visitors(t + 100).len() <= worlds::MAX_VISITORS);
     // Nothing a request said is anywhere in the database, in any table.
@@ -4133,4 +4135,45 @@ async fn an_agent_that_names_both_a_crawler_and_a_fetcher_is_a_visitor_and_never
     }
     // None of it is a player, and none of it moves.
     assert_eq!(server.view(COMMONS).await["players"], json!([]));
+}
+
+// W30
+#[tokio::test]
+async fn a_world_at_its_cap_says_so_before_looking_at_the_move() {
+    start_early_in(60, 40).await;
+    let server = Server::start().await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let t = now();
+    let ann = server.person("Ann").await;
+    let player = server.state.db.own_player(&ann.id, t).unwrap();
+    for n in 0..300 {
+        assert!(worlds::act(&server.state, &player, COMMONS, &emote("wave"), t).is_ok(), "move {n}");
+    }
+    // There's nothing here to take down, which a quiet world would answer with a 400.
+    let guest = server.guest().await;
+    let reply = server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": 0, "y": 0 })).await;
+    assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS, "{}", reply.show());
+    assert!(reply.text.contains("very busy"), "{}", reply.show());
+}
+
+// W30
+#[tokio::test]
+async fn a_move_someone_cant_pay_for_counts_as_refused() {
+    start_early_in(60, 40).await;
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    for _ in 0..29 {
+        server.acts_ok(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await;
+    }
+    let map = Map::from_db(&server, COMMONS);
+    let (first, last) = map.line_from_road(5).unwrap();
+    let dear = road_move(first, last);
+    let ip = "203.0.113.77";
+    for n in 0..60 {
+        let reply = server.post("/api/worlds/commons/act", dear.clone()).token(&guest.token).ip(ip).send().await;
+        assert!(reply.text.contains("that costs"), "{n}: {}", reply.show());
+    }
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    let after = server.post("/api/worlds/commons/act", wave).token(&guest.token).ip(ip).send().await;
+    assert!(after.text.contains("too many of your moves"), "{}", after.show());
 }

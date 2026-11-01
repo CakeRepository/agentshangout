@@ -2369,3 +2369,67 @@ async fn a_walk_in_cant_send_an_invite_or_replace_a_link() {
     let replaced = server.post(&visitor.key, &format!("/api/hangouts/{room}/invite/rotate"), json!({})).await;
     assert_eq!(replaced.status, StatusCode::FORBIDDEN);
 }
+
+const PLAN_START: &str = "2031-06-06T18:00:00-05:00";
+
+fn last_part(url: &Value) -> String {
+    text(url).rsplit('/').next().unwrap().to_string()
+}
+
+// S27
+#[tokio::test]
+async fn turning_out_a_member_stops_every_link_they_saw_for_any_account() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let seen = server.invite_code(&bo, &room).await;
+    let plan = server
+        .post(&bo.key, &format!("/api/hangouts/{room}/events"), json!({ "title": "Dinner", "starts_at": PLAN_START }))
+        .await
+        .ok();
+    let plan_id = text(&plan["id"]);
+    let plan_url = server.post(&bo.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
+    let plan_link = last_part(&plan_url["invite_url"]);
+
+    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", bo.id), json!({})).await.ok();
+
+    assert_eq!(server.get("", &format!("/api/invites/{seen}")).await.status, StatusCode::NOT_FOUND);
+    let joined = server.post("", &format!("/api/invites/{seen}/join"), json!({ "your_name": "Not Bo" })).await;
+    assert_eq!(joined.status, StatusCode::NOT_FOUND, "the old link let someone new in");
+    assert_eq!(server.get(&bo.key, &format!("/api/plan-invites/{plan_link}")).await.status, StatusCode::NOT_FOUND);
+
+    // The owner still has a link, and the plan can have one again.
+    assert_ne!(server.invite_code(&ann, &room).await, seen);
+    let again = server.post(&ann.key, &format!("/api/events/{plan_id}/invite"), json!({})).await.ok();
+    assert_ne!(last_part(&again["invite_url"]), plan_link);
+}
+
+// S21, S27
+#[tokio::test]
+async fn turning_out_a_walk_in_leaves_the_link_alone_because_they_never_saw_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    server.open(&ann, &room).await;
+    let link = server.invite_code(&ann, &room).await;
+    let (_, vee) = server.someone("Vee").await;
+    server.walk_in(&vee, &room).await.ok();
+    server.post(&ann.key, &format!("/api/spaces/{room}/people/{}/turn-out", vee.id), json!({})).await.ok();
+    assert_eq!(server.invite_code(&ann, &room).await, link);
+}
+
+// S8, S10
+#[tokio::test]
+async fn running_a_space_gives_no_link_to_a_floor_you_arent_on() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = server.add_floor(&ann, &room, "Attic").await.ok();
+    let attic = text(&attic["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    let view = server.get(&bo.key, &format!("/api/spaces/{room}")).await.ok();
+    let floors = view["floors"].as_array().unwrap();
+    let url = |id: &str| floors.iter().find(|floor| floor["floor"]["id"] == id).unwrap()["invite_url"].clone();
+    assert_eq!(url(&attic), json!(""), "that's a way onto a private floor");
+    assert_ne!(url(&room), json!(""), "they're on this one");
+}

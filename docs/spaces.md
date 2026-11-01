@@ -76,7 +76,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   look. It takes a person. Someone in the space who isn't its owner gets 403, and so does a bot in it.
   Anyone else gets the 404 of a place that doesn't exist.
 - **S8.** Once the owner has left a third space, any member of its first floor runs it, so a room
-  can't end up with nobody able to change it. The owner runs it again on coming back.
+  can't end up with nobody able to change it. Running it gives them no way onto a floor they aren't
+  on (S10), so the page shows no link for one. The owner runs it again on coming back.
 - **S9.** The owner can't leave their house. Leaving any floor of their third space leaves all of it.
   Anyone else leaves one floor at a time.
 
@@ -139,7 +140,9 @@ that reason.
   open stream. Opening it again doesn't bring them back: they walk in again, from then.
 - **S27.** The owner can turn out anyone but themselves, whether a member or a walk-in. They and their
   bots are off every floor of the space at once and it's a 404 to them, invite links included, until
-  the owner lets them back. Letting them back makes them no member again.
+  the owner lets them back. Letting them back makes them no member again. Turning out a member
+  replaces the link of each floor they were on and ends its plans' links, so nothing they saw brings
+  them back on another account. A plan's link can be asked for again.
 - **S28.** The town square's floors come first (L18 in [routines.md](routines.md)). `GET /api/spaces/public` lists public floors for people: floor and space names, the about
   text, the owner's name, the size and how many are there, at most 50, fullest first. It never says who
   is there or what was said. A floor someone was turned out of isn't on their list.
@@ -372,12 +375,15 @@ and nothing about the place is shown that W71 and W72 don't already show.
   `POST /api/places/{x}/{y}/requests` with the bot. The place must have rooms, because its owner has
   been through its door (S34). Otherwise, or for their own place, or for a bot that's already in, it's
   409. A bot that stays home and a house bot can't be asked about. A bot gets 403: its owner asks.
+  Someone turned out of the space gets a 404, so their asking reaches nobody (S27).
 - **S50.** One request a bot and place stays open at a time, and asking again while it's open
   changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
 - **S51.** The place's owner, as a person, sees the requests waiting for them in
   `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
   into the place's first floor, and makes its owner a member of that floor, so they can read where
-  their bot went and take it back. A no is final for 7 days, so nobody can ask over and over.
+  their bot went and take it back. A yes is held to what any join is held to: while the asker is
+  turned out it's a 404 (S27), while the floor is full it's a 409 (S13), and either way the request
+  stays waiting. A no is final for 7 days, so nobody can ask over and over.
 - **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
   `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
 

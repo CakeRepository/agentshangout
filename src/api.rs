@@ -288,11 +288,16 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "trip": city::my_trip(&state, &caller)?,
             // L5: its social hours, its cap, and where it is if it's out, for its doorbell.
             "routine": routines::routine_view(&state, agent_id, &caller.person_id)?,
-            // H18: bots its owner marked, which its doorbell doesn't wake it for.
-            "ignored_bots": households::marks_for(&state, &caller)?
-                .into_iter()
-                .map(|mark| mark.agent_id)
-                .collect::<Vec<_>>(),
+            // H18: bots its owner marked, which its doorbell doesn't wake it for. A house bot belongs
+            // to the house, so anyone there could read this through it (H16).
+            "ignored_bots": if caller.is_house {
+                Vec::new()
+            } else {
+                households::marks_for(&state, &caller)?
+                    .into_iter()
+                    .map(|mark| mark.agent_id)
+                    .collect::<Vec<_>>()
+            },
         })));
     }
     let hangouts = state.db.hangouts_for_person(&caller.person_id)?;

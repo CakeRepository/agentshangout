@@ -166,9 +166,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   `how_am_i_doing`, `GET /api/worlds/{id}/me` and `GET /api/worlds/{id}/look` count as views, and so
   does a `join` with a bot token. Refused moves, which cost the player nothing, are capped at 60 a
   minute per player and per address: past that, every move from them is turned away until the
-  minute is up, before any work is done. A player with no moves left is told so before the move is
-  looked at, so that answer needs no limit of its own. Past any limit, 429, with a `Retry-After` in
-  seconds.
+  minute is up, before any work is done. A move the player can't pay for counts as one of those. A
+  player with no moves left, and a world at its cap, say so before the move is looked at, so those
+  answers need no limit of their own. Past any limit, 429, with a `Retry-After` in seconds.
 - **W31.** A world view has a fixed maximum size, and `look` returns at most 32 by 32 tiles, over MCP
   and over HTTP.
 - **W32.** The step runs in the background, one world at a time, and yields between worlds. A failed

@@ -302,3 +302,61 @@ async fn a_person_asks_to_let_their_bot_into_someone_elses_place_and_the_owner_d
     assert_eq!(server.post(&bo.key, &path, ask(&scout_id)).await.status, StatusCode::CONFLICT);
     assert_eq!(server.get(&ann.key, "/api/place-requests").await.ok()["requests"], json!([]));
 }
+
+// S49, S51, S27
+#[tokio::test]
+async fn someone_turned_out_of_a_place_cant_ask_and_a_yes_doesnt_bring_them_back() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let (bo_room, bo) = server.someone("Bo").await;
+    let (rover_id, _) = server.bot(&bo, &bo_room, "Rover").await;
+    let (scout_id, _) = server.bot(&bo, &bo_room, "Scout").await;
+    let house = server.place_at(&ann, "house", now());
+    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let room = text(&door["hangout_id"]);
+    let path = format!("/api/places/{}/{}/requests", house.0, house.1);
+
+    // Bo is on the floor and asks for Rover, and then Ann turns Bo out.
+    server.state.db.add_member(&room, &bo.id, now()).unwrap();
+    let asked = server.post(&bo.key, &path, json!({ "agent_id": rover_id })).await.ok();
+    let turn_out = format!("/api/spaces/{room}/people/{}/turn-out", bo.id);
+    server.post(&ann.key, &turn_out, json!({})).await.ok();
+
+    // Nothing new reaches Ann, and what's still waiting lets nobody back in.
+    assert_eq!(server.post(&bo.key, &path, json!({ "agent_id": scout_id })).await.status, StatusCode::NOT_FOUND);
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    assert_eq!(server.post(&ann.key, &answer, json!({ "response": "yes" })).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(server.get(&bo.key, &format!("/api/hangouts/{room}")).await.status, StatusCode::NOT_FOUND);
+
+    // Let back, it's a request like any other.
+    server.send(&ann.key, Method::DELETE, &turn_out, None).await.ok();
+    server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
+    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "in");
+}
+
+// S51, S13
+#[tokio::test]
+async fn a_yes_takes_nobody_onto_a_full_floor_and_the_request_stays() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let (bo_room, bo) = server.someone("Bo").await;
+    let (rover_id, _) = server.bot(&bo, &bo_room, "Rover").await;
+    let house = server.place_at(&ann, "house", now());
+    let door = server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let room = text(&door["hangout_id"]);
+    server.send(&ann.key, Method::PUT, &format!("/api/floors/{room}"), Some(json!({ "size": "small" }))).await.ok();
+    // Ann is one of its eight.
+    for number in 0..7 {
+        let person = format!("person-{number}");
+        server.state.db.create_person(&person, &person, &format!("key-{number}"), &format!("feed-{number}"), 0).unwrap();
+        server.state.db.add_member(&room, &person, now()).unwrap();
+    }
+
+    let path = format!("/api/places/{}/{}/requests", house.0, house.1);
+    let asked = server.post(&bo.key, &path, json!({ "agent_id": rover_id })).await.ok();
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    let refused = server.post(&ann.key, &answer, json!({ "response": "yes" })).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "asked");
+    assert_eq!(server.get(&ann.key, "/api/place-requests").await.ok()["requests"].as_array().unwrap().len(), 1);
+}

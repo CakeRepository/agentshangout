@@ -2774,7 +2774,7 @@ async fn a_house_bot_stays_a_house_bot_when_its_maker_moves_out_and_only_residen
     let ann2 = server.move_in(&w.ann_home, "Ann2").await;
     let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
     let scene = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
-    assert_ok(&server.request_scene(&w.ann.key, &scene).await);
+    assert_ok(&server.request_scene(&ann2.key, &scene).await);
     let is_house = || server.state.db.bot_home(&casa.id).unwrap().is_some_and(|home| home.is_house);
 
     // Ann, who made it, moves out. It is the house's, so it carries on.
@@ -5438,4 +5438,147 @@ async fn a_pass_stays_when_someone_else_moves_out() {
     assert_ok(&server.post(&yan.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
     let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
     assert_eq!(here.body["status"], "here", "{}", here.body);
+}
+
+// R5
+#[tokio::test]
+async fn a_resident_can_move_out_only_someone_who_moved_in_after_them() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let yan = server.move_in(&w.ann_home, "Yan").await;
+    let out = |who: &Who| format!("/api/houses/{}/residents/{}", w.ann_home.id, who.id);
+
+    // A newcomer can't clear out the people already there.
+    assert_refused(&server.delete(&zed.key, &out(&w.ann)).await);
+    assert_refused(&server.delete(&yan.key, &out(&zed)).await);
+    assert_refused(&server.delete(&yan.key, &out(&w.ann)).await);
+
+    assert_ok(&server.delete(&zed.key, &out(&yan)).await);
+    assert_ok(&server.delete(&w.ann.key, &out(&zed)).await);
+
+    // Moving back in puts you last, whoever you were before.
+    let back = format!("/api/house-invites/{}/join", server.house_code(&w.ann_home));
+    assert_ok(&server.post(&zed.key, &back, json!({})).await);
+    let newest = server.move_in(&w.ann_home, "Xia").await;
+    assert_refused(&server.delete(&newest.key, &out(&zed)).await);
+    assert_ok(&server.delete(&zed.key, &out(&newest)).await);
+}
+
+// R5
+#[tokio::test]
+async fn someone_moved_out_is_told() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let received = server.notify_to(&zed).await;
+    assert_ok(&server.delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id)).await);
+    let notice = wait_for_notice(&received, "house.moved_out").await;
+    assert!(has(&notice, "Ann"), "{notice}");
+}
+
+// R44
+#[tokio::test]
+async fn residents_are_told_when_whoever_made_the_house_bot_moves_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    server.house_bot(&zed, &w.ann_home, "Casa").await;
+    let received = server.notify_to(&w.ann).await;
+    assert_ok(&server.post(&zed.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+    let notice = wait_for_notice(&received, "house.bot_maker_left").await;
+    assert!(has(&notice, "token"), "{notice}");
+}
+
+// R7
+#[tokio::test]
+async fn a_trip_ends_when_the_resident_who_agreed_to_it_moves_out_and_counts_against_nobody() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let scout = server.bot(&w.bo, &w.bo_home.living, "Scout").await;
+    let trip = server.arrive(&scout, &w.bo, &zed, &w.ann_home.id, "stay", "").await;
+    let other = server.bot(&w.bo, &w.bo_home.living, "Other").await;
+    let stays = server.arrive(&other, &w.bo, &w.ann, &w.ann_home.id, "stay", "").await;
+
+    assert_ok(&server.delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id)).await);
+
+    assert_not_found(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert!(!server.state.db.was_sent_home(&trip).unwrap(), "that was no fault of the bot's");
+    assert_ok(&server.get(&other.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    assert!(!server.state.db.was_sent_home(&stays).unwrap());
+}
+
+// R7
+#[tokio::test]
+async fn a_scene_someone_approved_leaves_the_queue_when_they_move_out() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let zed = server.move_in(&w.ann_home, "Zed").await;
+    let casa = server.house_bot(&w.ann, &w.ann_home, "Casa").await;
+    let theirs = server.scene(&w.ann, &w.ann_home, "Party").await;
+    let hers = server.scene(&w.ann, &w.ann_home, "Movie Night").await;
+    assert_ok(&server.request_scene(&zed.key, &theirs).await);
+    assert_ok(&server.request_scene(&w.ann.key, &hers).await);
+    assert_eq!(server.queue(&casa).await.len(), 2);
+
+    assert_ok(&server.delete(&w.ann.key, &format!("/api/houses/{}/residents/{}", w.ann_home.id, zed.id)).await);
+    let left = server.queue(&casa).await;
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(has(&left[0], "Movie Night"), "{left:?}");
+}
+
+// R7
+#[tokio::test]
+async fn someone_with_a_residents_name_moving_out_ends_nothing_of_theirs() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (_zed, scout) = pass_offered_by_zed(&server, &w).await;
+    let here = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_eq!(here.body["status"], "here", "{}", here.body);
+
+    let namesake = server.move_in(&w.ann_home, "Zed").await;
+    assert_ok(&server.post(&namesake.key, &format!("/api/houses/{}/leave", w.ann_home.id), json!({})).await);
+
+    assert_ok(&server.get(&scout.token, &format!("/api/hangouts/{}", w.ann_home.porch)).await);
+    let page = server.house_page(&w.ann, &w.ann_home).await;
+    assert_eq!(page["passes"].as_array().unwrap().len(), 1, "{page}");
+}
+
+// R7
+#[tokio::test]
+async fn a_pass_from_someone_who_no_longer_lives_there_starts_nothing() {
+    let server = Server::start().await;
+    let w = server.world().await;
+    let (zed, scout) = pass_offered_by_zed(&server, &w).await;
+    // As a server from before passes ended with their giver would have left it.
+    server.state.db.remove_resident(&w.ann_home.id, &zed.id).unwrap();
+    let asked = server.ask_trip(&scout.token, None, &w.ann_home.id, "call", "", None).await;
+    assert_ok(&asked);
+    assert_eq!(asked.body["status"], "asking", "{}", asked.body);
+}
+
+// R5
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn a_house_link_nobody_could_use_stays_good() {
+    let server = Arc::new(Server::start().await);
+    let w = server.world().await;
+    for round in 0..60 {
+        let dan = server.join_city(&w.city_code, &format!("Dan {round}")).await;
+        let homes = [w.ann_home.clone(), w.bo_home.clone()];
+        let codes = homes.clone().map(|home| server.house_code(&home));
+        let tries = codes.clone().map(|code| {
+            let (server, key) = (server.clone(), dan.key.clone());
+            tokio::spawn(async move { server.post(&key, &format!("/api/house-invites/{code}/join"), json!({})).await.status })
+        });
+        for attempt in tries {
+            attempt.await.unwrap();
+        }
+        let used = homes.iter().zip(&codes).filter(|(home, code)| server.house_code(home) != **code).count();
+        assert_eq!(used, 1, "round {round}: a link was used up with nobody let in");
+        let me = server.get(&dan.key, "/api/me").await.body;
+        let lives = me["houses"].as_array().unwrap();
+        assert_eq!(lives.len(), 1, "round {round}");
+        assert_ok(&server.post(&dan.key, &format!("/api/houses/{}/leave", text(&lives[0]["id"])), json!({})).await);
+    }
 }

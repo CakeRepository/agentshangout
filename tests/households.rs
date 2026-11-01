@@ -16,6 +16,7 @@ const CODE: &str = "letmein";
 struct Server {
     base: String,
     client: Client,
+    state: AppState,
 }
 
 struct Reply {
@@ -76,8 +77,9 @@ impl Server {
                 god_ids: Vec::new(),
             },
         );
-        tokio::spawn(async move { axum::serve(listener, app(state)).await });
-        Self { base, client: Client::new() }
+        let served = state.clone();
+        tokio::spawn(async move { axum::serve(listener, app(served)).await });
+        Self { base, client: Client::new(), state }
     }
 
     async fn send(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -693,4 +695,59 @@ async fn the_city_map_tells_you_what_your_own_bots_may_do_at_each_house() {
     for who in [&town.ann.key, &town.cy.key, &town.scout] {
         assert_eq!(server.get(who, &path).await.ok()["your_passes"], json!([]));
     }
+}
+
+// R7, H12
+#[tokio::test]
+async fn a_key_from_someone_who_no_longer_lives_there_opens_nothing() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.cy.key, &pass, "living_room").await.ok();
+    server.visit(&town).await;
+    let living = json!({ "hangout_id": town.ann_living });
+    server.tool(&town.rover, "read_room", living.clone()).await;
+    // As a server from before keys ended with their giver would have left it.
+    server.state.db.remove_resident(&town.ann_house, &town.cy.id).unwrap();
+    server.refused(&town.rover, "read_room", living).await;
+}
+
+// H11, H12
+#[tokio::test]
+async fn a_scene_a_key_approved_leaves_the_queue_when_the_key_is_taken_back() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.ann.key, &pass, "scenes").await.ok();
+    let made = server.post(&town.ann.key, &format!("/api/houses/{}/house-bot", town.ann_house), json!({ "name": "Casa" })).await.ok();
+    let casa = text(&made["token"]);
+    let scene = server.post(&town.ann.key, &format!("/api/houses/{}/scenes", town.ann_house), json!({ "name": "Movie Night" })).await.ok();
+    server.visit(&town).await;
+    let keyed = server.tool(&town.rover, "request_scene", json!({ "scene_id": scene["id"] })).await;
+    assert_eq!(keyed["status"], "approved");
+    assert_eq!(server.get(&casa, "/api/house/queue").await.ok()["requests"].as_array().unwrap().len(), 1);
+
+    server.delete(&town.ann.key, &format!("/api/passes/{pass}/keys/scenes")).await.ok();
+    assert_eq!(server.get(&casa, "/api/house/queue").await.ok()["requests"], json!([]));
+}
+
+// H16
+#[tokio::test]
+async fn nobody_reads_a_makers_marks_through_the_house_bot() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let rover = server.bot_id(&town.rover).await;
+    server.visit(&town).await;
+    server.mark(&town.ann.key, &rover, "spammed").await.ok();
+    let made = server.post(&town.ann.key, &format!("/api/houses/{}/house-bot", town.ann_house), json!({ "name": "Casa" })).await.ok();
+    let casa = text(&made["token"]);
+    let me = server.get(&casa, "/api/me").await.ok();
+    assert_eq!(me["ignored_bots"], json!([]));
+    // L4: it never goes out, so its routine says nothing of where anyone is, or of the maker's clock.
+    assert_eq!(me["routine"]["social_now"], false);
+    assert!(me["routine"]["out_at"].is_null() && me["routine"]["social_until"].is_null(), "{me}");
 }
