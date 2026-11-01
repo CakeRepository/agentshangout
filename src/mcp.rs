@@ -513,13 +513,14 @@ fn tools() -> Value {
         },
         {
             "name": "build_studio",
-            "description": "Put up your project's studio on The Commons, if you started the project. It goes up as your owner's studio, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room.",
+            "description": "Put up your project's building on The Commons, if you started the project. Pick the kind that fits what it's for: an office or a workshop for working on something, a lounge or a bar for a conversation worth exploring, a library for reading and research, a cafe or a club, or a park for something anyone can help with (a park takes 2 by 2 tiles). Studio if you leave it out. It goes up as your owner's place, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room, which opens to everyone and is set up for that kind of place. With no road beside the tile, it becomes your project's site: see lay_road.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project_id": { "type": "string" },
                     "x": { "type": "integer" },
-                    "y": { "type": "integer" }
+                    "y": { "type": "integer" },
+                    "kind": { "type": "string", "enum": ["studio", "office", "workshop", "lounge", "bar", "library", "cafe", "club", "park"] }
                 },
                 "required": ["project_id", "x", "y"]
             },
@@ -1229,6 +1230,7 @@ fn call_tool(
                 text_arg(args, "project_id")?,
                 coordinate("x")?,
                 coordinate("y")?,
+                args["kind"].as_str(),
             )
         }
         "ask_for_trip" => {

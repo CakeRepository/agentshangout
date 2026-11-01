@@ -441,7 +441,7 @@ pub struct Template {
 
 /// How a floor can start out. Each keeps clear of whatever furniture it leaves in, and leaves a way
 /// from the door to the table. The first is how every floor starts.
-pub const TEMPLATES: [Template; 5] = [
+pub const TEMPLATES: [Template; 7] = [
     Template {
         template: "hangout",
         label: "Hangout",
@@ -552,7 +552,82 @@ pub const TEMPLATES: [Template; 5] = [
             at("plant", 38, 12),
         ],
     },
+    Template {
+        template: "bar",
+        label: "Bar",
+        paint: "ink",
+        flooring: "walnut",
+        hidden: &["arcade", "rug", "beanbags", "couch", "desk"],
+        items: &[
+            // The counter stays, with tables for two down each side and low lights.
+            at("coffee_table", 3, 2),
+            at("stool", 2, 3),
+            at("stool", 6, 3),
+            at("coffee_table", 3, 8),
+            at("stool", 2, 9),
+            at("stool", 6, 9),
+            at("coffee_table", 33, 6),
+            at("stool", 32, 7),
+            at("stool", 36, 7),
+            at("coffee_table", 33, 11),
+            at("stool", 32, 12),
+            at("stool", 36, 12),
+            at("lamp", 0, 6),
+            at("lamp", 10, 5),
+            at("lamp", 29, 4),
+        ],
+    },
+    Template {
+        template: "workshop",
+        label: "Workshop",
+        paint: "clay",
+        flooring: "oak",
+        hidden: &["bar", "arcade", "beanbags", "couch"],
+        items: &[
+            // Benches along the back wall, and the board to plan on.
+            at("workbench", 28, 0),
+            at("workbench", 33, 0),
+            at("cabinet", 4, 0),
+            at("whiteboard", 33, 5),
+            at("coffee_table", 3, 10),
+            at("stool", 2, 11),
+            at("stool", 6, 11),
+            at("lamp", 8, 9),
+            at("lamp", 29, 3),
+            at("plant", 36, 12),
+        ],
+    },
 ];
+
+/// W92: the template a new place's room starts with, by the kind of place. A house, a club and a
+/// studio start as a hangout, as they always have.
+pub fn template_for_place(kind: &str) -> Option<&'static Template> {
+    let word = match kind {
+        "cafe" => "cafe",
+        "green" => "garden",
+        "lounge" => "lounge",
+        "bar" => "bar",
+        "office" | "library" => "study",
+        "workshop" => "workshop",
+        _ => return None,
+    };
+    template_of(word)
+}
+
+/// W92: dresses a new place's room for what the place is. Done once, as its room is made.
+pub fn dress_for_place(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    kind: &str,
+) -> ApiResult<()> {
+    let Some(template) = template_for_place(kind) else {
+        return Ok(());
+    };
+    let place = place_of(state, caller, floor_id)?;
+    use_template(state, caller, &place, template)?;
+    Ok(())
+}
 
 pub fn template_of(word: &str) -> Option<&'static Template> {
     TEMPLATES.iter().find(|entry| entry.template == word)

@@ -364,6 +364,8 @@ struct PlaceAt {
 }
 
 fn place_at(state: &AppState, x: i64, y: i64) -> ApiResult<PlaceAt> {
+    // W91: any tile of a big place is that place.
+    let (x, y) = state.db.place_anchor_at(COMMONS_ID, x, y)?;
     let (kind, owner_id) =
         state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
     let building = (kind.clone(), owner_id.clone());
@@ -532,7 +534,25 @@ async fn away(
 /// S48: whether this space's building is a café or the town square (W82), whose owner needs no code
 /// to open its floors.
 fn is_cafe(state: &AppState, space: &Space) -> ApiResult<bool> {
-    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind == "cafe" || kind == "square"))
+    // W92: every place but a house is open unless its owner closes it, so its owner needs no code.
+    Ok(building_of(state, space)?.is_some_and(|(kind, _)| kind != "house"))
+}
+
+/// W92: what a place is called on the map and in its room's name, by its kind.
+pub fn place_title(kind: &str) -> &'static str {
+    match kind {
+        "cafe" => "Café",
+        "club" => "Club",
+        "green" => "Park",
+        "lounge" => "Lounge",
+        "bar" => "Bar",
+        "office" => "Office",
+        "workshop" => "Workshop",
+        "library" => "Library",
+        "square" => "Town Square",
+        "house" => "House",
+        _ => "Studio",
+    }
 }
 
 /// S34: the third space a new building opens onto: the oldest with no building standing, or a new
@@ -548,11 +568,8 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
             return Ok(space);
         }
     }
-    let kind = match kind {
-        "cafe" => "Café",
-        "club" => "Club",
-        _ => "Studio",
-    };
+    let place = kind;
+    let kind = place_title(kind);
     let name: String = caller.name.chars().take(MAX_NAME_CHARS - NAMED_AFTER_CHARS).collect();
     let name = if square { TOWN_SQUARE.to_string() } else { format!("{name}'s {kind}") };
     // Only a person gets here (the door refuses bots), so the switch is theirs to have, on or off.
@@ -569,7 +586,8 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
     if square {
         state.db.mark_town_square_room(&id)?;
     }
-    if square || kind == "Café" {
+    // W92: every place's room starts open, and dressed for what the place is.
+    {
         state.db.change_floor(&FloorChange {
             id: &id,
             name: None,
@@ -581,6 +599,9 @@ fn third_space_for_building(state: &AppState, caller: &Caller, kind: &str) -> Ap
             private_only: &items::private_only(),
         })?;
         ops::announce(state, &id, FLOOR_OPENED)?;
+    }
+    if !square {
+        items::dress_for_place(state, caller, &id, place)?;
     }
     state.db.space(&id)?.ok_or_else(ApiError::not_found)
 }
@@ -606,6 +627,12 @@ async fn go_through_door(
             "slow down: {MAX_DOORS_PER_MINUTE} doors a minute"
         )));
     }
+    // W91: a door on any tile of a big place is that place's door.
+    let (x, y) = match state.db.building_at(COMMONS_ID, body.x, body.y)? {
+        Some(_) => (body.x, body.y),
+        None => state.db.place_anchor_at(COMMONS_ID, body.x, body.y)?,
+    };
+    let body = Door { x, y };
     let building =
         state.db.building_at(COMMONS_ID, body.x, body.y)?.ok_or_else(ApiError::not_found)?;
     let found = match state.db.space_on_plot(COMMONS_ID, body.x, body.y)? {

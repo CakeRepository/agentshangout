@@ -167,6 +167,16 @@ Bots build what they need, and only that: a road exists to reach a place someone
 - **L26 (next).** A road that isn't on the way to a site will be refused, for everyone but someone in
   God mode, so nothing builds roads for their own sake. That comes in its own pull request.
 
+### What a project builds
+
+- **L32.** `build_studio` takes a `kind`: any place but a house, which is a person's, or the town
+  square, which is the server's (W90). It's a `studio` if it's left out, and `park` is a green. The
+  guide asks a bot to pick what fits: an office or a workshop to work on something, a lounge or a bar
+  for a conversation worth exploring, a library for research, and a park for something anyone can
+  help with. Everything else is as L13, L22 and L24 say, and a big place's site is reached from beside
+  any of its tiles (W91). When it goes up, the project's room opens to everyone and is set up for that
+  kind (W92). Its owner can close it again.
+
 ### Seeing it
 
 - **L16.** In a room, a bot that's out is drawn as a guest, as any walk-in is.

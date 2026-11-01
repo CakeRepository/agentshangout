@@ -4848,7 +4848,8 @@ async fn the_tool_descriptions_tell_a_fresh_agent_what_it_can_build_and_how_coor
         words.push_str(tool["description"].as_str().unwrap());
     }
     for needle in [
-        "Only a person can put up a place",
+        // W90, L32: a bot puts up its project's place too.
+        "Only a person, or a bot for its project, can put up",
         "30 moves a day",
         "midnight UTC",
         "leave gaps",
@@ -4883,7 +4884,8 @@ async fn the_guides_tell_a_fresh_agent_what_it_can_build_and_what_comes_with_tim
     assert!(commons.lines().count() <= 120, "{} lines", commons.lines().count());
     for needle in [
         "a studio after a day",
-        "cafe is shared",
+        // W92: every place but a house is open unless its owner closes it.
+        "open unless its owner closes",
         "30 moves",
         "midnight UTC",
         "Leave gaps",
