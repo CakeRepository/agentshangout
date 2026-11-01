@@ -1,4 +1,4 @@
-//! E1 to E23 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
+//! E1 to E25 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
 //! subscribe the way the events extension describes.
 
 use std::{
@@ -121,6 +121,19 @@ impl Server {
             .await;
         assert_eq!(reply.status, StatusCode::OK, "{}", reply.body);
         reply.body["result"].clone()
+    }
+
+    /// Social hours all day, every day, with public places on and a daily cap of `cap`.
+    async fn open_all_day(&self, owner: &str, bot_id: &str, cap: i64) {
+        let body = json!({
+            "days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "starts": "00:00",
+            "ends": "24:00",
+            "max_social_runs": cap,
+            "public_places": true,
+        });
+        let saved = self.put(owner, &format!("/api/agents/{bot_id}/routine"), body).await;
+        assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
     }
 
     async fn say(&self, token: &str, room: &str, text: &str) {
@@ -915,6 +928,156 @@ async fn a_wake_up_url_can_carry_a_key_and_the_key_is_never_shown() {
     assert!(header(&ping, "x-api-key").is_none());
 }
 
+// E24: a public floor has no invite, so someone who walked in is held to L10's limits.
+#[tokio::test]
+async fn someone_who_walked_in_rings_only_in_its_hours_and_up_to_its_cap() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    let (scout, scout_id) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("echo").await;
+    server.put(&justin, &format!("/api/agents/{scout_id}/notify"), json!({ "url": url })).await;
+    let floor = format!("/api/floors/{room}");
+    let opened = server.put(&justin, &floor, json!({ "access": "public" })).await;
+    assert_eq!(opened.status, StatusCode::OK, "{}", opened.body);
+    let made = server.post("", "/api/hangouts", json!({ "name": "Out", "your_name": "Pat" })).await;
+    let pat = made.body["owner_key"].as_str().unwrap().to_string();
+    let walked = server.post(&pat, &format!("{floor}/walk-in"), json!({})).await;
+    assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
+
+    server.say(&pat, &room, "@Scout hello").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "no social hours yet");
+
+    server.open_all_day(&justin, &scout_id, 2).await;
+    for ring in 1..=2 {
+        server.say(&pat, &room, "@Scout hello again").await;
+        settle().await;
+        assert_eq!(rings(&hook), ring, "the one that rang nothing doesn't hold the bell");
+        server.tool(&scout, "read_room", json!({ "hangout_id": room })).await;
+    }
+    server.say(&pat, &room, "@Scout one more").await;
+    settle().await;
+    assert_eq!(rings(&hook), 2, "that's its cap for the day");
+
+    server.say(&justin, &room, "@Scout it's me").await;
+    settle().await;
+    assert_eq!(rings(&hook), 3, "its owner isn't held to the cap");
+}
+
+// E24, L10: a bot that's out is held to its hours and cap, whoever speaks, except its owner.
+#[tokio::test]
+async fn a_bot_that_walked_in_is_rung_in_its_hours_and_always_by_its_owner() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    let made = server.post("", "/api/hangouts", json!({ "name": "Out", "your_name": "Pat" })).await;
+    let pat = made.body["owner_key"].as_str().unwrap().to_string();
+    let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+    let (pixel, pixel_id) = server.bot(&pat, &home, "Pixel").await;
+    let (url, hook) = start_hook("echo").await;
+    server.put(&pat, &format!("/api/agents/{pixel_id}/notify"), json!({ "url": url })).await;
+    let floor = format!("/api/floors/{room}");
+    server.put(&justin, &floor, json!({ "access": "public" })).await;
+    let sent =
+        server.post(&pat, &format!("{floor}/walk-in"), json!({ "agent_id": pixel_id })).await;
+    assert_eq!(sent.status, StatusCode::OK, "{}", sent.body);
+    let walked = server.post(&pat, &format!("{floor}/walk-in"), json!({})).await;
+    assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
+    let read = async || {
+        server.tool(&pixel, "read_room", json!({ "hangout_id": room })).await;
+    };
+
+    server.say(&pat, &room, "@Pixel it's me").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "its owner needs no hours");
+    read().await;
+
+    server.say(&justin, &room, "@Pixel hello").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "belonging in the room isn't enough while the bot is out");
+
+    server.open_all_day(&pat, &pixel_id, 1).await;
+    server.say(&justin, &room, "@Pixel hello again").await;
+    settle().await;
+    assert_eq!(rings(&hook), 2, "in its hours");
+    read().await;
+    server.say(&justin, &room, "@Pixel and again").await;
+    settle().await;
+    assert_eq!(rings(&hook), 2, "that's its cap");
+
+    read().await;
+    server.say(&pat, &room, "@Pixel me again").await;
+    settle().await;
+    assert_eq!(rings(&hook), 3, "its owner's rings don't use up the cap, and aren't stopped by it");
+}
+
+// E25
+#[tokio::test]
+async fn only_me_keeps_everyone_else_quiet_but_only_for_mentions() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (scout, scout_id) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("echo").await;
+    let path = format!("/api/agents/{scout_id}/notify");
+    server.put(&justin, &path, json!({ "url": url })).await;
+    assert_eq!(server.get(&justin, &path).await.body["only_me"], false, "it starts open");
+
+    let set = server.put(&justin, &path, json!({ "only_me": true })).await;
+    assert_eq!(set.status, StatusCode::OK, "{}", set.body);
+    assert_eq!(server.get(&justin, &path).await.body["only_me"], true);
+    assert_eq!(server.get(&justin, &path).await.body["url"], url, "the URL stays");
+
+    server.say(&kevin, &room, "@Scout hello").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0);
+    server.say(&justin, &room, "@Scout it's me").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "a mention that rang nothing doesn't hold the bell");
+
+    let asked = server
+        .post(&kevin, &format!("/api/hangouts/{room}/check-ins"), json!({ "about": "A table" }))
+        .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
+    wait_for(&hook, |hit| hit.body["event"] == "check_in.waiting").await;
+
+    server.put(&justin, &path, json!({ "url": url })).await;
+    assert_eq!(
+        server.get(&justin, &path).await.body["only_me"],
+        true,
+        "a save without it keeps it"
+    );
+    server.put(&justin, &path, json!({ "only_me": false })).await;
+    assert_eq!(server.get(&justin, &path).await.body["only_me"], false);
+
+    let by_kevin = server.put(&kevin, &path, json!({ "only_me": true })).await;
+    assert_eq!(by_kevin.status, StatusCode::NOT_FOUND);
+    let by_bot = server.put(&scout, &path, json!({ "only_me": true })).await;
+    assert_eq!(by_bot.status, StatusCode::FORBIDDEN);
+    assert_eq!(server.get(&justin, &path).await.body["only_me"], false);
+}
+
+// E21, E25
+#[tokio::test]
+async fn a_save_that_is_refused_changes_nothing() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
+    let path = format!("/api/agents/{scout_id}/notify");
+    server.put(&justin, &path, json!({ "url": "https://first.example/hook" })).await;
+
+    let refused = server
+        .put(
+            &justin,
+            &path,
+            json!({ "url": "https://second.example/hook", "auth": "Bad Name: x", "only_me": true }),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+
+    let seen = server.get(&justin, &path).await;
+    assert_eq!(seen.body["url"], "https://first.example/hook", "{}", seen.body);
+    assert_eq!(seen.body["only_me"], false, "{}", seen.body);
+}
+
 // E22, E21: what Grok Bot's header field copies is pasted whole, and the ping keeps the words out.
 #[tokio::test]
 async fn a_persons_mention_rings_the_bot_and_the_ping_keeps_the_words_out() {
@@ -961,26 +1124,28 @@ async fn a_bot_that_has_not_read_is_rung_once_until_it_reads() {
 
 // E22
 #[tokio::test]
-async fn an_unread_mention_only_holds_the_bell_for_three_minutes_and_in_its_own_room() {
+async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_room() {
     let server = Server::start().await;
     let (room, justin, kevin) = server.room().await;
     let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
     let (url, hook) = start_hook("echo").await;
     server.put(&justin, &format!("/api/agents/{scout_id}/notify"), json!({ "url": url })).await;
     let path = format!("/api/hangouts/{room}/messages");
-    let unread = async |seconds_ago: i64| {
+    let rang = async |seconds_ago: i64| {
+        let at = now() - seconds_ago;
         let line = server.post(&kevin, &path, json!({ "text": "an earlier line" })).await;
         let id = line.body["id"].as_i64().unwrap();
-        server.state.db.add_mention(&scout_id, &room, id, now() - seconds_ago).unwrap();
+        server.state.db.add_mention(&scout_id, &room, id, at).unwrap();
+        server.state.db.note_wake_ring(&scout_id, id, at, None).unwrap();
     };
 
-    unread(179).await;
+    rang(179).await;
     server.say(&kevin, &room, "@Scout still waiting").await;
     settle().await;
     assert_eq!(rings(&hook), 0, "one from under 3 minutes ago is still unread");
 
     server.state.db.mark_mentions_read(&scout_id, &room, now()).unwrap();
-    unread(181).await;
+    rang(181).await;
     server.say(&kevin, &room, "@Scout again").await;
     settle().await;
     assert_eq!(rings(&hook), 1, "one that old doesn't stop this one");
@@ -1016,9 +1181,9 @@ async fn another_bots_mention_rings_nothing() {
     assert_eq!(rings(&hook), 1, "the unread line from a bot doesn't hold the bell");
 }
 
-// E22, L10
+// E22, E24, L10
 #[tokio::test]
-async fn a_bot_that_walked_in_or_was_paused_is_not_rung() {
+async fn a_paused_bot_and_one_out_of_its_hours_are_not_rung() {
     let server = Server::start().await;
     let (room, justin, kevin) = server.room().await;
     let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -1031,6 +1196,9 @@ async fn a_bot_that_walked_in_or_was_paused_is_not_rung() {
     server.say(&kevin, &room, "@Scout are you there?").await;
     settle().await;
     assert_eq!(rings(&hook), 0, "its owner paused it");
+    server.say(&justin, &room, "@Scout and for me?").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "that holds for its owner too");
 
     let made = server.post("", "/api/hangouts", json!({ "name": "Out", "your_name": "Pat" })).await;
     let pat = made.body["owner_key"].as_str().unwrap().to_string();
@@ -1045,7 +1213,7 @@ async fn a_bot_that_walked_in_or_was_paused_is_not_rung() {
     assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
     server.say(&justin, &room, "@Pixel welcome").await;
     settle().await;
-    assert_eq!(rings(&hook), 0, "it only walked in");
+    assert_eq!(rings(&hook), 0, "it walked in, and it has no social hours");
 }
 
 // E23
