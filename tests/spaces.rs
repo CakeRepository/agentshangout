@@ -2129,7 +2129,7 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 32] = [
+const KEPT_BY_THE_WIPE: [&str; 33] = [
     "people",
     "passkey_users",
     "passkeys",
@@ -2140,6 +2140,7 @@ const KEPT_BY_THE_WIPE: [&str; 32] = [
     "owner_notes",
     "bot_marks",
     "bots_without_moods",
+    "bots_without_a_house",
     "person_looks",
     "bot_looks",
     "agents",
@@ -3382,4 +3383,175 @@ fn a_narrow_room_keeps_its_name_and_every_button() {
         css.contains(".wd-room .wd-title-actions { margin-left: auto; }"),
         "buttons on a line of their own aren't where they were"
     );
+}
+
+async fn turn_out(server: &Server, by: &Who, space: &str, person: &Who) {
+    let path = format!("/api/spaces/{space}/people/{}/turn-out", person.id);
+    server.post(&by.key, &path, json!({})).await.ok();
+}
+
+async fn new_account_on(server: &Server, link: &str) -> Reply {
+    server.post("", &format!("/api/invites/{link}/join"), json!({ "your_name": "Not Bo" })).await
+}
+
+// S27: leaving a floor doesn't unsee its link, and all the join check knows is the account.
+#[tokio::test]
+async fn a_floor_left_before_being_turned_out_lets_no_new_account_in_on_its_old_link() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    server.say(&ann.key, &attic, "only for the attic").await.ok();
+    let bo = server.join(&ann, &room, "Bo").await;
+    let seen = server.invite_code(&ann, &attic).await;
+    server.post(&bo.key, &format!("/api/invites/{seen}/join"), json!({})).await.ok();
+    server.post(&bo.key, &format!("/api/hangouts/{attic}/leave"), json!({})).await.ok();
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+    assert_ne!(server.invite_code(&ann, &attic).await, seen);
+}
+
+// S21, S27: a walk-in saw no link, unless they saw it before they were a walk-in.
+#[tokio::test]
+async fn someone_turned_out_as_a_walk_in_keeps_no_link_from_when_they_belonged() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let seen = server.invite_code(&bo, &room).await;
+    server.post(&bo.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    server.open(&ann, &room).await;
+    server.walk_in(&bo, &room).await.ok();
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S27, FR5: an invite from a friend shows the link, so whoever had one saw it.
+#[tokio::test]
+async fn someone_turned_out_keeps_no_link_an_invite_from_a_friend_showed_them() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (cys_room, cy) = server.someone("Cy").await;
+    let cys_code = server.invite_code(&cy, &cys_room).await;
+    server.post(&ann.key, &format!("/api/invites/{cys_code}/join"), json!({})).await.ok();
+    let invite = format!("/api/hangouts/{room}/invite-friend");
+    server.post(&ann.key, &invite, json!({ "person_id": cy.id })).await.ok();
+    let seen = server.invite_code(&ann, &room).await;
+    server.open(&ann, &room).await;
+    server.walk_in(&cy, &room).await.ok();
+
+    turn_out(&server, &ann, &room, &cy).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S8, S27: the link of the first floor would have run the space, and undone this.
+#[tokio::test]
+async fn nobody_turned_out_comes_back_to_run_the_space_and_let_themselves_in() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    let cy = server.join(&ann, &room, "Cy").await;
+    let upstairs = server.invite_code(&ann, &attic).await;
+    server.post(&bo.key, &format!("/api/invites/{upstairs}/join"), json!({})).await.ok();
+    let seen = server.invite_code(&bo, &room).await;
+    server.post(&bo.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    // Cy runs it now, and Bo is only upstairs.
+    turn_out(&server, &cy, &room, &bo).await;
+
+    new_account_on(&server, &seen).await.refused(StatusCode::NOT_FOUND);
+    let view = server.get(&cy.key, &format!("/api/spaces/{room}")).await.ok();
+    assert_eq!(names(&view["turned_out"]), vec!["Bo".to_string()]);
+}
+
+// S27: only what they saw changes, so a floor they never reached keeps its link and its invites.
+#[tokio::test]
+async fn turning_someone_out_leaves_the_link_of_a_floor_they_never_saw_alone() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    let link = server.invite_code(&ann, &attic).await;
+
+    turn_out(&server, &ann, &room, &bo).await;
+
+    assert_eq!(server.invite_code(&ann, &attic).await, link);
+}
+
+// S12, S51: the first floor is the one the space began with, wherever it has been moved to.
+#[tokio::test]
+async fn a_yes_brings_a_bot_onto_the_floor_the_space_began_with_however_floors_are_ordered() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    server.say(&ann.key, &attic, "only for the attic").await.ok();
+    let (x, y) = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, (x, y)).await.ok()["hangout_id"], json!(room));
+    let (bos_room, bo) = server.someone("Bo").await;
+    let code = server.invite_code(&ann, &room).await;
+    server.post(&bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let (bot, _) = server.bot(&bo, &bos_room, "Rover").await;
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    // Bo runs it now, and moves the attic below the floor they're on.
+    let down = json!({ "direction": "down" });
+    server.post(&bo.key, &format!("/api/floors/{attic}/move"), down).await.ok();
+    let asked = json!({ "agent_id": bot });
+    let asked = server.post(&bo.key, &format!("/api/places/{x}/{y}/requests"), asked).await.ok();
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
+
+    server.snapshot(&bo.key, &attic).await.refused(StatusCode::NOT_FOUND);
+    let ground = server.snapshot(&bo.key, &room).await.ok();
+    assert!(names(&ground["agents"]).contains(&"Rover".to_string()), "{ground}");
+}
+
+// S8, S15, S19: opening a floor is a way onto it, and running a space gives nobody that.
+#[tokio::test]
+async fn someone_running_a_space_opens_only_a_floor_they_are_on() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let attic = text(&server.add_floor(&ann, &room, "Attic").await.ok()["id"]);
+    let bo = server.join(&ann, &room, "Bo").await;
+    server.post(&ann.key, &format!("/api/hangouts/{room}/leave"), json!({})).await.ok();
+
+    let opening = json!({ "access": "public", "create_code": CODE });
+    let path = format!("/api/floors/{attic}");
+    server.put(&bo.key, &path, opening).await.refused(StatusCode::FORBIDDEN);
+    server.walk_in(&bo, &attic).await.refused(StatusCode::NOT_FOUND);
+
+    // The rest of running it reaches this floor as it did, and the floor they're on opens.
+    server.put(&bo.key, &path, json!({ "name": "Loft" })).await.ok();
+    server.open(&bo, &room).await;
+}
+
+// R20, S49, S51: a bot can be told to stay home while its request waits.
+#[tokio::test]
+async fn a_yes_doesnt_bring_in_a_bot_told_to_stay_home_since_its_owner_asked() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let (x, y) = server.build(&ann, "studio").await;
+    assert_eq!(server.go_in(&ann.key, (x, y)).await.ok()["hangout_id"], json!(room));
+    let town = server.neighbours().await;
+    let asked = json!({ "agent_id": town.bot });
+    let path = format!("/api/places/{x}/{y}/requests");
+    let asked = server.post(&town.cy.key, &path, asked).await.ok();
+    let home = server.state.db.bot_home(&town.bot).unwrap().unwrap();
+    let stays = json!({ "house_id": home.house_id, "stays_home": true });
+    server.put(&town.cy.key, &format!("/api/agents/{}/home", town.bot), stays).await.ok();
+
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    server
+        .post(&ann.key, &answer, json!({ "response": "yes" }))
+        .await
+        .refused(StatusCode::CONFLICT);
+
+    server.snapshot(&town.token, &room).await.refused(StatusCode::NOT_FOUND);
+    let waiting = server.get(&ann.key, "/api/place-requests").await.ok();
+    assert_eq!(waiting["requests"].as_array().unwrap().len(), 1, "it stays waiting: {waiting}");
 }

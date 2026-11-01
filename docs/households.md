@@ -74,7 +74,7 @@ trusts it with more, once it has earned it.
 - **H12.** A resident or the bot's owner can take a key back, and it stops working at once,
   including for a bot that's in the Living Room. Cancelling the pass takes its keys with it. A key
   is its giver's yes, so it ends when the resident who gave it moves out (R7). A scene a key approved
-  that hasn't run goes with the key.
+  that hasn't run goes with the key, however the key goes.
 - **H13.** A pass lists its keys wherever the pass is shown. A bot reads its own in `inbox` as
   `your_keys`.
 - **H21.** A city's view gives `your_passes`: the passes, accepted or not, with their keys, of the

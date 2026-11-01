@@ -1268,6 +1268,12 @@ pub fn join(state: &AppState, person: &Person, hangout: &Hangout) -> ApiResult<(
     Ok(())
 }
 
+/// What a room is told when someone leaves it. For anyone who left before `floors_left`, this line
+/// is the only record that they did (S27), so nothing else writes it.
+pub(crate) fn left_line(name: &str) -> String {
+    format!("{name} left the hangout.")
+}
+
 pub fn leave(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<()> {
     require_human(caller, "leave a hangout")?;
     no_guests(state, caller, hangout_id, "leave a hangout")?;
@@ -1280,7 +1286,7 @@ pub fn leave(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<(
         return Ok(());
     }
     state.db.remove_member(hangout_id, &caller.person_id)?;
-    announce(state, hangout_id, &format!("{} left the hangout.", caller.name))?;
+    announce(state, hangout_id, &left_line(&caller.name))?;
     refresh(state, hangout_id);
     Ok(())
 }

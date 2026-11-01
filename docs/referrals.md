@@ -45,7 +45,8 @@ person sends the link.
 - **F9.** A plan has one link. Any person in the room can replace it, and the old one stops working
   at once.
 - **F10.** A link works while its plan is coming up. Once the plan is cancelled or over, the link
-  answers like a wrong code: 404.
+  answers like a wrong code: 404. It answers the same to someone turned out of the space the plan is
+  in (S27).
 - **F11.** A link shows the title, start, end, place, whether the plan is on the calendar, who sent
   the link, how many yeses it has and how many it needs. It never shows the room's name, the plan's
   notes, who else answered, or anything else from the room.

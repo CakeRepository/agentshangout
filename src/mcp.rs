@@ -1040,7 +1040,12 @@ fn resolve_city(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Op
 
 /// W88, W89: The Commons, for a bot whose owner lets it out. `no_city` says there's nothing else to
 /// show it, so a refusal says that too.
-fn list_commons(state: &AppState, caller: &Caller, no_city: bool) -> ApiResult<Value> {
+fn list_commons(
+    state: &AppState,
+    headers: &HeaderMap,
+    caller: &Caller,
+    no_city: bool,
+) -> ApiResult<Value> {
     let agent_id = caller.agent_id.as_deref().unwrap_or_default();
     if let Some(reason) = routines::kept_in(state, agent_id)? {
         let refused = format!("you can't see The Commons, the public map: {reason}");
@@ -1050,6 +1055,8 @@ fn list_commons(state: &AppState, caller: &Caller, no_city: bool) -> ApiResult<V
             refused
         }));
     }
+    // W30: it's a view whichever door it came through, and this one reads the whole map.
+    worlds::allow_view(state, headers, now())?;
     let mut reply = worlds::commons_for_bot(state, &caller.person_id)?;
     reply["trust_note"] = json!(CITY_TRUST_NOTE);
     reply["note"] = json!(format!(
@@ -1060,11 +1067,16 @@ fn list_commons(state: &AppState, caller: &Caller, no_city: bool) -> ApiResult<V
 }
 
 /// What a bot needs to find a house: names, who lives where, and where every bot is.
-fn list_city(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value> {
+fn list_city(
+    state: &AppState,
+    headers: &HeaderMap,
+    caller: &Caller,
+    args: &Value,
+) -> ApiResult<Value> {
     let city_id = match resolve_city(state, caller, args)? {
-        Some(id) if id == COMMONS_ID => return list_commons(state, caller, false),
+        Some(id) if id == COMMONS_ID => return list_commons(state, headers, caller, false),
         Some(id) => id,
-        None => return list_commons(state, caller, true),
+        None => return list_commons(state, headers, caller, true),
     };
     let view = city::city_view(state, caller, &city_id)?;
     let person_name = |id: &str| {
@@ -1140,7 +1152,13 @@ fn call_house_tool(
     }
 }
 
-fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> ApiResult<Value> {
+fn call_tool(
+    state: &AppState,
+    headers: &HeaderMap,
+    caller: &Caller,
+    name: &str,
+    args: &Value,
+) -> ApiResult<Value> {
     // A house bot has a separate world, and nobody else gets to enter it.
     if caller.is_house {
         return call_house_tool(state, caller, name, args);
@@ -1149,7 +1167,7 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         return Err(ApiError::forbidden("that tool is only for a house bot"));
     }
     match name {
-        "list_city" => list_city(state, caller, args),
+        "list_city" => list_city(state, headers, caller, args),
         "public_floors" => {
             let floors = crate::routines::public_floors(state, caller)?;
             Ok(json!({ "trust_note": TRUST_NOTE, "places": floors }))
@@ -1452,7 +1470,14 @@ fn rpc_result(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
-fn dispatch(state: &AppState, caller: &Caller, id: Value, method: &str, params: &Value) -> Value {
+fn dispatch(
+    state: &AppState,
+    headers: &HeaderMap,
+    caller: &Caller,
+    id: Value,
+    method: &str,
+    params: &Value,
+) -> Value {
     match method {
         "initialize" => {
             let requested = params["protocolVersion"].as_str().unwrap_or_default();
@@ -1492,7 +1517,7 @@ fn dispatch(state: &AppState, caller: &Caller, id: Value, method: &str, params: 
             let empty = json!({});
             let args = params.get("arguments").unwrap_or(&empty);
             // Tool failures go back to the model as results, so it can read them and adjust.
-            let result = match call_tool(state, caller, name, args) {
+            let result = match call_tool(state, headers, caller, name, args) {
                 Ok(value) => json!({
                     "content": [{ "type": "text", "text": value.to_string() }],
                     "structuredContent": value,
@@ -1569,7 +1594,7 @@ pub async fn handle(
         };
         return Json(rpc_result(id, result)).into_response();
     }
-    Json(dispatch(&state, &caller, id, method, &params)).into_response()
+    Json(dispatch(&state, &headers, &caller, id, method, &params)).into_response()
 }
 
 #[cfg(test)]
@@ -1639,7 +1664,8 @@ mod tests {
     /// Calls a tool the way a client would, returning the whole `tools/call` result.
     fn call(world: &World, caller: &Caller, name: &str, args: Value) -> Value {
         let params = json!({ "name": name, "arguments": args });
-        dispatch(&world.state, caller, json!(1), "tools/call", &params)["result"].clone()
+        dispatch(&world.state, &HeaderMap::new(), caller, json!(1), "tools/call", &params)["result"]
+            .clone()
     }
 
     /// A tool that worked: its structured result.
@@ -1657,7 +1683,8 @@ mod tests {
     }
 
     fn tool_names(world: &World, caller: &Caller) -> Vec<String> {
-        let reply = dispatch(&world.state, caller, json!(1), "tools/list", &json!({}));
+        let reply =
+            dispatch(&world.state, &HeaderMap::new(), caller, json!(1), "tools/list", &json!({}));
         reply["result"]["tools"]
             .as_array()
             .unwrap()
@@ -1683,7 +1710,14 @@ mod tests {
             assert!(!ordinary.contains(&name.to_string()), "{name} is for the house bot");
         }
 
-        let init = dispatch(&world.state, &world.casa, json!(1), "initialize", &json!({}));
+        let init = dispatch(
+            &world.state,
+            &HeaderMap::new(),
+            &world.casa,
+            json!(1),
+            "initialize",
+            &json!({}),
+        );
         let text = init["result"]["instructions"].as_str().unwrap();
         assert!(text.contains("house_queue") && text.contains("no access to chat"), "{text}");
         assert!(!text.contains("hangout"), "{text}");

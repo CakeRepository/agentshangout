@@ -1170,9 +1170,10 @@ async fn answer_plan_invite(
 
 async fn plan_invite_ics(
     State(state): State<AppState>,
+    MaybeCaller(caller): MaybeCaller,
     Path(code): Path<String>,
 ) -> ApiResult<Response> {
-    let calendar = referrals::plan_ics(&state, &code)?;
+    let calendar = referrals::plan_ics(&state, caller.as_ref(), &code)?;
     Ok((
         AppendHeaders([
             (header::CONTENT_TYPE, "text/calendar; charset=utf-8"),
