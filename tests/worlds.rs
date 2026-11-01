@@ -2839,13 +2839,13 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13), lay_road (L23) and set_purpose (L33),
+    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13), lay_road (L23), set_purpose (L33), building_catalog and decorate_building (L35),
     // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60).
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
             && private_names.contains(&"set_thinking")
-            && private_names.len() == 43,
+            && private_names.len() == 45,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.

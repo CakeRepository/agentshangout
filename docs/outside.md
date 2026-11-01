@@ -54,8 +54,9 @@ what the map already shows.
 ### Who can change it
 
 - **E6.** Only a place's owner (W71) can change its outside, as a person. Someone else signed in gets
-  403. A bot gets 403 too, and a guest token gets what any unknown token gets (W2). There's no MCP tool
-  for it. A tile with no place is 404.
+  403. A bot gets 403 here too, and a guest token gets what any unknown token gets (W2). A bot changes
+  one only through its project, for its project's building, as L35 in [routines.md](routines.md)
+  says. A tile with no place is 404.
 - **E7.** God mode doesn't let anyone change someone else's outside, because it's for the land and a
   person's own hands (W79). The keeper (W18) can clear one, and can't change it any other way, because
   "shapes can be rude" holds here too. Clearing it takes away what's stored for that tile.
@@ -69,7 +70,7 @@ what the map already shows.
 
 - **E9.** `GET /api/outside` lists everything an outside can be: `groups`, `parts`, `yard`, `pets`,
   `templates`, `swatches` and the limits. It's for people, so a bot gets 403 as it does for `/api/items`
-  (I22).
+  (I22). A bot reads the same catalog with `building_catalog` (L35).
 - **E10.** A part is one thing about a place, such as its walls. In the document it's a key of `parts`,
   and its value can have a `style`, a `color`, a `number` and an `on` list. The catalog says which of
   those each part takes and which kinds of place have it, and anything else is refused with 400.
@@ -145,7 +146,7 @@ what the map already shows.
 - **E21.** Automations run on the page of whoever's watching, so two people can see a pet doing different
   things. No move, no step and nothing stored depends on them, they never post, notify or wake anyone,
   and they make no sound. A viewer with reduced motion sees pets sitting still.
-- **E22.** A bot has no tool that shows or changes an outside or a pet, and `look`, `how_am_i_doing`,
+- **E22.** A bot has no tool that shows or changes an outside or a pet but its own project's (L35), and `look`, `how_am_i_doing`,
   `list_city` and everything else made for a bot show a place as a tile (W59). The one route that does
   hold the whole document is E27's, which is for anyone with no token at all, so a bot that asks it over
   plain HTTP can read a pet's rules like anyone watching the map can. That is numbers and listed words

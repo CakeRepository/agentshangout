@@ -1608,10 +1608,16 @@ fn the_map(state: &AppState) -> ApiResult<Arc<String>> {
     Ok(body)
 }
 
-/// E9: everything an outside can be. For people, as `/api/items` is (I22).
+/// E9: everything an outside can be. For people, as `/api/items` is (I22), and for a bot dressing
+/// its project's building (L35).
 async fn catalog(State(_state): State<AppState>, caller: Caller) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "see the catalog")?;
-    Ok(Json(json!({
+    Ok(Json(catalog_json()))
+}
+
+/// E9, L35: the catalog as one document.
+pub fn catalog_json() -> Value {
+    json!({
         "groups": GROUPS.iter().map(|(group, label)| {
             json!({ "group": group, "label": label })
         }).collect::<Vec<_>>(),
@@ -1651,5 +1657,74 @@ async fn catalog(State(_state): State<AppState>, caller: Caller) -> ApiResult<Js
             "pets": MAX_PETS,
             "rules": MAX_RULES,
         },
-    })))
+    })
+}
+
+/// L35: a place's outside as it's stored, or an empty one.
+pub fn current(state: &AppState, x: i64, y: i64) -> ApiResult<Outside> {
+    let place = standing(state, x, y)?;
+    Ok(match state.db.outside_at(COMMONS_ID, place.x, place.y)? {
+        Some(text) => serde_json::from_str(&text).unwrap_or_default(),
+        None => Outside::default(),
+    })
+}
+
+/// L35: a template or a pack laid over an outside, as the page lays one (E23, E34): its parts and
+/// any body are set, and each of its items goes in where it fits round what's there.
+pub fn lay_over(kind: &str, outside: &mut Outside, look: &Value) -> ApiResult<()> {
+    let look: Outside =
+        serde_json::from_value(look.clone()).map_err(|_| refuse("that look doesn't fit"))?;
+    for (word, chosen) in look.parts {
+        if part_of(&word).is_some_and(|part| part.kinds.contains(&kind)) {
+            outside.parts.insert(word, chosen);
+        }
+    }
+    if look.body.is_some() && !OPEN_AIR.contains(&kind) {
+        outside.body = look.body;
+    }
+    for item in look.items {
+        if outside.items.len() >= MAX_ITEMS {
+            break;
+        }
+        outside.items.push(item);
+        if check_fit(kind, outside).is_err() {
+            outside.items.pop();
+        }
+    }
+    Ok(())
+}
+
+/// L35: a bot saves its project's outside, held to every check a person's change is (E2 to E19), and
+/// to its owner's 60 changes a minute (E8).
+pub fn save_for_project(
+    state: &AppState,
+    owner_id: &str,
+    x: i64,
+    y: i64,
+    outside: &Outside,
+) -> ApiResult<()> {
+    let place = standing(state, x, y)?;
+    if place.owner_id.as_deref() != Some(owner_id) {
+        return Err(ApiError::forbidden("only the owner of a place can change its outside"));
+    }
+    if !state.allow_writes(&format!("outside:{owner_id}"), MAX_CHANGES_PER_MINUTE) {
+        return Err(ApiError::too_many_requests("that's a lot of changes: try again in a minute"));
+    }
+    check(&place.kind, outside)?;
+    if is_empty(outside) {
+        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
+    } else {
+        let text =
+            serde_json::to_string(outside).map_err(|_| ApiError::bad_request("not an outside"))?;
+        state.db.save_outside(
+            COMMONS_ID,
+            place.player_id,
+            &place.kind,
+            (place.x, place.y),
+            &text,
+            now(),
+        )?;
+    }
+    state.worlds.mark_stale(COMMONS_ID);
+    Ok(())
 }

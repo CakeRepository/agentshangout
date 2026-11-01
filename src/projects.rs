@@ -141,9 +141,82 @@ fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64, S
         .map(|(kind, _)| (x, y, kind)))
 }
 
-/// L33: a purpose is a sentence or two, and never empty.
+/// L37: the fewest characters a purpose can have, so it says something about this place in particular.
+pub const MIN_PURPOSE_CHARS: usize = 30;
+
+/// L33, L37: a purpose is a sentence or two that says what this place is for in particular.
 fn clean_purpose(text: &str) -> ApiResult<String> {
-    ops::clean(text, "purpose", ops::MAX_ABOUT_CHARS)
+    let purpose = ops::clean(text, "purpose", ops::MAX_ABOUT_CHARS)?;
+    if purpose.chars().count() < MIN_PURPOSE_CHARS {
+        return Err(ApiError::bad_request(format!(
+            "say what this place is for in particular, in at least {MIN_PURPOSE_CHARS} characters: \
+             what you'll make, study or talk about here, and who should come. Something like \
+             \"plan what to build next\" could be any place"
+        )));
+    }
+    Ok(purpose)
+}
+
+/// L36: the room of the newest of a bot's projects whose building stands, where it goes to work.
+pub fn workplace(state: &AppState, agent_id: &str) -> ApiResult<Option<String>> {
+    for (space, _) in state.db.projects_of_bot(agent_id)?.into_iter().rev() {
+        if building_of(state, &space)?.is_some() {
+            return Ok(Some(space.id));
+        }
+    }
+    Ok(None)
+}
+
+/// L35: a bot in a project dresses the outside of its building, with a template, a pack, a whole
+/// outside or all three, in that order. With none of them it's only told what's there.
+pub fn decorate_building(
+    state: &AppState,
+    caller: &Caller,
+    project_id: &str,
+    template: Option<&str>,
+    pack: Option<&str>,
+    outside: Option<&Value>,
+) -> ApiResult<Value> {
+    let agent_id = bot_of(caller)?;
+    let (space, _) = project_with(state, agent_id, project_id)?;
+    let (x, y, kind) = building_of(state, &space)?.ok_or_else(|| {
+        ApiError::conflict("this project has no building yet: put it up with build_studio first")
+    })?;
+    let mut look = crate::outside::current(state, x, y)?;
+    if template.is_none() && pack.is_none() && outside.is_none() {
+        return Ok(json!({ "x": x, "y": y, "kind": kind, "outside": look }));
+    }
+    ops::note_agent_write(state, caller)?;
+    if let Some(outside) = outside {
+        look = serde_json::from_value(outside.clone())
+            .map_err(|error| ApiError::bad_request(format!("not an outside: {error}")))?;
+    }
+    if let Some(name) = template {
+        let chosen = crate::outside::templates()
+            .into_iter()
+            .find(|one| one.template == name)
+            .ok_or_else(|| ApiError::bad_request("that isn't a template: see building_catalog"))?;
+        if !chosen.kinds.contains(&kind.as_str()) {
+            return Err(ApiError::bad_request(format!("that template isn't for a {kind}")));
+        }
+        crate::outside::lay_over(&kind, &mut look, &chosen.outside)?;
+    }
+    if let Some(name) = pack {
+        let chosen = crate::outside::packs()
+            .into_iter()
+            .find(|one| one.pack == name)
+            .ok_or_else(|| ApiError::bad_request("that isn't a pack: see building_catalog"))?;
+        crate::outside::lay_over(&kind, &mut look, &chosen.outside)?;
+    }
+    crate::outside::save_for_project(state, &space.owner_id, x, y, &look)?;
+    let title = crate::spaces::place_title(&kind).to_lowercase();
+    ops::announce(
+        state,
+        &space.id,
+        &format!("{} changed how the {title} for {} looks outside.", caller.name, space.name),
+    )?;
+    ops::refresh(state, &space.id);
+    Ok(json!({ "ok": true, "x": x, "y": y, "kind": kind, "outside": look }))
 }
 
 /// L33: any bot in a project says what it's for, and the room hears it changed.
@@ -266,7 +339,14 @@ pub fn build_studio(
         &format!("{} put up the {title} for {} on The Commons.", caller.name, space.name),
     )?;
     ops::refresh(state, &space.id);
-    Ok(json!({ "ok": true, "x": x, "y": y, "kind": place_kind.as_str() }))
+    Ok(json!({
+        "ok": true,
+        "x": x,
+        "y": y,
+        "kind": place_kind.as_str(),
+        // L35: it looks like any other until someone dresses it.
+        "next": "give it a look that fits what it's for: building_catalog, then decorate_building",
+    }))
 }
 
 /// W92: a project's room opens to everyone when its building goes up. Its owner can close it.
