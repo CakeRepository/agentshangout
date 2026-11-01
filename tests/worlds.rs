@@ -1672,11 +1672,14 @@ async fn each_move_costs_what_the_table_says() {
         .ok();
     assert_eq!(
         (walk["cost"].as_i64(), walk["changed"].as_i64(), walk["moves_left"].as_i64()),
-        (Some(1), Some(0), Some(25))
+        (Some(1), Some(1), Some(25))
     );
     let wave =
         server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
-    assert_eq!((wave["cost"].as_i64(), wave["moves_left"].as_i64()), (Some(1), Some(24)));
+    assert_eq!(
+        (wave["cost"].as_i64(), wave["changed"].as_i64(), wave["moves_left"].as_i64()),
+        (Some(1), Some(1), Some(24))
+    );
     assert_eq!(server.moves_left(&guest.token).await, 24);
 
     // A place is one move, from a person with a spot beside a road.
@@ -5452,6 +5455,88 @@ async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_an
     assert!(between.body.to_string().contains("roads follow the streets"), "{}", between.show());
     // A lane of 3 tiles goes anywhere, as long as it touches a road.
     server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
+}
+
+// W87
+#[tokio::test]
+async fn look_lists_no_street_tile_that_already_has_a_road() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    let window = json!({ "player_token": guest.token, "x": 51, "y": 42, "w": 16, "h": 8 });
+    let listed = |look: &Value, key: &str| -> HashSet<(i64, i64)> {
+        look[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|at| (at[0].as_i64().unwrap(), at[1].as_i64().unwrap()))
+            .collect()
+    };
+
+    let before = server.tool("look", window.clone()).await;
+    assert!((47..=56).all(|x| listed(&before, "streets").contains(&(x, 42))), "{before}");
+
+    // Once a road runs along the street, none of its tiles is still offered.
+    server.act(&guest.token, COMMONS, road_move((47, 42), (56, 42))).await.ok();
+    let after = server.tool("look", window).await;
+    let streets = listed(&after, "streets");
+    let built = listed(&after, "built");
+    assert!((47..=56).all(|x| built.contains(&(x, 42))), "{after}");
+    assert!((47..=56).all(|x| !streets.contains(&(x, 42))), "{after}");
+    assert!(streets.is_disjoint(&built), "a street tile is already built: {after}");
+}
+
+// W14, W87
+#[tokio::test]
+async fn look_lists_a_bulldozed_forest_tile_on_a_street() {
+    let server = Server::start().await;
+    let guest = server.guest().await;
+    worlds::ensure_commons(&server.state).unwrap();
+
+    // A forest tile on a street, with open land beside it for the road a bulldozer needs.
+    let map = Map::from_db(&server, COMMONS);
+    let row = server.state.db.world(COMMONS).unwrap().unwrap();
+    let hoods = world::neighborhoods(row.seed, row.size);
+    let mut tiles = server.tiles(COMMONS);
+    let street = Tile { kind: Kind::Road, level: 0, player: None };
+    let (forest, road) = (0..map.size)
+        .flat_map(|y| (0..map.size).map(move |x| (x, y)))
+        .filter(|&(x, y)| map.ground(x, y) == Some('f') && !map.built.contains_key(&(x, y)))
+        .find_map(|(x, y)| {
+            [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .into_iter()
+                .map(|(dx, dy)| (x + dx, y + dy))
+                .find(|&(nx, ny)| {
+                    if !map.open(nx, ny) {
+                        return false;
+                    }
+                    tiles.insert((nx as u16, ny as u16), street);
+                    let on = world::on_street(&hoods, &tiles, (x as u16, y as u16));
+                    tiles.remove(&(nx as u16, ny as u16));
+                    on
+                })
+                .map(|road| ((x, y), road))
+        })
+        .expect("a forest tile on a street, beside open land");
+    server.write(COMMONS, &[Change::Set((road.0 as u16, road.1 as u16), street)]);
+
+    let window =
+        json!({ "player_token": guest.token, "x": forest.0, "y": forest.1, "w": 16, "h": 8 });
+    let lists = |look: &Value| {
+        look["streets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|at| (at[0].as_i64().unwrap(), at[1].as_i64().unwrap()) == forest)
+    };
+    let before = server.tool("look", window.clone()).await;
+    assert!(!lists(&before), "forest is in the way, so it is not offered: {before}");
+
+    // Cleared, a road may go on it (the building rules treat it as free), so it is offered.
+    let (x, y) = forest;
+    server.act(&guest.token, COMMONS, json!({ "action": "bulldoze", "x": x, "y": y })).await.ok();
+    assert_eq!(server.tiles(COMMONS)[&(x as u16, y as u16)].kind, Kind::Cleared);
+    let after = server.tool("look", window).await;
+    assert!(lists(&after), "a cleared tile on a street is left out of streets: {after}");
 }
 
 // W52
