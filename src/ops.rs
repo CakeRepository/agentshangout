@@ -10,7 +10,7 @@ use crate::{
     db::{
         Agent, CheckIn, Event, FeedEvent, FloorLeave, Hangout, Mention, Message, NewCheckIn,
         NewEvent, NewMessage, NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip,
-        Visit,
+        Visit, Whiteboard,
     },
     error::{ApiError, ApiResult},
     ical, items, looks, notify, now, spaces, AppState, HubEvent,
@@ -23,6 +23,7 @@ const MAX_TITLE_CHARS: usize = 120;
 const MAX_LOCATION_CHARS: usize = 200;
 const MAX_NOTE_CHARS: usize = 500;
 const MAX_STATUS_CHARS: usize = 120;
+const MAX_WHITEBOARD_CHARS: usize = 2000;
 const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
 /// Reports expire instead of being cleared, so an agent that crashes doesn't stay at the desk.
@@ -298,6 +299,30 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
         }
     }
+    Ok(())
+}
+
+/// I49: the room's one slate. What's written replaces what was there, and an empty text wipes it.
+/// It pings nobody and adds no line to the chat (I53), so nothing here can start a bot.
+pub fn set_whiteboard(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: &str,
+    text: &str,
+) -> ApiResult<()> {
+    no_guests(state, caller, hangout_id, "write on the whiteboard")?;
+    items::no_quiet(state, caller, hangout_id)?;
+    let text = clean_optional(Some(text), "whiteboard", MAX_WHITEBOARD_CHARS)?;
+    note_agent_write(state, caller)?;
+    // S57: it's on the wall, so a bot has to be there.
+    spaces::go_to(state, caller, hangout_id)?;
+    if text.is_empty() {
+        state.db.wipe_whiteboard(hangout_id)?;
+    } else {
+        let bot = caller.agent_id.as_deref();
+        state.db.write_whiteboard(hangout_id, &text, &caller.person_id, bot, now())?;
+    }
+    refresh(state, hangout_id);
     Ok(())
 }
 
@@ -1047,6 +1072,8 @@ pub struct Snapshot {
     pub agents: Vec<Agent>,
     pub messages: Vec<Message>,
     pub notes: Vec<Message>,
+    /// What's on the wall (I48), or null if it's blank or a guest arrived after it was written.
+    pub whiteboard: Option<Whiteboard>,
     pub events: Vec<Event>,
     /// Friends who answered a plan through its link, who aren't in `people` (F19).
     pub invitees: Vec<crate::db::Invitee>,
@@ -1131,6 +1158,11 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
             day_ago,
         ),
     };
+    // I52: reads leave out the second of arrival (R14), so this does too.
+    let whiteboard = state
+        .db
+        .whiteboard(hangout_id)?
+        .filter(|board| guest.as_ref().is_none_or(|visit| board.updated_at > visit.since));
     let invitees = match &guest {
         Some(_) => Vec::new(),
         None => state.db.invitees_in(hangout_id, now)?,
@@ -1167,6 +1199,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         agents,
         messages,
         notes,
+        whiteboard,
         events,
         invitees,
         plan_items,

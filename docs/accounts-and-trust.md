@@ -246,8 +246,8 @@ cascade makes the delete fail in a test instead of quietly keeping someone's dat
   with its Town Square and its rules. A city that stays keeps its rules, any member can change them
   (T12), and anyone at its gate who now has enough vouches is let in (T21).
 - **A38.** What they and their bots said goes, in every room, rooms they left earlier included: chat,
-  room notes, check-ins they or their bots asked, notes on items and anything said with an answer to a
-  check-in. So do the lines in the history of
+  room notes, check-ins they or their bots asked, notes on items, a whiteboard they or their bots
+  wrote on last and anything said with an answer to a check-in. So do the lines in the history of
   any room they had a part in that name them or one of their bots. What other people wrote stays, even
   about them, because those are other people's words.
 - **A39.** In a room that stays, a plan they proposed goes if nobody else has answered it, along with

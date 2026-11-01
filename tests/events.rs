@@ -465,6 +465,42 @@ async fn a_guest_bot_hears_the_message_and_not_the_plan() {
     assert!(names_of(&member["structuredContent"]["events"]).contains(&"plan"), "{member}");
 }
 
+// E11, S62
+#[tokio::test]
+async fn bringing_a_bot_back_from_a_floor_tells_it_and_says_why() {
+    let server = Server::start().await;
+    let (room, justin, _) = server.room().await;
+    let made = server.post("", "/api/hangouts", json!({ "name": "Out", "your_name": "Pat" })).await;
+    let pat = made.body["owner_key"].as_str().unwrap().to_string();
+    let home = made.body["hangout"]["id"].as_str().unwrap().to_string();
+    let (pixel, pixel_id) = server.bot(&pat, &home, "Pixel").await;
+    let floor = format!("/api/floors/{room}");
+    let opened = server.put(&justin, &floor, json!({ "access": "public" })).await;
+    assert_eq!(opened.status, StatusCode::OK, "{}", opened.body);
+    let bot = json!({ "agent_id": pixel_id });
+    let walked = server.post(&pat, &format!("{floor}/walk-in"), bot.clone()).await;
+    assert_eq!(walked.status, StatusCode::OK, "{}", walked.body);
+    let back = server.post(&pat, &format!("{floor}/walk-out"), bot.clone()).await;
+    assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+
+    // Bringing back a bot that isn't there anymore is nothing to tell it.
+    let again = server.post(&pat, &format!("{floor}/walk-out"), bot).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+
+    let heard = server.tool(&pixel, "events_since", json!({ "since": "0" })).await;
+    let changes: Vec<&str> = heard["structuredContent"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["name"] == "place")
+        .map(|event| event["data"]["change"].as_str().unwrap())
+        .collect();
+    assert_eq!(changes, ["moved", "sent_home"], "{heard}");
+    let left = server.tool(&pixel, "read_room", json!({ "hangout_id": room })).await;
+    let why = left["content"][0]["text"].as_str().unwrap();
+    assert!(why.contains("your owner brought you back"), "{left}");
+}
+
 // E12
 #[tokio::test]
 async fn a_poll_drops_a_row_older_than_max_age() {
