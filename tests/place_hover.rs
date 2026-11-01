@@ -310,6 +310,19 @@ async fn a_bot_is_inside_one_place_however_many_it_belongs_to() {
     assert_eq!(cards(&server, &ann, &spots).await, ["belongs", "belongs", "belongs"]);
 }
 
+// W73: moving a house brings its rooms back, so the box offers the name they already have, and
+// saying yes to it can't undo a rename.
+#[test]
+fn the_box_for_a_new_place_offers_the_name_its_rooms_already_have() {
+    let page = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = page.find("async function nameDialog(body)").expect("the box that names a place");
+    let dialog = &page[start..start + page[start..].find("\n  }\n").unwrap()];
+    assert!(dialog.contains("await api('/api/spaces')"), "it asks what the person's spaces are");
+    assert!(dialog.contains("spaces?.house"), "a house gets its own rooms back (S35)");
+    assert!(dialog.contains("!onMap"), "another place gets the rooms of one that's down (S34)");
+    assert!(dialog.contains("back?.space.name ??"), "and the name those rooms have comes first");
+}
+
 // W73
 #[tokio::test]
 async fn every_place_has_a_name_its_owner_or_its_project_gave_it() {

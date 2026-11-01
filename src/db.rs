@@ -8098,6 +8098,16 @@ impl Db {
         )
     }
 
+    /// G6: whether a plan this person said yes or maybe to is on the calendar.
+    pub fn has_plan_on_calendar(&self, person_id: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM rsvps r JOIN events e ON e.id = r.event_id
+             WHERE r.person_id = ? AND r.response != 'no' AND e.status = 'confirmed' LIMIT 1",
+            [person_id],
+        )
+    }
+
     /// I19: how many friends a person has right now. Nothing keeps this, so it can't go stale.
     pub fn friend_count(&self, person_id: &str) -> rusqlite::Result<i64> {
         self.conn().query_row(
