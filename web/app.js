@@ -119,11 +119,16 @@ function field(label, input, hint) {
   return h('label', { class: 'field' }, h('span', {}, label), input, hint && h('small', {}, hint));
 }
 
-// With a passkey the owner key is the way back in after losing every one, not the only way in.
-function showOwnerKey(key, then, { passkey = false } = {}) {
+// With a passkey the owner key is the way back in after losing every one, not the only way in. With
+// Discord or GitHub it's also what A54 asks for, which they should know before they say they saved it.
+function showOwnerKey(key, then, { passkey = false, site } = {}) {
+  const once = 'It\'s shown only this once, so put it in your password manager.';
+  const text = site
+    ? `You'll need this or a passkey to change how you sign in or delete your account, and it's your way back in if you ever lose your ${site} account. ${once}`
+    : `This is your way back in if you ever lose every passkey. ${once}`;
   const dialog = modal('Save your owner key',
-    h('p', {}, passkey
-      ? 'This is your way back in if you ever lose every passkey. It\'s shown only this once, so put it in your password manager.'
+    h('p', {}, passkey || site
+      ? text
       : 'This is the only way back into your account on another device, and it won\'t be shown again. Put it in your password manager.'),
     secretRow(key),
     h('div', { class: 'modal-actions' },
@@ -193,13 +198,13 @@ const NO_PASSKEYS = {
   server: 'Passkeys aren\'t switched on at this address.',
 };
 
-// An account made from just a name has no passkey. Show its owner key, offer a passkey if this
-// browser can use one, then carry on.
-function afterNewAccount(ownerKey, enter) {
+// An account made from just a name, or with Discord or GitHub, has no passkey. Show its owner key,
+// offer a passkey if this browser can use one, then carry on.
+function afterNewAccount(ownerKey, enter, { site } = {}) {
   showOwnerKey(ownerKey, async () => {
     if ((await passkeyStatus()).usable) await offerPasskey();
     enter();
-  });
+  }, { site });
 }
 
 // Resolves when the person has added a passkey or said not now.
@@ -273,7 +278,8 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
         onclick: act(createError, async () => {
           if (nameInput.reportValidity()) await nameOnly.run(nameInput.value);
         }),
-      }, nameOnly.text)));
+      }, nameOnly.text)),
+    signInElsewhere('Sign up', '?new=true'));
 
   const toggle = h('button', {
     type: 'button',
@@ -306,15 +312,42 @@ function accessCard({ title, intro = [], note, status, createText, onSignedIn, o
 }
 
 // Plain links to this server, which redirects to the site. It stays empty until the server says
-// which sites it has (A58), and someone whose account has no link is told so when they come back.
-function signInElsewhere() {
+// which sites it has (A58). Both words lead to the same place: an account with a link signs in, and
+// one without is offered a new account when they come back (A51).
+function signInElsewhere(verb = 'Sign in', query = '') {
   const links = h('div', { class: 'sign-in-elsewhere' });
   api('/api/sign-in').then(({ sites }) => links.replaceChildren(...sites.map(({ site, name }) => h('a', {
     class: 'button',
-    href: `/api/sign-in/${site}`,
+    href: `/api/sign-in/${site}${query}`,
     onclick: leaving,
-  }, `Sign in with ${name}`)))).catch(() => {});
+  }, `${verb} with ${name}`)))).catch(() => {});
   return links;
+}
+
+// A59, A60: nothing exists until they say yes here, and the name is theirs to choose.
+function newAccountView({ step, name: site, account }, back) {
+  const error = formError();
+  return h('main', { class: 'home' }, h('form', {
+    class: 'card access',
+    onsubmit: submitter(error, async ({ your_name: yourName }) => {
+      const { owner_key: key } = await api('/api/sign-in/new-account', {
+        method: 'POST',
+        body: { step, your_name: yourName },
+      });
+      sessionStorage.removeItem(WAY_BACK);
+      history.replaceState({}, '', back);
+      afterNewAccount(key, route, { site });
+    }),
+  },
+    h('h2', {}, `Make an account with ${site}?`),
+    h('p', { class: 'muted' }, `There's no account here for ${account} yet. Choose the name people will see, and you'll sign in with ${site} from now on.`),
+    field('Your name', h('input', { name: 'your_name', required: true, maxLength: 60, autocomplete: 'given-name', value: account }),
+      `It needn't match ${site}, and only you see which account you used.`),
+    error,
+    h('div', { class: 'form-actions' },
+      h('button', { type: 'submit', class: 'primary' }, 'Create account'),
+      link(back, 'Not now')),
+    h('p', { class: 'muted note' }, `Already have an account here? Sign in to it, then link ${site} from your home page.`)));
 }
 
 // A56: this is the only place a link shows, and only to its own person.
@@ -329,7 +362,9 @@ function signInCard(me) {
       type: 'button',
       class: 'link danger',
       onclick: act(error, async () => {
-        if (!confirm(`Unlink ${name}? It will stop signing you in, and anywhere signed in with it gets signed out.`)) return;
+        const last = !me.passkeys && me.sign_in.filter((other) => other.linked).length === 1;
+        const warning = last ? ' It\'s your only way in besides your owner key, so make sure you have that first.' : '';
+        if (!confirm(`Unlink ${name}? It will stop signing you in, and anywhere signed in with it gets signed out.${warning}`)) return;
         await api(`/api/sign-in/${encodeURIComponent(site)}`, { method: 'DELETE' });
         await route();
       }),
@@ -348,6 +383,8 @@ function signInCard(me) {
 // page already fetched, or null if that failed.
 function passkeysCard(me, status, first) {
   if (!status.usable && !me.passkeys) return null;
+  // A54: a session a site started can't change these, so it isn't offered the chance.
+  const limited = me.sign_in_session;
   const card = h('section', { class: 'card passkeys', 'aria-label': 'Passkeys' });
   const error = formError();
   let list = first;
@@ -365,7 +402,7 @@ function passkeysCard(me, status, first) {
       h('div', { class: 'passkey-main' },
         h('strong', {}, passkey.label),
         h('small', { class: 'muted' }, `Added ${dateFormat.format(fromUnix(passkey.created_at))} · ${used}`)),
-      h('button', {
+      limited ? null : h('button', {
         type: 'button',
         class: 'link danger',
         'aria-label': `Remove ${passkey.label}`,
@@ -387,13 +424,14 @@ function passkeysCard(me, status, first) {
       h('h2', {}, 'Passkeys'),
       status.usable || have ? h('p', { class: 'muted' }, PASSKEY_EXPLAINER) : null,
       list === null ? h('p', { class: 'muted' }, 'Couldn\'t load your passkeys. Reload the page to try again.') : null,
-      status.usable && list && !have ? h('p', {}, 'Add one, and you won\'t need your owner key to sign in next time.') : null,
+      status.usable && list && !have && !limited ? h('p', {}, 'Add one, and you won\'t need your owner key to sign in next time.') : null,
       have ? h('ul', { class: 'passkey-list' }, list.map(row)) : null,
-      status.usable && have === 1 ? h('p', { class: 'muted' }, 'Add one on a second device too, in case you lose this one.') : null,
+      status.usable && have === 1 && !limited ? h('p', { class: 'muted' }, 'Add one on a second device too, in case you lose this one.') : null,
+      limited ? h('p', { class: 'muted' }, have ? 'Sign in with a passkey or your owner key to change these.' : 'Sign in with your owner key to add one.') : null,
       !status.usable ? h('p', { class: 'muted' }, `${NO_PASSKEYS[status.reason]} You can't add one from here.`) : null,
       notice ? h('p', { class: 'muted', role: 'status' }, notice) : null,
       error,
-      status.usable && list ? h('form', {
+      status.usable && list && !limited ? h('form', {
         class: 'add-passkey',
         onsubmit: submitter(error, async ({ label }) => {
           if (!await registerPasskey({ label })) return;
@@ -454,7 +492,11 @@ async function homeParts(me) {
     h('p', { class: 'muted' }, 'You\'re signed in. Build in any world, claim bots, and start private rooms and cities.'),
     freeTimesField(me),
     housePlansField(me),
-    h('button', {
+    // A54: what a session a site started can't do, and how to get to it.
+    me.sign_in_session ? h('p', { class: 'muted' },
+      'You signed in with Discord or GitHub. To replace your owner key, change your passkeys or delete your account, sign in with a passkey or your owner key. If you\'ve lost both, ',
+      h('a', { href: '/privacy', target: '_blank' }, 'here\'s how to reach us'),
+      '.') : h('button', {
       type: 'button',
       class: 'ghost',
       onclick: async () => {
@@ -468,7 +510,7 @@ async function homeParts(me) {
       class: 'ghost',
       onclick: async () => { await api('/api/session', { method: 'DELETE' }); route(); },
     }, 'Sign out'),
-    h('button', { type: 'button', class: 'ghost danger', onclick: () => deleteAccountDialog(me) }, 'Delete account'));
+    me.sign_in_session ? null : h('button', { type: 'button', class: 'ghost danger', onclick: () => deleteAccountDialog(me) }, 'Delete account'));
 
   // A person's house and third spaces, and the way to change each.
   const owned = spaces ? [spaces.house, ...spaces.third] : [];
@@ -6580,16 +6622,19 @@ function saveClock() {
 
 // A17, A48: Discord and GitHub send people back here with a code. The session cookie stayed behind
 // on that redirect, so the server can't tell who this is until this page asks from its own site.
-// Null means it worked, and the page they came from is the address again.
+// Null means it worked, and the page they came from is the address again. An account nobody has
+// linked isn't an error: it's the offer of a new one (A51).
 async function backFromElsewhere(finishPath) {
   const query = new URLSearchParams(location.search);
   const back = sessionStorage.getItem(WAY_BACK) || '/';
-  sessionStorage.removeItem(WAY_BACK);
   history.replaceState({}, '', location.pathname);
   let problem = 'Nothing changed, because you didn\'t say yes there.';
   if (query.get('code')) {
     try {
-      await api(finishPath, { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      const { new_account: offer } = await api(finishPath, { method: 'POST', body: { code: query.get('code'), state: query.get('state') } });
+      // The way back stays until they're through it, so reloading the offer doesn't lose it.
+      if (offer) return newAccountView(offer, back);
+      sessionStorage.removeItem(WAY_BACK);
       history.replaceState({}, '', back);
       return null;
     } catch (error) {
