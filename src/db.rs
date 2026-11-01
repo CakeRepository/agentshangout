@@ -610,6 +610,12 @@ CREATE TABLE IF NOT EXISTS item_uses (
     until_at    INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS item_uses_by_item ON item_uses (item_id);
+CREATE TABLE IF NOT EXISTS bot_places (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    since       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS room_agents_by_bot ON room_agents (agent_id);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -717,6 +723,8 @@ pub struct Agent {
     pub doorbell: Option<DoorbellStatus>,
     /// When this bot's trip here runs out. Set only for a guest, by `visitors_in`.
     pub visitor_until: Option<i64>,
+    /// It belongs to this room but it's somewhere else (S55). Set only in a room's snapshot.
+    pub away: bool,
     /// Set only where a person is shown a room's own bots (A21, A22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordLink>,
@@ -1284,9 +1292,10 @@ pub struct Visit {
     pub until: i64,
 }
 
-/// L17: a bot at the door of a place, as `[agent, name, owner, x, y, out]`, where `out` says it
-/// walked onto a public floor there rather than being in a project.
-pub type BotAtPlace = (String, String, String, i64, i64, bool);
+/// L17: a bot at the door of a place, as `[agent, name, owner, x, y, out, room]`, where `out` says it
+/// walked onto a public floor there rather than belonging to it, and `room` is the room that door is
+/// for, which is where it has to be (S56).
+pub type BotAtPlace = (String, String, String, i64, i64, bool, String);
 
 /// A road between two houses, `a` sorting before `b`, and how many trips really arrived.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1455,6 +1464,7 @@ fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
         activity,
         doorbell,
         visitor_until: None,
+        away: false,
         discord: None,
     })
 }
@@ -1771,6 +1781,23 @@ fn bot_places_sql(city: &str, from: &str) -> String {
 
 fn exists(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> rusqlite::Result<bool> {
     conn.query_row(sql, params, |_| Ok(())).optional().map(|found| found.is_some())
+}
+
+/// H10: whether this room is one a bot on a trip is a guest in right now.
+fn guest_on_trip(
+    conn: &Connection,
+    hangout_id: &str,
+    agent_id: &str,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    exists(
+        conn,
+        &format!(
+            "SELECT 1 FROM trips t JOIN houses ho ON ho.id = t.house_id
+             WHERE {GUEST_ROOM} AND t.agent_id = ?2 AND t.status = 'here' AND t.ends_at > ?3"
+        ),
+        params![hangout_id, agent_id, now],
+    )
 }
 
 /// FR6: ends the invites waiting for a place. Their rows stay, so a day's count (FR7) still sees
@@ -3096,8 +3123,9 @@ impl Db {
         rows.collect()
     }
 
-    /// L17: bots with public places on, each at the door of a place whose building stands as its
-    /// space's (S33). Whether a project's bot is in its hours is the caller's to work out.
+    /// L17: bots with public places on, each at every door of a place whose building stands as its
+    /// space's (S33). Which of those it's really at, and whether it's in its hours, is the caller's
+    /// to work out.
     pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<BotAtPlace>> {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
@@ -3108,14 +3136,21 @@ impl Db {
              JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT a.id, a.name, a.owner_id, d.x, d.y, 1 FROM floor_visits v
+            "SELECT a.id, a.name, a.owner_id, d.x, d.y, 1, v.hangout_id FROM floor_visits v
              JOIN agents a ON a.id = v.agent_id
              JOIN floors f ON f.hangout_id = v.hangout_id AND f.access = 'public'
              JOIN spaces s ON s.id = f.space_id
              {DOOR}
              WHERE v.until > ?2 AND (b.kind = 'house') = (s.kind = 'house')
              UNION ALL
-             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0 FROM projects pr
+             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0, f.hangout_id FROM room_agents ra
+             JOIN agents a ON a.id = ra.agent_id
+             JOIN floors f ON f.hangout_id = ra.hangout_id AND f.access = 'public'
+             JOIN spaces s ON s.id = f.space_id
+             {DOOR}
+             WHERE (b.kind = 'house') = (s.kind = 'house')
+             UNION ALL
+             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0, pr.space_id FROM projects pr
              JOIN room_agents ra ON ra.hangout_id = pr.space_id
              JOIN agents a ON a.id = ra.agent_id
              JOIN spaces s ON s.id = pr.space_id
@@ -3124,7 +3159,15 @@ impl Db {
              LIMIT 400"
         ))?;
         let rows = stmt.query_map(params![world_id, now], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
         })?;
         rows.collect()
     }
@@ -4025,6 +4068,91 @@ impl Db {
         Ok(WalkedIn::In)
     }
 
+    /// S56: the one room a bot is in now, whatever else it belongs to. A trip comes first, because
+    /// only going home ends one (S39), and then a walk-in. A bot in no room at all has no place.
+    pub fn bot_place(&self, agent_id: &str, now: i64) -> rusqlite::Result<Option<String>> {
+        let conn = self.conn();
+        let went: Option<String> = conn
+            .query_row("SELECT hangout_id FROM bot_places WHERE agent_id = ?", [agent_id], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        let porch: Option<String> = conn
+            .query_row(
+                "SELECT ho.porch FROM trips t JOIN houses ho ON ho.id = t.house_id
+                 WHERE t.agent_id = ? AND t.status = 'here' AND t.ends_at > ?",
+                params![agent_id, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(porch) = porch {
+            // H10: it's in the Living Room only if it went there, and it still has the key.
+            return Ok(match went {
+                Some(room) if guest_on_trip(&conn, &room, agent_id, now)? => Some(room),
+                _ => Some(porch),
+            });
+        }
+        let walked: Option<String> = conn
+            .query_row(
+                "SELECT v.hangout_id FROM floor_visits v JOIN floors f ON f.hangout_id = v.hangout_id
+                 WHERE v.agent_id = ? AND v.until > ? AND f.access = 'public'
+                 ORDER BY v.since DESC LIMIT 1",
+                params![agent_id, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if walked.is_some() {
+            return Ok(walked);
+        }
+        conn.query_row(
+            "SELECT hangout_id FROM room_agents WHERE agent_id = ?1
+             ORDER BY hangout_id = ?2 DESC, rowid LIMIT 1",
+            params![agent_id, went],
+            |row| row.get(0),
+        )
+        .optional()
+    }
+
+    /// S56: the room a bot went to, in place of the last one.
+    pub fn set_bot_place(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_places (agent_id, hangout_id, since) VALUES (?1, ?2, ?3)
+             ON CONFLICT (agent_id) DO UPDATE SET hangout_id = excluded.hangout_id, since = excluded.since",
+            params![agent_id, hangout_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// L9: when a bot last went to a room itself, if it has.
+    pub fn bot_place_since(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn()
+            .query_row("SELECT since FROM bot_places WHERE agent_id = ?", [agent_id], |row| {
+                row.get(0)
+            })
+            .optional()
+    }
+
+    /// S58: whether a bot is on a trip, and if so whether this room is one it's a guest in.
+    pub fn on_trip_away_from(
+        &self,
+        hangout_id: &str,
+        agent_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let conn = self.conn();
+        let on_trip = exists(
+            &conn,
+            "SELECT 1 FROM trips WHERE agent_id = ? AND status = 'here' AND ends_at > ?",
+            params![agent_id, now],
+        )?;
+        Ok(on_trip && !guest_on_trip(&conn, hangout_id, agent_id, now)?)
+    }
+
     /// Ends a walk-in. `who` is a person's id or their bot's.
     pub fn end_visit(&self, hangout_id: &str, who: &str) -> rusqlite::Result<()> {
         self.conn().execute(
@@ -4667,6 +4795,8 @@ impl Db {
                 params![trip_id, now, now + minutes * 60],
             )?;
             tx.execute("DELETE FROM floor_visits WHERE agent_id = ?", [&agent_id])?;
+            // S56: a trip ends at home, so nothing it goes to on the way counts for afterwards.
+            tx.execute("DELETE FROM bot_places WHERE agent_id = ?", [&agent_id])?;
         }
         tx.commit()?;
         Ok(if busy { Arrival::Busy } else { Arrival::Arrived })

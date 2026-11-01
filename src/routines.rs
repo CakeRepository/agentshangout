@@ -243,7 +243,8 @@ fn walk_bot_in(
     if state.db.is_turned_out(&floor.space_id, owner_id)? {
         return Err(ApiError::not_found());
     }
-    let left = state.db.walked_onto(agent_id, now)?;
+    let mut left = state.db.walked_onto(agent_id, now)?;
+    left.extend(state.db.bot_place(agent_id, now)?);
     let walked = state.db.walk_in(
         &NewVisit {
             hangout_id: &floor.id,
@@ -291,6 +292,7 @@ fn come_back_now(state: &AppState, agent_id: &str) -> ApiResult<bool> {
         state.presence.forget(floor, agent_id);
         ops::refresh(state, floor);
     }
+    crate::spaces::refresh_bot_place(state, agent_id)?;
     state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     Ok(!floors.is_empty())
 }
@@ -301,9 +303,9 @@ pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
     come_back_now(state, agent_id)
 }
 
-/// L17: who The Commons shows at its places, by name, beside each building's door. A bot that
-/// walked onto a public floor is there while its walk-in lasts. A project's bot is at the studio in
-/// its social hours, unless it's out somewhere. C14: what it's wearing goes with the name.
+/// L17: who The Commons shows at its places, by name, beside each building's door. A bot is at the
+/// door of the room it's in (S56): a floor it walked onto while its walk-in lasts, and a public floor
+/// it belongs to or a project's studio in its social hours. C14: what it's wearing goes with the name.
 /// L17, L18: a bot at a place: its name, the tile by the door, its look, where it comes from, and
 /// the player of its own that isn't on the street while it's there.
 pub struct BotAtPlace {
@@ -322,18 +324,20 @@ pub fn bots_at_places(
     now: i64,
 ) -> ApiResult<Vec<BotAtPlace>> {
     let rows = state.db.bots_at_places(crate::worlds::COMMONS_ID, now)?;
-    let out: std::collections::HashSet<String> =
-        rows.iter().filter(|row| row.5).map(|row| row.0.clone()).collect();
     let ids: Vec<String> = rows.iter().map(|row| row.0.clone()).collect();
     let mut looks = worn(state, Wearer::Bot, &ids)?;
     let mut shown = std::collections::HashSet::new();
     let mut list = Vec::new();
-    for (agent_id, name, owner_id, x, y, walked) in rows {
+    for (agent_id, name, owner_id, x, y, walked, room) in rows {
+        // S56: belonging somewhere doesn't put it there.
+        if state.db.bot_place(&agent_id, now)?.as_deref() != Some(room.as_str()) {
+            continue;
+        }
         if !walked {
             let in_hours =
                 social_until(&routine_of(state, &agent_id)?, offset_of(state, &owner_id)?, now)
                     .is_some();
-            if out.contains(&agent_id) || !in_hours {
+            if !in_hours {
                 continue;
             }
         }
@@ -387,10 +391,14 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     if !state.db.walked_onto(agent_id, now)?.is_empty() {
         return Ok(());
     }
+    let slot = now.div_euclid(WANDER_SECS);
+    // A bot that went to a room itself this half hour isn't walked straight back out of it.
+    if state.db.bot_place_since(agent_id)?.is_some_and(|since| since >= slot * WANDER_SECS) {
+        return Ok(());
+    }
     let open = state.db.public_floors(owner_id, now, MAX_PLACES)?;
     let open: Vec<PublicFloor> =
         open.into_iter().filter(|floor| floor.here < capacity(&floor.size)).collect();
-    let slot = now.div_euclid(WANDER_SECS);
     let until = ends.min((slot + 1) * WANDER_SECS);
     // L19: a bot with nothing going yet goes where the others are meeting.
     if state.db.projects_of_bot(agent_id)?.is_empty() {

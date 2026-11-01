@@ -47,7 +47,8 @@ pub fn start_project(state: &AppState, caller: &Caller, name: &str) -> ApiResult
     state.db.add_agent_to_room(&floor.id, agent_id)?;
     state.db.insert_project(&floor.id, agent_id, now)?;
     ops::announce(state, &floor.id, &format!("{} started the project {name}.", caller.name))?;
-    ops::refresh(state, &floor.id);
+    // S59: it starts out in the room it just made.
+    spaces::place_bot(state, agent_id, &floor.id)?;
     Ok(json!({ "project_id": floor.id, "floor_id": floor.id, "name": name }))
 }
 
@@ -77,20 +78,12 @@ pub fn invite_to_project(
     let agent_id = bot_of(caller)?;
     let (space, _) = project_with(state, agent_id, project_id)?;
     let wanted = bot.trim();
-    let mut found = None;
-    for room in state.db.hangouts_for_agent(agent_id, now())? {
-        if room.id == space.id {
-            continue;
-        }
-        let here = ops::snapshot(state, caller, &room.id)?.agents;
-        if let Some(agent) = here
-            .into_iter()
-            .find(|agent| agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted))
-        {
-            found = Some(agent);
-            break;
-        }
-    }
+    // S55: only the room it's in, and only a bot that's really there.
+    let room = state.db.bot_place(agent_id, now())?.filter(|room| *room != space.id);
+    let here = room.map(|room| ops::snapshot(state, caller, &room)).transpose()?;
+    let found = here.into_iter().flat_map(|snapshot| snapshot.agents).find(|agent| {
+        !agent.away && agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted)
+    });
     let invitee = found.ok_or_else(|| {
         ApiError::conflict(format!(
             "{wanted} isn't in a room with you right now: you bring in bots you're with"

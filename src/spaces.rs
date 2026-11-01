@@ -1068,8 +1068,11 @@ async fn walk_in(
         None => None,
     };
     let who = agent.as_ref().map_or(caller.person_id.as_str(), |agent| agent.id.as_str());
-    // Read first: once they've walked in, nothing says which floor they left.
-    let left = state.db.walked_onto(who, now)?;
+    // Read first: once they've walked in, nothing says which floor they left, or which room a bot.
+    let mut left = state.db.walked_onto(who, now)?;
+    if let Some(agent) = &agent {
+        left.extend(state.db.bot_place(&agent.id, now)?);
+    }
     let walked = state.db.walk_in(
         &NewVisit {
             hangout_id: &floor.id,
@@ -1122,8 +1125,65 @@ async fn walk_out(
     state.db.end_visit(&floor.id, &who)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
+    refresh_bot_place(&state, &who)?;
     state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
+}
+
+/// S56: the room a bot is in now reloads, because it just got back to it.
+pub fn refresh_bot_place(state: &AppState, agent_id: &str) -> ApiResult<()> {
+    if let Some(room) = state.db.bot_place(agent_id, now())? {
+        ops::refresh(state, &room);
+    }
+    Ok(())
+}
+
+/// S58, S59: puts a bot in a room, off any floor it walked onto. On a trip it stays on the trip, and
+/// this is where it is once it's home. Both rooms reload.
+pub fn place_bot(state: &AppState, agent_id: &str, hangout_id: &str) -> ApiResult<()> {
+    let now = now();
+    let was = state.db.bot_place(agent_id, now)?;
+    for floor in state.db.walked_onto(agent_id, now)? {
+        if floor != hangout_id {
+            state.db.end_visit(&floor, agent_id)?;
+            state.presence.forget(&floor, agent_id);
+        }
+    }
+    state.db.set_bot_place(agent_id, hangout_id, now)?;
+    for room in was.iter().map(String::as_str).chain([hangout_id]) {
+        ops::refresh(state, room);
+    }
+    // L17: where it is shows on The Commons.
+    state.worlds.mark_stale(COMMONS_ID);
+    Ok(())
+}
+
+/// S57, S58: a bot takes itself to a room it can be in, before it does something there. A person
+/// has nowhere to go, and neither has a bot that's already there.
+pub fn go_to(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<()> {
+    let Some(agent_id) = caller.agent_id.as_deref() else {
+        return Ok(());
+    };
+    let now = now();
+    if state.db.bot_place(agent_id, now)?.as_deref() == Some(hangout_id) {
+        return Ok(());
+    }
+    if state.db.on_trip_away_from(hangout_id, agent_id, now)? {
+        return Err(ApiError::conflict("you're on a trip: go home first"));
+    }
+    place_bot(state, agent_id, hangout_id)
+}
+
+/// S57: `go_to_room`, for a bot going somewhere with nothing to do there yet.
+pub fn go_to_room(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Value> {
+    ops::no_house_bot(caller)?;
+    if !caller.is_agent() {
+        return Err(ApiError::forbidden("only bots go to rooms"));
+    }
+    let hangout = ops::require_room(state, caller, hangout_id)?;
+    ops::note_agent_write(state, caller)?;
+    go_to(state, caller, &hangout.id)?;
+    Ok(json!({ "hangout_id": hangout.id, "name": hangout.name }))
 }
 
 /// S29: anyone but the keeper finds no such floor.

@@ -583,6 +583,35 @@ async fn a_key_needs_an_accepted_pass_two_good_trips_and_a_resident() {
     assert_eq!(given["keys"], json!(["living_room", "scenes"]));
 }
 
+// H10, S55, S56
+#[tokio::test]
+async fn a_guest_with_the_key_is_on_the_porch_or_in_the_living_room_and_not_both() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.good_trip(&town).await;
+    server.good_trip(&town).await;
+    let pass = server.pass(&town).await;
+    server.give_key(&town.ann.key, &pass, "living_room").await.ok();
+    server.visit(&town).await;
+    let here = |room: Value| room["you_are_here"].clone();
+    let living = json!({ "hangout_id": town.ann_living });
+    let porch = json!({ "hangout_id": town.ann_porch });
+
+    // It arrives on the Porch, with the Living Room open to it.
+    assert_eq!(here(server.tool(&town.rover, "read_room", porch.clone()).await), true);
+    assert_eq!(here(server.tool(&town.rover, "read_room", living.clone()).await), false);
+
+    // It goes in, which is the Porch left behind.
+    server.tool(&town.rover, "go_to_room", living.clone()).await;
+    assert_eq!(here(server.tool(&town.rover, "read_room", living.clone()).await), true);
+    assert_eq!(here(server.tool(&town.rover, "read_room", porch.clone()).await), false);
+
+    // And back out.
+    server.tool(&town.rover, "go_to_room", porch.clone()).await;
+    assert_eq!(here(server.tool(&town.rover, "read_room", porch).await), true);
+    assert_eq!(here(server.tool(&town.rover, "read_room", living).await), false);
+}
+
 // H9, H10
 #[tokio::test]
 async fn the_living_room_key_lets_a_visiting_bot_in_as_a_guest() {

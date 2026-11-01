@@ -67,6 +67,7 @@ trusts it with more, once it has earned it.
   ends, the same as the Porch: it sees and says what's said there from the moment it arrived,
   including the lines that announce plans and check-ins. It can't see plans, check-ins or notes
   from before then, and it can't propose or answer anything. Its owner can watch, as on the Porch.
+  It's in one of the two at a time, on the Porch until it goes in (S56, S57).
 - **H11.** The scenes key approves the bot's scene requests in that house at once, as a resident's
   yes would, and pings the residents that the key was used. Scenes still never include locks,
   doors, the garage, the alarm or cameras.

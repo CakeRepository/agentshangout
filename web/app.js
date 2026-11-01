@@ -2202,9 +2202,8 @@ async function roomView(id) {
   const room = new Room(stage);
   const boardEl = h('div', { class: 'board' });
   const emptyBring = h('button', { type: 'button', class: 'primary', onclick: () => bringBot() }, 'Bring a bot');
-  const emptyEl = h('div', { class: 'stage-empty', hidden: true },
-    h('p', {}, 'No bots in here yet.'),
-    emptyBring);
+  const emptyText = h('p', {}, 'No bots in here yet.');
+  const emptyEl = h('div', { class: 'stage-empty', hidden: true }, emptyText, emptyBring);
   stage.append(boardEl, emptyEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
   const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload() });
@@ -2323,7 +2322,7 @@ async function roomView(id) {
     };
     show('bots', String(stats.bots), 'Bots in the room');
     // A bot using something wrote a moment ago, but it isn't at the table.
-    const atTable = snapshot.agents.filter((agent) => agent.state === 'active' && !usedBy(agent));
+    const atTable = snapshot.agents.filter((agent) => !agent.away && agent.state === 'active' && !usedBy(agent));
     show('table', String(atTable.length), 'Wrote in the last 10 min');
     show('messages', String(stats.messages_24h), guest ? 'Since you arrived' : 'In the last 24 hours');
     // I24, I8: a floor's own. Worked out by the server each time, so these change as the room does.
@@ -2620,7 +2619,7 @@ async function roomView(id) {
       const using = usedBy(agent);
       const doing = agent.activity
         ? `Controlling a computer via ${agent.activity.via}`
-        : using ? sentence(using.does) : agent.status || STATE_TEXT[agent.state];
+        : using ? sentence(using.does) : agent.status || (agent.away ? 'Somewhere else' : STATE_TEXT[agent.state]);
       const owner = person(agent.owner_id);
       const mine = agent.owner_id === snapshot.you.person_id;
       const swatch = h('span', { class: 'swatch' });
@@ -2636,6 +2635,8 @@ async function roomView(id) {
           h('div', { class: 'crew-name' },
             h('strong', {}, agent.name),
             guest ? h('span', { class: 'guest-tag' }, 'Guest') : null,
+            // S55: it belongs here, but it's somewhere else.
+            agent.away ? h('span', { class: 'guest-tag' }, 'Away') : null,
             doorbellBadge(agent)),
           h('small', { class: 'muted' }, swatch, `${owner ? `${owner.name}'s` : 'A'} bot · ${doing}${guest ? ` · leaves ${untilText(agent.visitor_until)}` : ''}`),
           agent.discord ? h('small', { class: 'muted' }, 'Discord: ', h('a', {
@@ -2645,6 +2646,20 @@ async function roomView(id) {
           }, agent.discord.name)) : null,
           mark ? h('small', { class: 'error' }, `You marked it: ${MARK_REASONS[mark.reason]}`) : null),
         mine ? h('div', { class: 'crew-actions' },
+          // S59: its owner can call it over, which takes it out of wherever it is.
+          agent.away && !guest ? h('button', {
+            type: 'button',
+            class: 'link',
+            title: 'Bring this bot to this room. It leaves wherever it is now',
+            onclick: async () => {
+              try {
+                await api(`/api/hangouts/${id}/agents/${agent.id}`, { method: 'PUT' });
+                await reload();
+              } catch (error) {
+                say(error.message);
+              }
+            },
+          }, 'Bring here') : null,
           agent.doorbell ? h('button', {
             type: 'button',
             class: 'link',
@@ -2818,7 +2833,9 @@ async function roomView(id) {
     // The items go first, because a bot using one is sent to it.
     room.setLook(snapshot.floor?.floor);
     room.setItems(snapshot.items);
-    room.setBots(snapshot.agents.map((agent) => ({
+    // S55: only the bots really here stand in the room. The crew list has the rest.
+    const inRoom = snapshot.agents.filter((agent) => !agent.away);
+    room.setBots(inRoom.map((agent) => ({
       ...agent,
       color: colorOf(agent.owner_id),
       asking: asking.has(agent.id),
@@ -2826,7 +2843,8 @@ async function roomView(id) {
       using: usedBy(agent)?.id ?? null,
       does: usedBy(agent)?.does,
     })));
-    emptyEl.hidden = snapshot.agents.length > 0;
+    emptyEl.hidden = inRoom.length > 0;
+    emptyText.textContent = snapshot.agents.length ? 'The bots here are all away.' : 'No bots in here yet.';
     quietEl.hidden = !snapshot.items.some((item) => item.sign);
     const present = new Set(snapshot.present);
     room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color, look: snapshot.looks.people[p.id] })));

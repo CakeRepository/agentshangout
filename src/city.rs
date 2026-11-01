@@ -982,8 +982,9 @@ pub fn create_trip(state: &AppState, caller: &Caller, input: &TripInput) -> ApiR
 
 /// Starts a trip both sides have agreed to. Every other way it can come out is a 409 saying why.
 fn start(state: &AppState, trip_id: &str, agent_id: &str, now: i64) -> ApiResult<Trip> {
-    // Read first: once it has arrived, nothing says which floor it left (S40).
-    let left = state.db.walked_onto(agent_id, now)?;
+    // Read first: once it has arrived, nothing says which floor it left (S40), or which room (S56).
+    let mut left = state.db.walked_onto(agent_id, now)?;
+    left.extend(state.db.bot_place(agent_id, now)?);
     let reason = match state.db.arrive(trip_id, now)? {
         Arrival::Arrived => {
             for floor in &left {
@@ -1099,6 +1100,7 @@ pub fn end_trip(state: &AppState, caller: &Caller, trip_id: &str) -> ApiResult<T
             others.push(trip.owner_id.clone());
             others.retain(|id| *id != caller.person_id || caller.is_agent());
             ping(state, others, "trip.ended", &house.porch_id, &line);
+            crate::spaces::refresh_bot_place(state, &trip.agent_id)?;
         }
         "asking" => {
             if !state.db.decline_trip(&trip.id, &caller.name, now)? {

@@ -1725,6 +1725,199 @@ async fn the_page_that_changes_a_space_is_served_to_anyone_and_holds_nothing_but
     assert!(!page.body.to_string().contains("Ann"), "{}", page.body);
 }
 
+// A bot in one room at a time (S55 to S60)
+
+/// Which of these rooms show the bot as here. A room it doesn't belong to doesn't count.
+async fn rooms_it_is_in(server: &Server, owner: &Who, rooms: &[&str], bot: &str) -> Vec<String> {
+    let mut here = Vec::new();
+    for room in rooms {
+        let snapshot = server.snapshot(&owner.key, room).await.ok();
+        let row = snapshot["agents"].as_array().unwrap().iter().find(|agent| agent["id"] == bot);
+        if row.is_some_and(|agent| agent["away"] != true) {
+            here.push((*room).to_string());
+        }
+    }
+    here
+}
+
+impl Server {
+    async fn tool(&self, token: &str, name: &str, arguments: Value) -> Value {
+        let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": { "name": name, "arguments": arguments } });
+        self.post(token, "/mcp", call).await.ok()["result"].clone()
+    }
+
+    /// Ann, her bot Fern, and three rooms Fern belongs to: its first, then two more.
+    async fn bot_in_three_rooms(&self) -> (Who, String, String, [String; 3]) {
+        let (first, ann) = self.someone("Ann").await;
+        let (bot, token) = self.bot(&ann, &first, "Fern").await;
+        let second = text(&self.third_space(&ann, "Second").await.ok()["hangout"]["id"]);
+        let third = text(&self.third_space(&ann, "Third").await.ok()["hangout"]["id"]);
+        for room in [&second, &third] {
+            self.put(&ann.key, &format!("/api/hangouts/{room}/agents/{bot}"), json!({})).await.ok();
+        }
+        (ann, bot, token, [first, second, third])
+    }
+}
+
+// S55, S56
+#[tokio::test]
+async fn a_bot_that_belongs_to_three_rooms_is_in_one_of_them() {
+    let server = Server::start().await;
+    let (ann, bot, _, rooms) = server.bot_in_three_rooms().await;
+    let rooms: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    // It was brought to the third last, so that's where it is.
+    assert_eq!(rooms_it_is_in(&server, &ann, &rooms, &bot).await, [rooms[2]]);
+
+    // Each room still lists it, for its owner to reach, and counts only who's here.
+    for room in &rooms {
+        let snapshot = server.snapshot(&ann.key, room).await.ok();
+        assert_eq!(snapshot["agents"][0]["id"], json!(bot), "{snapshot}");
+        assert_eq!(snapshot["stats"]["bots"], i64::from(*room == rooms[2]), "{snapshot}");
+    }
+}
+
+// S57
+#[tokio::test]
+async fn saying_something_in_a_room_takes_a_bot_there_and_out_of_the_last_one() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    for room in [list[0], list[1], list[2], list[0]] {
+        server.say(&token, room, "Here now").await.ok();
+        assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [room]);
+    }
+
+    // Reading a room from elsewhere isn't going there.
+    server.snapshot(&token, list[1]).await.ok();
+    server.get(&token, &format!("/api/hangouts/{}/messages", list[2])).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
+}
+
+// S57, S60
+#[tokio::test]
+async fn go_to_room_moves_a_bot_and_it_can_tell_where_it_is() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    let went = server.tool(&token, "go_to_room", json!({ "hangout_id": list[0] })).await;
+    assert!(went["isError"].is_null(), "{went}");
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
+
+    let inbox = server.tool(&token, "inbox", json!({})).await;
+    assert_eq!(inbox["structuredContent"]["you_are_in"]["id"], list[0], "{inbox}");
+    for (room, here) in [(list[0], true), (list[1], false)] {
+        let read = server.tool(&token, "read_room", json!({ "hangout_id": room })).await;
+        assert_eq!(read["structuredContent"]["you_are_here"], here, "{read}");
+    }
+
+    // A room it doesn't belong to is no more there than it was before.
+    let (other, _) = server.someone("Bo").await;
+    let refused = server.tool(&token, "go_to_room", json!({ "hangout_id": other })).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
+}
+
+// S55
+#[tokio::test]
+async fn a_bot_thats_away_still_hears_from_the_room() {
+    let server = Server::start().await;
+    let (ann, _, token, rooms) = server.bot_in_three_rooms().await;
+    server.say(&token, &rooms[0], "Over here").await.ok();
+
+    server.say(&ann.key, &rooms[1], "@Fern are you there?").await.ok();
+    let messages = server.get(&token, &format!("/api/hangouts/{}/messages", rooms[1])).await.ok();
+    assert!(messages.to_string().contains("are you there?"), "{messages}");
+}
+
+// S58
+#[tokio::test]
+async fn going_to_a_room_ends_a_walk_in_and_coming_back_finds_the_room_it_left() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+    let (floor, bo) = server.someone("Bo").await;
+    server.open(&bo, &floor).await;
+    let walk = format!("/api/floors/{floor}/walk-in");
+    let send = json!({ "agent_id": bot });
+
+    // Out on a floor, it's in none of its own rooms, and the floor is where it is.
+    server.say(&token, list[1], "Off out").await.ok();
+    server.post(&ann.key, &walk, send.clone()).await.ok();
+    assert!(rooms_it_is_in(&server, &ann, &list, &bot).await.is_empty());
+    assert_eq!(server.snapshot(&bo.key, &floor).await.ok()["stats"]["bots"], 1);
+
+    // Brought back, it's in the room it left.
+    let back = format!("/api/floors/{floor}/walk-out");
+    server.post(&ann.key, &back, send.clone()).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[1]]);
+
+    // Going to one of its own rooms leaves the floor at that moment.
+    server.post(&ann.key, &walk, send).await.ok();
+    server.say(&token, list[0], "Back again").await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
+    assert_eq!(server.snapshot(&bo.key, &floor).await.ok()["stats"]["bots"], 0);
+    server.snapshot(&token, &floor).await.refused(StatusCode::NOT_FOUND);
+}
+
+// S39, S58
+#[tokio::test]
+async fn a_bot_on_a_trip_goes_home_before_it_goes_anywhere_else() {
+    let server = Server::start().await;
+    let town = server.neighbours().await;
+    let home = text(&server.get(&town.token, "/api/me").await.ok()["hangouts"][0]["id"]);
+    let trip = server.ask_for_trip(&town).await;
+    server.host_says_yes(&town, &trip).await;
+    let at_home = [home.as_str()];
+
+    assert!(rooms_it_is_in(&server, &town.cy, &at_home, &town.bot).await.is_empty());
+    server.say(&town.token, &home, "Back in a bit").await.refused(StatusCode::CONFLICT);
+    let lines = server.snapshot(&town.cy.key, &home).await.ok()["messages"].to_string();
+    assert!(!lines.contains("Back in a bit"), "nothing was said: {lines}");
+
+    // It can still ask its owner from home, which doesn't take it there (R46).
+    let asked = format!("/api/hangouts/{home}/owner-questions");
+    server.post(&town.token, &asked, json!({ "question": "Stay longer?" })).await.ok();
+    assert!(rooms_it_is_in(&server, &town.cy, &at_home, &town.bot).await.is_empty());
+
+    // On the Porch it's where it is, and home again it's where it was.
+    server.say(&town.token, &town.porch, "Hello").await.ok();
+    server.post(&town.cy.key, &format!("/api/trips/{trip}/end"), json!({})).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &town.cy, &at_home, &town.bot).await, at_home);
+    server.say(&town.token, &home, "Home").await.ok();
+}
+
+// S59
+#[tokio::test]
+async fn an_owner_brings_a_bot_to_a_room_it_already_belongs_to() {
+    let server = Server::start().await;
+    let (ann, bot, token, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+    server.say(&token, list[0], "Here").await.ok();
+
+    let call = format!("/api/hangouts/{}/agents/{bot}", list[1]);
+    server.put(&ann.key, &call, json!({})).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[1]]);
+
+    // Calling it over isn't bringing it in, so the room isn't told it came in again.
+    let lines = server.snapshot(&ann.key, list[1]).await.ok()["messages"].to_string();
+    assert_eq!(lines.matches("brought in Fern").count(), 1, "{lines}");
+}
+
+// S56
+#[tokio::test]
+async fn sent_home_from_the_room_its_in_a_bot_is_in_its_first_room() {
+    let server = Server::start().await;
+    let (ann, bot, _, rooms) = server.bot_in_three_rooms().await;
+    let list: Vec<&str> = rooms.iter().map(String::as_str).collect();
+
+    server.delete(&ann.key, &format!("/api/hangouts/{}/agents/{bot}", list[2])).await.ok();
+    assert_eq!(rooms_it_is_in(&server, &ann, &list, &bot).await, [list[0]]);
+}
+
 // docs/spaces.md, Starting fresh: a person runs this script on the live database and it can't be taken
 // back, so it has to take exactly what it says and leave a site that still works.
 
