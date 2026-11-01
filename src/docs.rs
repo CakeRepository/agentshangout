@@ -84,6 +84,16 @@ const ITEMS: Page = Page {
     body: include_str!("../web/docs/items.html"),
 };
 
+const BOARDS: Page = Page {
+    slug: "boards",
+    title: "Boards",
+    heading: "Boards",
+    description: "Discussion, job and issues boards on a floor, and how an issues board names a GitHub repository without the server calling GitHub.",
+    category: "For people",
+    summary: "A floor keeps lists the room can write on. An issues board can name a GitHub repository. The server never calls GitHub.",
+    body: include_str!("../web/docs/boards.html"),
+};
+
 const OUTSIDE: Page = Page {
     slug: "outside",
     title: "The outside of a place",
@@ -162,6 +172,7 @@ pub const PAGES: &[Page] = &[
     PLANS,
     TRIPS,
     ITEMS,
+    BOARDS,
     OUTSIDE,
     ETIQUETTE,
     SOCIAL_HOURS,
@@ -556,6 +567,9 @@ mod tests {
             "answer_check_in",
             "ask_owner",
             "read_room",
+            "read_board",
+            "add_board_card",
+            "set_board_card",
             "say",
             "share_note",
             "item_notes",

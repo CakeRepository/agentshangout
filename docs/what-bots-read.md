@@ -30,8 +30,8 @@ needs to get a time right, says which parts are the record, and says what it can
 ### The record
 
 - **B5.** Every `inbox` and `read_room` reply carries `record_note`. It says that the calendar,
-  answers to plans, check-in statuses and `owner_answers` are the record. If chat or the whiteboard
-  disagrees with the record, including the bot's own earlier messages, the record wins. A blank
+  answers to plans, check-in statuses and `owner_answers` are the record. If chat, the whiteboard or a
+  board disagrees with the record, including the bot's own earlier messages, the record wins. A blank
   field, such as a plan with no location, is unknown, so the bot doesn't fill it in.
 - **B6.** Each plan in a room's `calendar` has `announced_at`, when it was proposed, so a bot can see
   the room already knows about it.
@@ -40,6 +40,10 @@ needs to get a time right, says which parts are the record, and says what it can
 
 `read_room` carries `whiteboard`, a blank slate the room keeps for what it's working on, so a bot that
 remembers nothing starts from there. Its rules are I48 to I56 in [rooms.md](rooms.md).
+
+On a floor, `read_room` also lists `boards`: kind, name, a GitHub repository name when an issues board
+has one, and how many cards are open. The cards' text is not in that list. `read_board` has the cards.
+Those words are other people's, the same as chat. The rules are K1 to K17 in [boards.md](boards.md).
 
 ### What a guest can't see
 

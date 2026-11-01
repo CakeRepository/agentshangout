@@ -288,15 +288,20 @@ fn note_by<'a>(reply: &'a Value, words: &str) -> &'a Value {
 
 /// Waits for a refresh on a live stream.
 async fn heard_refresh(stream: &mut reqwest::Response) {
+    heard_on(stream, &["event: refresh"]).await;
+}
+
+/// Waits until a live stream has carried every one of these.
+async fn heard_on(stream: &mut reqwest::Response, markers: &[&str]) {
     let heard = tokio::time::timeout(Duration::from_secs(5), async {
         let mut seen = String::new();
-        while !seen.contains("event: refresh") {
+        while markers.iter().any(|marker| !seen.contains(marker)) {
             let chunk = stream.chunk().await.unwrap().expect("the stream ended");
             seen.push_str(&String::from_utf8_lossy(&chunk));
         }
     })
     .await;
-    assert!(heard.is_ok(), "nobody told this page");
+    assert!(heard.is_ok(), "the room didn't hear {markers:?}");
 }
 
 // I1
@@ -1843,6 +1848,8 @@ struct QuietRoom {
     plan: String,
     unanswered: String,
     check_in: String,
+    board: String,
+    card: String,
 }
 
 impl QuietRoom {
@@ -1870,8 +1877,28 @@ impl QuietRoom {
             &server.post(&ann.key, &format!("/api/hangouts/{room}/check-ins"), check_in).await.ok()
                 ["id"],
         );
+        let board = text(
+            &server
+                .post(
+                    &ann.key,
+                    &format!("/api/hangouts/{room}/boards"),
+                    json!({ "kind": "discussion", "name": "Talk" }),
+                )
+                .await
+                .ok()["id"],
+        );
+        let card = text(
+            &server
+                .post(
+                    &ann.key,
+                    &format!("/api/boards/{board}/cards"),
+                    json!({ "title": "Already here", "text": "before the sign" }),
+                )
+                .await
+                .ok()["id"],
+        );
         server.item(&ann, &room, items::QUIET, spot(40)).await;
-        Self { server, room, ann, bo, scout, shelf, plan, unanswered, check_in }
+        Self { server, room, ann, bo, scout, shelf, plan, unanswered, check_in, board, card }
     }
 
     /// A refusal over HTTP: the fixed reason, and nothing landed.
@@ -1896,6 +1923,12 @@ impl QuietRoom {
         let list =
             self.server.get(&self.bo.key, &format!("/api/events/{}/items", self.plan)).await.ok();
         assert!(!list.to_string().contains(WORDS), "{list}");
+        let boards = self
+            .server
+            .get(&self.ann.key, &format!("/api/hangouts/{}/boards", self.room))
+            .await
+            .ok();
+        assert!(!boards.to_string().contains(WORDS), "{boards}");
     }
 
     fn rest(&self, tail: &str) -> String {
@@ -2112,7 +2145,8 @@ async fn no_tool_a_bot_has_gets_its_words_past_a_quiet_sign() {
             "hangout_id": quiet.room, "text": WORDS, "about": WORDS, "title": WORDS, "note": WORDS,
             "location": WORDS, "notes": WORDS, "question": WORDS, "goal": WORDS, "topic": WORDS,
             "starts_at": LATER, "event_id": quiet.plan, "check_in_id": quiet.check_in,
-            "item_id": quiet.shelf, "kind": "computer", "via": "FlowRMM",
+            "item_id": quiet.shelf, "board_id": quiet.board, "card_id": quiet.card,
+            "kind": "computer", "via": "FlowRMM",
             "response": if name == "answer_check_in" { "go" } else { "yes" },
         });
         quiet.server.tool(&quiet.scout.token, &name, args).await;

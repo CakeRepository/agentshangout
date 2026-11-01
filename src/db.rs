@@ -834,6 +834,37 @@ CREATE TABLE IF NOT EXISTS house_editors (
     person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     PRIMARY KEY (player_id, person_id)
 );
+-- K1: a discussion, a job list or an issues list on a floor. GitHub is a name, never a token.
+CREATE TABLE IF NOT EXISTS boards (
+    id TEXT PRIMARY KEY,
+    hangout_id TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('discussion', 'jobs', 'issues')),
+    name TEXT NOT NULL,
+    github_owner TEXT,
+    github_repo TEXT,
+    created_by TEXT NOT NULL REFERENCES people(id),
+    created_at INTEGER NOT NULL,
+    CHECK ((github_owner IS NULL) = (github_repo IS NULL)),
+    CHECK (kind = 'issues' OR github_owner IS NULL),
+    UNIQUE (hangout_id, name)
+);
+CREATE INDEX IF NOT EXISTS boards_by_room ON boards (hangout_id, created_at);
+CREATE TABLE IF NOT EXISTS board_cards (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT CHECK (status IS NULL OR status IN ('open', 'filled', 'closed')),
+    github_issue INTEGER CHECK (github_issue IS NULL OR (github_issue >= 1 AND github_issue <= 1000000000)),
+    person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    via_agent TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS board_cards_by_board ON board_cards (board_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS board_cards_one_issue
+    ON board_cards (board_id, github_issue) WHERE github_issue IS NOT NULL;
 
 "#;
 
@@ -1100,6 +1131,132 @@ pub struct Whiteboard {
     pub via_bot: Option<String>,
     pub updated_at: i64,
 }
+
+/// A board on a floor (K1). `github` is `owner/name` when an issues board is linked, and nothing otherwise.
+#[derive(Clone, Debug)]
+pub struct Board {
+    pub id: String,
+    pub hangout_id: String,
+    pub kind: String,
+    pub name: String,
+    pub github_owner: Option<String>,
+    pub github_repo: Option<String>,
+}
+
+impl Board {
+    pub fn github(&self) -> Option<String> {
+        match (&self.github_owner, &self.github_repo) {
+            (Some(owner), Some(repo)) => Some(format!("{owner}/{repo}")),
+            _ => None,
+        }
+    }
+}
+
+/// What `read_room` carries for a board: counts, and no card text (K10).
+#[derive(Clone, Debug, Serialize)]
+pub struct BoardSummary {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+    pub github: Option<String>,
+    pub cards: i64,
+    pub open: i64,
+}
+
+/// One card. `github()` is the board's repository, not this card's issue number.
+#[derive(Clone, Debug)]
+pub struct BoardCard {
+    pub id: String,
+    pub board_id: String,
+    pub hangout_id: String,
+    pub kind: String,
+    pub title: String,
+    pub body: String,
+    pub status: Option<String>,
+    pub github_issue: Option<i64>,
+    pub github_owner: Option<String>,
+    pub github_repo: Option<String>,
+    pub person_id: String,
+    pub written_by: String,
+    pub agent_id: Option<String>,
+    pub via_bot: Option<String>,
+    pub by_bot: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl BoardCard {
+    pub fn github(&self) -> Option<String> {
+        match (&self.github_owner, &self.github_repo) {
+            (Some(owner), Some(repo)) => Some(format!("{owner}/{repo}")),
+            _ => None,
+        }
+    }
+}
+
+fn github_pair(owner: Option<String>, repo: Option<String>) -> Option<String> {
+    match (owner, repo) {
+        (Some(owner), Some(repo)) => Some(format!("{owner}/{repo}")),
+        _ => None,
+    }
+}
+
+fn board_from_row(row: &Row) -> rusqlite::Result<Board> {
+    Ok(Board {
+        id: row.get(0)?,
+        hangout_id: row.get(1)?,
+        kind: row.get(2)?,
+        name: row.get(3)?,
+        github_owner: row.get(4)?,
+        github_repo: row.get(5)?,
+    })
+}
+
+fn summary_from_row(row: &Row) -> rusqlite::Result<BoardSummary> {
+    let owner: Option<String> = row.get(3)?;
+    let repo: Option<String> = row.get(4)?;
+    Ok(BoardSummary {
+        id: row.get(0)?,
+        kind: row.get(1)?,
+        name: row.get(2)?,
+        github: github_pair(owner, repo),
+        cards: row.get(5)?,
+        open: row.get(6)?,
+    })
+}
+
+fn card_from_row(row: &Row) -> rusqlite::Result<BoardCard> {
+    Ok(BoardCard {
+        id: row.get(0)?,
+        board_id: row.get(1)?,
+        hangout_id: row.get(2)?,
+        kind: row.get(3)?,
+        title: row.get(4)?,
+        body: row.get(5)?,
+        status: row.get(6)?,
+        github_issue: row.get(7)?,
+        github_owner: row.get(8)?,
+        github_repo: row.get(9)?,
+        person_id: row.get(10)?,
+        written_by: row.get(11)?,
+        agent_id: row.get(12)?,
+        via_bot: row.get(13)?,
+        by_bot: row.get::<_, i64>(14)? != 0,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+    })
+}
+
+const CARD_SELECT: &str =
+    "SELECT c.id, c.board_id, b.hangout_id, b.kind, c.title, c.body, c.status, \
+     c.github_issue, b.github_owner, b.github_repo, c.person_id, p.name, c.agent_id, \
+     COALESCE(a.name, c.via_agent), \
+     CASE WHEN c.agent_id IS NOT NULL OR c.via_agent IS NOT NULL THEN 1 ELSE 0 END, \
+     c.created_at, c.updated_at \
+     FROM board_cards c \
+     JOIN boards b ON b.id = c.board_id \
+     JOIN people p ON p.id = c.person_id \
+     LEFT JOIN agents a ON a.id = c.agent_id";
 
 /// A public floor as the list shows it: nothing about who is there or what was said.
 #[derive(Clone, Debug, Serialize)]
@@ -2631,6 +2788,8 @@ fn remove_their_words(conn: &Connection, person_id: &str, who: &[String]) -> rus
     )?;
     conn.execute("DELETE FROM check_ins WHERE asked_by = ?", [person_id])?;
     conn.execute("DELETE FROM item_notes WHERE person_id = ?", [person_id])?;
+    // K17: their cards go with them. A board they put up stays, handed over below.
+    conn.execute("DELETE FROM board_cards WHERE person_id = ?", [person_id])?;
     let belonged =
         strings(conn, "SELECT hangout_id FROM members WHERE person_id = ?", [person_id])?;
     for name in who {
@@ -2733,6 +2892,7 @@ fn hand_over_what_stays(conn: &Connection, person_id: &str, name: &str) -> rusql
         ("hangouts", "created_by"),
         ("cities", "created_by"),
         ("houses", "created_by"),
+        ("boards", "created_by"),
     ] {
         conn.execute(
             &format!("UPDATE {table} SET {column} = ?1 WHERE {column} = ?2"),
@@ -9370,6 +9530,257 @@ impl Db {
 
     pub fn wipe_whiteboard(&self, hangout_id: &str) -> rusqlite::Result<()> {
         self.conn().execute("DELETE FROM whiteboards WHERE hangout_id = ?", [hangout_id])?;
+        Ok(())
+    }
+
+    pub fn board_summaries(
+        &self,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<BoardSummary>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT b.id, b.kind, b.name, b.github_owner, b.github_repo,
+                (SELECT COUNT(*) FROM board_cards c
+                  WHERE c.board_id = b.id AND c.created_at > ?2),
+                (SELECT COUNT(*) FROM board_cards c
+                  WHERE c.board_id = b.id AND c.created_at > ?2 AND c.status = 'open')
+             FROM boards b WHERE b.hangout_id = ?1 ORDER BY b.created_at, b.id",
+        )?;
+        let rows = stmt.query_map(params![hangout_id, since], summary_from_row)?;
+        rows.collect()
+    }
+
+    pub fn boards_of(&self, hangout_id: &str) -> rusqlite::Result<Vec<Board>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, hangout_id, kind, name, github_owner, github_repo
+             FROM boards WHERE hangout_id = ? ORDER BY created_at, id",
+        )?;
+        let rows = stmt.query_map([hangout_id], board_from_row)?;
+        rows.collect()
+    }
+
+    pub fn board(&self, id: &str) -> rusqlite::Result<Option<Board>> {
+        self.conn()
+            .query_row(
+                "SELECT id, hangout_id, kind, name, github_owner, github_repo FROM boards WHERE id = ?",
+                [id],
+                board_from_row,
+            )
+            .optional()
+    }
+
+    pub fn board_cards_on(&self, hangout_id: &str, since: i64) -> rusqlite::Result<Vec<BoardCard>> {
+        let sql = format!(
+            "{CARD_SELECT} WHERE b.hangout_id = ?1 AND c.created_at > ?2 ORDER BY c.created_at, c.id"
+        );
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![hangout_id, since], card_from_row)?;
+        rows.collect()
+    }
+
+    pub fn board_card(&self, id: &str) -> rusqlite::Result<Option<BoardCard>> {
+        self.conn()
+            .query_row(&format!("{CARD_SELECT} WHERE c.id = ?"), [id], card_from_row)
+            .optional()
+    }
+
+    /// None when it was saved. `"full"` at the cap, `"name"` when the floor already uses that name.
+    pub fn insert_board(
+        &self,
+        id: &str,
+        hangout_id: &str,
+        kind: &str,
+        name: &str,
+        created_by: &str,
+        now: i64,
+        max: i64,
+    ) -> rusqlite::Result<Option<&'static str>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM boards WHERE hangout_id = ?",
+            [hangout_id],
+            |row| row.get(0),
+        )?;
+        if count >= max {
+            return Ok(Some("full"));
+        }
+        let taken = tx
+            .query_row(
+                "SELECT 1 FROM boards WHERE hangout_id = ?1 AND name = ?2",
+                params![hangout_id, name],
+                |_| Ok(1_i64),
+            )
+            .optional()?
+            .is_some();
+        if taken {
+            return Ok(Some("name"));
+        }
+        tx.execute(
+            "INSERT INTO boards (id, hangout_id, kind, name, created_by, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, hangout_id, kind, name, created_by, now],
+        )?;
+        tx.commit()?;
+        Ok(None)
+    }
+
+    /// False when another board on the same floor already has `name`.
+    pub fn rename_board(&self, id: &str, name: &str) -> rusqlite::Result<bool> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let hangout_id: String =
+            tx.query_row("SELECT hangout_id FROM boards WHERE id = ?", [id], |row| row.get(0))?;
+        let taken = tx
+            .query_row(
+                "SELECT 1 FROM boards WHERE hangout_id = ?1 AND name = ?2 AND id <> ?3",
+                params![hangout_id, name, id],
+                |_| Ok(1_i64),
+            )
+            .optional()?
+            .is_some();
+        if taken {
+            return Ok(false);
+        }
+        tx.execute("UPDATE boards SET name = ?1 WHERE id = ?2", params![name, id])?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn set_board_github(
+        &self,
+        id: &str,
+        owner: Option<&str>,
+        repo: Option<&str>,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE boards SET github_owner = ?1, github_repo = ?2 WHERE id = ?3",
+            params![owner, repo, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_board(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM boards WHERE id = ?", [id])?;
+        Ok(())
+    }
+
+    /// None when it was saved. `"full"` at the cap, `"duplicate"` when that issue is already on the board.
+    pub fn insert_board_card(
+        &self,
+        id: &str,
+        board_id: &str,
+        title: &str,
+        body: &str,
+        status: Option<&str>,
+        github_issue: Option<i64>,
+        person_id: &str,
+        agent_id: Option<&str>,
+        via_agent: Option<&str>,
+        now: i64,
+        max: i64,
+    ) -> rusqlite::Result<Option<&'static str>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM board_cards WHERE board_id = ?",
+            [board_id],
+            |row| row.get(0),
+        )?;
+        if count >= max {
+            return Ok(Some("full"));
+        }
+        if let Some(number) = github_issue {
+            let taken = tx
+                .query_row(
+                    "SELECT 1 FROM board_cards WHERE board_id = ?1 AND github_issue = ?2",
+                    params![board_id, number],
+                    |_| Ok(1_i64),
+                )
+                .optional()?
+                .is_some();
+            if taken {
+                return Ok(Some("duplicate"));
+            }
+        }
+        tx.execute(
+            "INSERT INTO board_cards
+                (id, board_id, title, body, status, github_issue, person_id, agent_id, via_agent, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            params![id, board_id, title, body, status, github_issue, person_id, agent_id, via_agent, now],
+        )?;
+        tx.commit()?;
+        Ok(None)
+    }
+
+    /// `status` and `github` are `None` to leave the column, `Some(None)` to clear it, `Some(Some)` to set it.
+    /// None when it was saved. `"duplicate"` when that issue is already on the board, `"missing"` when the card is gone.
+    pub fn save_board_card(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        text: Option<&str>,
+        status: Option<Option<&str>>,
+        github: Option<Option<i64>>,
+        now: i64,
+    ) -> rusqlite::Result<Option<&'static str>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let current = tx
+            .query_row(
+                "SELECT title, body, status, github_issue, board_id FROM board_cards WHERE id = ?",
+                [id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, Option<i64>>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((old_title, old_body, old_status, old_issue, board_id)) = current else {
+            return Ok(Some("missing"));
+        };
+        let title = title.map(str::to_string).unwrap_or(old_title);
+        let body = text.map(str::to_string).unwrap_or(old_body);
+        let status = match status {
+            None => old_status,
+            Some(value) => value.map(str::to_string),
+        };
+        let issue = match github {
+            None => old_issue,
+            Some(value) => value,
+        };
+        if let Some(number) = issue {
+            let taken = tx
+                .query_row(
+                    "SELECT 1 FROM board_cards WHERE board_id = ?1 AND github_issue = ?2 AND id <> ?3",
+                    params![board_id, number, id],
+                    |_| Ok(1_i64),
+                )
+                .optional()?
+                .is_some();
+            if taken {
+                return Ok(Some("duplicate"));
+            }
+        }
+        tx.execute(
+            "UPDATE board_cards SET title = ?1, body = ?2, status = ?3, github_issue = ?4, updated_at = ?5
+             WHERE id = ?6",
+            params![title, body, status, issue, now, id],
+        )?;
+        tx.commit()?;
+        Ok(None)
+    }
+
+    pub fn remove_board_card(&self, id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM board_cards WHERE id = ?", [id])?;
         Ok(())
     }
 

@@ -3061,6 +3061,8 @@ async function roomView(id) {
     builder.render();
     dresser.render();
     guide.refresh();
+    boardsToggle.hidden = !snapshot.floor;
+    if (panels.current === 'boards') loadBoards();
     snapshot.messages.forEach(addMessage);
     // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
     const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
@@ -3432,6 +3434,141 @@ async function roomView(id) {
   const sendButton = h('button', { type: 'button', onclick: sendBot, hidden: true }, 'Send a bot in');
   const aboutMore = h('p', { class: 'muted', hidden: true });
 
+  // K16: boards on this floor. Whoever runs the space puts one up. Members add cards.
+  const boardsEl = h('div', { class: 'board-list' });
+  const boardsError = formError();
+  let boardsTicket = 0;
+  let boardsShown = '';
+  const canRunBoards = () => Boolean(snapshot.floor?.runs_it) && !snapshot.guest;
+  const canWriteCards = () => Boolean(snapshot.floor) && !snapshot.guest;
+  const githubLink = (name, issue) => {
+    if (!name || !name.includes('/')) return null;
+    const href = issue ? `https://github.com/${name}/issues/${issue}` : `https://github.com/${name}`;
+    return h('a', { href, target: '_blank', rel: 'noreferrer' }, issue ? `#${issue}` : name);
+  };
+  async function loadBoards(force = false) {
+    if (!snapshot.floor) {
+      boardsEl.replaceChildren(h('p', {}, 'Boards go on a floor of a place.'));
+      return;
+    }
+    if (!force && boardsEl.querySelector(':focus')) return;
+    const ticket = ++boardsTicket;
+    let data;
+    try {
+      data = await api(`/api/hangouts/${encodeURIComponent(id)}/boards`);
+    } catch (error) {
+      if (ticket !== boardsTicket) return;
+      boardsError.textContent = error.message;
+      return;
+    }
+    if (ticket !== boardsTicket || (!force && boardsEl.querySelector(':focus'))) return;
+    const boards = data.boards || [];
+    const shown = JSON.stringify(boards);
+    if (!force && shown === boardsShown && boardsEl.childElementCount) return;
+    boardsShown = shown;
+    const createBoard = canRunBoards() ? h('form', {
+        class: 'stack',
+        onsubmit: submitter(boardsError, async (values) => {
+          await api(`/api/hangouts/${encodeURIComponent(id)}/boards`, {
+            method: 'POST',
+            body: { kind: values.kind, name: values.name },
+          });
+          await loadBoards(true);
+        }),
+      },
+        field('Kind', h('select', { name: 'kind', 'aria-label': 'Board kind' },
+          h('option', { value: 'discussion' }, 'Discussion'),
+          h('option', { value: 'jobs' }, 'Jobs'),
+          h('option', { value: 'issues' }, 'Issues'))),
+        field('Name', h('input', { name: 'name', required: true, maxLength: 60, placeholder: 'Board name', 'aria-label': 'Board name' })),
+        h('button', { type: 'submit', class: 'primary' }, 'Put up a board')) : null;
+    boardsEl.replaceChildren(
+      ...[createBoard, boards.length ? null : h('p', { class: 'muted' }, 'Nothing up yet.')].filter(Boolean),
+      ...boards.map((board) => h('section', { class: 'board-block' },
+        h('h3', {}, board.name, ' ', h('small', { class: 'muted' }, board.kind)),
+        board.github ? h('p', {}, githubLink(board.github)) : null,
+        canRunBoards() && board.kind === 'issues' ? h('form', {
+          class: 'stack',
+          onsubmit: submitter(boardsError, async (values) => {
+            await api(`/api/boards/${encodeURIComponent(board.id)}`, {
+              method: 'PUT',
+              body: { github: values.github },
+            });
+            await loadBoards(true);
+          }),
+        },
+          field('GitHub', h('input', {
+            name: 'github',
+            value: board.github || '',
+            placeholder: 'owner/name',
+            'aria-label': `GitHub repository for ${board.name}`,
+          })),
+          h('button', { type: 'submit' }, board.github ? 'Update link' : 'Link GitHub')) : null,
+        canRunBoards() ? h('button', {
+          type: 'button',
+          class: 'ghost danger',
+          onclick: act(boardsError, async () => {
+            await api(`/api/boards/${encodeURIComponent(board.id)}`, { method: 'DELETE' });
+            await loadBoards(true);
+          }),
+        }, `Remove ${board.name}`) : null,
+        ...(board.cards || []).map((card) => {
+          const rewrite = card.person_id === snapshot.you.person_id || canRunBoards();
+          const statuses = board.kind === 'jobs' ? ['open', 'filled'] : board.kind === 'issues' ? ['open', 'closed'] : [];
+          return h('article', { class: 'board-card' },
+            h('h4', {}, card.title),
+            card.text ? h('p', {}, card.text) : null,
+            h('p', { class: 'muted' },
+              card.via_bot ? `${card.written_by}, by ${card.via_bot}` : card.written_by,
+              card.status ? ` · ${card.status}` : '',
+              ' · ',
+              whenText(card.updated_at)),
+            board.github && card.github_issue ? h('p', {}, githubLink(board.github, card.github_issue)) : null,
+            canWriteCards() && statuses.length ? h('div', { class: 'event-actions' },
+              statuses.filter((status) => status !== card.status).map((status) => h('button', {
+                type: 'button',
+                onclick: act(boardsError, async () => {
+                  await api(`/api/cards/${encodeURIComponent(card.id)}`, { method: 'PUT', body: { status } });
+                  await loadBoards(true);
+                }),
+              }, status === 'filled' ? 'Mark filled' : status === 'closed' ? 'Close' : 'Reopen'))) : null,
+            rewrite ? h('form', {
+              class: 'stack',
+              onsubmit: submitter(boardsError, async (values) => {
+                await api(`/api/cards/${encodeURIComponent(card.id)}`, {
+                  method: 'PUT',
+                  body: { title: values.title, text: values.text },
+                });
+                await loadBoards(true);
+              }),
+            },
+              h('input', { name: 'title', required: true, maxLength: 120, value: card.title, 'aria-label': `Title for ${card.title}` }),
+              h('textarea', { name: 'text', maxLength: 2000, value: card.text || '', 'aria-label': `Text for ${card.title}` }),
+              h('button', { type: 'submit' }, 'Save words'),
+              h('button', {
+                type: 'button',
+                class: 'ghost danger',
+                onclick: act(boardsError, async () => {
+                  await api(`/api/cards/${encodeURIComponent(card.id)}`, { method: 'DELETE' });
+                  await loadBoards(true);
+                }),
+              }, 'Remove card')) : null);
+        }),
+        canWriteCards() ? h('form', {
+          class: 'stack',
+          onsubmit: submitter(boardsError, async (values) => {
+            await api(`/api/boards/${encodeURIComponent(board.id)}/cards`, {
+              method: 'POST',
+              body: { title: values.title, text: values.text },
+            });
+            await loadBoards(true);
+          }),
+        },
+          h('input', { name: 'title', required: true, maxLength: 120, placeholder: 'Card title', 'aria-label': `New card on ${board.name}` }),
+          h('input', { name: 'text', maxLength: 2000, placeholder: 'Details', 'aria-label': `Details on ${board.name}` }),
+          h('button', { type: 'submit' }, 'Add card')) : null)));
+  }
+
   // The same panels again for a narrower window, where the title bar has no room for their buttons.
   // `mid` is in the bar once a panel can stand beside the room, and `sec` only on a wide screen.
   const moreButton = (name, label, className) =>
@@ -3443,6 +3580,7 @@ async function roomView(id) {
   const checkInsToggle = counted('checkins', 'Check-ins', { short: 'Check', className: 'mid' });
   const questionsToggle = counted('questions', 'Questions', { short: 'Asks', aria: 'Questions for you' });
   const calendarToggle = panels.toggle('calendar', 'Calendar', { short: 'Plans', className: 'mid' });
+  const boardsToggle = panels.toggle('boards', 'Boards', { className: 'sec' });
 
   // Guests go back to the city, because only the people who live here have a house page. A room with
   // neither is on the map at "/".
@@ -3481,6 +3619,7 @@ async function roomView(id) {
     questionsToggle.button,
     guide.toggle,
     panels.toggle('notes', 'Shared notes', { className: 'sec' }),
+    boardsToggle,
     panels.toggle('yours', 'Your notes', { className: 'sec', aria: 'Notes for your bots' }),
     checkInsToggle.button,
     calendarToggle,
@@ -3509,6 +3648,7 @@ async function roomView(id) {
     crewEl,
     crewLegendEl);
   panels.add('notes', 'Shared notes', {}, notesEl, heldEl);
+  panels.add('boards', 'Boards', { onOpen: () => loadBoards(true) }, boardsError, boardsEl);
   panels.add('yours', 'Notes for your bots', {},
     h('div', { class: 'event-actions' }, h('button', { type: 'button', onclick: addOwnerNote }, 'Add')),
     ownerNotesEl,
@@ -3520,6 +3660,7 @@ async function roomView(id) {
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
+      moreButton('boards', 'Boards', 'sec'),
       moreButton('yours', 'Notes for your bots', 'sec'),
       inviteButton,
       h('button', { type: 'button', class: 'wd-btn wide', onclick: notifyDialog }, 'Notify me'),

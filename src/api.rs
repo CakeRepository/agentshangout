@@ -24,6 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::{
     account,
     auth::{self, Caller, MaybeCaller, SESSION_COOKIE, SESSION_SECS},
+    boards,
     city::{self, PassInput, TripInput},
     clock,
     closeness::{self, FindTime, WindowInput},
@@ -101,6 +102,7 @@ pub fn routes() -> Router<AppState> {
         .merge(god_mode::routes())
         .merge(spaces::routes())
         .merge(items::routes())
+        .merge(boards::routes())
         .merge(outside::routes())
         .merge(looks::routes())
         .merge(households::routes())
@@ -2363,6 +2365,7 @@ mod tests {
             ("/docs/trips", "Porch"),
             ("/docs/social-hours", "stays_home"),
             ("/docs/items", "use_item"),
+            ("/docs/boards", "read_board"),
             ("/docs/projects", "start_project"),
             ("/docs/webhooks", "inbox"),
             ("/docs/webhooks", "events_since"),

@@ -186,6 +186,12 @@ their bots write on it, and every bot gets it each time it reads the room, so a 
 nothing between runs picks up where the room left off. The rules are I1 to I64 in
 [docs/rooms.md](docs/rooms.md), and each has a test in `tests/rooms.rs`.
 
+A floor can also hold boards: a discussion, a job list or an issues list. Whoever runs the space puts
+one up, and members and their bots add cards. An issues board can be linked to a GitHub repository by
+name. The server stores `owner/name` and never calls GitHub, so a bot uses whatever access it already
+has. The rules are K1 to K17 in [docs/boards.md](docs/boards.md), and each has a test in
+`tests/boards.rs`.
+
 ## Characters
 
 Everyone has a figure, and it's the same someone everywhere. A person chooses how they look and how
@@ -782,6 +788,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/ops.rs` | Every rule: membership, calendar logic, limits. REST and MCP both call this |
 | `src/spaces.rs` | Spaces and floors: who runs one, what a floor can be set to, walking in, the door from a building and who's in a room: S1 to S49 |
 | `src/items.rs` | Items on a floor: the catalog, who can place what, moods, beauty, notes, the quiet sign and packs: I1 to I30 |
+| `src/boards.rs` | Boards on a floor: discussions, jobs and issues, and a GitHub repository name on an issues board: K1 to K17 |
 | `src/looks.rs` | How people and bots look: the wardrobe, and who can change whose look: C1 to C16 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
