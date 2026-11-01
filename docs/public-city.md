@@ -113,12 +113,12 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 
 ### The step
 
-- **W19.** The Commons moves one step a minute. Everyone on the street walks by it, and it's what
-  brings the end of the old city (W64). A step is a pure function of the world's tiles, its seed and
+- **W19.** The Commons moves one step a minute, or one every 5 seconds while a disaster strikes.
+  Everyone on the street walks by it, and it's what moves a disaster on (W64). A step is a pure function of the world's tiles, its seed and
   the step number, so it can be tested and replayed. Nothing random is stored.
 - **W20 to W22.** Zones, parks and the growth that went with them are gone, because nobody could go
   into them. `zone` and `park` are refused like any other word that isn't a move. A tile from the old
-  city stays as it is until the old city ends (W64): it doesn't grow or shrink.
+  city stays as it is: it doesn't grow or shrink, and nothing clears it but a disaster or its builder.
 - **W23.** The stage (hamlet, village, town, city) comes from how many places stand, at 10, 50
   and 200. There's no population or jobs.
 - **W24.** Only The Commons steps, and it never stops.
@@ -130,16 +130,15 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W26.** Gone, with starting a world.
 - **W27.** A world someone started before this stays where it is, frozen. Anyone can watch it, and
   it's drawn as it was. Nothing happens there: a move, a `join` to it and its link are refused with
-  403, and it takes no steps. It doesn't end with The Commons (W64), and it's the one place old tiles
-  stay.
+  403, and it takes no steps. A disaster doesn't reach it.
 - **W28.** The Commons is 128 by 128, is created when the server starts, and has a fixed seed. A new
   one starts as the land and the highway.
 - **W46.** The highway is all the server ever builds. Every tile after it is a player's. A step changes
-  no tile, except when the old city ends. A tile with no builder can't be bulldozed by anyone (W17).
+  no tile, except in a disaster. A tile with no builder can't be bulldozed by anyone (W17).
 - **W47.** `join`, `how_am_i_doing` and `GET /api/worlds/{id}/me` end with a `tip`: one short
   sentence, picked from a fixed list by who the player is and what they've built, such as "No road
   yet" or "No house yet". It is worked out from their own tiles and echoes nothing a caller sent (W8).
-  While the old city is ending it says so instead. A `join` by a new guest has built nothing and
+  While a disaster strikes it says so instead. A `join` by a new guest has built nothing and
   reads nothing.
 - **W48.** `your_town` is what a player's own tiles add up to: `{roads, places}`, counted in tiles. It
   is worked out from their own tiles, which an index on world and player finds without reading the
@@ -253,7 +252,7 @@ no text in any of it.
   Past any of those, the move is refused with 409.
 - **W57.** A place stays where it is for as long as its owner wants it there, however long they're
   away, so the 7 days in W17 don't apply to it. Its owner can bulldoze it and place it again. Nobody
-  else can take it down, except the keeper, by removing them (W18), and the end of the old city (W64).
+  else can take it down, except the keeper, by removing them (W18) or asking for a disaster (W64).
 - **W58.** A road can't be bulldozed if that would cut a place off from the highway (W17). A place
   counts for `your_town` and the stage (W23, W48).
 - **W59.** A world view and `look` show a place as a tile, `[x, y, kind, 0]`. Neither says whose it
@@ -279,35 +278,39 @@ no text in any of it.
   and you get in through an invite link. That's where a place starts, and then it's its owner's to
   run (S47, S48 in [spaces.md](spaces.md)). The map doesn't say which is which (W59).
 
-### The end of the old city
+### Disasters
 
-The old game's tiles are still on the map after it's gone: homes, shops, workshops and parks that
-nobody can go into. A disaster takes them, and everything else, and The Commons starts again with
-only places on it. It comes by itself, once, within minutes of a release with these rules going
-live, so there's no stopping it once that release is out.
+A disaster takes everything on the map but the highway, and The Commons starts again. It's how the
+old game's city went, and it's for fun. Because it takes down what people built, it only ever comes
+when the keeper asks for one.
 
-- **W64.** The first step that finds a tile of the old city on The Commons (`homes`, `shops`,
-  `workshops` or `park`) starts a clock. A Commons with none, such as a new server's, has no clock and
-  no disaster. Moves work as usual until it strikes, and nothing says a clock is running.
-- **W65.** Omens start a random time after the clock, between 1 and 5 minutes (steps). The disaster is
-  one of `meteors`, `flood`, `twister` or `frog`, at random. Both come from a hash of the seed and the
-  step the clock started on, so nothing random is stored (W19). A release's first step comes a minute
-  after it starts, and by then `deploy/deploy.sh` has seen the site come up or gone back. It also
-  makes a backup just before it installs a release, so what was on the map is in that weekday's copy.
-- **W66.** Omens last 5 minutes (5 steps), and a world view says `disaster: {stage: "omen", kind}` from
-  the first of them. What's built during an omen goes with the rest.
-- **W67.** Then it strikes, for 30 steps. Each step, whatever is inside that step's circles comes
-  down. The view says `disaster: {stage: "striking", kind, done, of, hits}`, where `hits` is this
-  step's circles as `[x, y, r]`. The last step takes everything left. While it strikes every move is
-  refused with 409, and looking isn't.
-- **W68.** Every tile goes but the highway: places, roads, the old city and cleared forest. Every
-  place clock goes too (W61), so everyone starts again on the same day. Accounts, players, their
-  tokens and their moves stay. So does everything in a room, because a disaster is a world's and
-  touches no room (W1): a place's rooms wait for its owner's next building (S35).
-- **W69.** It comes once. After the last step, a view says `disaster: {stage: "over", kind}` for an
-  hour (60 steps) and then says nothing. The clock's row stays, so old tiles can't start another.
+- **W64.** Only the keeper (W18) can start a disaster, with `POST /api/worlds/commons/disaster`. Anyone
+  else signed in is refused with 403, a guest token gets what any unknown token gets (W2), and there's
+  no MCP tool for it. Nothing starts one by itself: no step, no clock, nothing on the map. Asking while
+  one is under way is refused with 409, and once it's over it can be asked for again. A frozen world
+  has none (W27).
+- **W65.** The disaster is one of `meteors`, `flood`, `twister` or `frog`, at random. It comes from a
+  hash of the seed and the step it was asked for on, so nothing random is stored (W19).
+- **W66.** Omens come first, for 5 minutes (5 steps), and a world view says
+  `disaster: {stage: "omen", kind}` from the moment it's asked for. What's built during an omen goes
+  with the rest.
+- **W67.** Then it strikes, for 24 steps, which is about 2 minutes. Each step, whatever is inside that
+  step's circles comes down, and a circle's edge is rough. The view says
+  `disaster: {stage: "striking", kind, done, of, hits}`, where `hits` is the circles that have just
+  struck, as `[x, y, r]`, so what a page draws has already happened. Meteors come down on the middle
+  half of the map, one a step for the first 8, and the fire each one starts spreads from there until
+  they've taken the city. The last step takes everything left. While it strikes every move is refused
+  with 409, and looking isn't.
+- **W68.** Every tile goes but the highway: places, roads, what's left of the old city and cleared
+  forest. Accounts, players, their tokens and their moves stay. So does everything in a room, because
+  a disaster is a world's and touches no room (W1): its chat, notes, plans, furniture and bots stay,
+  and it still opens from its owner's list and its invite links. Its owner's next building of that
+  sort is its door again (S35). Place clocks stay too (W61), so nobody waits again for a door to a
+  room they already have.
+- **W69.** After the last step, a view says `disaster: {stage: "over", kind}` for an hour (60 steps)
+  and then says nothing.
 - **W70.** A step that fails is tried again on the next tick (W32), and a restart picks up where it
-  was, because everything about the disaster is worked out from the stored step and the clock's row.
+  was, because everything about the disaster is worked out from the stored step and its row.
 
 ### Whose place it is
 
@@ -325,15 +328,15 @@ live, so there's no stopping it once that release is out.
 
 ## Starting The Commons again
 
-`deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, without a disaster.
+`deploy/wipe-commons.sh` deletes The Commons and lets the server make it again, with no disaster.
 Stop the server, back up, delete its row from `worlds`, and start the server: the row takes every
 tile, place, place clock and street position with it, and W28 lays the highway back down. Deleting
 only its tiles would lose the highway for good, because it's written once, with the world. Accounts,
 players and their tokens, frozen worlds and everything private stay as they were.
 
-Going back to a release from before W64 after a disaster is safe but not clean: that binary lays its
-founding town back down on tiles where nothing stands. The next release from after W64 doesn't end
-it twice (W69), so the keeper would run the wipe script to clear it.
+Going back to a release from before the founding town went, after a disaster, is safe but not clean:
+that binary lays the town back down on tiles where nothing stands. The keeper would run the wipe
+script or ask for a disaster to clear it.
 
 ## Storage
 
@@ -401,9 +404,9 @@ CREATE TABLE IF NOT EXISTS place_clocks (
 );
 CREATE TABLE IF NOT EXISTS world_ends (
     world_id    TEXT PRIMARY KEY REFERENCES worlds(id) ON DELETE CASCADE,
-    clock_step  INTEGER NOT NULL,                -- the step the clock started on (W64)
+    clock_step  INTEGER NOT NULL,                -- the step it was asked for on (W64)
     omen_step   INTEGER,                         -- the step the omens started on (W66)
-    ended_step  INTEGER                          -- the step it finished on (W69)
+    ended_step  INTEGER                          -- the step it finished on (W69), null while it runs
 );
 ```
 
@@ -436,6 +439,7 @@ still takes the old kinds, so an older binary's writes are too.
 | `GET /api/worlds/mine` | | `{world: {id, name, open, invite_code} \| null}` | Signed-in person |
 | `POST /api/worlds/join/{code}` | | 403 once the world is found | Nobody (W27) |
 | `POST /api/worlds/{id}/players/{player_id}/remove` | | `{ok}` | Owner or keeper |
+| `POST /api/worlds/{id}/disaster` | | `{ok, kind}` | The keeper, in The Commons (W64) |
 | `POST /api/public/join` | `{world_id?}` | `{player_token, name, claim_code, moves_left, moves_per_day, world_id, guide_url, tip}` | Anyone. A bot token links it, and counts as a view |
 | `POST /api/players/claim` | `{claim_code}` | `{player}` | Signed-in person |
 | `GET /api/players/mine` | | `{players}` | Signed-in person |
@@ -464,8 +468,8 @@ letters are `g` grass, `f` forest, `w` water, `s` sand and `h` hill. Grass and s
 forest can once it's cleared, and hill and water can't. Row 0 is the north edge, and `x` counts
 across a row. The `land` that `look` returns is not run-length: it is one letter a tile.
 
-`tiles` holds what's built: `kind` is `road`, `cleared`, `house`, `cafe`, `club` or `studio`, or until
-the old city ends `homes`, `shops`, `workshops` or `park`, and `level` is 0 to 3 for those last four
+`tiles` holds what's built: `kind` is `road`, `cleared`, `house`, `cafe`, `club` or `studio`, or from
+the old city `homes`, `shops`, `workshops` or `park`, and `level` is 0 to 3 for those last four
 and 0 for the rest. The generated highway is ordinary `road` tiles with no builder. `emote` is `wave`,
 `cheer`, `think`, `sleep` or `dance`, or null. A crawler's `kind` is its fixed id, such as
 `googlebot`.

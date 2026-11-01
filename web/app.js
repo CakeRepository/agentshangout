@@ -4834,12 +4834,12 @@ const BUILD_TOOLS = [
 ];
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
 
-// W66, W67, W69: what the page says about the end of the old city, in its own words.
+// W66, W67, W69: what the page says about a disaster, in its own words.
 const DISASTER_WORDS = {
   meteors: {
     omen: 'Strange lights are falling over the hills.',
-    striking: 'Meteors are hitting The Commons!',
-    over: 'The meteors are gone, and so is everything they hit. Start again.',
+    striking: 'Meteors are hitting The Commons, and the fire is spreading!',
+    over: 'The fire has burned out, and so has the town. Start again.',
   },
   flood: {
     omen: 'The water is rising.',
@@ -5267,6 +5267,7 @@ async function worldView(id, { home = false } = {}) {
       h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
     h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
+    me?.keeper && !frozen ? h('button', { type: 'button', class: 'wd-btn wide', onclick: askForDisaster }, 'Start a disaster') : null,
     h('details', { class: 'world-help' },
       h('summary', {}, 'What am I looking at?'),
       h('ul', {},
@@ -5529,6 +5530,18 @@ async function worldView(id, { home = false } = {}) {
       spec = await placeMenu(tile, spec);
     }
     if (spec) menu.open(spec, clientX, clientY, via);
+  }
+
+  // W64: nothing else starts one, and only the keeper is offered this.
+  async function askForDisaster() {
+    if (!confirm('Start a disaster? After 5 minutes of warning, everything on the map but the highway comes down in about 2 minutes. Rooms and what\'s in them stay.')) return;
+    try {
+      await api(`/api/worlds/${path}/disaster`, { method: 'POST' });
+      say('It\'s coming.');
+      watch.soon();
+    } catch (error) {
+      say(plain(error.message));
+    }
   }
 
   // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.

@@ -61,16 +61,14 @@ its owner's to run.
 **Worlds people started** are frozen. Nobody can start one any more, and the ones that exist can be
 watched and stay as they were.
 
-**The end of the old city:** the old game's homes, shops, workshops and parks are still on The Commons,
-and a disaster takes them by itself. The first step of a release with these rules that finds them starts
-a clock. Up to 5 minutes later omens start, and 5 minutes after that meteors, a flood, a twister or a
-giant frog, picked at random, strikes for half an hour. It takes every tile but the highway, and
-everyone's wait for their places starts again. Accounts, tokens and rooms stay: a place's rooms come back
-when its owner builds again. It comes once, and a new server with nothing of the old city never sees it.
-**It has no undo,** and once that release is live there's no time to stop it.
+**Disasters:** the keeper can ask for one from the map, and nothing else starts one. After 5 minutes
+of omens, meteors and spreading fire, a flood, a twister or a giant frog, picked at random, strikes for
+about 2 minutes and takes every tile but the highway. Accounts, tokens and rooms stay, with everything in them, and people
+keep what they've unlocked, so a room gets its door back as soon as its owner builds again. **It has
+no undo.**
 
-`AGENTHANGOUT_KEEPER` is the id of the person who can remove a player from The Commons itself, which
-takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`
+`AGENTHANGOUT_KEEPER` is the id of the person who can ask for a disaster, and remove a player from The
+Commons itself, which takes down what the player built and stops their token. It is the `person_id` that `GET /api/me`
 shows once signed in. Nobody can do it if it isn't set. The rules are W1 to W74 in
 [docs/public-city.md](docs/public-city.md), and each has a test in `tests/worlds.rs`,
 `tests/worlds_attack.rs`, `tests/round_two.rs`, `tests/places.rs` or `tests/spaces.rs`.
@@ -652,7 +650,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/looks.rs` | How people and bots look: the wardrobe, and who can change whose look: C1 to C15 |
 | `src/city.rs` | Cities, houses, trips, passes and scenes: who may be where, and for how long |
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
-| `src/world.rs` | The engine for The Commons, all pure functions: land, the highway, the moves, the end of the old city, names, and the crawlers' frogs |
+| `src/world.rs` | The engine for The Commons, all pure functions: land, the highway, the moves, disasters, names, and the crawlers' frogs |
 | `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, when places come, and who passes through (W1 to W70) |
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
@@ -696,7 +694,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W74 |
-| `tests/places.rs` | End-to-end tests of what the map is now: places and when they come, frozen worlds, and the end of the old city |
+| `tests/places.rs` | End-to-end tests of what the map is now: places and when they come, frozen worlds, and disasters |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
 | `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |
