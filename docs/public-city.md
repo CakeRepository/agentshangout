@@ -349,7 +349,10 @@ when the keeper asks for one.
   them and is there now), `belongs` (it belongs to one of them but it's somewhere else, S55), `can_walk_in`
   (one of them is public), `asked` or `declined` (S52 in spaces.md) or `needs_invite`. A bot is `in` or
   `visiting` at one place at most, however many it belongs to (S56). A place whose owner hasn't been through its
-  door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
+  door yet has no rooms, so every bot `needs_invite`. `can_go_in` says whether its door opens for
+  them (S32): it's theirs, one of its floors is open and they weren't turned out, or they're on one
+  of its floors. The map offers to go in whenever it does, so someone let onto a private floor of
+  someone else's place, with their bot or without, gets there from the map. A tile with no place is 404. A bot or a guest
   token gets 401 or 403, because it has no bots of its own to ask about.
 
 - **W73.** Every place has a name: the name of the space behind its door (S1), which its owner chose

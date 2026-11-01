@@ -529,3 +529,58 @@ async fn a_yes_takes_nobody_onto_a_full_floor_and_the_request_stays() {
         1
     );
 }
+
+// W72, S32: the bug was a private floor's member being told their bot belongs there and offered no
+// way in, because the map only offered to go in to a place that was theirs or open.
+#[tokio::test]
+async fn someone_let_onto_a_private_floor_is_told_they_can_go_in_and_the_door_opens() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let (bo_room, bo) = server.someone("Bo").await;
+    let (rover_id, _) = server.bot(&bo, &bo_room, "Rover").await;
+    let house = server.place_at(&ann, "house", now());
+    let door =
+        server.post(&ann.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await.ok();
+    let room = text(&door["hangout_id"]);
+    let (_, cy) = server.someone("Cy").await;
+
+    // Before Ann lets Rover in, the door is only hers.
+    assert_eq!(server.place(&ann.key, house).await.ok()["can_go_in"], true);
+    assert_eq!(server.place(&bo.key, house).await.ok()["can_go_in"], false);
+
+    // A yes brings Rover and Bo onto the private floor (S51), and the door opens for Bo.
+    let path = format!("/api/places/{}/{}/requests", house.0, house.1);
+    let asked = server.post(&bo.key, &path, json!({ "agent_id": rover_id })).await.ok();
+    let answer = format!("/api/place-requests/{}/answer", text(&asked["id"]));
+    server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
+    let place = server.place(&bo.key, house).await.ok();
+    assert_eq!(place["open"], false);
+    assert_eq!(place["can_go_in"], true, "{place}");
+    let went =
+        server.post(&bo.key, "/api/spaces/door", json!({ "x": house.0, "y": house.1 })).await;
+    assert_eq!(text(&went.ok()["hangout_id"]), room);
+
+    // Someone who isn't on it still can't, and neither can Bo once he's turned out.
+    assert_eq!(server.place(&cy.key, house).await.ok()["can_go_in"], false);
+    let turn_out = format!("/api/spaces/{room}/people/{}/turn-out", bo.id);
+    server.post(&ann.key, &turn_out, json!({})).await.ok();
+    assert_eq!(server.place(&bo.key, house).await.ok()["can_go_in"], false);
+
+    // The map offers to go in on what the server says, not only on a place being yours or open.
+    let page = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = page.find("async function placeMenu(t, spec)").expect("the place menu");
+    let menu = &page[start..start + page[start..].find("\n  }\n").unwrap()];
+    assert!(menu.contains("if (details.can_go_in) own.push({ label: 'Go in'"), "{menu}");
+}
+
+// W72: a place's menu is what you can do with it. Nothing can be built on one, so the build tools
+// aren't offered there.
+#[test]
+fn a_places_menu_offers_no_build_tools() {
+    let page = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = page.find("function tileMenu(t)").expect("the tile menu");
+    let menu = &page[start..start + page[start..].find("\n  }\n").unwrap()];
+    let tools = menu.find("BUILD_TOOLS.filter").expect("the build tools");
+    let guard = menu.find("if (!BUILDING_KINDS.has(t.kind)) {").expect("a guard for places");
+    assert!(guard < tools, "{menu}");
+}

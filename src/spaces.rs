@@ -307,6 +307,17 @@ async fn place_details(
         None => Vec::new(),
     };
     let now = now();
+    // W72, S32: whether the door opens for them, as `go_through_door` decides.
+    let turned_out = match &place.space {
+        Some(space) => state.db.is_turned_out(&space.id, &caller.person_id)?,
+        None => false,
+    };
+    let mut can_go_in = place.owner_id.as_deref() == Some(caller.person_id.as_str());
+    for floor in &floors {
+        can_go_in = can_go_in
+            || (floor.access == "public" && !turned_out)
+            || state.in_room(&caller, &floor.id)?;
+    }
     let mut bots = Vec::new();
     for agent in state.db.agents_of(&caller.person_id, now)? {
         if state.db.bot_home(&agent.id)?.is_some_and(|home| home.is_house) {
@@ -349,6 +360,7 @@ async fn place_details(
         "purpose": place.space.as_ref().map(|space| space.about.clone()).filter(|about| !about.trim().is_empty()),
         // Whether anyone signed in can walk in, so the map knows whether to offer to go in.
         "open": floors.iter().any(|floor| floor.access == "public"),
+        "can_go_in": can_go_in,
         "bots": bots,
     })))
 }
