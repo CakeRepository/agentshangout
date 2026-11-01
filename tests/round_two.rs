@@ -3535,7 +3535,7 @@ async fn first_moves_still_work_once_the_road_the_guide_shows_is_built() {
                 && run(tile, step).all(|next| streets.contains(&next))
         })
         .expect("no run of streets starts beside a road");
-    let last = run(first, step).last().unwrap();
+    let last = run(first, step).next_back().unwrap();
     let done = server
         .tool(
             "build",
