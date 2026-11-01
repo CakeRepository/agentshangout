@@ -5687,6 +5687,14 @@ fn road_history_survives_reopening_and_guest_expiry_never_reassigns_roads() {
         assert!(next.id > builder);
         assert!(db.road_removals(COMMONS, next.id).unwrap().is_empty());
         assert_eq!(db.world_tiles(COMMONS).unwrap()[&(42, 41)].player, Some(builder as u64));
+        db.in_transaction::<(), rusqlite::Error>(|tx| {
+            tx.write_changes(COMMONS, &[Change::Remove((42, 41))], 200)
+        })
+        .unwrap();
+        assert!(
+            db.road_removals(COMMONS, next.id).unwrap().is_empty(),
+            "an abandoned road can come down without assigning its history to someone else"
+        );
     }
     std::fs::remove_file(path).unwrap();
 }

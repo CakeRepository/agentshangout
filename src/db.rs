@@ -8304,7 +8304,8 @@ fn q_write_changes(
              SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?4, w.step, ?5
              FROM world_tiles t JOIN worlds w ON w.id = t.world_id
              WHERE t.world_id = ?1 AND t.x = ?2 AND t.y = ?3 AND t.kind = 'road'
-               AND t.player_id IS NOT NULL AND (?6 <> 'road' OR t.player_id IS NOT ?7)",
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)
+               AND (?6 <> 'road' OR t.player_id IS NOT ?7)",
             params![world_id, pos.0, pos.1, now, cause, kind, player.map(|id| id as i64)],
         )?;
         match change {
@@ -10088,7 +10089,8 @@ impl Db {
                 (world_id, player_id, x, y, built_at, removed_at, world_step, reason)
              SELECT t.world_id, t.player_id, t.x, t.y, t.built_at, ?3, w.step, 'player_removed'
              FROM world_tiles t JOIN worlds w ON w.id = t.world_id
-             WHERE t.world_id = ?1 AND t.player_id = ?2 AND t.kind = 'road'",
+             WHERE t.world_id = ?1 AND t.player_id = ?2 AND t.kind = 'road'
+               AND EXISTS (SELECT 1 FROM players p WHERE p.id = t.player_id)",
             params![world_id, player_id, crate::now()],
         )?;
         let down = tx.execute(

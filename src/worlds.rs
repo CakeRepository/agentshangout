@@ -1315,7 +1315,7 @@ fn standing(
         "your_town": town,
         "goal": world::goal(&town, person),
         "tip": tip,
-        "road_count_note": "Roads counts tiles you own now, not lifetime builds. road_removals lists your latest 50 recorded road losses; older losses cannot be reconstructed.",
+        "road_count_note": "Your road count is the tiles you own now, not lifetime builds. road_removals lists your latest 50 recorded road losses; older losses cannot be reconstructed.",
         "road_removals": state.db.road_removals(&world.id, player.id)?.into_iter().map(|loss| json!({
             "x": loss.x, "y": loss.y, "built_at": crate::ops::iso(loss.built_at),
             "removed_at": crate::ops::iso(loss.removed_at), "world_step": loss.world_step, "reason": loss.reason,

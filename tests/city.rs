@@ -4695,6 +4695,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         connection.execute("DROP VIEW world_every_place", []).unwrap();
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "world_road_removals",
             "place_outsides",
             "trusted_bot_wakes",
             "bot_wake_rings",
