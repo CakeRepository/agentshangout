@@ -3327,11 +3327,13 @@ async fn a_flood_of_user_agents_and_addresses_keeps_only_a_kind_a_day_and_a_coun
         }
     }
     worlds::housekeeping(&server.state, t + 400);
-    let rows = server.state.db.sightings_on(worlds::today(t)).unwrap();
     let allowed: HashSet<&str> = world::CRAWLERS.iter().map(|c| c.id).chain(world::FETCHERS.iter().map(|f| f.id)).collect();
-    assert!(rows.len() <= allowed.len());
-    for row in &rows {
-        assert!(allowed.contains(row.0.as_str()), "{} isn't on a list", row.0);
+    for day in worlds::today(t)..=worlds::today(t + 400) {
+        let rows = server.state.db.sightings_on(day).unwrap();
+        assert!(rows.len() <= allowed.len());
+        for row in &rows {
+            assert!(allowed.contains(row.0.as_str()), "{} isn't on a list", row.0);
+        }
     }
     assert!(server.state.worlds.visitors(t + 100).len() <= worlds::MAX_VISITORS);
     // Nothing a request said is anywhere in the database, in any table.
