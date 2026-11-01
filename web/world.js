@@ -5015,6 +5015,9 @@ export class World {
         seen.add(id);
         // A fourth field is what someone signed in, or a bot out at a place, is wearing (C14).
         const worn = wornIn(row[3]);
+        // L17: a bot at a place says whether it's inside a building (null) or on an open-air place.
+        const atPlace = row.length >= 7;
+        const area = Array.isArray(row[6]) ? [clamp(Number(row[6][0]) || 0, 0, n - 1), clamp(Number(row[6][1]) || 0, 0, n - 1)] : null;
         let p = map.get(id);
         if (!p) {
           // L18: a bot that just reached a place sets out from where it was, and goes there.
@@ -5024,12 +5027,23 @@ export class World {
           p = make(id, name, fx, fy, worn);
           p.born = animate ? this.time : -10;
           map.set(id, p);
+          this.settle(p, atPlace, area);
           if (animate && !travels) this.sparkle(p.px, p.py, 5);
-          if (fx !== x || fy !== y) this.walkTo(p, x, y);
+          const [tx, ty] = this.standAt(p, x, y);
+          if (!animate) {
+            // On a page that has just opened, it's already where it is.
+            p.x = tx;
+            p.y = ty;
+            p.px = tx + 0.5 + p.ox;
+            p.py = ty + 0.5 + p.oy;
+          } else if (fx !== tx || fy !== ty) this.walkTo(p, tx, ty);
         } else {
           p.leaving = 0;
           if (JSON.stringify(worn) !== p.worn) dress(p, name, p.kind, worn);
-          if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
+          this.settle(p, atPlace, area);
+          const [tx, ty] = this.standAt(p, x, y);
+          if (!p.area && (p.x !== tx || p.y !== ty)) this.walkTo(p, tx, ty);
+          else if (p.area && !this.inArea(p, p.x, p.y)) this.walkTo(p, tx, ty);
         }
       });
     }
@@ -5038,6 +5052,31 @@ export class World {
       if (animate && !p.leaving) p.leaving = this.time;
       else if (!animate) map.delete(id);
     }
+  }
+
+  // L17: a bot at a building is inside it, and one at an open-air place keeps to the place's tiles.
+  settle(p, atPlace, area) {
+    p.inside = atPlace && !area;
+    p.area = area;
+    if (atPlace) p.wander = area ? p.wander || 3 : 0;
+  }
+
+  // Where a figure stands: on an open-air place, a tile of it of its own, and anywhere else, there.
+  standAt(p, x, y) {
+    if (!p.area) return [x, y];
+    const k = this.kind[p.area[1] * this.n + p.area[0]];
+    const big = k === K_SQUARE || k === K_GREEN;
+    const spot = big ? ih(p.h, 7, 3) % 4 : 0;
+    return [p.area[0] + (spot & 1), p.area[1] + (spot >> 1)];
+  }
+
+  inArea(p, x, y) {
+    return Boolean(p.area) && x >= p.area[0] && x <= p.area[0] + 1 && y >= p.area[1] && y <= p.area[1] + 1;
+  }
+
+  // L17: inside a building, once it has got there, a bot isn't drawn on the map.
+  indoors(p) {
+    return Boolean(p.inside) && !p.path.length;
   }
 
   sparkle(tx, ty, count) {
@@ -5801,6 +5840,13 @@ export class World {
   }
 
   stroll(p) {
+    if (p.area) {
+      // L17: round the open-air place, and never off it onto the street.
+      const tx = p.area[0] + (Math.random() < 0.5 ? 0 : 1);
+      const ty = p.area[1] + (Math.random() < 0.5 ? 0 : 1);
+      p.path = [[tx + 0.2 + Math.random() * 0.6, ty + 0.2 + Math.random() * 0.6, false]];
+      return;
+    }
     const cx = clamp(Math.round(p.px - 0.5), 0, this.n - 1);
     const cy = clamp(Math.round(p.py - 0.5), 0, this.n - 1);
     if (cx !== p.x || cy !== p.y) {
@@ -6289,6 +6335,7 @@ export class World {
     }
     for (const map of [this.people, this.visitors]) {
       for (const p of map.values()) {
+        if (this.indoors(p)) continue;
         place(p, ...screenOf(p.px, p.py));
         if (inView(p.sx, p.sy) && ready(p.sx, p.sy)) ents.push(p);
       }
@@ -6600,7 +6647,7 @@ export class World {
       }
     };
     for (const map of [this.players, this.people, this.visitors]) {
-      for (const p of map.values()) test(p, p.kind === 'person' ? 13 : 16, reach);
+      for (const p of map.values()) if (!this.indoors(p)) test(p, p.kind === 'person' ? 13 : 16, reach);
     }
     for (const f of this.frogs.values()) test(f, 9, reach * 1.1);
     return best;

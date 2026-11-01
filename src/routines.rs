@@ -404,6 +404,9 @@ pub struct BotAtPlace {
     pub look: Look,
     pub from: Option<(u16, u16)>,
     pub player: Option<i64>,
+    /// L17: the place's own tile when it's open to the sky, where the bot stays. `None` is a
+    /// building, which it's inside.
+    pub open_air: Option<(u16, u16)>,
 }
 
 pub fn bots_at_places(
@@ -434,6 +437,7 @@ pub fn bots_at_places(
             continue;
         }
         let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else { continue };
+        let open_air = tiles.get(&(x, y)).is_some_and(|tile| tile.kind.is_big()).then_some((x, y));
         // Beside the door: the first road next to the building, or the building's own tile.
         let road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().find_map(|(dx, dy)| {
             let pos =
@@ -457,6 +461,7 @@ pub fn bots_at_places(
             look: looks.remove(&agent_id).unwrap_or_default(),
             from,
             player,
+            open_air,
         });
     }
     Ok(list)

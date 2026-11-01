@@ -1032,3 +1032,71 @@ async fn a_project_puts_up_the_kind_of_place_it_needs_and_its_room_opens() {
     let inbox = server.tool(&town.fern, "inbox", json!({})).await;
     assert_eq!(inbox["your_projects"][0]["studio"], json!([spot.0, spot.1]), "{inbox}");
 }
+
+// L17, W91: a bot at a building is inside it, and one at an open-air place stays on the place.
+#[tokio::test]
+async fn a_bot_is_inside_a_building_and_out_on_an_open_air_place() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, cy) = server.someone("Cy3").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let open = |floor: String| {
+        let server = &server;
+        let cy = &cy;
+        async move {
+            let path = format!("/api/floors/{floor}");
+            server
+                .put(&cy.key, &path, json!({ "access": "public", "create_code": CODE }))
+                .await
+                .ok();
+            floor
+        }
+    };
+    let go_in = |(x, y): (i64, i64)| {
+        let server = &server;
+        let cy = &cy;
+        async move {
+            let door =
+                server.post(&cy.key, "/api/spaces/door", json!({ "x": x, "y": y })).await.ok();
+            text(&door["hangout_id"])
+        }
+    };
+    let cafe = server.place_at(&cy, "cafe", now());
+    let cafe_floor = open(go_in(cafe).await).await;
+    server.all_day(&town.bo, &town.rover, true).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": cafe_floor })).await;
+    let row = |view: &Value| view["bots_out"][0].clone();
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert!(row(&view)[6].is_null(), "inside the cafe: {}", row(&view));
+
+    // A park, where all four tiles are open.
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let clear = |(x, y): (i64, i64)| {
+        let pos = (x as u16, y as u16);
+        !tiles.contains_key(&pos)
+            && !world::is_reserved(&tiles, pos)
+            && land.at(pos).is_some_and(|ground| ground.is_open())
+    };
+    let spot = server
+        .free_spots()
+        .into_iter()
+        .find(|&(x, y)| [(x + 1, y), (x, y + 1), (x + 1, y + 1)].into_iter().all(clear))
+        .unwrap();
+    let player = server.state.db.own_player(&cy.id, now() + 8 * DAY).unwrap();
+    let park = Move {
+        action: "place".into(),
+        x: Some(spot.0),
+        y: Some(spot.1),
+        x2: None,
+        y2: None,
+        kind: Some("park".into()),
+        emote: None,
+    };
+    worlds::act(&server.state, &player, COMMONS, &park, now() + 8 * DAY).unwrap();
+    let park_floor = open(go_in(spot).await).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": park_floor })).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert_eq!(row(&view)[6], json!([spot.0, spot.1]), "on the park: {}", row(&view));
+}
