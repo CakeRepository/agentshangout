@@ -13,6 +13,7 @@ use crate::{
         NewSceneRequest, NewTrip, Pass, Person, QueueItem, Road, Scene, SceneRequest, Trip,
     },
     error::{ApiError, ApiResult},
+    looks::{self, Look},
     notify, now,
     ops::{self, DAY_SECS, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
     trust, AppState,
@@ -86,9 +87,14 @@ pub struct CityView {
     pub people: Vec<Person>,
     pub houses: Vec<CityHouse>,
     pub bots: Vec<BotPlace>,
+    /// What's chosen for the bots on the map (C13). Empty for a bot.
+    pub bot_looks: BTreeMap<String, Look>,
     pub growth: Growth,
     /// What the city asks of anyone who comes by its link.
     pub rules: trust::CityRules,
+    /// T13: the vouches someone at the gate needs now. If the city has shrunk, that can be fewer
+    /// than `rules` says.
+    pub vouches_needed: i64,
     /// Who is waiting at the gate. For people in the city only: their bots don't see it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<Vec<trust::GateEntry>>,
@@ -300,10 +306,10 @@ pub fn city_invite_preview(state: &AppState, code: &str) -> ApiResult<CityPrevie
     let people = state.db.city_members(&city.id)?;
     let rules = trust::city_rules(state, &city.id)?;
     Ok(CityPreview {
+        vouches_needed: state.db.vouches_needed(&city.id)?,
         name: city.name,
         people: people.into_iter().map(|person| person.name).collect(),
         rules_text: rules.rules_text,
-        vouches_needed: rules.min_vouches,
     })
 }
 
@@ -349,13 +355,16 @@ pub fn leave_city(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult
     if state.db.house_of_person_in_city(&city.id, &caller.person_id)?.is_some() {
         return Err(ApiError::conflict("leave your house first, then the city"));
     }
-    state.db.remove_city_member(&city.id, &caller.person_id, &caller.name, now())?;
+    let now = now();
+    state.db.remove_city_member(&city.id, &caller.person_id, &caller.name, now)?;
     ops::announce(state, &city.square_id, &format!("{} left {}.", caller.name, city.name))?;
     ops::refresh(state, &city.square_id);
     // Their bots may have been on a Porch here.
     for house in state.db.houses_in_city(&city.id)? {
         refresh_house(state, &house);
     }
+    // One fewer person can mean one fewer vouch to find (T13).
+    trust::admit_anyone_ready(state, &city, now)?;
     ops::refresh_city(state, &city.id);
     Ok(())
 }
@@ -390,6 +399,8 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
     let gatherings = state.db.gatherings(&city.id, now)?;
     let invite_url =
         holds_city_link(state, caller, &city)?.then(|| city_invite_url(state, &city.invite_code));
+    let bots = state.db.bots_in_city(&city.id, now)?;
+    let bot_ids: Vec<String> = bots.iter().map(|bot| bot.id.clone()).collect();
     Ok(CityView {
         you: CityYou {
             person_id: caller.person_id.clone(),
@@ -399,13 +410,15 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
                 .map(|house| house.id),
         },
         people: state.db.city_members(&city.id)?,
-        bots: state.db.bots_in_city(&city.id, now)?,
+        bot_looks: looks::on_map(state, caller, &bot_ids)?,
+        bots,
         growth: Growth {
             stage: stage(houses.len() as i64, gatherings),
             gatherings,
             roads: state.db.roads(&city.id)?,
         },
         rules: trust::city_rules(state, &city.id)?,
+        vouches_needed: state.db.vouches_needed(&city.id)?,
         gate: trust::gate_view(state, caller, &city.id)?,
         your_passes,
         houses,

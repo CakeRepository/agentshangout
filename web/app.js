@@ -1,4 +1,4 @@
-import { Room, itemPicture } from './room.js';
+import { LOOK_COLOURS, Room, figurePicture, isWearing, itemPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
@@ -340,11 +340,13 @@ function passkeysCard(me, status, first) {
 // (the way in, your account, your rooms and cities, the form that starts a hangout) are panels that
 // open over the map. This builds those sections. It is asked for the first time one of them opens.
 async function homeParts(me) {
-  const [status, passkeyList, spaces, publicFloors] = await Promise.all([
+  const [status, passkeyList, spaces, publicFloors, server] = await Promise.all([
     passkeyStatus(),
     me?.passkeys ? api('/api/passkeys').then((data) => data.passkeys).catch(() => null) : [],
     me ? api('/api/spaces').catch(() => null) : null,
     me ? api('/api/spaces/public').then((data) => data.floors).catch(() => []) : [],
+    // If this can't be read, the page says what a server with a code would.
+    api('/api/server').catch(() => ({ asks_for_code: true })),
   ]);
   const createError = formError();
 
@@ -449,10 +451,15 @@ async function homeParts(me) {
   const citiesCard = (who) => {
     const homes = who?.houses || [];
     const waiting = who?.waiting || [];
+    // R49, S49: a server with a code keeps these to whoever holds it, and anyone else hosts their own.
+    const open = !server.asks_for_code;
     return h('section', { class: 'card cities', 'aria-label': 'Cities' },
       h('div', { class: 'panel-head' },
         h('h2', {}, 'Your cities'),
-        h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city')),
+        open ? h('button', { type: 'button', class: 'primary', onclick: () => startCityDialog(who) }, 'Start a city') : null),
+      open ? null : h('p', { class: 'muted' }, 'Here, every room is a place on the map. For rooms off the map and cities, run a private server of your own, so they stay with someone you trust. ',
+        h('a', { href: `${REPO_URL}#your-own-private-server`, target: '_blank', rel: 'noopener' }, 'Here\'s how'), '. ',
+        h('button', { type: 'button', class: 'link', onclick: () => startCityDialog(who) }, 'I have a server code')),
       who?.cities?.length
         ? h('ul', { class: 'room-list' }, who.cities.map((city) => {
           const house = homes.find((home) => home.city_id === city.id);
@@ -488,7 +495,8 @@ async function homeParts(me) {
     // passkeysCard is nothing at all where passkeys can't work and there are none to show.
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList)].filter(Boolean) : [signIn()],
     // Someone signed in starts a third space by building one on the map.
-    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me ? null : createForm].filter(Boolean),
+    // S49: on a private server this form is how someone makes their first account.
+    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me || server.asks_for_code ? null : createForm].filter(Boolean),
     stop: () => stop(),
   };
 }
@@ -1801,6 +1809,194 @@ function windowClock(frame) {
   return () => clearInterval(timer);
 }
 
+// The wardrobe: how a person looks, and how their bots do. The rules are in docs/looks.md and the
+// server keeps them. Each change goes to the server and shows once it has said yes, like an item.
+const LOOK_TURNS = ['front', 'right', 'back', 'left'];
+const LOOK_ZOOM = 2;
+const LOOK_ZOOM_BIG = 5;
+const LOOK_ZOOM_SMALL = 1;
+
+const zoomed = (canvas, zoom) => {
+  canvas.style.width = `${canvas.width * zoom}px`;
+  canvas.style.height = `${canvas.height * zoom}px`;
+  return canvas;
+};
+
+//   view()     the room's latest snapshot
+//   reload()   fetches it again
+function wardrobe({ panels, view, reload }) {
+  // Everything worn, as of the last time the panel opened, with each change the server took since.
+  let closet = null;
+  // The bot being dressed, or null for this person.
+  let botId = null;
+  let turn = 0;
+  let busy = false;
+  // What to put the focus back on, because a change draws the tiles again.
+  let lastTile = null;
+  let tiles = new Map();
+
+  const error = formError();
+  const sayHere = h('p', { class: 'muted wardrobe-say', role: 'status' });
+  const whoEl = h('div', { class: 'wardrobe-who', role: 'group', 'aria-label': 'Who to dress' });
+  const standEl = h('div', { class: 'wardrobe-stand', role: 'img' });
+  const partsEl = h('div', { class: 'build-catalog' }, h('p', { class: 'muted' }, 'Opening the wardrobe…'));
+  const turnButton = h('button', {
+    type: 'button',
+    class: 'wd-btn wide',
+    disabled: true,
+    onclick: () => {
+      turn = (turn + 1) % LOOK_TURNS.length;
+      renderStand();
+    },
+  }, 'Turn');
+  const startOver = h('button', { type: 'button', class: 'wd-btn wide', disabled: true, onclick: () => askToStartOver() }, 'Start over');
+  panels.add('look', 'Character', { onOpen: () => open() },
+    whoEl,
+    h('div', { class: 'wardrobe-top' }, standEl, h('div', { class: 'wardrobe-buttons' }, turnButton, startOver, sayHere)),
+    error,
+    partsEl);
+  const toggle = panels.toggle('look', 'Character', { short: 'Look', className: 'mid' });
+  toggle.hidden = true;
+  const more = h('button', { type: 'button', class: 'wd-btn wide mid', hidden: true, onclick: () => panels.open('look') }, 'Character');
+
+  const dressing = () => closet.bots.find((bot) => bot.id === botId) || null;
+  // A bot nobody chose a shell for is drawn in its owner's colour, as it is in the room.
+  const figure = () => {
+    const bot = dressing();
+    return bot
+      ? { kind: 'bot', name: bot.name, color: closet.you.color, chosen: bot.look }
+      : { kind: 'person', name: closet.you.name, color: closet.you.color, chosen: closet.you.look };
+  };
+
+  // C5: only the server's word counts, so nothing changes here until it has said yes.
+  async function change(body, done) {
+    if (busy) return;
+    busy = true;
+    error.hidden = true;
+    try {
+      const path = botId ? `/api/agents/${encodeURIComponent(botId)}/look` : '/api/me/look';
+      const { look } = await api(path, { method: 'PUT', body });
+      (dressing() || closet.you).look = look;
+      render();
+      sayHere.textContent = done;
+      await reload();
+    } catch (failure) {
+      error.textContent = failure.message;
+      error.hidden = false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  function wear(part, choice) {
+    lastTile = `${part.part}:${choice.choice}`;
+    change({ [part.part]: choice.choice }, `${part.label}: ${choice.label}.`);
+  }
+
+  // Back to what the name gives them (C4), so everything they chose goes.
+  function askToStartOver() {
+    const { name, kind } = figure();
+    const parts = closet.parts[kind];
+    const dialog = modal(botId ? `Start ${name} over?` : 'Start over?',
+      h('p', {}, 'Everything chosen here goes, and this goes back to the look that came with the name.'),
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', onclick: () => dialog.close() }, 'Keep it'),
+        h('button', {
+          type: 'button',
+          class: 'primary',
+          onclick: () => {
+            dialog.close();
+            change(Object.fromEntries(parts.map(({ part }) => [part, null])), 'Back to the start.');
+          },
+        }, 'Start over')));
+  }
+
+  function renderWho() {
+    const whom = (id, name, who) => h('button', {
+      type: 'button',
+      class: 'wd-btn wardrobe-whom',
+      'aria-pressed': String(id === botId),
+      onclick: () => {
+        botId = id;
+        turn = 0;
+        sayHere.textContent = '';
+        render();
+      },
+    }, zoomed(figurePicture(who), LOOK_ZOOM_SMALL), h('span', {}, name));
+    const { color } = closet.you;
+    whoEl.replaceChildren(
+      whom(null, 'You', { kind: 'person', name: closet.you.name, color, chosen: closet.you.look }),
+      ...closet.bots.map((bot) => whom(bot.id, bot.name, { kind: 'bot', name: bot.name, color, chosen: bot.look })));
+    whoEl.hidden = !closet.bots.length;
+  }
+
+  function renderStand() {
+    const who = figure();
+    standEl.setAttribute('aria-label', `${who.name}, facing ${LOOK_TURNS[turn]}`);
+    standEl.replaceChildren(zoomed(figurePicture(who, LOOK_TURNS[turn]), LOOK_ZOOM_BIG));
+  }
+
+  // A colour is a swatch, and anything else is a tile with the figure wearing it.
+  function chooser(part, choice, who) {
+    const pressed = String(isWearing(who, part.part, choice.choice));
+    const swatch = Object.hasOwn(LOOK_COLOURS, part.part);
+    const button = swatch
+      ? h('button', { type: 'button', class: 'wardrobe-swatch', title: choice.label, 'aria-label': `${part.label}: ${choice.label}`, 'aria-pressed': pressed, onclick: () => wear(part, choice) })
+      : h('button', { type: 'button', class: 'wd-btn build-tile wardrobe-tile', 'aria-pressed': pressed, onclick: () => wear(part, choice) },
+        h('span', { class: 'build-pic', 'aria-hidden': 'true' }, zoomed(figurePicture({ ...who, chosen: { ...who.chosen, [part.part]: choice.choice } }), LOOK_ZOOM)),
+        h('span', { class: 'build-name' }, choice.label));
+    if (swatch) button.style.background = LOOK_COLOURS[part.part][choice.choice] || '';
+    tiles.set(`${part.part}:${choice.choice}`, button);
+    return button;
+  }
+
+  function renderParts() {
+    const who = figure();
+    tiles = new Map();
+    partsEl.replaceChildren(...closet.parts[who.kind].map((part) => h('section', { class: 'build-group', 'aria-label': part.label },
+      h('h3', {}, part.label),
+      h('div', { class: Object.hasOwn(LOOK_COLOURS, part.part) ? 'wardrobe-swatches' : 'build-tiles' },
+        part.choices.map((choice) => chooser(part, choice, who))))));
+    tiles.get(lastTile)?.focus({ preventScroll: true });
+    lastTile = null;
+  }
+
+  function render() {
+    turnButton.disabled = startOver.disabled = false;
+    renderWho();
+    renderStand();
+    renderParts();
+  }
+
+  async function open() {
+    error.hidden = true;
+    try {
+      closet = await api('/api/looks');
+      if (!dressing()) botId = null;
+      render();
+    } catch (failure) {
+      error.textContent = failure.message;
+      error.hidden = false;
+    }
+  }
+
+  return {
+    toggle,
+    more,
+    // On every refresh: only people have a wardrobe (C8).
+    render: () => {
+      toggle.hidden = more.hidden = Boolean(view().you.agent_id);
+    },
+    // From the Crew panel, with that bot on the stand.
+    dress: (id) => {
+      botId = id;
+      turn = 0;
+      sayHere.textContent = '';
+      panels.open('look');
+    },
+  };
+}
+
 // A room is the same game window as the map, with the camera moved indoors. The pixel room fills the
 // well, the readouts are its numbers, the status bar carries its running notes, and everything else
 // on the page is a panel that opens over it from the title bar.
@@ -1844,6 +2040,7 @@ async function roomView(id) {
     emptyBring);
   stage.append(boardEl, emptyEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
+  const dresser = wardrobe({ panels, view: () => snapshot, reload: () => reload() });
 
   // The running notes along the bottom, around the status bar's own message and clock.
   const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
@@ -2294,6 +2491,7 @@ async function roomView(id) {
               }
             },
           }, moodless ? 'Moods off' : 'Moods on'),
+          h('button', { type: 'button', class: 'link', title: 'Choose how this bot looks', onclick: () => dresser.dress(agent.id) }, 'Look'),
           h('button', {
             type: 'button',
             class: 'link',
@@ -2426,13 +2624,14 @@ async function roomView(id) {
       ...agent,
       color: colorOf(agent.owner_id),
       asking: asking.has(agent.id),
+      look: snapshot.looks.bots[agent.id],
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
     room.setLook(snapshot.floor?.floor);
     room.setItems(snapshot.items);
     quietEl.hidden = !snapshot.items.some((item) => item.sign);
     const present = new Set(snapshot.present);
-    room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color })));
+    room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color, look: snapshot.looks.people[p.id] })));
     stage.dataset.size = snapshot.floor?.floor.size || '';
     renderFloors();
     renderGuest();
@@ -2445,6 +2644,7 @@ async function roomView(id) {
     renderCrew();
     renderNotes();
     builder.render();
+    dresser.render();
     snapshot.messages.forEach(addMessage);
     // A question or a check-in behind a shut panel, or arriving while one is open, has to be noticed.
     const waiting = snapshot.owner_questions.length + snapshot.check_ins.filter((c) => c.status === 'waiting' && canAnswer(c)).length;
@@ -2552,7 +2752,7 @@ async function roomView(id) {
     const days = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
     const dialog = modal(`${agent.name}'s schedule`,
       h('p', {}, `In its social hours, ${agent.name} can go out to public rooms by itself, wander between them, listen, and talk with the bots it meets. It costs nothing until someone there mentions it, and then each wake-up is a run on your machine, up to the cap below.`),
-      h('p', { class: 'muted' }, 'Everything in a public room was written by strangers and their bots. What your bot says there is up to its own judgment, so only turn this on for a bot you trust with that.'),
+      h('p', { class: 'muted' }, 'Everything in a public room was written by strangers and their bots. What your bot says there is up to its own judgment, so only turn this on for a bot you trust with that. With public places on, The Commons map shows your bot by name at whichever place it is in.'),
       h('form', {
         onsubmit: submitter(error, async (values) => {
           await api(`/api/agents/${agent.id}/routine`, {
@@ -2765,6 +2965,7 @@ async function roomView(id) {
     questionsToggle.button,
     chatToggle.button,
     builder.toggle,
+    dresser.toggle,
     checkInsToggle.button,
     calendarToggle,
     panels.toggle('crew', 'Crew', { short: 'Crew' }),
@@ -2797,6 +2998,7 @@ async function roomView(id) {
   panels.add('more', 'More', {},
     aboutMore,
     h('div', { class: 'game-more' }, ...[
+      dresser.more,
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
@@ -3582,7 +3784,7 @@ async function cityView(id) {
 
   function renderGate() {
     const entries = view.gate || [];
-    const need = view.rules?.min_vouches || 0;
+    const need = view.vouches_needed || 0;
     const keeper = Boolean(view.city.invite_url);
     gateEl.hidden = !entries.length;
     // For a leaked link that filled the gate with strangers: one button instead of fifty.
@@ -3651,6 +3853,7 @@ async function cityView(id) {
   function renderRules() {
     const keeper = Boolean(view.city.invite_url);
     const { min_vouches: need, rules_text: text } = view.rules || { min_vouches: 0, rules_text: '' };
+    const asked = view.vouches_needed || 0;
     rulesEl.hidden = !(keeper || need || text);
     if (keeper) {
       // Never below what's set now, or an untouched number would stop the rules text from saving.
@@ -3661,7 +3864,7 @@ async function cityView(id) {
       }
     }
     // The form is rebuilt only if what surrounds it changes, so a reload doesn't pull it from under a cursor.
-    const key = keeper ? 'keeper' : JSON.stringify([need, text]);
+    const key = keeper ? 'keeper' : JSON.stringify([asked, text]);
     if (key === rulesKey) return;
     rulesKey = key;
     rulesEl.replaceChildren(
@@ -3670,7 +3873,7 @@ async function cityView(id) {
         h('p', { class: 'muted' }, 'What people have to do to join with your invite link. Nobody already in is asked again.'),
         rulesForm,
       ] : [
-        need ? h('p', {}, `Newcomers wait at the gate until ${need === 1 ? 'someone vouches' : `${need} people vouch`} for them.`) : null,
+        asked ? h('p', {}, `Newcomers wait at the gate until ${asked === 1 ? 'someone vouches' : `${asked} people vouch`} for them.`) : null,
         text ? h('p', { class: 'rules-text' }, text) : null,
       ]));
   }
@@ -4873,13 +5076,16 @@ async function worldView(id, { home = false } = {}) {
     heading: 'h1',
     live: latest.kind === 'public',
   });
-  frame.root.classList.add('wd-game');
+  frame.root.classList.add('wd-game', 'wd-map');
   frame.tools.setAttribute('aria-label', 'Tools');
   frame.message.setAttribute('role', 'status');
   const well = frame.host.parentElement;
   const root = h('main', { class: 'game' }, frame.root);
   const say = (text) => {
-    if (frame.message.textContent !== text) frame.message.textContent = text;
+    if (frame.message.textContent === text) return;
+    frame.message.textContent = text;
+    // W74: the bar is one line, so a sentence that doesn't fit is there when you hover over it.
+    frame.message.title = text;
   };
   const showMoves = () => {
     if (frame.outputs.moves) frame.outputs.moves.textContent = moves === null ? '-' : numberText(moves);
@@ -4910,6 +5116,7 @@ async function worldView(id, { home = false } = {}) {
     townCounts.textContent = `${townCountsText(t)} `;
     townGoal.textContent = `Goal: ${data.goal}`;
     townFull.textContent = townText(data);
+    townEl.title = townFull.textContent;
   };
   async function refreshTown() {
     if (!me) return;
@@ -5271,17 +5478,98 @@ async function worldView(id, { home = false } = {}) {
     }
   }
 
+  // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.
+  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio']);
+  const ACCESS_TEXT = {
+    in: 'is inside',
+    visiting: 'is visiting now',
+    can_walk_in: 'can walk in: it\u2019s open to anyone',
+    needs_invite: 'needs an invite from the owner',
+  };
+  const placeCard = h('div', { class: 'city-card', hidden: true, 'aria-hidden': 'true' });
+  const placeDetails = new Map();
+  let hoveredPlace = null;
+  let pointer = null;
+  const ownerAt = (x, y) => (latest?.owners || []).find((row) => row[0] === x && row[1] === y)?.[2] || null;
+
+  function placeCardAt() {
+    if (!pointer || placeCard.hidden) return;
+    const box = placeCard.parentElement.getBoundingClientRect();
+    const x = pointer.x - box.left;
+    const y = pointer.y - box.top;
+    const w = placeCard.offsetWidth;
+    const hgt = placeCard.offsetHeight;
+    placeCard.style.left = `${Math.max(4, x + 16 + w > box.width ? x - w - 16 : x + 16)}px`;
+    placeCard.style.top = `${Math.max(4, y + 16 + hgt > box.height ? y - hgt - 16 : y + 16)}px`;
+  }
+
+  function showPlace(place) {
+    if (!place || !pointer) {
+      placeCard.hidden = true;
+      return;
+    }
+    const key = `${place.x},${place.y}`;
+    const owner = ownerAt(place.x, place.y);
+    const details = placeDetails.get(key)?.body;
+    const lines = [
+      h('strong', { class: 'city-card-name' }, owner ? `${owner}\u2019s ${place.kind}` : `A ${place.kind}`),
+      details?.yours ? h('span', { class: 'city-card-home' }, 'Yours') : null,
+    ];
+    for (const bot of details?.bots || []) {
+      const allowed = bot.access !== 'needs_invite';
+      lines.push(h('span', { class: allowed ? 'city-card-bot allowed' : 'city-card-bot' },
+        h('b', {}, bot.name), ` ${ACCESS_TEXT[bot.access] || ''}`));
+    }
+    if (!me || me.kind !== 'person') lines.push(h('small', { class: 'city-card-hint' }, 'Sign in to see how your bots can get in.'));
+    placeCard.replaceChildren(...lines.filter(Boolean));
+    placeCard.hidden = false;
+    placeCardAt();
+  }
+
+  async function loadPlace(place) {
+    const key = `${place.x},${place.y}`;
+    const known = placeDetails.get(key);
+    if (known && Date.now() - known.at < 15000) return;
+    placeDetails.set(key, { at: Date.now(), body: known?.body });
+    try {
+      const body = await api(`/api/places/${encodeURIComponent(place.x)}/${encodeURIComponent(place.y)}`);
+      placeDetails.set(key, { at: Date.now(), body });
+      if (hoveredPlace && hoveredPlace.x === place.x && hoveredPlace.y === place.y) showPlace(hoveredPlace);
+    } catch {
+      // Gone, or signed out: the card shows what the map knows.
+    }
+  }
+
   function hovered(hover) {
     let text = '';
+    const kind = hover?.tile?.kind;
+    hoveredPlace = hover && hover.x !== null && PLACE_KINDS.has(kind) ? { x: hover.x, y: hover.y, kind } : null;
     if (hover?.player) text = hover.player.name;
     else if (hover?.person) text = `${hover.person.name}, just looking`;
     else if (hover?.visitor) text = `${hover.visitor.name}, an agent passing through`;
     else if (hover?.crawler) text = `${hover.crawler.name}, a web crawler`;
-    else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${hover.tile?.kind ? ` · ${hover.tile.kind}` : ''}`;
+    else if (hoveredPlace) {
+      const owner = ownerAt(hover.x, hover.y);
+      text = `${hover.x}, ${hover.y} · ${owner ? `${owner}\u2019s ${kind}` : kind}`;
+    } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
     frame.where.textContent = text;
+    showPlace(hoveredPlace);
+    if (hoveredPlace && me && me.kind === 'person') loadPlace(hoveredPlace);
   }
 
   const world = new World(frame.host, { interactive: true, onTile: build, onHover: hovered, onPick: picked, onFollow: followEnded });
+  frame.host.parentElement.classList.add('wd-hovercard');
+  frame.host.parentElement.append(placeCard);
+  world.canvas.addEventListener('pointermove', (event) => {
+    pointer = { x: event.clientX, y: event.clientY };
+    if (hoveredPlace && placeCard.hidden) showPlace(hoveredPlace);
+    else placeCardAt();
+  });
+  world.canvas.addEventListener('pointerleave', () => {
+    pointer = null;
+    hoveredPlace = null;
+    placeCard.hidden = true;
+  });
   world.canvas.addEventListener('wheel', () => menu.close(), { passive: true });
   world.canvas.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') menu.close();

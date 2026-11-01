@@ -1,6 +1,9 @@
 //! SQLite storage. Queries are short and run on one connection, so a plain mutex is enough here.
 
-use std::sync::{Mutex, MutexGuard};
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, MutexGuard},
+};
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
@@ -553,6 +556,23 @@ CREATE TABLE IF NOT EXISTS bot_routines (
     public_places   INTEGER NOT NULL DEFAULT 0,
     updated_at      INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projects (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    agent_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS person_looks (
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    part        TEXT NOT NULL,
+    choice      TEXT NOT NULL,
+    PRIMARY KEY (person_id, part)
+);
+CREATE TABLE IF NOT EXISTS bot_looks (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    part        TEXT NOT NULL,
+    choice      TEXT NOT NULL,
+    PRIMARY KEY (agent_id, part)
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -569,6 +589,23 @@ pub struct Person {
     pub id: String,
     pub name: String,
     pub color: String,
+}
+
+/// Whose look it is. People and bots have a table each, with one shape (C4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wearer {
+    Person,
+    Bot,
+}
+
+impl Wearer {
+    /// The table a look is in, and the column that says whose it is.
+    const fn table(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Person => ("person_looks", "person_id"),
+            Self::Bot => ("bot_looks", "agent_id"),
+        }
+    }
 }
 
 /// A passkey as the person's own list shows it. The library's data stays in `StoredPasskey`.
@@ -1191,6 +1228,10 @@ pub struct Visit {
     pub until: i64,
 }
 
+/// L17: a bot at the door of a place, as `[agent, name, owner, x, y, out]`, where `out` says it
+/// walked onto a public floor there rather than being in a project.
+pub type BotAtPlace = (String, String, String, i64, i64, bool);
+
 /// A road between two houses, `a` sorting before `b`, and how many trips really arrived.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Road {
@@ -1486,6 +1527,17 @@ const GATHERINGS: &str = "FROM events e JOIN cities c ON c.square_id = e.hangout
 /// left stays in the table but doesn't count, and counts again if they come back.
 const VOUCHERS_IN_CITY: &str = "FROM vouches v
      JOIN city_members cm ON cm.city_id = v.city_id AND cm.person_id = v.by_person";
+
+/// T13: what a city asks of someone at its gate, as SQL for the city `id`. Only people in the city
+/// can vouch, so it's never more than there are of them. A city that asks for any always asks for
+/// at least one, so the last person leaving doesn't open the gate.
+fn vouches_needed_sql(id: &str) -> String {
+    format!(
+        "COALESCE((SELECT MIN(e.min_vouches, MAX(1, (SELECT COUNT(*) FROM city_members m
+                                                     WHERE m.city_id = e.place_id)))
+                   FROM entry_rules e WHERE e.place_id = {id}), 0)"
+    )
+}
 
 const PLAN_ITEM_COLS: &str = "i.id, i.event_id, i.body, i.added_by, i.adder,
      CASE WHEN r.person_id IS NOT NULL THEN i.claimed_by END,
@@ -2916,6 +2968,72 @@ impl Db {
             params![person_id, agent_id],
         )?;
         Ok(())
+    }
+
+    // Projects (L11 to L15)
+
+    pub fn insert_project(&self, space_id: &str, agent_id: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO projects (space_id, agent_id, created_at) VALUES (?, ?, ?)",
+            params![space_id, agent_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// A project's space and the bot that started it, if it's still there.
+    pub fn project(&self, space_id: &str) -> rusqlite::Result<Option<(Space, Option<String>)>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id WHERE p.space_id = ?"),
+                [space_id],
+                |row| Ok((space_from_row(row)?, row.get(6)?)),
+            )
+            .optional()
+    }
+
+    /// The projects whose first floor this bot is in, oldest first, with the bot that started each.
+    pub fn projects_of_bot(&self, agent_id: &str) -> rusqlite::Result<Vec<(Space, Option<String>)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SPACE_COLS}, p.agent_id FROM projects p JOIN spaces s ON s.id = p.space_id
+             JOIN room_agents r ON r.hangout_id = p.space_id AND r.agent_id = ?
+             ORDER BY p.created_at, p.space_id"
+        ))?;
+        let rows = stmt.query_map([agent_id], |row| Ok((space_from_row(row)?, row.get(6)?)))?;
+        rows.collect()
+    }
+
+    /// L17: bots with public places on, each at the door of a place whose building stands as its
+    /// space's (S33). Whether a project's bot is in its hours is the caller's to work out.
+    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<BotAtPlace>> {
+        // The building on a space's plot, standing as that space's door: its owner's own player put it
+        // up, and a house is a house's door and anything else a third space's.
+        const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
+             JOIN world_buildings b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
+                            AND pl.agent_id IS NULL AND pl.token_hash IS NULL
+             JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT a.id, a.name, a.owner_id, d.x, d.y, 1 FROM floor_visits v
+             JOIN agents a ON a.id = v.agent_id
+             JOIN floors f ON f.hangout_id = v.hangout_id AND f.access = 'public'
+             JOIN spaces s ON s.id = f.space_id
+             {DOOR}
+             WHERE v.until > ?2 AND (b.kind = 'house') = (s.kind = 'house')
+             UNION ALL
+             SELECT a.id, a.name, a.owner_id, d.x, d.y, 0 FROM projects pr
+             JOIN room_agents ra ON ra.hangout_id = pr.space_id
+             JOIN agents a ON a.id = ra.agent_id
+             JOIN spaces s ON s.id = pr.space_id
+             {DOOR}
+             WHERE b.kind = 'studio'
+             LIMIT 400"
+        ))?;
+        let rows = stmt.query_map(params![world_id, now], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        })?;
+        rows.collect()
     }
 
     // Routines (L1 to L10)
@@ -4870,20 +4988,6 @@ impl Db {
 
     // Friends and invites
 
-    /// F1, F2: invited by a friend, with no city of their own yet. Worked out from what happened.
-    pub fn invited_with_no_city(&self, person_id: &str) -> rusqlite::Result<bool> {
-        self.conn().query_row(
-            "SELECT NOT EXISTS (SELECT 1 FROM cities WHERE created_by = ?1)
-               AND (EXISTS (SELECT 1 FROM plan_invitees WHERE person_id = ?1)
-                 OR EXISTS (SELECT 1 FROM members m JOIN hangouts h ON h.id = m.hangout_id
-                            WHERE m.person_id = ?1 AND h.created_by != ?1)
-                 OR EXISTS (SELECT 1 FROM city_members cm JOIN cities c ON c.id = cm.city_id
-                            WHERE cm.person_id = ?1 AND c.created_by != ?1))",
-            [person_id],
-            |row| row.get(0),
-        )
-    }
-
     /// The plan's link, which is `code` if it doesn't have one yet.
     pub fn plan_invite_code(
         &self,
@@ -5672,6 +5776,12 @@ impl Db {
         rows.collect()
     }
 
+    /// T13: how many vouches someone at this city's gate needs right now.
+    pub fn vouches_needed(&self, city_id: &str) -> rusqlite::Result<i64> {
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        self.conn().query_row(&sql, [city_id], |row| row.get(0))
+    }
+
     /// The gates this person is waiting at, with their vouches and what each city asks for.
     pub fn gates_of_person(&self, person_id: &str, cutoff: i64) -> rusqlite::Result<Vec<GatePlace>> {
         let conn = self.conn();
@@ -5679,10 +5789,11 @@ impl Db {
             "SELECT c.id, c.name,
                     (SELECT COUNT(*) {VOUCHERS_IN_CITY}
                       WHERE v.city_id = g.city_id AND v.for_person = g.person_id),
-                    COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = c.id), 0)
+                    {}
              FROM city_gate g JOIN cities c ON c.id = g.city_id
              WHERE g.person_id = ?1 AND g.created_at > ?2
-             ORDER BY g.created_at, g.rowid"
+             ORDER BY g.created_at, g.rowid",
+            vouches_needed_sql("c.id")
         ))?;
         let rows = stmt.query_map(params![person_id, cutoff], |row| {
             Ok(GatePlace {
@@ -5714,11 +5825,8 @@ impl Db {
         )? {
             return Ok(false);
         }
-        let needed: i64 = tx.query_row(
-            "SELECT COALESCE((SELECT min_vouches FROM entry_rules WHERE place_id = ?), 0)",
-            [city_id],
-            |row| row.get(0),
-        )?;
+        let sql = format!("SELECT {}", vouches_needed_sql("?"));
+        let needed: i64 = tx.query_row(&sql, [city_id], |row| row.get(0))?;
         let have: i64 = tx.query_row(
             &format!("SELECT COUNT(*) {VOUCHERS_IN_CITY} WHERE v.city_id = ? AND v.for_person = ?"),
             params![city_id, person_id],
@@ -6760,6 +6868,55 @@ impl Db {
         rows.collect()
     }
 
+    /// C5: one change to a look, all of it or none. `None` clears a part.
+    pub fn change_look(
+        &self,
+        wearer: Wearer,
+        id: &str,
+        change: &[(&str, Option<&str>)],
+    ) -> rusqlite::Result<()> {
+        let (table, column) = wearer.table();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (part, choice) in change {
+            match choice {
+                Some(choice) => tx.execute(
+                    &format!(
+                        "INSERT INTO {table} ({column}, part, choice) VALUES (?, ?, ?)
+                         ON CONFLICT ({column}, part) DO UPDATE SET choice = excluded.choice"
+                    ),
+                    params![id, part, choice],
+                )?,
+                None => tx.execute(
+                    &format!("DELETE FROM {table} WHERE {column} = ? AND part = ?"),
+                    params![id, part],
+                )?,
+            };
+        }
+        tx.commit()
+    }
+
+    /// C4: what's stored for each of these, by id. Anyone with nothing stored isn't in it.
+    pub fn looks(
+        &self,
+        wearer: Wearer,
+        ids: &[String],
+    ) -> rusqlite::Result<BTreeMap<String, BTreeMap<String, String>>> {
+        let (table, column) = wearer.table();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("SELECT part, choice FROM {table} WHERE {column} = ?"))?;
+        let mut looks = BTreeMap::new();
+        for id in ids {
+            let look = stmt
+                .query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<BTreeMap<String, String>>>()?;
+            if !look.is_empty() {
+                looks.insert(id.clone(), look);
+            }
+        }
+        Ok(looks)
+    }
+
     /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as
     /// when one is already waiting or they said no.
     #[allow(clippy::too_many_arguments)]
@@ -6894,6 +7051,20 @@ impl Db {
     /// and player, so it costs what they have built and not what the world holds.
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
+    /// W71: every place in a world with its owner's name, `(x, y, name)`.
+    pub fn place_owners(&self, world_id: &str) -> rusqlite::Result<Vec<(i64, i64, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT b.x, b.y, pe.name FROM world_buildings b
+             JOIN players pl ON pl.id = b.player_id
+             JOIN people pe ON pe.id = pl.person_id
+             WHERE b.world_id = ?1
+             ORDER BY b.y, b.x",
+        )?;
+        let rows = stmt.query_map([world_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,
@@ -7798,6 +7969,34 @@ mod tests {
         assert_eq!(db.roads("nowhere").unwrap(), []);
     }
 
+    // R41
+    #[test]
+    fn roads_go_by_where_a_bot_lives_now() {
+        let db = Db::open(":memory:").unwrap();
+        two_houses(&db);
+        db.create_person("p3", "Cy", "key3", "feed3", 0).unwrap();
+        db.add_city_member("c1", "p3", 0).unwrap();
+        house(&db, "hb", "c1", "p3", 30);
+        bot(&db, "b3", "p2");
+        let road = |a: &str, b: &str, trips| Road { a: a.to_string(), b: b.to_string(), trips };
+
+        // A bot with no home arrives, and that draws nothing.
+        start_trip(&db, "t1", "b3", "hz", 60, 1000);
+        assert_eq!(db.roads("c1").unwrap(), []);
+
+        // Given a home, its arrival draws a road from there.
+        db.set_bot_home("b3", "ha", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("ha", "hz", 1)]);
+
+        // Moved, the road moves with it.
+        db.set_bot_home("b3", "hb", false, false).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), [road("hb", "hz", 1)]);
+
+        // With no home again, the road goes.
+        db.conn().execute("DELETE FROM bot_homes WHERE agent_id = 'b3'", []).unwrap();
+        assert_eq!(db.roads("c1").unwrap(), []);
+    }
+
     #[test]
     fn building_a_house_makes_its_rooms() {
         let db = Db::open(":memory:").unwrap();
@@ -8365,6 +8564,27 @@ mod tests {
         let back = bot_player(&db, "a1", "p1", "second", 4);
         assert_eq!(back.id, player.id);
         assert!(db.player_by_token("second").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_look_goes_with_whoever_wore_it() {
+        let db = Db::open(":memory:").unwrap();
+        for person in ["p1", "p2"] {
+            db.create_person(person, person, &format!("key-{person}"), &format!("feed-{person}"), 0).unwrap();
+        }
+        db.create_agent("a1", "p1", "Scout", "token", 0).unwrap();
+        db.change_look(Wearer::Person, "p2", &[("hat", Some("cap"))]).unwrap();
+        db.change_look(Wearer::Bot, "a1", &[("hat", Some("crown")), ("shell", Some("teal"))]).unwrap();
+        // Set twice is still one row, and clearing one leaves the other.
+        db.change_look(Wearer::Bot, "a1", &[("hat", Some("cap"))]).unwrap();
+        db.change_look(Wearer::Bot, "a1", &[("shell", None)]).unwrap();
+        let ids = ["a1".to_string()];
+        assert_eq!(db.looks(Wearer::Bot, &ids).unwrap()["a1"], BTreeMap::from([("hat".to_string(), "cap".to_string())]));
+
+        db.conn().execute("DELETE FROM agents WHERE id = 'a1'", []).unwrap();
+        db.conn().execute("DELETE FROM people WHERE id = 'p2'", []).unwrap();
+        assert!(db.looks(Wearer::Bot, &ids).unwrap().is_empty());
+        assert!(db.looks(Wearer::Person, &["p2".to_string()]).unwrap().is_empty());
     }
 
     #[test]

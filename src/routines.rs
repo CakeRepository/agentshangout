@@ -13,8 +13,9 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::Caller,
-    db::{NewVisit, PublicFloor, RoutineRow, WalkedIn},
+    db::{NewVisit, PublicFloor, RoutineRow, WalkedIn, Wearer},
     error::{ApiError, ApiResult},
+    looks::{looks_of, Look},
     now,
     ops::{self, DAY_SECS},
     spaces::{capacity, MAX_BOTS_WALKED_IN, WALK_IN_SECS},
@@ -169,6 +170,8 @@ async fn put_routine(
     }
     let routine = RoutineRow { days, starts_min, ends_min, max_social_runs, public_places: body.public_places };
     state.db.set_bot_routine(&agent.id, &routine, now())?;
+    // L17: public places and social hours decide whether The Commons shows it.
+    state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     // Turning public places off brings it back from anywhere it went by itself or wandered to.
     if !routine.public_places {
         come_back_now(&state, &agent.id)?;
@@ -218,6 +221,8 @@ fn walk_bot_in(state: &AppState, agent_id: &str, owner_id: &str, floor_id: &str,
             ops::refresh(state, gone);
         }
         ops::refresh(state, &floor.id);
+        // L17: where it is shows on The Commons.
+        state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     }
     Ok(walked)
 }
@@ -246,6 +251,7 @@ fn come_back_now(state: &AppState, agent_id: &str) -> ApiResult<bool> {
         state.presence.forget(floor, agent_id);
         ops::refresh(state, floor);
     }
+    state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     Ok(!floors.is_empty())
 }
 
@@ -253,6 +259,43 @@ fn come_back_now(state: &AppState, agent_id: &str) -> ApiResult<bool> {
 pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
     let agent_id = bot_of(caller)?;
     come_back_now(state, agent_id)
+}
+
+/// L17: who The Commons shows at its places, by name, beside each building's door. A bot that
+/// walked onto a public floor is there while its walk-in lasts. A project's bot is at the studio in
+/// its social hours, unless it's out somewhere. C14: a look goes with the name, and nowhere else.
+pub fn bots_at_places(
+    state: &AppState,
+    tiles: &std::collections::BTreeMap<(u16, u16), crate::world::Tile>,
+    now: i64,
+) -> ApiResult<Vec<(String, u16, u16, Look)>> {
+    let rows = state.db.bots_at_places(crate::worlds::COMMONS_ID, now)?;
+    let out: std::collections::HashSet<String> =
+        rows.iter().filter(|row| row.5).map(|row| row.0.clone()).collect();
+    let ids: Vec<String> = rows.iter().map(|row| row.0.clone()).collect();
+    let mut looks = looks_of(state, Wearer::Bot, &ids)?;
+    let mut shown = std::collections::HashSet::new();
+    let mut list = Vec::new();
+    for (agent_id, name, owner_id, x, y, walked) in rows {
+        if !walked {
+            let in_hours = social_until(&routine_of(state, &agent_id)?, offset_of(state, &owner_id)?, now).is_some();
+            if out.contains(&agent_id) || !in_hours {
+                continue;
+            }
+        }
+        if !shown.insert(agent_id.clone()) {
+            continue;
+        }
+        let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else { continue };
+        // Beside the door: the first road next to the building, or the building's own tile.
+        let road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().find_map(|(dx, dy)| {
+            let pos = (u16::try_from(i32::from(x) + dx).ok()?, u16::try_from(i32::from(y) + dy).ok()?);
+            tiles.get(&pos).is_some_and(|tile| tile.kind == crate::world::Kind::Road).then_some(pos)
+        });
+        let (x, y) = road.unwrap_or((x, y));
+        list.push((name, x, y, looks.remove(&agent_id).unwrap_or_default()));
+    }
+    Ok(list)
 }
 
 /// A fixed shuffle of a bot's id and a half hour, so each half hour picks a floor no caller chose.

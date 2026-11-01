@@ -12,7 +12,7 @@ use crate::{
         NewOwnerQuestion, OwnerQuestion, Pass, Person, SceneRequest, Trip, Visit,
     },
     error::{ApiError, ApiResult},
-    ical, items, notify, now, spaces, AppState, HubEvent,
+    ical, items, looks, notify, now, spaces, AppState, HubEvent,
 };
 
 pub const MAX_AGENT_WRITES_PER_MINUTE: u32 = 30;
@@ -909,6 +909,8 @@ pub struct Snapshot {
     pub bots_without_moods: Vec<String>,
     /// The ids of the people with this floor open. Empty anywhere but a floor, and for a bot.
     pub present: Vec<String>,
+    /// What's chosen for those drawn here (C11). Empty for a bot.
+    pub looks: looks::Looks,
 }
 
 pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResult<Snapshot> {
@@ -982,6 +984,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         state.db.bots_without_moods(&caller.person_id)?
     };
     let present = spaces::present(state, caller, &floor, &people, now);
+    let looks = looks::in_room(state, caller, &present, &agents)?;
     Ok(Snapshot {
         hangout,
         you: You {
@@ -1005,6 +1008,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         furnishing,
         bots_without_moods,
         present,
+        looks,
     })
 }
 
@@ -1180,6 +1184,8 @@ pub fn remove_agent(
     let agent = own_agent(state, caller, agent_id, "remove a bot")?;
     no_guests(state, caller, hangout_id, "remove a bot")?;
     state.db.remove_agent_from_room(hangout_id, agent_id)?;
+    // L17: a bot taken out of a project leaves its studio on The Commons.
+    state.worlds.mark_stale(crate::worlds::COMMONS_ID);
     // W3: a bot sent home has no player token in the public worlds either. It joins again if it
     // still has its bot token.
     state.db.end_bot_player_token(agent_id)?;

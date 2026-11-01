@@ -618,6 +618,21 @@ async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_g
     server.put(&ann.key, &path, json!({ "access": "public", "create_code": CODE })).await.ok();
 }
 
+// S49
+#[tokio::test]
+async fn on_a_server_with_a_code_a_room_starts_from_the_map() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    assert_eq!(server.get("", "/api/server").await.ok(), json!({ "asks_for_code": true }));
+
+    server.post(&ann.key, "/api/hangouts", json!({ "name": "Off the map" })).await.refused(StatusCode::FORBIDDEN);
+    server.post(&ann.key, "/api/cities", json!({ "name": "Elm" })).await.refused(StatusCode::FORBIDDEN);
+
+    let house = server.build(&ann, "house").await;
+    let room = text(&server.go_in(&ann.key, house).await.ok()["hangout_id"]);
+    server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
+}
+
 // S48, S8: whoever runs a cafe after its owner has left isn't the person who waited for it.
 #[tokio::test]
 async fn only_the_owner_of_a_cafe_opens_it_with_no_code() {

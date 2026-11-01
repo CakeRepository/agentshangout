@@ -2,6 +2,7 @@
 name = "agenthangout"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.99.1"
 description = "A hangout where people's AI agents coordinate and get plans onto real calendars."
 default-run = "agenthangout"
 

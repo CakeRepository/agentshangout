@@ -229,9 +229,9 @@ fn lines_about(view: &Value, words: &str) -> usize {
 
 // Starting a city
 
-// F1
+// R49
 #[tokio::test]
-async fn someone_a_friend_brought_into_a_room_can_start_a_city_and_nobody_else_can() {
+async fn nobody_starts_a_city_without_the_code_however_they_came_in() {
     let server = Server::start().await;
     let room = server.room("Ann").await;
     server.start_city(&room.ann).await.refused();
@@ -239,185 +239,70 @@ async fn someone_a_friend_brought_into_a_room_can_start_a_city_and_nobody_else_c
     let wrong = server.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Eve", "create_code": "guess" })).await;
     wrong.refused();
 
+    // Brought into a room by a friend.
     let bo = server.join(&room.invite, "Bo").await;
-    let city = server.start_city(&bo).await.ok();
-    assert_eq!(city["city"]["name"], "Elm");
-    assert_eq!(city["person"]["id"], bo.id.as_str());
-}
+    server.start_city(&bo).await.refused();
 
-// F1
-#[tokio::test]
-async fn joining_a_city_counts_and_so_does_answering_a_plan() {
-    let server = Server::start().await;
+    // Brought into a city by a friend.
     let made = server.post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE })).await.ok();
     let invite = code_of(&made["invite_url"]);
-    let joined = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Bo" })).await.ok();
-    let bo = Who { key: text(&joined["owner_key"]), id: text(&joined["person"]["id"]) };
-    server.start_city(&bo).await.ok();
+    let joined = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Cy" })).await.ok();
+    let cy = Who { key: text(&joined["owner_key"]), id: text(&joined["person"]["id"]) };
+    server.start_city(&cy).await.refused();
 
-    let room = server.room("Cy").await;
+    // Answered a plan through its link.
     let event = server.plan(&room.ann, &room.id, 2).await;
     let link = server.link(&room.ann, &event).await;
     let friend = server.invitee(&link, "Dee", "no").await;
-    server.start_city(&friend).await.ok();
-}
+    server.start_city(&friend).await.refused();
 
-// F2
-#[tokio::test]
-async fn an_invite_covers_one_city_and_leaving_does_not_give_it_back() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    let bo = server.join(&room.invite, "Bo").await;
-    let city = text(&server.start_city(&bo).await.ok()["city"]["id"]);
-    server.start_city(&bo).await.refused();
-    server.post(&bo.key, &format!("/api/cities/{city}/leave"), json!({})).await.ok();
-    server.start_city(&bo).await.refused();
-    // The code still works for someone who has used theirs.
-    server.post(&bo.key, "/api/cities", json!({ "name": "Ash", "create_code": CODE })).await.ok();
-}
-
-// F2
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn two_requests_at_once_cannot_both_use_one_invite() {
-    let server = Arc::new(Server::start().await);
-    let room = server.room("Ann").await;
-    for round in 0..15 {
-        let friend = server.join(&room.invite, &format!("Friend {round}")).await;
-        let tries: Vec<_> = (0..8)
-            .map(|_| {
-                let (server, friend) = (server.clone(), friend.clone());
-                tokio::spawn(async move { server.start_city(&friend).await })
-            })
-            .collect();
-        let mut started = 0;
-        for attempt in tries {
-            let reply = attempt.await.unwrap();
-            if reply.status == StatusCode::OK {
-                started += 1;
-            }
-        }
-        assert_eq!(started, 1, "round {round}");
-    }
-}
-
-// F3
-#[tokio::test]
-async fn a_bot_cannot_use_its_owners_invite() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    let bo = server.join(&room.invite, "Bo").await;
+    // A bot gets no further than its owner.
     let bot = server.bot(&bo, &room.id).await;
     server.post(&bot, "/api/cities", json!({ "name": "Elm" })).await.refused();
-    // And it hasn't used it up.
-    server.start_city(&bo).await.ok();
+
+    // The code still works, for someone who is already here.
+    let city = server.post(&bo.key, "/api/cities", json!({ "name": "Ash", "create_code": CODE })).await.ok();
+    assert_eq!(city["person"]["id"], bo.id.as_str());
 }
 
-// F3
+// R49: a server with no code is one someone runs for themselves, and it needs nothing set up.
 #[tokio::test]
-async fn someone_at_a_citys_gate_has_not_been_let_in_yet() {
+async fn a_server_with_no_code_lets_anyone_on_it_start_a_city() {
+    let open = Server::start_with(None).await;
+    assert_eq!(open.get("", "/api/server").await.ok(), json!({ "asks_for_code": false }), "S49");
+    let made = open.post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann" })).await.ok();
+    assert_eq!(made["city"]["name"], "Elm");
+    let room = open.room("Bo").await;
+    open.start_city(&room.ann).await.ok();
+}
+
+// R50
+#[tokio::test]
+async fn a_city_that_exists_still_takes_people_in_with_no_code() {
     let server = Server::start().await;
     let made = server.post("", "/api/cities", json!({ "name": "Oak", "your_name": "Ann", "create_code": CODE })).await.ok();
     let city = text(&made["city"]["id"]);
-    let ann = text(&made["owner_key"]);
     let invite = code_of(&made["invite_url"]);
     let joined = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Bo" })).await.ok();
     let bo = text(&joined["owner_key"]);
-    let set = server.send_from(&server.fresh_address(), &ann, Method::PUT, &format!("/api/cities/{city}/rules"), Some(json!({ "min_vouches": 1 }))).await;
-    assert_eq!(set.status, StatusCode::OK, "{}", set.show());
-
-    let arrived = server.post("", &format!("/api/city-invites/{invite}/join"), json!({ "your_name": "Cy", "accept_rules": true })).await.ok();
-    assert_eq!(arrived["waiting"], true, "{arrived}");
-    let cy = Who { key: text(&arrived["owner_key"]), id: text(&arrived["person"]["id"]) };
-    server.start_city(&cy).await.refused();
-    assert_eq!(server.get(&cy.key, "/api/me").await.ok()["may_start_city"], false);
-
-    server.post(&bo, &format!("/api/cities/{city}/people/{}/vouch", cy.id), json!({})).await.ok();
-    server.start_city(&cy).await.ok();
-}
-
-// F4
-#[tokio::test]
-async fn an_invite_starts_a_city_and_never_a_hangout() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    let bo = server.join(&room.invite, "Bo").await;
-    server.post(&bo.key, "/api/hangouts", json!({ "name": "Mine" })).await.refused();
+    server.post(&bo, &format!("/api/cities/{city}/houses"), json!({ "name": "Bo's place" })).await.ok();
+    server.get(&bo, &format!("/api/cities/{city}")).await.ok();
 }
 
 // F6
 #[tokio::test]
-async fn the_page_is_told_when_no_code_is_needed() {
+async fn the_page_is_told_whether_a_city_needs_the_code() {
     let server = Server::start().await;
     let room = server.room("Ann").await;
-    let may = |who: Who| {
-        let server = &server;
-        async move { server.get(&who.key, "/api/me").await.ok()["may_start_city"].clone() }
-    };
-    assert_eq!(may(room.ann.clone()).await, false);
     let bo = server.join(&room.invite, "Bo").await;
-    assert_eq!(may(bo.clone()).await, true);
-    server.start_city(&bo).await.ok();
-    assert_eq!(may(bo).await, false, "used");
+    for who in [&room.ann, &bo] {
+        assert_eq!(server.get(&who.key, "/api/me").await.ok()["may_start_city"], false);
+    }
 
     let open = Server::start_with(None).await;
     let room = open.room("Ann").await;
     let me = open.get(&room.ann.key, "/api/me").await.ok();
     assert_eq!(me["may_start_city"], true, "this server asks for no code");
-}
-
-// F7
-#[tokio::test]
-async fn cities_started_without_a_code_are_limited_per_address_and_a_code_is_not() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    let start = |who: Who, address: &'static str| {
-        let server = &server;
-        async move {
-            server.send_from(address, &who.key, Method::POST, "/api/cities", Some(json!({ "name": "Elm" }))).await
-        }
-    };
-    for n in 0..3 {
-        let friend = server.join(&room.invite, &format!("Friend {n}")).await;
-        start(friend, "203.0.113.9").await.ok();
-    }
-    let friend = server.join(&room.invite, "One more").await;
-    let over = start(friend.clone(), "203.0.113.9").await;
-    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.show());
-    assert!(over.retry_after.is_some(), "says how long to wait");
-    start(friend, "203.0.113.10").await.ok();
-
-    let body = json!({ "name": "Ash", "your_name": "Dee", "create_code": CODE });
-    for _ in 0..5 {
-        server.send_from("203.0.113.9", "", Method::POST, "/api/cities", Some(body.clone())).await.ok();
-    }
-}
-
-// F7
-#[tokio::test]
-async fn cities_started_without_a_code_are_limited_across_the_server() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    for n in 0..20 {
-        let friend = server.join(&room.invite, &format!("Friend {n}")).await;
-        server.start_city(&friend).await.ok();
-    }
-    let friend = server.join(&room.invite, "One more").await;
-    let over = server.start_city(&friend).await;
-    assert_eq!(over.status, StatusCode::TOO_MANY_REQUESTS, "{}", over.show());
-}
-
-// F7
-#[tokio::test]
-async fn a_city_refused_for_its_name_uses_up_none_of_the_limit() {
-    let server = Server::start().await;
-    let room = server.room("Ann").await;
-    let friend = server.join(&room.invite, "Bo").await;
-    let blank = json!({ "name": "   " });
-    for _ in 0..4 {
-        let refused = server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(blank.clone())).await;
-        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.show());
-    }
-    server.send_from("203.0.113.9", &friend.key, Method::POST, "/api/cities", Some(json!({ "name": "Elm" }))).await.ok();
 }
 
 // A plan's link

@@ -1,0 +1,6 @@
+# The Rust that CI, Publish, Codespaces and your own machine all build with, so a new release can't
+# turn CI red with no change to the code. CONTRIBUTING.md says how to raise it.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

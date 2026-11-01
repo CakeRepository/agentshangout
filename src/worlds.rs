@@ -128,9 +128,10 @@ pub fn today(now: i64) -> i64 {
 
 // Limits
 
-/// Counts requests per key in a window, with a fixed amount of memory: a key lands in one of a
-/// fixed number of counters, so a flood of addresses can't grow it, only share counters. A key that
-/// shares with a busy one may be refused early, which the sizes make rare.
+/// Counts requests per key in a window, with a fixed amount of memory: a key lands on two of a
+/// fixed number of counters, so a flood of addresses can't grow it, only share counters. A key's
+/// count is the lower of its two, so another key only gets in its way by sharing both, which the
+/// sizes make very rare. With a single counter, every key counts together.
 pub(crate) struct Limiter {
     hasher: RandomState,
     window: i64,
@@ -148,17 +149,27 @@ impl Limiter {
         }
     }
 
+    /// The two counters a key lands on, one from each half of its hash. They can be the same one.
+    fn slots(&self, key: &str, counters: usize) -> [usize; 2] {
+        let hash = self.hasher.hash_one(key);
+        [hash & 0xffff_ffff, hash >> 32].map(|half| half as usize % counters)
+    }
+
     /// Counts a request, and says whether it is within the limit.
     fn allow(&self, key: &str, now: i64) -> bool {
         let window = now.div_euclid(self.window);
         let mut counters = locked(&self.counters);
-        let slot = (self.hasher.hash_one(key) % counters.len() as u64) as usize;
-        let counter = &mut counters[slot];
-        if counter.0 != window {
-            *counter = (window, 0);
-        }
-        counter.1 = counter.1.saturating_add(1);
-        counter.1 <= self.max
+        let [first, second] = self.slots(key, counters.len());
+        let mut count = |slot: usize| {
+            let counter = &mut counters[slot];
+            if counter.0 != window {
+                *counter = (window, 0);
+            }
+            counter.1 = counter.1.saturating_add(1);
+            counter.1
+        };
+        let lowest = if first == second { count(first) } else { count(first).min(count(second)) };
+        lowest <= self.max
     }
 
     /// Counts a request like `allow`, and refuses it with how long to wait if it is over.
@@ -173,8 +184,10 @@ impl Limiter {
     fn spent(&self, key: &str, now: i64) -> bool {
         let window = now.div_euclid(self.window);
         let counters = locked(&self.counters);
-        let counter = counters[(self.hasher.hash_one(key) % counters.len() as u64) as usize];
-        counter.0 == window && counter.1 >= self.max
+        self.slots(key, counters.len()).iter().all(|&slot| {
+            let counter = counters[slot];
+            counter.0 == window && counter.1 >= self.max
+        })
     }
 
     /// Seconds until the window that `now` is in ends.
@@ -1491,6 +1504,11 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 
 // Views
 
+/// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
+type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str);
+/// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
+type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
+
 #[derive(Serialize)]
 struct ViewOut<'a> {
     id: &'a str,
@@ -1502,19 +1520,23 @@ struct ViewOut<'a> {
     step: u64,
     land: &'a [String],
     tiles: Vec<(u16, u16, &'static str, u8)>,
-    /// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
-    players: Vec<(i64, String, u16, u16, Option<&'static str>, &'static str)>,
+    players: Vec<PlayerOut>,
     places: u32,
     roads: u32,
     stage: &'static str,
     updated_at: i64,
-    /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
     #[serde(skip_serializing_if = "Option::is_none")]
-    crawlers: Option<Vec<(&'static str, &'static str, u16, u16, i64)>>,
+    crawlers: Option<Vec<CrawlerOut>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     people: Option<Vec<(String, u16, u16)>>,
+    /// W71: `[x, y, name]`, whose each place is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owners: Option<Vec<(u16, u16, String)>>,
+    /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
 }
@@ -1604,7 +1626,17 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
 
     let disaster = state.db.world_end(&world.id)?.and_then(|end| disaster_of(world, &end));
 
-    let (crawlers, visitors, people) = if world.id == COMMONS_ID {
+    let owners = if world.id == COMMONS_ID {
+        let rows = state.db.place_owners(&world.id)?;
+        Some(
+            rows.into_iter()
+                .filter_map(|(x, y, name)| Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?, name)))
+                .collect(),
+        )
+    } else {
+        None
+    };
+    let (crawlers, visitors, people, bots_out) = if world.id == COMMONS_ID {
         let roads = Roads::from_tiles(&snapshot.tiles);
         let on_the_street = |numbers: Vec<u64>| -> Vec<(String, u16, u16)> {
             numbers
@@ -1626,9 +1658,10 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
             .collect();
         let visitors = on_the_street(state.worlds.visitors(now));
         let people = on_the_street(state.worlds.people(now));
-        (Some(crawlers), Some(visitors), Some(people))
+        let bots_out = crate::routines::bots_at_places(state, &snapshot.tiles, now)?;
+        (Some(crawlers), Some(visitors), Some(people), Some(bots_out))
     } else {
-        (None, None, None)
+        (None, None, None, None)
     };
 
     let mut out = ViewOut {
@@ -1649,6 +1682,8 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
         crawlers,
         visitors,
         people,
+        owners,
+        bots_out,
         disaster,
     };
     // The tag leaves out the time it was built and how long ago each frog was seen, because both
@@ -2328,6 +2363,33 @@ mod tests {
         // A window a long way off in either direction is just a different window.
         assert!(limiter.allow("b", i64::MAX));
         assert!(limiter.allow("b", i64::MIN + 1));
+    }
+
+    #[test]
+    fn a_key_is_only_held_up_by_another_that_shares_both_its_counters() {
+        let limiter = Limiter::new(64, 60, 3);
+        let slots = |key: &str| limiter.slots(key, 64);
+        let busy = (0..).map(|n| format!("busy-{n}")).find(|key| slots(key)[0] != slots(key)[1]).unwrap();
+        // One key that shares a counter with the busy one, and one that shares both.
+        let keys = (0..).map(|n| format!("key-{n}"));
+        let one = keys.clone().find(|key| slots(key)[0] == slots(&busy)[0] && slots(key)[1] != slots(&busy)[1]);
+        let both = keys.clone().find(|key| slots(key) == slots(&busy));
+        let (one, both) = (one.unwrap(), both.unwrap());
+
+        (0..3).for_each(|_| assert!(limiter.allow(&busy, 100)));
+        assert!(limiter.spent(&busy, 100));
+        assert!(!limiter.spent(&one, 100));
+        assert!((0..3).all(|_| limiter.allow(&one, 100)), "its own 3");
+        assert!(!limiter.allow(&one, 100), "its own limit still holds");
+        assert!(limiter.spent(&both, 100));
+    }
+
+    #[test]
+    fn one_counter_counts_every_key_together_and_each_request_once() {
+        let limiter = Limiter::new(1, 60, 3);
+        assert!(limiter.allow("a", 100) && limiter.allow("b", 100) && limiter.allow("c", 100));
+        assert!(limiter.spent("d", 100));
+        assert!(!limiter.allow("d", 100));
     }
 
     fn parse(json: serde_json::Value) -> Result<Parsed, &'static str> {

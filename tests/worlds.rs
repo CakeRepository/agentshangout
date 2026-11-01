@@ -1,4 +1,4 @@
-//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W70). They
+//! Tests for the public worlds, written from the rules in docs/public-city.md (W1 to W74). They
 //! drive a real server over HTTP. A comment such as `// W13` above a test names the rule it
 //! covers, so coverage can be checked by searching for it.
 //!
@@ -610,7 +610,7 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
         assert!(!reply.text.contains("player_token"));
     }
     // Nothing was made: not a player, not a place on the street, not a claim.
-    assert!(server.state.db.players_of(&made["person"]["id"].as_str().unwrap().to_string()).unwrap().is_empty());
+    assert!(server.state.db.players_of(made["person"]["id"].as_str().unwrap()).unwrap().is_empty());
     assert_eq!(server.view(COMMONS).await["players"], json!([]));
     // The same through MCP.
     let reply = server.rpc("tools/call", json!({ "name": "join", "arguments": {} })).await;
@@ -624,7 +624,7 @@ async fn a_bot_that_stays_home_and_a_house_bot_are_refused_and_nothing_is_made()
         reply.body["result"]["content"][0]["text"].as_str().unwrap().to_string()
     };
     assert!(text.contains("stays home"), "{text}");
-    assert!(server.state.db.players_of(&made["person"]["id"].as_str().unwrap().to_string()).unwrap().is_empty());
+    assert!(server.state.db.players_of(made["person"]["id"].as_str().unwrap()).unwrap().is_empty());
 }
 
 // W3, W9
@@ -1425,7 +1425,7 @@ async fn a_road_is_a_straight_line_of_up_to_16_and_a_drag_in_any_direction_works
     let map = Map::from_db(&server, COMMONS);
 
     // 17 tiles is too long, a diagonal is not a line.
-    let long = map.line_from_road(17).and_then(|line| Some(line));
+    let long = map.line_from_road(17);
     if let Some((first, last)) = long {
         assert!(server.act(&ann.key, COMMONS, road_move(first, last)).await.status.is_client_error());
     }
@@ -1995,9 +1995,10 @@ async fn moves_are_capped_in_a_world_at_300_a_minute() {
     }
     assert_eq!(applied, 300, "300 moves went through");
     assert_eq!(refused, 30, "and the rest were told to wait");
-    // A refused one cost nothing: the last guest only used what went through.
+    // A refused one cost nothing: the last guest only used what went through, and the 300 that did
+    // were the first 10 guests' 30 each, so this one spent none.
     let last = guests.last().unwrap();
-    assert_eq!(server.moves_left(&last.token).await, 30 - (300 - 10 * 30));
+    assert_eq!(server.moves_left(&last.token).await, 30);
     // Moves that are refused for another reason did not count towards the cap. A player's refused
     // moves have a limit of their own (60 a minute), so seven players are refused 50 times each.
     let fresh = Server::start().await;
@@ -2116,8 +2117,8 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, and public_floors, go_out and come_back for going out (L6, L8).
-    assert!(private_names.contains(&"inbox") && private_names.len() == 33, "{private_names:?}");
+    // 30, public_floors, go_out and come_back for going out (L6, L8), and three for projects (L11 to L13).
+    assert!(private_names.contains(&"inbox") && private_names.len() == 36, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
@@ -2932,7 +2933,7 @@ async fn the_view_has_the_documented_shape() {
     let keys: HashSet<&str> = view.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people"])
+        HashSet::from(["id", "name", "kind", "open", "size", "seed", "step", "land", "tiles", "players", "places", "roads", "stage", "updated_at", "crawlers", "visitors", "people", "bots_out", "owners"])
     );
     assert!((view["updated_at"].as_i64().unwrap() - now()).abs() < 10);
     let tile = &view["tiles"][0];
@@ -3891,9 +3892,9 @@ async fn a_road_a_place_needs_cant_be_cut_and_it_counts_for_your_town() {
     assert_eq!(tile_kind(&server, first), Some(Kind::Road));
 }
 
-// W59
+// W59, W71
 #[tokio::test]
-async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
+async fn a_place_is_a_tile_and_only_owners_names_whose_it_is() {
     let server = Server::start().await;
     let map = Map::from_db(&server, COMMONS);
     let spots = building_spots(&map, 2);
@@ -3910,8 +3911,16 @@ async fn a_place_is_a_tile_and_says_nothing_about_whose_it_is() {
     let path = format!("/api/worlds/{COMMONS}/look?x={}&y={}&w=8&h=8", spot.0, spot.1);
     let look = server.get(&path).send().await.ok();
     assert!(look["built"].as_array().unwrap().contains(&json!([spot.0, spot.1, "studio", 0])), "{look}");
+    // W71: the view names the owner in `owners`, and only there. Nothing says which account it is, and
+    // `look` names nobody.
+    assert!(view["owners"].as_array().unwrap().contains(&json!([spot.0, spot.1, "Marigold"])), "{view}");
+    let mut rest = view.clone();
+    rest.as_object_mut().unwrap().remove("owners");
+    for text in [rest.to_string(), look.to_string()] {
+        assert!(!text.contains("Marigold"), "{text}");
+    }
     for text in [view.to_string(), look.to_string()] {
-        assert!(!text.contains("Marigold") && !text.contains(&ann.id), "{text}");
+        assert!(!text.contains(&ann.id), "{text}");
     }
 
     // There is no tool for it, and the build tool doesn't take one.
@@ -3967,4 +3976,40 @@ async fn deleting_the_commons_row_starts_it_again_and_leaves_everyone_else_alone
     assert!(again.moves_left(&guest.token).await <= i64::from(worlds::GUEST_MOVES), "tokens still work");
     again.act(&ann.key, COMMONS, place("house", spots[0])).await.ok();
     let _ = std::fs::remove_file(&path);
+}
+
+// W73
+#[test]
+fn a_map_paints_its_land_in_the_same_step_that_sizes_it() {
+    // Sizing a canvas wipes it, and a resize is heard after the frame is drawn, so the browser shows
+    // whatever is there. The sky is a canvas of its own behind the map, so a map that waits for the
+    // next frame shows as clouds, and it did every time one opened. Nothing here runs a browser, so
+    // this reads the page, as tests/rooms.rs does for the nap spots.
+    let page = include_str!("../web/world.js");
+    let (_, rest) = page.split_once("\n  resize() {").expect("the map has a resize");
+    let (resize, _) = rest.split_once("\n  }").expect("resize ends");
+    let wiped = resize.find("this.canvas.width = cw").expect("resize sizes the canvas");
+    let camera = resize.find("this.clampCam()").expect("resize settles the camera");
+    let land = resize.find("this.render()").expect("resize leaves the map blank until the next frame");
+    assert!(wiped < land && camera < land, "the land goes on after the wipe, with the camera settled");
+    assert!(resize.contains("drawSky("), "a map still waiting for its view shows the sky");
+}
+
+// W74
+#[test]
+fn the_status_bar_under_the_map_stays_one_line_tall() {
+    // The map gets the height the bar leaves, so a goal that wrapped when the mouse came onto the map
+    // resized the map each time, in a window of an ordinary size. Nothing here runs a browser, so this
+    // reads the page. Rooms stack rows in the same bar and have no map, so they keep them.
+    let app = include_str!("../web/app.js");
+    assert!(app.contains("frame.root.classList.add('wd-game', 'wd-map');"), "the map's window says it's the map");
+    let css = include_str!("../web/style.css");
+    assert!(css.contains(".wd-map > .wd-status { flex-wrap: nowrap; }"), "the bar is one row on a wide screen");
+    assert!(
+        css.contains(".wd-map .wd-status .wd-seg[role=\"status\"], .wd-map .wd-status .wd-town { white-space: nowrap; overflow-wrap: normal; }"),
+        "the two cells that say whole sentences stay on one line, on every screen",
+    );
+    assert!(css.contains(".wd-map .wd-status .wd-town { order: 1; }"), "on a narrow screen the readout can't add a row");
+    assert!(app.contains("frame.message.title = text;"), "a message that doesn't fit can still be read");
+    assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
 }

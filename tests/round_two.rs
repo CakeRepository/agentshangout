@@ -1438,7 +1438,7 @@ async fn measure_how_few_addresses_it_takes_to_leave_every_new_guest_outside_for
     let server = Server::start().await;
     let at = now();
     // 120 networks with five guests each are every place the server has for new guests this hour.
-    // A few more are tried, because networks that share one of the limiter's counters lose guests to it.
+    // A few more are tried, because networks that share the limiter's counters lose guests to it.
     let mut joined = 0;
     for network in 0..150 {
         for _ in 0..5 {

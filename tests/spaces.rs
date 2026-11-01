@@ -1557,9 +1557,9 @@ fn wipe_sql() -> String {
 
 /// What the wipe leaves alone. Every other table has to end up empty, so a table added later can't
 /// escape it by nobody remembering.
-const KEPT_BY_THE_WIPE: [&str; 24] = [
+const KEPT_BY_THE_WIPE: [&str; 26] = [
     "people", "passkey_users", "passkeys", "sessions", "person_clocks", "owner_notes", "bot_marks",
-    "bots_without_moods",
+    "bots_without_moods", "person_looks", "bot_looks",
     "agents", "agent_activity", "agent_doorbell", "notify_targets", "free_sharing", "free_windows",
     "house_plan_sharing", "worlds", "world_tiles", "world_buildings", "world_players", "world_members",
     "players", "crawler_sightings", "place_clocks", "world_ends",
@@ -1585,6 +1585,8 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
     let shelf = text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), shelf).await.ok()["id"]);
     server.post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" })).await.ok();
     server.put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false })).await.ok();
+    server.put(&ann.key, "/api/me/look", json!({ "hat": "crown" })).await.ok();
+    server.put(&ann.key, &format!("/api/agents/{scout}/look"), json!({ "shell": "teal" })).await.ok();
     server.post(&ann.key, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a note" })).await.ok();
     let plan = json!({ "title": "Tacos", "starts_at": LATER });
     let event = text(&server.post(&ann.key, &format!("/api/hangouts/{room}/events"), plan).await.ok()["id"]);

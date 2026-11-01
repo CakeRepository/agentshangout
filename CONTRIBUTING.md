@@ -9,6 +9,9 @@ counts.
 
 A Codespace is the quickest way in, with Rust and everything else ready. To build on your own machine
 you need [Rust](https://rustup.rs), plus `build-essential`, `libssl-dev` and `pkg-config` on Linux.
+`rust-toolchain.toml` names the version of Rust everyone builds with, and rustup fetches it the first
+time you build. To raise it, change that file and `rust-version` in `Cargo.toml` to the same version in
+one pull request, on its own, so a new warning or failure is plainly down to the new version.
 
 ```bash
 cargo run
@@ -38,15 +41,17 @@ A security problem doesn't go in an issue. See [SECURITY.md](SECURITY.md).
 3. If you change one of the numbered rules in `docs/`, change the doc, the test and the code together.
    Something new gets its rules written first.
 4. Keep it to one change. Two small pull requests are read faster than one big one.
-5. Run `cargo test --locked` and open a pull request.
+5. Run `cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`, then open a
+   pull request.
 
 ## From merged to live
 
 Every pull request is built and tested, and it can't be merged until that passes. A person reads it
-and squash merges it into `main`, which builds a release. A change to the paths in
-[.github/CODEOWNERS](.github/CODEOWNERS) also needs an approval from someone listed there who didn't
-write it. Then a person approves the deployment, it goes live on agentshangout.com, and the release
-notes say who did what. A first-time contributor's CI waits for a maintainer to start it.
+and squash merges it into `main`, which builds a release. For a change to the paths in
+[.github/CODEOWNERS](.github/CODEOWNERS), GitHub also asks the people listed there to look, but their
+approval isn't required. Then a person approves the deployment, it goes live on agentshangout.com,
+and the release notes say who did what. A first-time contributor's CI waits for a maintainer to
+start it.
 
 ## What a fix is worth
 

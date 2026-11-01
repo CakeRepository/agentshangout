@@ -1361,7 +1361,7 @@ const EXTREMES: [i64; 36] = [
 fn is_broken(result: &Result<Reply, reqwest::Error>) -> Option<String> {
     match result {
         Err(error) => Some(format!("the connection broke: {error}")),
-        Ok(reply) if reply.status.is_server_error() => Some(format!("{}", reply.show())),
+        Ok(reply) if reply.status.is_server_error() => Some(reply.show()),
         Ok(_) => None,
     }
 }
@@ -1584,7 +1584,7 @@ async fn every_shape_of_a_json_rpc_request_gets_an_answer_and_none_echoes_it() {
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{mark}\"}}"),
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":\"{mark}\"}}"),
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":[\"{mark}\"]}}"),
-        format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":5}}}}"),
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":5}}".to_string(),
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"{mark}\"}}}}"),
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":[\"{mark}\"]}}}}"),
         format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"join\",\"arguments\":\"{mark}\"}}}}"),
@@ -2099,10 +2099,7 @@ async fn one_address_hammering_join_cannot_use_up_the_servers_new_guests_for_eve
             others += 1;
         }
     }
-    // Addresses share a fixed number of counters, so one of these can land on the flooded
-    // address's counter and be refused early, about one time in 4,096. The limiter says so. What
-    // this guards is the server's own allowance, and a flood that used it up would stop them all.
-    assert!(others >= 59, "{others} other addresses got in");
+    assert_eq!(others, 60, "{others} other addresses got in");
 }
 
 // W12, W30
@@ -2155,7 +2152,7 @@ async fn a_client_cannot_slip_past_a_limit_by_how_it_writes_its_own_address() {
     let spellings = ["2001:db8::78", "2001:0db8:0:0:0:0:0:78", "2001:DB8::78", "2001:db8:0000::0078"];
     let mut joined = 0;
     for spelling in spellings.iter().cycle().take(12) {
-        if server.post("/api/public/join", json!({})).header("x-forwarded-for", *spelling).send().await.status == StatusCode::OK {
+        if server.post("/api/public/join", json!({})).header("x-forwarded-for", spelling).send().await.status == StatusCode::OK {
             joined += 1;
         }
     }
@@ -2460,7 +2457,7 @@ async fn a_view_and_a_look_stay_a_fixed_size_however_full_the_world_and_the_stre
         let player = server.state.db.create_guest(&auth::hash_secret(&format!("token-{n}")), &auth::hash_secret(&format!("claim-{n}")), now()).unwrap();
         server.state.db.in_transaction::<(), rusqlite::Error>(|tx| tx.enter_world(COMMONS, player.id, (64, 64), now())).unwrap();
     }
-    let guests = vec![server.guest().await.token];
+    let guests = [server.guest().await.token];
     // A crowd of crawlers and visitors too.
     for agent in [GOOGLEBOT, GPTBOT, "Mozilla/5.0 (compatible; bingbot/2.0)", "ClaudeBot/1.0", "PerplexityBot/1.0", "DuckDuckBot/1.0", "Applebot/0.1"] {
         server.get("/").ua(agent).send().await;
@@ -3170,7 +3167,7 @@ async fn the_engine_makes_land_and_a_highway_for_thousands_of_seeds_without_pani
     for _ in 0..300 {
         seeds.push(rng.next() & MAX_SEED);
     }
-    seeds.extend([u64::MAX & MAX_SEED, MAX_SEED - 1, 1 << 32, (1 << 32) - 1, 1 << 31]);
+    seeds.extend([MAX_SEED, MAX_SEED - 1, 1 << 32, (1 << 32) - 1, 1 << 31]);
     for seed in seeds {
         let at = std::time::Instant::now();
         let land = world::terrain(seed, world::OWN_SIZE);

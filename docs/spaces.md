@@ -32,6 +32,7 @@ the moment they arrive, so making a floor public can never show what was said on
 | What public means | Anyone signed in. There is no looking in without an account |
 | What a house costs | Nothing. Third spaces and opening a floor to the public need the server's code, if it has one, unless the place was built on the map |
 | What's shared | A café, from the start. Everything else is private unless you're invited |
+| Rooms off the map | Only with the server's code, so on a server run for other people every room is a place on the map. Anyone else hosts their own |
 | Cities | Untouched. They stay invite-only, for the reason in [city.md](city.md) |
 
 ## Places
@@ -58,7 +59,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   from before spaces get one, and accounts that never look, such as a friend answering a plan's link,
   cost nothing. It's named after them, has one private floor and takes no server code. It belongs to
   the person, so a bot or a guest player has none.
-- **S3.** A person can hold 3 third spaces. A fourth is refused with 409. Only spaces they own and
+- **S3.** A person can hold 3 third spaces, counting any their bots started as projects (L11 in
+  [routines.md](routines.md)). A fourth is refused with 409. Only spaces they own and
   still belong to count, so a room from before spaces doesn't. Starting one needs the server's code,
   as starting a hangout always did.
 - **S4.** A space has at most 5 floors, counting the first. Adding one needs no server code.
@@ -276,6 +278,7 @@ SpaceView {
 | --- | --- | --- | --- |
 | `GET /api/spaces` | | `MySpaces` | People. Builds the house if there isn't one (S2) |
 | `GET /api/spaces/public` | | `{floors: [PublicFloor]}` | People |
+| `GET /api/server` | | `{asks_for_code}` | Anyone (S49) |
 | `GET /api/spaces/{id}` | | `SpaceView` | Whoever runs it |
 | `PUT /api/spaces/{id}` | `{name?, about?}` | `Space` | Whoever runs it |
 | `DELETE /api/spaces/{id}` | | `{ok}` | Whoever runs it. Third spaces only |
@@ -347,6 +350,12 @@ comes from the person, the first time they go through their own door, on a route
   floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
   A club, a studio and a house start private. A room that comes back through S34 stays as its owner
   left it: placing a café never opens a room someone already has.
+- **S49.** On a server with a code, a room starts from the map: someone's house, or a place they put
+  up (S34). Starting one anywhere else takes the code (S3), and so does a city (R49), and the page
+  points anyone without it to the map or to hosting a private server of their own. A bot's project is
+  the one exception: it starts off the map, and gets its door when its studio goes up (L11, L13).
+  `GET /api/server` says whether a server asks for a code, so a page can say so before anyone signs
+  in. It says nothing else.
 - **S48.** While a third space's building is a café, its owner opens and closes its floors with no
   server code. Nobody else gets that: whoever runs it once the owner has left (S8) needs the code,
   because they didn't wait for it. The keeper can still close a floor (S29), and removing the owner
@@ -399,7 +408,7 @@ through the real routes, and requires every table to be on the list below or lef
 | All plans, their answers, lists and links, so they leave everyone's calendars | Calendar links, which stay valid and show nothing |
 | Every city, with its rules, vouches and gate | Notification URLs and doorbells |
 | Every house in a city, with its residents, trips, passes, scenes and notes | Time zones, free times and who can see them |
-| Every space and floor, walk-ins and who was turned out, and every item and its notes | Notes people keep for their own bots, marks on bots, and which bots have moods turned off |
+| Every space and floor, walk-ins and who was turned out, and every item and its notes | Notes people keep for their own bots, marks on bots, which bots have moods turned off, and how people and bots look |
 | House bots, and with them the tokens on whatever ran a home | The public worlds, players and buildings |
 | Invite links of every kind, and invites between friends | |
 

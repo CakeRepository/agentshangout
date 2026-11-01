@@ -61,6 +61,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/spaces", get(my_spaces))
         .route("/api/spaces/public", get(public_floors))
         .route("/api/spaces/door", post(go_through_door))
+        .route("/api/places/{x}/{y}", get(place_details))
         .route("/api/spaces/{id}", get(space_view).put(change_space).delete(close_space))
         .route("/api/spaces/{id}/floors", post(add_floor))
         .route("/api/spaces/{id}/people/{person_id}/turn-out", post(turn_out).delete(let_back))
@@ -274,6 +275,52 @@ fn building_of(state: &AppState, space: &Space) -> ApiResult<Option<Building>> {
 
 fn stands_on_map(state: &AppState, space: &Space) -> ApiResult<bool> {
     Ok(building_of(state, space)?.is_some())
+}
+
+/// W72: one place on The Commons for a signed-in person: whose it is, and how each of their own
+/// bots can get into its rooms.
+async fn place_details(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path((x, y)): Path<(i64, i64)>,
+) -> ApiResult<Json<Value>> {
+    ops::require_human(&caller, "ask about a place: only people have bots of their own")?;
+    let (kind, owner_id) = state.db.building_at(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
+    let owner = match &owner_id {
+        Some(id) => state.db.person(id)?.map(|person| person.name),
+        None => None,
+    };
+    // The rooms behind it, if its owner has been through its door and it still stands as that door.
+    let building = (kind.clone(), owner_id.clone());
+    let floors = match state.db.space_on_plot(COMMONS_ID, x, y)?.filter(|space| is_door_to(&building, space)) {
+        Some(space) => state.db.floors_of(&space.id)?,
+        None => Vec::new(),
+    };
+    let now = now();
+    let mut bots = Vec::new();
+    for agent in state.db.agents_of(&caller.person_id, now)? {
+        if state.db.bot_home(&agent.id)?.is_some_and(|home| home.is_house) {
+            continue;
+        }
+        let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
+        let walked = state.db.walked_onto(&agent.id, now)?;
+        let access = if floors.iter().any(|floor| walked.contains(&floor.id)) {
+            "visiting"
+        } else if floors.iter().any(|floor| rooms.contains(&floor.id)) {
+            "in"
+        } else if floors.iter().any(|floor| floor.access == "public") {
+            "can_walk_in"
+        } else {
+            "needs_invite"
+        };
+        bots.push(json!({ "name": agent.name, "access": access }));
+    }
+    Ok(Json(json!({
+        "kind": kind,
+        "owner": owner,
+        "yours": owner_id.as_deref() == Some(caller.person_id.as_str()),
+        "bots": bots,
+    })))
 }
 
 /// S48: whether this space's building is a café, whose owner needs no code to open its floors.
@@ -824,6 +871,10 @@ async fn walk_in(
         ops::refresh(&state, gone);
     }
     ops::refresh(&state, &floor.id);
+    // L17: a bot with public places on shows at the place it walked into.
+    if agent.is_some() {
+        state.worlds.mark_stale(COMMONS_ID);
+    }
     Ok(Json(json!({ "hangout_id": floor.id, "until": now + WALK_IN_SECS })))
 }
 
@@ -844,6 +895,7 @@ async fn walk_out(
     state.db.end_visit(&floor.id, &who)?;
     state.presence.forget(&floor.id, &who);
     ops::refresh(&state, &floor.id);
+    state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
 }
 

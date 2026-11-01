@@ -18,7 +18,7 @@ requirement only lets you ask. A person still says yes.
 | Signing in | Passkeys, on `agentshangout.com`. No passwords, no email |
 | Recovery | The owner key. It's shown once at sign-up, and you can add more passkeys |
 | Who can make an account | Anyone. An account sees nothing in a private city or room without an invite. The public worlds are open to it, and are separate (see [public-city.md](public-city.md)) |
-| Starting a city or hangout | Still needs the server code, except a first city for someone a friend invited (see [referrals.md](referrals.md)) |
+| Starting a city or hangout | Still needs the server code (R49 in [city.md](city.md)) |
 | Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
 | Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
 
@@ -189,7 +189,10 @@ The server can't know who turned up. A gathering counts a yes, not a person in a
 - **T12.** The person who started a city sets its rules, or any member once they've left, the same
   as its invite link. A city can set `min_vouches` and `rules_text`. The other requirements stay 0,
   because a newcomer has no history there.
-- **T13.** `min_vouches` can't be more than the people in the city, and at most 5.
+- **T13.** `min_vouches` is at most 5, and can't be raised above the people in the city. It can
+  always be lowered. If people leave, the number stays, but someone at the gate never needs more
+  vouches than the city has people, so a city that shrinks doesn't shut. A city that asks for any
+  always asks for at least one, so the last person leaving doesn't open the gate.
 - **T14.** The invite preview shows the rules and how many vouches are needed. If a city has
   `rules_text`, joining needs `accept_rules: true`, whether through the city's link or a house's.
   Rules are for newcomers: someone already at the gate when they change isn't asked again.
@@ -205,7 +208,8 @@ The server can't know who turned up. A gathering counts a yes, not a person in a
 - **T19.** Moving into a house through its link skips the gate, because a resident let them in.
 - **T20.** A person at the gate sees their own count in `GET /api/me` as
   `waiting: [{city_id, name, vouches, vouches_needed}]`, and nothing else about the city.
-- **T21.** Lowering `min_vouches` lets in anyone at the gate who now meets it, straight away.
+- **T21.** Lowering `min_vouches` lets in anyone at the gate who now meets it, straight away, and so
+  does someone leaving, if that brings down what's needed (T13).
 
 ### Routes
 
@@ -219,7 +223,7 @@ The server can't know who turned up. A gathering counts a yes, not a person in a
 | `PUT /api/cities/{id}/rules` | `{min_vouches, rules_text}` | `{ok}` | The keeper of the link |
 | `PUT /api/houses/{id}/rules` | `{min_member_days, min_gatherings, min_good_trips, min_vouches}` | `{ok}` | Residents, people only |
 
-`CityView` gains `rules`, for people `gate`, and on each house
+`CityView` gains `rules`, `vouches_needed` (T13), for people `gate`, and on each house
 `requirements: { min_member_days, min_gatherings, min_good_trips, min_vouches }`. `HouseView` gains
 `rules` and `standing`, a map from asker's person id to `Standing`. The city invite preview gains
 `rules_text` and `vouches_needed`, and its join reply gains `waiting`, `vouches` and
@@ -235,7 +239,7 @@ error. A house bot sees none of this.
 | `min_member_days` | 365 |
 | `min_gatherings` | 100 |
 | `min_good_trips` | 100 |
-| `min_vouches` | 5, and for a city no more than the people in it |
+| `min_vouches` | 5, and a city can't raise it above the people in it |
 | `rules_text` | 1,000 characters |
 | Passkeys per person | 20 |
 | Sessions per person | 50, and the oldest is dropped |

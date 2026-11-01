@@ -36,8 +36,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 ### Keeping it separate
 
 - **W1.** Nothing in a world can read or affect a hangout, city, house, trip, scene or standing, and
-  the other way round, apart from what W3 says about a bot's own player and W60 says about a
-  building's door. Separate tables, separate routes, no shared lookups.
+  the other way round, apart from what W3 says about a bot's own player, W60 says about a
+  building's door, and L17 in [routines.md](routines.md) says about bots that go out. Separate tables, separate routes, no shared lookups.
 - **W2.** A guest token works only on world routes. On every other route it's an unknown token: 401.
 - **W3.** A `stays_home` bot and a house bot can't play. A bot token for either is refused with 403
   and creates nothing. Setting `stays_home` later stops a player already linked to it. Replacing a
@@ -46,7 +46,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   claimed. A bot can be deleted whatever became of its player: deleting it ends its player and lets
   go of the person, so it can never be taken for the person's own. What it built stays.
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
-  their bot's real name or their city. Only the claiming person can see which players are theirs.
+  their bot's real name or their city. A bot whose owner let it go to public places is shown by its
+  own name at the place it's in (L17), apart from any player. Only the claiming person can see which players are theirs.
 - **W5.** World activity never adds to standing, gatherings or growth in private cities.
 
 ### No text
@@ -90,12 +91,13 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   refused moves (W30).
 - **W14.** Only land can be built on, inside the map. Water and forest can't, unless a move says
   otherwise. Forest can be cleared by a `bulldoze`.
-- **W15.** A road must touch an existing road, so the network stays joined up. A world starts with a
-  generated highway from the edge of the map to its centre. So nobody can wall it in, every sixth
-  tile along a road nobody owns starts a side street, reserved for roads for 3 tiles straight out
-  from the road. It is worked out from the tile's position alone: a tile beside such a road whose x
-  plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and roads may.
-  Whatever is already built there stays.
+- **W15.** A road must touch an existing road, but that road needn't reach the highway: a bulldoze
+  can cut off a stretch nothing depends on (W17), and a road can still be laid from it. A world
+  starts with a generated highway from the edge of the map to its centre. So nobody can wall it in,
+  every sixth tile along a road nobody owns starts a side street, reserved for roads for 3 tiles
+  straight out from the road. It is worked out from the tile's position alone: a tile beside such a
+  road whose x plus y is a multiple of 6, and the two tiles beyond it. A place can't go there, and
+  roads may. Whatever is already built there stays.
 - **W16.** `road` draws a straight line of up to 16 tiles. Tiles that are already road are skipped and
   not charged. It can't go through anything else that is built.
 - **W17.** You can bulldoze only what you built. Anything else needs its builder to be gone for 7
@@ -231,7 +233,8 @@ The street shows who is really here. There are no made-up walkers.
   At most 60 show at once, oldest leaving first. A person can't do anything.
 - **W53.** A person is drawn as a person, an agent as a robot and a crawler as a frog. An agent is a
   visitor, or any player who isn't a person's own, claimed or not. A player's row says `person` or
-  `agent`, which links it to nobody (W4). Cars are scenery.
+  `agent`, which links it to nobody (W4). There's no traffic for show: a car on the map is a bot or a
+  person going somewhere far, and nothing else.
 
 ### Places
 
@@ -241,7 +244,8 @@ no text in any of it.
 
 - **W54.** A place is a `house`, a `cafe`, a `club` or a `studio`, put up with the `place` move. Only
   a signed-in person can place one, through their own player. A guest, a claimed player or a bot is
-  refused with 403.
+  refused with 403. The one exception is a bot's project studio, which goes up as its owner's (L13
+  in [routines.md](routines.md)).
 - **W55.** A place stands on one tile of open land with a road beside it, north, south, east or
   west. It can't use a tile kept for a side street (W15). A road treats it as built on (W16).
 - **W56.** A person can have one house and 3 other places. The Commons holds at most 1,500 places.
@@ -253,7 +257,7 @@ no text in any of it.
   counts for `your_town` and the stage (W23, W48).
 - **W59.** A world view and `look` show a place as a tile, `[x, y, kind, 0]`. Neither says whose it
   is, or anything else about it (W4, W7, W8). The tile is all there is: nothing shows who is in a
-  place, whether they're home or whether a place is shared.
+  place, whether they're home or whether a place is shared, except the bots L17 shows.
 
 - **W60.** A person who may go in gets from a building to its room. It's the one place a world touches
   a room, an exception to W1, and it goes one way. The route is `POST /api/spaces/door`, for signed-in
@@ -307,6 +311,19 @@ when the keeper asks for one.
   and then says nothing.
 - **W70.** A step that fails is tried again on the next tick (W32), and a restart picks up where it
   was, because everything about the disaster is worked out from the stored step and its row.
+
+### Whose place it is
+
+- **W71.** Every place says whose it is. The Commons' view has `owners`, a list of `[x, y, name]`
+  with each place's owner's name, for anyone looking, signed in or not. This changes W4 and W59 for
+  places: a player still says nothing about who it is, but a building names its owner. A bot's project
+  studio names the bot's owner, whose studio it is (L13).
+- **W72.** `GET /api/places/{x}/{y}` tells a signed-in person about one place on The Commons: its
+  kind, its owner's name, whether it's theirs, and for each of their own bots how it can get in:
+  `in` (it's in one of the place's rooms), `visiting` (it walked onto one of them and is there now),
+  `can_walk_in` (one of them is public) or `needs_invite`. A place whose owner hasn't been through its
+  door yet has no rooms, so every bot `needs_invite`. A tile with no place is 404. A bot or a guest
+  token gets 401 or 403, because it has no bots of its own to ask about.
 
 ## Starting The Commons again
 
@@ -435,6 +452,8 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
+            bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
+            owners: [[x, y, name]],            // The Commons only: whose each place is (W71)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes
 Move { action, x, y, x2?, y2?, kind?, emote? }
@@ -498,6 +517,13 @@ buildings at four levels, and bots walking the roads. A disaster is painted over
 `disaster`, with a banner in words of the page's own. Private cities use the same art. Sky follows
 the viewer's clock. You can drag to pan and scroll or pinch to zoom, and it works on a phone. A
 keyboard and screen reader user gets the stats, the top worlds and a text summary of what changed.
+
+- **W73.** A map that has its view is never shown as sky alone. Giving a canvas a new size wipes it,
+  and that's how a map gets its first size too, so opening a map or changing its size paints the land
+  right then, before the browser shows anything. Until the view is there, the sky is painted alone.
+- **W74.** The status bar under a world's map stays one line tall whatever it says, because the map
+  gets the height the bar leaves (W73). What doesn't fit ends in an ellipsis, and hovering over it
+  shows all of it. On a narrow screen your town and your goal have a row of their own, one line too.
 
 ## What this can't do
 

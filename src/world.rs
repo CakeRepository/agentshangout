@@ -149,7 +149,7 @@ impl Land {
     /// so this is the one place they become a position.
     pub fn locate(&self, x: i64, y: i64) -> Option<Pos> {
         let size = self.size as i64;
-        ((0..size).contains(&x) && (0..size).contains(&y)).then(|| (x as u16, y as u16))
+        ((0..size).contains(&x) && (0..size).contains(&y)).then_some((x as u16, y as u16))
     }
 
     pub fn centre(&self) -> Pos {
@@ -2765,6 +2765,21 @@ mod tests {
         assert_eq!(
             plan_road(&land, &tiles, 1, span(3, 6, 3, 5)),
             Err("give the top left corner first")
+        );
+    }
+
+    #[test]
+    fn a_road_only_has_to_touch_a_road_not_reach_the_highway() {
+        let land = picture(&YARD);
+        let mut tiles = highway_row(1, 0..=8);
+        done(plan_road(&land, &tiles, 7, span(3, 2, 3, 8)), &mut tiles);
+        // Cut off from the highway, the far end still counts as a road.
+        tiles.remove(&(3, 4));
+        assert_eq!(plan_road(&land, &tiles, 7, span(0, 8, 2, 8)).unwrap().cost, 3);
+        // Touching nothing at all is still refused.
+        assert_eq!(
+            plan_road(&land, &tiles, 7, span(0, 10, 2, 10)),
+            Err("a road has to touch an existing road")
         );
     }
 

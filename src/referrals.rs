@@ -1,7 +1,4 @@
-//! Friends bringing friends: a plan's link, and the first city that being invited lets you start.
-//! The rules are F1 to F23 in docs/referrals.md.
-
-use std::sync::{Mutex, MutexGuard};
+//! Friends bringing friends: a plan's link. The rules are F6 to F23 in docs/referrals.md.
 
 use axum::http::HeaderMap;
 use serde::Serialize;
@@ -17,21 +14,15 @@ use crate::{
 };
 
 const HOUR_SECS: i64 = 3_600;
-const DAY_SECS: i64 = 86_400;
 /// F18: past this a plan's link stops taking new people.
 const MAX_INVITEES: i64 = 30;
 const NEW_PEOPLE_PER_ADDRESS_PER_HOUR: u32 = 10;
 const NEW_PEOPLE_PER_HOUR: u32 = 120;
-const CITIES_PER_ADDRESS_PER_DAY: u32 = 3;
-const CITIES_PER_HOUR: u32 = 20;
 
-/// F7 and the limits on plan links. Counted in memory, so a restart starts them again.
+/// The limits on plan links. Counted in memory, so a restart starts them again.
 pub struct Limits {
     new_people_per_address: Limiter,
     new_people: Limiter,
-    cities_per_address: Limiter,
-    cities: Limiter,
-    city_start: Mutex<()>,
 }
 
 impl Limits {
@@ -39,16 +30,7 @@ impl Limits {
         Limits {
             new_people_per_address: Limiter::new(4096, HOUR_SECS, NEW_PEOPLE_PER_ADDRESS_PER_HOUR),
             new_people: Limiter::new(1, HOUR_SECS, NEW_PEOPLE_PER_HOUR),
-            cities_per_address: Limiter::new(4096, DAY_SECS, CITIES_PER_ADDRESS_PER_DAY),
-            cities: Limiter::new(1, HOUR_SECS, CITIES_PER_HOUR),
-            city_start: Mutex::new(()),
         }
-    }
-
-    /// F2: held from checking whether someone may start a city until it exists, so two requests
-    /// at once can't both use the same invite.
-    pub fn one_city_start(&self) -> MutexGuard<'_, ()> {
-        self.city_start.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -56,39 +38,6 @@ impl Default for Limits {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// Starting a city
-
-/// F6: whether this person can start a city with no code.
-pub fn may_start_city(state: &AppState, person_id: &str) -> ApiResult<bool> {
-    Ok(state.config.create_code.is_none() || state.db.invited_with_no_city(person_id)?)
-}
-
-/// F1 to F5, F7: lets someone without the code through if a friend invited them. Anyone else gets
-/// `refused`, the same answer as a wrong code.
-pub fn check_friends_invite(
-    state: &AppState,
-    caller: Option<&Caller>,
-    headers: &HeaderMap,
-    refused: ApiError,
-) -> ApiResult<()> {
-    let Some(caller) = caller.filter(|caller| !caller.is_agent()) else {
-        return Err(refused);
-    };
-    if !state.db.invited_with_no_city(&caller.person_id)? {
-        return Err(refused);
-    }
-    let now = now();
-    let limits = &state.referrals;
-    if let Some(ip) = worlds::address_of(state, headers) {
-        limits.cities_per_address.take(
-            &ip.to_string(),
-            now,
-            "too many new cities from your address: try again tomorrow",
-        )?;
-    }
-    limits.cities.take("all", now, "a lot of new cities started this hour: try again soon")
 }
 
 // A plan's link
