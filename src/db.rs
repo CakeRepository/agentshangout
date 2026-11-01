@@ -952,6 +952,9 @@ pub struct RoutineRow {
     pub public_places: bool,
 }
 
+/// S51: a request waiting on a place's owner: `(id, space_id, place, bot, asker, asked_at)`.
+pub type PlaceRequestRow = (String, String, String, String, String, i64);
+
 /// B2: the time zone a person's page last reported, and its offset from UTC then.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PersonClock {
@@ -7076,10 +7079,6 @@ impl Db {
         rows.collect()
     }
 
-    /// Everything a player has built in a world. It reads their tiles only, by the index on world
-    /// and player, so it costs what they have built and not what the world holds.
-    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
-    /// for anything public: W4 and W59 say a world never tells anyone whose a building is.
     // Asking to let a bot in (S49 to S52)
 
     /// S52: the latest request for this bot at this space since `since` that's waiting or was turned
@@ -7098,6 +7097,7 @@ impl Db {
     }
 
     /// S50: adds a request unless this person has `max` waiting since `since`. False if they have.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_place_request(
         &self,
         id: &str,
@@ -7136,7 +7136,7 @@ impl Db {
         &self,
         owner_id: &str,
         since: i64,
-    ) -> rusqlite::Result<Vec<(String, String, String, String, String, i64)>> {
+    ) -> rusqlite::Result<Vec<PlaceRequestRow>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT r.id, r.space_id, s.name, a.name, p.name, r.created_at FROM place_requests r
@@ -7175,6 +7175,8 @@ impl Db {
         rows.collect()
     }
 
+    /// What building stands on a tile and the person it belongs to, for the door to its room. Not
+    /// for anything public: only W71 says whose a place is, by name.
     pub fn building_at(
         &self,
         world_id: &str,
@@ -7192,6 +7194,8 @@ impl Db {
             .optional()
     }
 
+    /// Everything a player has built in a world. It reads their tiles only, by the index on world
+    /// and player, so it costs what they have built and not what the world holds.
     pub fn player_tiles(&self, world_id: &str, player_id: i64) -> rusqlite::Result<Tiles> {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
