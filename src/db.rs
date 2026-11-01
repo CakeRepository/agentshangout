@@ -801,7 +801,7 @@ CREATE INDEX IF NOT EXISTS world_more_places_by_player ON world_more_places (wor
 CREATE VIEW IF NOT EXISTS world_every_place AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_places
     UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
--- W96: a road loss belongs to its former builder, and is recorded with the tile change.
+-- W97: a road loss belongs to its former builder, and is recorded with the tile change.
 CREATE TABLE IF NOT EXISTS world_road_removals (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     world_id    TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
@@ -9851,7 +9851,7 @@ impl Db {
         Ok(tiles)
     }
 
-    /// W96: only this builder's losses, newest first, with bounded response size.
+    /// W97: only this builder's losses, newest first, with bounded response size.
     pub fn road_removals(
         &self,
         world_id: &str,

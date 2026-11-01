@@ -5551,7 +5551,7 @@ async fn a_step_takes_up_roads_laid_side_by_side_and_leaves_every_road_joined() 
     worlds::step_world(&server.state, COMMONS, now()).unwrap();
     let after = server.tiles(COMMONS);
     let me = server.me(&guest.token, COMMONS).await;
-    let losses = me["road_removals"].as_array().expect("W96: explain roads that disappeared");
+    let losses = me["road_removals"].as_array().expect("W97: explain roads that disappeared");
     let after_count = me["your_town"]["roads"].as_u64().unwrap();
     assert!(!losses.is_empty());
     assert_eq!(before_count - after_count, losses.len() as u64);
@@ -5595,7 +5595,7 @@ async fn a_step_takes_up_roads_laid_side_by_side_and_leaves_every_road_joined() 
     assert!(left.iter().any(|pos| !highway.contains(pos)), "some of the slab stays, as streets");
 }
 
-// W96: a rebuild, replacement and rollback leave an honest, owner-scoped road record.
+// W97: a rebuild, replacement and rollback leave an honest, owner-scoped road record.
 #[tokio::test]
 async fn road_losses_survive_rebuilding_and_rollback_but_never_change_owners() {
     let server = Server::start().await;
@@ -5636,7 +5636,7 @@ async fn road_losses_survive_rebuilding_and_rollback_but_never_change_owners() {
     assert_eq!(server.me(&guest.token, COMMONS).await["road_removals"], me["road_removals"]);
 }
 
-// W96: the record is durable and bounded on read, and expired guests can't donate roads or history.
+// W97: the record is durable and bounded on read, and expired guests can't donate roads or history.
 #[test]
 fn road_history_survives_reopening_and_guest_expiry_never_reassigns_roads() {
     let path =
