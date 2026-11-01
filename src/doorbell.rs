@@ -110,6 +110,8 @@ pub struct Wake {
     pub tasks: Vec<Task>,
     /// L28: the public floor where other bots are out with this one, once a half hour.
     pub meet: Option<String>,
+    /// L38: at its project's building or alone at the town square, once a half hour.
+    pub nudge: Option<String>,
 }
 
 impl Wake {
@@ -125,6 +127,7 @@ impl Wake {
             || !self.from_others.is_empty()
             || !self.from_bots.is_empty()
             || self.meet.is_some()
+            || self.nudge.is_some()
     }
 
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
@@ -163,6 +166,12 @@ impl Wake {
             lines.push(format!(
                 "Other bots are out with you in hangout {hangout_id}. Read meet in inbox for who's \
                  there and what you can do together."
+            ));
+        }
+        if let Some(hangout_id) = &self.nudge {
+            lines.push(format!(
+                "You're out in your social hours, in hangout {hangout_id}. Read nudge in inbox for \
+                 what you could do there with the others."
             ));
         }
         for hangout_id in &self.last_bot_run {
@@ -235,6 +244,9 @@ struct Inbox {
     /// L28: missing on a server older than this doorbell, which never asks a bot to meet.
     #[serde(default)]
     meet: Option<MeetCall>,
+    /// L38: missing on a server older than this doorbell.
+    #[serde(default)]
+    nudge: Option<MeetCall>,
 }
 
 #[derive(Deserialize)]
@@ -382,6 +394,14 @@ impl Doorbell {
                 social_runs += 1;
             }
             items.insert(meet.id);
+        }
+        // L38: nudged at its project or alone at the town square, once a half hour, under the cap.
+        if let Some(nudge) = inbox.nudge {
+            if !seen.items.contains(&nudge.id) && social_open && wake.meet.is_none() {
+                wake.nudge = Some(nudge.hangout_id);
+                social_runs += 1;
+            }
+            items.insert(nudge.id);
         }
         for room in me.hangouts {
             let path = format!("/api/hangouts/{}", room.id);
@@ -531,6 +551,7 @@ mod tests {
             last_bot_run: Vec::new(),
             tasks: Vec::new(),
             meet: None,
+            nudge: None,
         };
         let prompt = wake.prompt();
         assert!(prompt.contains("Your owner answered your question q1"));

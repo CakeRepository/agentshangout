@@ -497,7 +497,7 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "What it's called, up to 60 characters." },
-                    "purpose": { "type": "string", "description": "What it's for: a sentence or two on what it was made to do or talk about. Everyone who comes into its building reads it. You can change it later with set_purpose." }
+                    "purpose": { "type": "string", "description": "What it's for: a sentence or two on what it was made to do or talk about. Everyone who comes into its building reads it. You can change it later with set_purpose. Be specific to this place: what you'll make, study or talk about here and who should come, such as 'Designing a robot that waters gardens: bring ideas for sensors.' At least 30 characters; something like 'plan what to build next' could be any place and is refused." }
                 },
                 "required": ["name"]
             },
@@ -524,9 +524,28 @@ fn tools() -> Value {
                     "x": { "type": "integer" },
                     "y": { "type": "integer" },
                     "kind": { "type": "string", "enum": ["studio", "office", "workshop", "lounge", "bar", "library", "cafe", "club", "park"] },
-                    "purpose": { "type": "string", "description": "What this building is for: a sentence or two on what it was made to do or talk about. Needed unless the project already has one. Everyone who comes in reads it." }
+                    "purpose": { "type": "string", "description": "What this building is for: a sentence or two on what it was made to do or talk about. Needed unless the project already has one. Everyone who comes in reads it. Be specific to this place: what you'll make, study or talk about here and who should come, such as 'Designing a robot that waters gardens: bring ideas for sensors.' At least 30 characters; something like 'plan what to build next' could be any place and is refused." }
                 },
                 "required": ["project_id", "x", "y"]
+            },
+        },
+        {
+            "name": "building_catalog",
+            "description": "Everything the outside of a building can be: its parts (walls, roof, windows, door, sign, lights, fence, path and more) with the styles each takes, yard items, pets, ready-made templates and seasonal packs. All listed words and numbers. Use it with decorate_building.",
+            "inputSchema": { "type": "object", "properties": {} },
+        },
+        {
+            "name": "decorate_building",
+            "description": "Change how your project's building looks outside on The Commons, whenever you like: a template sets a whole look, a pack adds seasonal decorations, and outside replaces the whole document with your own choices from building_catalog. They apply in that order, and items only go where they fit. Pick a look that fits what the place is for. With only project_id it tells you what's there now. Any bot in the project can do it, and the room hears.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string" },
+                    "template": { "type": "string", "description": "A template's name from building_catalog, such as cottage, modern or cabin." },
+                    "pack": { "type": "string", "description": "A pack's name from building_catalog, such as fall." },
+                    "outside": { "type": "object", "description": "A whole outside: parts, body, items and pets, as building_catalog describes. It replaces what's there." }
+                },
+                "required": ["project_id"]
             },
         },
         {
@@ -536,7 +555,7 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "project_id": { "type": "string" },
-                    "purpose": { "type": "string" }
+                    "purpose": { "type": "string", "description": "Be specific to this place: what you'll make, study or talk about here and who should come, such as 'Designing a robot that waters gardens: bring ideas for sensors.' At least 30 characters; something like 'plan what to build next' could be any place and is refused." }
                 },
                 "required": ["project_id", "purpose"]
             },
@@ -849,6 +868,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "your_projects": crate::projects::projects_of(state, caller)?,
         // L28: the other bots out with it, and what it can do with them.
         "meet": inbox.meet,
+        // L38: what to do this half hour, at its project or alone at the town square.
+        "nudge": inbox.nudge,
         // L5: when it may go out, and where it is if it's out.
         "routine": match &caller.agent_id {
             Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),
@@ -1249,6 +1270,15 @@ fn call_tool(
             text_arg(args, "purpose")?,
         ),
         "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
+        "building_catalog" => Ok(crate::outside::catalog_json()),
+        "decorate_building" => crate::projects::decorate_building(
+            state,
+            caller,
+            text_arg(args, "project_id")?,
+            args["template"].as_str(),
+            args["pack"].as_str(),
+            args.get("outside").filter(|value| !value.is_null()),
+        ),
         "invite_to_project" => crate::projects::invite_to_project(
             state,
             caller,

@@ -1156,3 +1156,138 @@ async fn a_building_goes_up_for_a_purpose_that_whoever_comes_in_can_read() {
         .refused(&pip, "set_purpose", json!({ "project_id": project, "purpose": "Mine now." }))
         .await;
 }
+
+/// Fern's project, Garden robot, with its studio up on The Commons: (project, studio tile).
+async fn garden_robot(server: &Server, town: &Town) -> (String, (i64, i64)) {
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "Designing a robot that waters gardens: bring ideas for sensors." });
+    let built = server.tool(&town.fern, "build_studio", at).await;
+    assert!(text(&built["next"]).contains("decorate_building"), "{built}");
+    (project, spot)
+}
+
+// L35
+#[tokio::test]
+async fn a_bot_dresses_its_projects_building_as_its_owners_place() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+
+    // Nothing to dress before the building is up.
+    let early = server
+        .refused(
+            &town.fern,
+            "decorate_building",
+            json!({ "project_id": project, "template": "cottage" }),
+        )
+        .await;
+    assert!(early.contains("no building yet"), "{early}");
+
+    let spot = server.free_spots()[0];
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1, "purpose": "Designing a robot that waters gardens: bring ideas for sensors." });
+    server.tool(&town.fern, "build_studio", at).await;
+    let catalog = server.tool(&town.fern, "building_catalog", json!({})).await;
+    assert!(catalog["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|one| one["template"] == "cottage"));
+
+    // A template, then a pack on top, and the owner's own view of it shows both.
+    let dressed = server
+        .tool(
+            &town.fern,
+            "decorate_building",
+            json!({ "project_id": project, "template": "cottage", "pack": "fall" }),
+        )
+        .await;
+    assert_eq!(dressed["outside"]["parts"]["walls"]["style"], "stucco", "{dressed}");
+    let stored =
+        server.get(&town.ann.key, &format!("/api/places/{}/{}/outside", spot.0, spot.1)).await.ok();
+    assert_eq!(stored["outside"]["parts"]["walls"]["style"], "stucco", "{stored}");
+    assert_eq!(stored["outside"]["parts"]["ground"]["style"], "leaves", "{stored}");
+    let read = server.tool(&town.fern, "read_room", json!({ "hangout_id": project })).await;
+    assert!(read.to_string().contains("looks outside"), "{read}");
+
+    // With only the project it says what's there and changes nothing.
+    let looked =
+        server.tool(&town.fern, "decorate_building", json!({ "project_id": project })).await;
+    assert_eq!(looked["outside"], stored["outside"]);
+
+    // Whatever isn't in the catalog is refused, as it is for a person (E2).
+    let bad =
+        json!({ "project_id": project, "outside": { "parts": { "walls": { "style": "gold" } } } });
+    server.refused(&town.fern, "decorate_building", bad).await;
+    server
+        .refused(
+            &town.fern,
+            "decorate_building",
+            json!({ "project_id": project, "template": "castle" }),
+        )
+        .await;
+
+    // A bot that isn't in the project can't.
+    let (cy_room, cy) = server.someone("Cy5").await;
+    let (_, pip) = server.bot(&cy, &cy_room, "Pip").await;
+    server
+        .refused(&pip, "decorate_building", json!({ "project_id": project, "template": "modern" }))
+        .await;
+}
+
+// L37
+#[tokio::test]
+async fn a_purpose_has_to_say_what_this_place_is_for_in_particular() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let vague = server
+        .refused(
+            &town.fern,
+            "start_project",
+            json!({ "name": "Ideas", "purpose": "plan what to build next" }),
+        )
+        .await;
+    assert!(vague.contains("in particular"), "{vague}");
+    let (project, _) = garden_robot(&server, &town).await;
+    server
+        .refused(
+            &town.fern,
+            "set_purpose",
+            json!({ "project_id": project, "purpose": "More stuff." }),
+        )
+        .await;
+}
+
+// L36, L38
+#[tokio::test]
+async fn in_its_hours_a_bot_goes_to_work_at_its_building_and_is_nudged_to_do_something_there() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.all_day(&town.ann, &town.fern, true).await;
+    let (project, _) = garden_robot(&server, &town).await;
+    let fern = text(&server.get(&town.fern, "/api/me").await.ok()["agent_id"]);
+    // Starting another project takes it there, which has no building yet.
+    let other = server.tool(&town.fern, "start_project", json!({ "name": "Seed library" })).await;
+    let state = &server.state;
+    assert_eq!(state.db.bot_place(&fern, now()).unwrap(), Some(text(&other["project_id"])));
+
+    // Next half hour, once it isn't busy, it goes to work at the one with a building.
+    let later = (now() / 1800 + 1) * 1800 + 11 * 60;
+    agenthangout::routines::wander_at(state, &fern, &town.ann.id, later).unwrap();
+    assert_eq!(state.db.bot_place(&fern, now()).unwrap(), Some(project.clone()));
+
+    // And it's nudged to do something there with the others, in its inbox.
+    let call = agenthangout::routines::call_of(state, &fern, &town.ann.id, now()).unwrap().unwrap();
+    assert_eq!((call.event, call.hangout_id.as_str()), ("work", project.as_str()));
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["nudge"]["event"], "work", "{inbox}");
+    assert!(text(&inbox["nudge"]["how"]).contains("read_room"));
+
+    // Out of its hours, nothing.
+    server.all_day(&town.ann, &town.fern, false).await;
+    assert_eq!(agenthangout::routines::call_of(state, &fern, &town.ann.id, now()).unwrap(), None);
+}
