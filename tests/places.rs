@@ -1171,14 +1171,14 @@ async fn the_newer_places_go_up_open_named_and_set_up_for_what_they_are() {
     let early = server.free_spots()[0];
     server.place(&ann, "bar", early).await.refused(StatusCode::CONFLICT);
 
-    for (kind, title, item) in [
-        ("office", "Office", "bookshelf"),
-        ("workshop", "Workshop", "workbench"),
-        ("bar", "Bar", "coffee_table"),
-    ] {
+    for (kind, title) in [("office", "Office"), ("workshop", "Workshop"), ("bar", "Bar")] {
         let spot = server.build_later(&ann, kind, 8);
         assert_eq!(server.tile(spot).map(|k| k.as_str()), Some(kind));
         let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+        // One of the templates for its kind, as its id picks (I39).
+        let template = agenthangout::items::template_for_place(kind, &room).unwrap();
+        assert!(agenthangout::items::templates_for_place(kind).contains(&template.template));
+        let item = template.items[0].kind;
         let floor = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
         assert_eq!(floor["floor"]["space"]["name"], format!("Ann's {title}"), "{floor}");
         assert_eq!(floor["floor"]["floor"]["access"], "public", "{floor}");
@@ -1186,6 +1186,14 @@ async fn the_newer_places_go_up_open_named_and_set_up_for_what_they_are() {
             floor.to_string().contains(&format!("\"{item}\"")),
             "{kind} has no {item}: {floor}"
         );
+        // W96: each of these has a floor above, open, and set up differently from the first.
+        let floors = floor["floor"]["floors"].as_array().unwrap();
+        assert_eq!(floors.len(), 2, "{kind}: {floor}");
+        let upper = floors.iter().find(|one| one["id"] != room.as_str()).unwrap();
+        assert_eq!(upper["access"], "public", "{kind}");
+        let (paint, flooring) = (&upper["paint"], &upper["flooring"]);
+        let first = &floor["floor"]["floor"];
+        assert!(paint != &first["paint"] || flooring != &first["flooring"], "{kind}: alike");
         server.go_in(&stranger.key, spot).await.ok();
     }
     // That's Ann's 3, whatever their kind (W56).

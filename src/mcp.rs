@@ -541,6 +541,7 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "project_id": { "type": "string" },
+                    "floor_id": { "type": "string", "description": "Another floor of the building, from read_room's floors. The project's own room if left out." },
                     "template": { "type": "string", "description": "A template's name from room_catalog, such as workshop, study, lounge or cafe." },
                     "pack": { "type": "string", "description": "A pack's name from room_catalog, such as fall." },
                     "remove": { "type": "array", "items": { "type": "string" }, "description": "Ids of items to take out, from read_room's items." },

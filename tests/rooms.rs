@@ -2977,8 +2977,47 @@ async fn hidden_on(server: &Server, who: &Who, room: &str) -> Value {
 #[test]
 fn a_template_is_fixed_in_the_code_and_the_room_page_can_draw_all_of_it() {
     let names: Vec<&str> = items::TEMPLATES.iter().map(|each| each.template).collect();
-    // W92: a bar and a workshop came with the places that start with them.
-    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden", "bar", "workshop"]);
+    // W92: a bar and a workshop came with the places that start with them, and the rest so places of
+    // a kind needn't look alike.
+    assert_eq!(
+        names,
+        [
+            "hangout",
+            "cafe",
+            "study",
+            "lounge",
+            "garden",
+            "bar",
+            "workshop",
+            "bakery",
+            "office",
+            "library",
+            "den",
+            "pub",
+            "makerspace",
+            "greenhouse",
+            "atelier",
+            "clubhouse"
+        ]
+    );
+    // Every kind of place but a house starts as one of them, and every one named is real.
+    for kind in
+        ["cafe", "green", "lounge", "bar", "office", "library", "workshop", "studio", "club"]
+    {
+        let choices = items::templates_for_place(kind);
+        assert!(!choices.is_empty(), "{kind}");
+        assert!(choices.iter().all(|word| items::template_of(word).is_some()), "{kind}");
+    }
+    assert!(items::templates_for_place("house").is_empty());
+    // The room's id picks among them, the same way each time.
+    let picks: std::collections::HashSet<&str> = (0..40)
+        .map(|n| items::template_for_place("cafe", &format!("room{n}")).unwrap().template)
+        .collect();
+    assert_eq!(picks.len(), 2, "both cafes come up");
+    assert_eq!(
+        items::template_for_place("cafe", "room7").unwrap().template,
+        items::template_for_place("cafe", "room7").unwrap().template
+    );
     assert!(items::template_of("<script>").is_none());
 
     let page = include_str!("../web/room.js");

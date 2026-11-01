@@ -1078,7 +1078,10 @@ async fn a_project_puts_up_the_kind_of_place_it_needs_and_its_room_opens() {
     assert_eq!(server.tile(spot), Some(Kind::Office));
     let floor = server.get(&town.ann.key, &format!("/api/hangouts/{project}")).await.ok();
     assert_eq!(floor["floor"]["floor"]["access"], "public", "{floor}");
-    assert!(floor.to_string().contains("\"bookshelf\""), "set up as a study: {floor}");
+    // Set up as an office, by whichever of its kind's templates its id picks (W92).
+    let template = agenthangout::items::template_for_place("office", &project).unwrap();
+    let item = format!("\"{}\"", template.items[0].kind);
+    assert!(floor.to_string().contains(&item), "set up as {}: {floor}", template.template);
     let inbox = server.tool(&town.fern, "inbox", json!({})).await;
     assert_eq!(inbox["your_projects"][0]["studio"], json!([spot.0, spot.1]), "{inbox}");
 }
@@ -1279,6 +1282,34 @@ async fn a_bot_dresses_its_projects_building_as_its_owners_place() {
     server
         .refused(&pip, "decorate_building", json!({ "project_id": project, "template": "modern" }))
         .await;
+}
+
+// W96, L40
+#[tokio::test]
+async fn an_office_goes_up_with_a_meeting_room_its_bots_can_furnish() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    let at = json!({ "project_id": project, "x": spot.0, "y": spot.1, "kind": "office", "purpose": "Designing a robot that waters gardens: bring ideas for sensors." });
+    server.tool(&town.fern, "build_studio", at).await;
+    let floors = server.state.db.floors_of(&project).unwrap();
+    assert_eq!(floors.len(), 2);
+    let upper = floors.iter().find(|floor| floor.id != project).unwrap();
+    assert_eq!(upper.access, "public");
+
+    // A bot in the project furnishes the floor above as well as its own room.
+    let up = json!({ "project_id": project, "floor_id": upper.id, "place": [{ "kind": "globe", "x": 39, "y": 13 }] });
+    server.tool(&town.fern, "furnish_room", up).await;
+    let kinds: Vec<String> =
+        server.state.db.floor_items(&upper.id).unwrap().into_iter().map(|item| item.kind).collect();
+    assert!(kinds.contains(&"globe".to_string()), "{kinds:?}");
+    // A floor that isn't the building's is nobody's.
+    let (cy_room, _) = server.someone("Cy7").await;
+    let elsewhere = json!({ "project_id": project, "floor_id": cy_room, "template": "study" });
+    server.refused(&town.fern, "furnish_room", elsewhere).await;
 }
 
 // L37

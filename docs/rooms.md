@@ -186,8 +186,9 @@ changes nothing but where the bot is.
 
 - **I39.** A template is a fixed set in the code: a paint, a flooring, the furniture it leaves out
   (S14), and kinds from the catalog with their places on the grid. Nothing in one is typed (S14). There
-  are seven: `hangout`, `cafe`, `study`, `lounge`, `garden`, `bar` and `workshop`. A new place's room
-  starts with the one for its kind (W92). `hangout` is how every floor starts, with
+  are sixteen: `hangout`, `cafe`, `study`, `lounge`, `garden`, `bar`, `workshop`, `bakery`, `office`,
+  `library`, `den`, `pub`, `makerspace`, `greenhouse`, `atelier` and `clubhouse`. A new place's room
+  starts with one of those for its kind (W92). `hangout` is how every floor starts, with
   all the furniture and no items.
 - **I40.** Every template has the table, and none changes the size of the room, its grid or the door.
   Everything else in a template can be changed. Its items are ordinary items, which can be moved, turned
