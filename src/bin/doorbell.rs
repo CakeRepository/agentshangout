@@ -7,7 +7,7 @@
 //! passes both to the command.
 //!
 //! If AGENTHANGOUT_TASK_COMMAND is set, the owner's `@Bot task: ...` messages go to that program
-//! instead, one at a time, with the text on stdin and without the token (L22 to L30).
+//! instead, one at a time, with the text on stdin and without the token (OT1 to OT9).
 
 use std::{
     env, fs,
@@ -21,7 +21,7 @@ use agenthangout::doorbell::{
 };
 use tokio::{io::AsyncWriteExt, process::Command, task::JoinHandle};
 
-/// L27: a task that runs this long is killed.
+/// OT6: a task that runs this long is killed.
 const TASK_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 const CHECK_EVERY: Duration = Duration::from_secs(15);
 /// A stuck run is killed so it can't hold up the next one.
@@ -48,12 +48,35 @@ fn setting(file: &str, name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn save(path: &Path, seen: &Seen) {
-    let saved = serde_json::to_vec(seen)
-        .map_err(|error| error.to_string())
-        .and_then(|bytes| fs::write(path, bytes).map_err(|error| error.to_string()));
-    if let Err(error) = saved {
-        eprintln!("couldn't save what the bot has seen: {error}");
+fn save(path: &Path, seen: &Seen) -> Result<(), String> {
+    use std::io::Write;
+    let bytes = serde_json::to_vec(seen).map_err(|e| e.to_string())?;
+    let pending = path.with_extension("json.pending");
+    // A process lock protects this path. Never truncate the last valid checkpoint.
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&pending)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(&pending, path)?;
+        #[cfg(unix)]
+        fs::File::open(path.parent().unwrap_or(Path::new(".")))?.sync_all()?;
+        Ok(())
+    })();
+    result.map_err(|e| format!("couldn't durably save doorbell state: {e}"))
+}
+
+fn load(path: &Path) -> Result<Seen, String> {
+    // A leftover pending write means the prior reservation had an uncertain outcome.
+    if path.with_extension("json.pending").exists() {
+        return Err("unfinished state save; inspect the checkpoint before restarting".into());
+    }
+    match fs::read(path) {
+        Ok(bytes) => {
+            serde_json::from_slice(&bytes).map_err(|e| format!("invalid doorbell state: {e}"))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Seen::default()),
+        Err(e) => Err(format!("couldn't read doorbell state: {e}")),
     }
 }
 
@@ -85,7 +108,7 @@ struct Running {
     owner_name: Option<String>,
 }
 
-/// The program that does tasks, and the repository its pull requests must be in (L31).
+/// The program that does tasks, and the repository its pull requests must be in (OT10).
 struct Worker {
     command: PathBuf,
     repo: String,
@@ -103,7 +126,7 @@ async fn tell(
     }
 }
 
-/// L29: tells the room how a task that has ended came out. It tries twice, since the owner has
+/// OT8: tells the room how a task that has ended came out. It tries twice, since the owner has
 /// nowhere else to find a pull request address.
 async fn finish(doorbell: &Doorbell, worker: &Worker, running: Running) {
     let outcome =
@@ -131,7 +154,7 @@ async fn finish(doorbell: &Doorbell, worker: &Worker, running: Running) {
     eprintln!("it was: {text}");
 }
 
-/// L26 and L27: starts the owner's tasks, or says why not. A task that was started, refused or
+/// OT5 and OT6: starts the owner's tasks, or says why not. A task that was started, refused or
 /// failed is marked and saved before the room hears anything, so it isn't tried again even if the
 /// bot's wake-up has to be, or the doorbell stops.
 async fn start_tasks(
@@ -141,20 +164,20 @@ async fn start_tasks(
     seen: &mut Seen,
     look: &mut Look,
     state: &Path,
-) {
+) -> Result<(), String> {
     for task in &look.wake.tasks {
         seen.handled(task);
         look.next.handled(task);
         let refusal = refusal(task, running.is_some(), seen);
         let owner = task.owner_name.as_deref();
         if let Some(refusal) = refusal {
-            save(state, seen);
+            save(state, seen)?;
             tell(doorbell, &task.hangout_id, owner, task.message_id, refusal).await;
             continue;
         }
         seen.count_task();
         look.next.count_task();
-        save(state, seen);
+        save(state, seen)?;
         eprintln!("starting the task from message {} of {}", task.message_id, task.hangout_id);
         let (command, id, text) = (worker.command.clone(), task.id(), task.text.clone());
         let repo = worker.repo.clone();
@@ -168,9 +191,10 @@ async fn start_tasks(
         });
         tell(doorbell, &task.hangout_id, owner, task.message_id, TaskNote::Started).await;
     }
+    Ok(())
 }
 
-/// L24 and L31: the worker, if the owner named one. Naming one without the repository its pull
+/// OT3 and OT10: the worker, if the owner named one. Naming one without the repository its pull
 /// requests belong to is a mistake, so the doorbell doesn't start.
 fn worker(file: &str) -> Result<Option<Worker>, String> {
     let Some(command) = setting(file, "AGENTHANGOUT_TASK_COMMAND") else { return Ok(None) };
@@ -216,11 +240,14 @@ async fn main() -> ExitCode {
     }
 
     let state = home.join(".agenthangout.doorbell.json");
-    let mut seen: Seen = fs::read(&state)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default();
-    // L24: tasks are off unless the owner named a program to run them.
+    let mut seen = match load(&state) {
+        Ok(seen) => seen,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    // OT3: tasks are off unless the owner named a program to run them.
     let worker = match worker(&file) {
         Ok(worker) => worker,
         Err(error) => {
@@ -254,7 +281,12 @@ async fn main() -> ExitCode {
             }
             if let Ok(Some(look)) = &mut look {
                 if !look.wake.tasks.is_empty() {
-                    start_tasks(&doorbell, worker, &mut running, &mut seen, look, &state).await;
+                    if let Err(error) =
+                        start_tasks(&doorbell, worker, &mut running, &mut seen, look, &state).await
+                    {
+                        eprintln!("{error}; stopping before another task can start");
+                        return ExitCode::FAILURE;
+                    }
                 }
             }
         }
@@ -264,7 +296,10 @@ async fn main() -> ExitCode {
             Ok(Some(look)) if !look.wake.needs_bot() => {
                 if look.next != seen {
                     seen = look.next;
-                    save(&state, &seen);
+                    if let Err(error) = save(&state, &seen) {
+                        eprintln!("{error}");
+                        return ExitCode::FAILURE;
+                    }
                 }
             }
             Ok(Some(look)) => {
@@ -282,7 +317,10 @@ async fn main() -> ExitCode {
                     match ring(&command, &url, &token, &look.wake.prompt()).await {
                         Ok(()) => {
                             seen = look.next;
-                            save(&state, &seen);
+                            if let Err(error) = save(&state, &seen) {
+                                eprintln!("{error}");
+                                return ExitCode::FAILURE;
+                            }
                         }
                         Err(error) => eprintln!("the wake-up failed: {error}"),
                     }
@@ -295,5 +333,60 @@ async fn main() -> ExitCode {
             Err(Failure::Network(error)) => eprintln!("couldn't reach the server: {error}"),
         }
         tokio::time::sleep(CHECK_EVERY).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agenthangout::doorbell::{Task, Wake};
+
+    #[tokio::test]
+    async fn an_unwritable_reservation_never_starts_a_worker() {
+        let dir = env::temp_dir().join(format!("hangout-reservation-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let doorbell = Doorbell::new("http://127.0.0.1:1", "local-test-only");
+        let worker = Worker { command: dir.join("never-start"), repo: "a/b".into() };
+        let mut running = None;
+        let mut seen = Seen::default();
+        let mut look = Look {
+            next: seen.clone(),
+            wake: Wake {
+                tasks: vec![Task {
+                    hangout_id: "room".into(),
+                    message_id: 1,
+                    text: "test".into(),
+                    too_long: false,
+                    owner_name: None,
+                }],
+                ..Wake::default()
+            },
+        };
+        let _ = start_tasks(&doorbell, &worker, &mut running, &mut seen, &mut look, &dir).await;
+        assert!(running.is_none(), "must persist the reservation before launching any worker");
+        let _ = fs::remove_file(dir.with_extension("json.pending"));
+        fs::remove_dir(&dir).unwrap();
+    }
+    #[test]
+    fn checkpoints_replace_atomically_and_corruption_never_resets_the_budget() {
+        let dir = env::temp_dir().join(format!("hangout-checkpoint-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        let mut seen = Seen::default();
+        save(&path, &seen).unwrap();
+        seen.count_task();
+        save(&path, &seen).unwrap();
+        assert_eq!(load(&path).unwrap(), seen);
+        let original = fs::read(&path).unwrap();
+        let pending = path.with_extension("json.pending");
+        fs::write(&pending, b"unfinished").unwrap();
+        assert!(save(&path, &Seen::default()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(load(&path).is_err());
+        fs::remove_file(pending).unwrap();
+        fs::write(&path, b"{truncated").unwrap();
+        assert!(load(&path).is_err());
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
     }
 }

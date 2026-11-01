@@ -1355,7 +1355,7 @@ async fn the_doorbell_rings_once_for_an_answer_and_keeps_the_words_out_of_the_pr
     assert!(other_bell.look(&muse_seen).await.unwrap().wake.is_empty());
 }
 
-// L22, L23, L25
+// OT1, OT2, OT4
 #[tokio::test]
 async fn only_the_owners_own_task_message_is_a_task_and_it_never_rings_the_bot() {
     let server = Server::start().await;
@@ -1420,7 +1420,7 @@ async fn only_the_owners_own_task_message_is_a_task_and_it_never_rings_the_bot()
     assert!(doorbell.look(&after.next).await.unwrap().wake.is_empty());
 }
 
-// L27
+// OT6
 #[tokio::test]
 async fn a_task_that_was_dealt_with_is_not_offered_again_when_a_wake_up_is_retried() {
     let server = Server::start().await;
@@ -1441,7 +1441,7 @@ async fn a_task_that_was_dealt_with_is_not_offered_again_when_a_wake_up_is_retri
     assert!(again.wake.is_empty());
 }
 
-// L24
+// OT3
 #[tokio::test]
 async fn without_tasks_switched_on_a_task_is_an_ordinary_owner_mention() {
     let server = Server::start().await;
@@ -1458,7 +1458,7 @@ async fn without_tasks_switched_on_a_task_is_an_ordinary_owner_mention() {
     assert_eq!(ring.wake.from_owner[0].message_id, said.body["id"].as_i64().unwrap());
 }
 
-// L29
+// OT8
 #[tokio::test]
 async fn what_the_doorbell_says_in_a_room_never_wakes_it() {
     let server = Server::start().await;
@@ -1477,7 +1477,7 @@ async fn what_the_doorbell_says_in_a_room_never_wakes_it() {
     assert!(quiet.wake.is_empty(), "{:?}", quiet.wake);
 }
 
-// L22, L25
+// OT1, OT4
 #[tokio::test]
 async fn a_note_is_not_a_task_and_a_task_is_not_a_bot_run_or_a_social_one() {
     let server = Server::start().await;
@@ -1508,7 +1508,7 @@ async fn a_note_is_not_a_task_and_a_task_is_not_a_bot_run_or_a_social_one() {
     assert_eq!(counts(&bot.next)["bot_runs"], json!({ room.id.clone(): 1 }));
 }
 
-// L29
+// OT8
 #[tokio::test]
 async fn an_owner_name_that_isnt_plain_is_left_out_of_what_the_doorbell_says() {
     let server = Server::start().await;
@@ -1526,4 +1526,35 @@ async fn an_owner_name_that_isnt_plain_is_left_out_of_what_the_doorbell_says() {
     let ring = doorbell.look(&seen).await.unwrap();
     assert_eq!(ring.wake.tasks.len(), 1);
     assert_eq!(ring.wake.tasks[0].owner_name, None);
+}
+
+// OT6: a failed ordinary wake retains its room cursor, but must not replay paid tasks.
+#[tokio::test]
+async fn more_than_fifty_tasks_do_not_replay_when_an_ordinary_wake_fails() {
+    let server = Server::start().await;
+    let room = server.room().await;
+    let (bot, _) = server.bot(&room.justin, &room.id, "Claude").await;
+    let bell = Doorbell::new(&server.base, &bot).with_tasks();
+    let mut seen = bell.look(&Seen::default()).await.unwrap().next;
+    let path = format!("/api/hangouts/{}/messages", room.id);
+    for n in 0..60 {
+        let result = server
+            .post(&room.justin, &path, json!({"text": format!("@Claude task: fixture {n}")}))
+            .await;
+        assert_eq!(result.status, StatusCode::OK);
+    }
+    server.post(&room.justin, &path, json!({"text":"@Claude ordinary wake"})).await;
+    let first = bell.look(&seen).await.unwrap();
+    assert_eq!(first.wake.tasks.len(), 60);
+    assert!(first.wake.needs_bot());
+    for task in &first.wake.tasks {
+        seen.handled(task);
+    }
+    // Deliberately do not adopt first.next, exactly as a failed ordinary wake behaves.
+    let restored: Seen = serde_json::from_slice(&serde_json::to_vec(&seen).unwrap()).unwrap();
+    let retry = bell.look(&restored).await.unwrap();
+    assert!(retry.wake.tasks.is_empty());
+    assert!(retry.wake.needs_bot());
+    server.post(&room.justin, &path, json!({"text":"@Claude task: new work"})).await;
+    assert_eq!(bell.look(&restored).await.unwrap().wake.tasks.len(), 1);
 }

@@ -1,4 +1,4 @@
-//! L22 to L30: the owner's tasks. The doorbell hands the owner's own `task:` messages, and nothing
+//! OT1 to OT9: the owner's tasks. The doorbell hands the owner's own `task:` messages, and nothing
 //! else from a room, to a separate worker that never reads the room. Everything here is plain
 //! functions, so the rules can be tested without a server.
 
@@ -9,9 +9,9 @@ use tokio::{
     process::Command,
 };
 
-/// L26: longer than this, a task isn't run.
+/// OT5: longer than this, a task isn't run.
 pub const MAX_TASK_CHARS: usize = 2000;
-/// L27: tasks that may start on one UTC day.
+/// OT6: tasks that may start on one UTC day.
 pub const MAX_TASKS_PER_DAY: u32 = 5;
 /// More than this much of a worker's output is dropped. Only its last line is ever used.
 const MAX_TASK_OUTPUT: u64 = 1 << 20;
@@ -26,7 +26,7 @@ pub struct Task {
     pub message_id: i64,
     /// Empty when `too_long`.
     pub text: String,
-    /// L26.
+    /// OT5.
     pub too_long: bool,
     /// The owner's name if the server gave it and it is plain enough to put after an @.
     pub owner_name: Option<String>,
@@ -49,7 +49,7 @@ impl Task {
         format!("{}/{}", self.hangout_id, self.message_id)
     }
 
-    /// L28: the worker's `TASK_ID`.
+    /// OT7: the worker's `TASK_ID`.
     pub fn id(&self) -> String {
         task_id(&self.hangout_id, self.message_id)
     }
@@ -59,7 +59,7 @@ impl Task {
 #[derive(Debug, PartialEq)]
 pub enum TaskText {
     Text(String),
-    /// L26.
+    /// OT5.
     TooLong,
 }
 
@@ -72,7 +72,7 @@ pub(super) fn plain_name(name: &str) -> bool {
         && name.chars().all(|c| c.is_alphanumeric() || " _-.'".contains(c))
 }
 
-/// L22: `@name task: text`, at the start of the message, with `@name` a whole word. Says nothing
+/// OT1: `@name task: text`, at the start of the message, with `@name` a whole word. Says nothing
 /// about who sent it.
 pub fn parse_task(body: &str, name: &str) -> Option<TaskText> {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
@@ -101,7 +101,7 @@ pub fn parse_task(body: &str, name: &str) -> Option<TaskText> {
     }
 }
 
-/// L28: `TASK_ID`, from ids the server made, with anything but letters, numbers, `-` and `_`
+/// OT7: `TASK_ID`, from ids the server made, with anything but letters, numbers, `-` and `_`
 /// swapped for `-`.
 pub fn task_id(hangout_id: &str, message_id: i64) -> String {
     format!("{hangout_id}-{message_id}")
@@ -111,7 +111,7 @@ pub fn task_id(hangout_id: &str, message_id: i64) -> String {
         .collect()
 }
 
-/// L31: whether `repo` is `owner/name` with safe characters, as `AGENTHANGOUT_TASK_REPO` must be.
+/// OT10: whether `repo` is `owner/name` with safe characters, as `AGENTHANGOUT_TASK_REPO` must be.
 pub fn valid_repo(repo: &str) -> bool {
     let Some((owner, name)) = repo.split_once('/') else { return false };
     (1..=39).contains(&owner.len())
@@ -122,7 +122,7 @@ pub fn valid_repo(repo: &str) -> bool {
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
-/// L29 and L31: the last non-empty line of a worker's output, if it is the address of a pull
+/// OT8 and OT10: the last non-empty line of a worker's output, if it is the address of a pull
 /// request in `repo` (`owner/name`) and nothing else. Anything else the worker prints is thrown
 /// away, and so is an address in any other repository.
 pub fn pr_url(output: &str, repo: &str) -> Option<String> {
@@ -151,7 +151,7 @@ pub enum TaskNote<'a> {
     TimedOut,
 }
 
-/// L29: fixed words, and an @ for the owner only when their name is plain.
+/// OT8: fixed words, and an @ for the owner only when their name is plain.
 pub fn task_note(owner: Option<&str>, message_id: i64, note: &TaskNote) -> String {
     let n = message_id;
     let words = match note {
@@ -187,7 +187,7 @@ pub enum TaskOutcome {
     TimedOut,
 }
 
-/// L28: the only variables a worker inherits from the doorbell. They are what git, gh, cargo,
+/// OT7: the only variables a worker inherits from the doorbell. They are what git, gh, cargo,
 /// pwsh and claude need to run and find the logins in the user's profile. Everything else in the
 /// doorbell's environment, secrets included, stops here. The four tokens at the end are only for
 /// someone who signs in to claude or gh that way instead of in their profile.
@@ -217,7 +217,7 @@ pub const WORKER_ENV: &[&str] = &[
     "GITHUB_TOKEN",
 ];
 
-/// L27: why a task can't start now, if it can't. `busy` is whether another is running.
+/// OT6: why a task can't start now, if it can't. `busy` is whether another is running.
 pub fn refusal(task: &Task, busy: bool, seen: &super::Seen) -> Option<TaskNote<'static>> {
     if task.too_long {
         Some(TaskNote::TooLong)
@@ -230,7 +230,7 @@ pub fn refusal(task: &Task, busy: bool, seen: &super::Seen) -> Option<TaskNote<'
     }
 }
 
-/// L27 and L28: runs `program` with the task on stdin. It gets a scrubbed environment (see
+/// OT6 and OT7: runs `program` with the task on stdin. It gets a scrubbed environment (see
 /// [`WORKER_ENV`]), `TASK_ID` and `AGENTHANGOUT_TASK_REPO`, and never this bot's token or the
 /// server's address. Its stdout is captured, and it is killed with whatever it started if it runs
 /// past `timeout`.
@@ -311,7 +311,7 @@ mod tests {
         }
     }
 
-    // L22
+    // OT1
     #[test]
     fn a_task_starts_with_the_bot_and_task() {
         assert_eq!(text("@Claude task: fix the typo", "Claude").as_deref(), Some("fix the typo"));
@@ -321,7 +321,7 @@ mod tests {
         assert_eq!(text("@cake CLAUDE Task: x", "Cake Claude").as_deref(), Some("x"));
     }
 
-    // L22
+    // OT1
     #[test]
     fn anything_else_is_an_ordinary_mention() {
         assert_eq!(text("hey @Claude task: fix it", "Claude"), None, "in the middle");
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(text("", "Claude"), None);
     }
 
-    // L22
+    // OT1
     #[test]
     fn odd_text_does_not_trip_the_parser() {
         assert_eq!(text("@Claude tésk: x", "Claude"), None);
@@ -349,7 +349,7 @@ mod tests {
         assert_eq!(text("@Cla", "Claude"), None);
     }
 
-    // L26
+    // OT5
     #[test]
     fn a_task_can_be_2000_characters_and_no_more() {
         let body = |n: usize| format!("@Claude task: {}", "é".repeat(n));
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(parse_task(&body(MAX_TASK_CHARS + 1), "Claude"), Some(TaskText::TooLong));
     }
 
-    // L29
+    // OT8
     #[test]
     fn only_a_pull_request_address_comes_back_from_a_worker() {
         let url = "https://github.com/CakeRepository/agentshangout/pull/166";
@@ -406,7 +406,7 @@ mod tests {
         }
     }
 
-    // L31
+    // OT10
     #[test]
     fn only_a_pull_request_in_the_task_repository_counts() {
         let repo = "CakeRepository/agentshangout";
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(note, "The task from message 4 finished without a pull request.");
     }
 
-    // L27
+    // OT6
     #[test]
     fn a_task_is_refused_for_length_for_being_busy_and_for_the_daily_limit() {
         let task = |too_long| Task {
@@ -456,7 +456,7 @@ mod tests {
         assert!(matches!(refusal(&task(false), true, &seen), Some(TaskNote::Busy)));
     }
 
-    // L29
+    // OT8
     #[test]
     fn the_room_hears_fixed_words() {
         let say = |owner, note| task_note(owner, 7, &note);
@@ -489,7 +489,7 @@ mod tests {
         }
     }
 
-    // L28
+    // OT7
     #[test]
     fn the_task_id_is_made_of_safe_characters() {
         assert_eq!(task_id("abc-123", 7), "abc-123-7");

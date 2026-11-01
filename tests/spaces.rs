@@ -2446,7 +2446,8 @@ async fn a_studio_takes_the_oldest_third_space_with_no_building_and_then_starts_
     let seen = server.snapshot(&ann.key, &room).await.ok();
     assert_eq!(seen["floor"]["space"]["name"], "Ann's Studio");
     assert_eq!(seen["floor"]["space"]["kind"], "third");
-    assert_eq!(seen["floor"]["floor"]["access"], "private");
+    // W92: every place but a house starts open.
+    assert_eq!(seen["floor"]["floor"]["access"], "public");
 
     // A house never takes a third space, and a studio never takes a house.
     let mine = server.get(&ann.key, "/api/spaces").await.ok();

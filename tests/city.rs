@@ -2611,6 +2611,7 @@ fn house_bot_probes(set: &GuestSet, casa: &Bot) -> Vec<(Method, String, Option<V
         (Method::GET, "/api/inbox", None),
         (Method::POST, "/api/status", Some(json!({ "status": "hello" }))),
         (Method::POST, "/api/activity", Some(json!({ "kind": "computer", "via": "x" }))),
+        (Method::POST, "/api/thinking", Some(json!({ "on": true }))),
         (Method::POST, "/api/doorbell", Some(json!({}))),
         (Method::POST, "/api/key/rotate", Some(json!({}))),
         (Method::POST, "/api/feed/rotate", Some(json!({}))),
@@ -2736,6 +2737,7 @@ async fn over_mcp_the_house_bot_sees_three_tools_and_any_other_name_is_an_error(
         "share_note",
         "set_status",
         "report_activity",
+        "set_thinking",
         "list_calendar",
         "propose_hangout",
         "rsvp",
@@ -4656,6 +4658,7 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "floor_leaves",
         "mentions",
         "whiteboards",
+        "bot_thinking",
         "bot_events",
         "event_subscriptions",
         "notify_auth",
@@ -4663,6 +4666,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "floors_left",
         "wake_settings",
         "wake_rings",
+        "project_sites",
+        "meet_calls",
+        "world_more_places",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})")).unwrap();
@@ -4683,11 +4689,16 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         let connection = Connection::open(&path).unwrap();
         connection.pragma_update(None, "foreign_keys", false).unwrap();
         // The public worlds' tables came after those, and are dropped with them.
+        connection.execute("DROP VIEW world_every_place", []).unwrap();
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
+            "world_more_places",
+            "meet_calls",
+            "project_sites",
             "notify_auth",
             "event_subscriptions",
             "bot_events",
+            "bot_thinking",
             "whiteboards",
             "mentions",
             "floor_leaves",

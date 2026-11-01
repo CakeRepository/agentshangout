@@ -1,5 +1,5 @@
-//! Tests for how the doorbell runs an owner's task (L27, L28), against a tiny fake worker: a script
-//! that reports what it was given. The rules are in docs/routines.md. A comment such as `// L28`
+//! Tests for how the doorbell runs an owner's task (OT6, OT7), against a tiny fake worker: a script
+//! that reports what it was given. The rules are in docs/routines.md. A comment such as `// OT7`
 //! above a test names the rule it covers.
 
 use std::{
@@ -36,7 +36,7 @@ fn doorbell_environment() {
     std::env::set_var("PLANTED_SECRET", "hunter2-planted");
 }
 
-// L28
+// OT7
 #[tokio::test]
 async fn the_worker_gets_the_task_on_stdin_and_never_the_token() {
     doorbell_environment();
@@ -85,7 +85,7 @@ async fn the_worker_gets_the_task_on_stdin_and_never_the_token() {
     assert_eq!(pr_url(&output, "a/b").as_deref(), Some("https://github.com/a/b/pull/5"));
 }
 
-// L27
+// OT6
 #[tokio::test]
 async fn a_worker_that_fails_or_cant_start_is_a_failure() {
     let fails = worker("fails", &["exit 3"]);
@@ -97,7 +97,7 @@ async fn a_worker_that_fails_or_cant_start_is_a_failure() {
     assert!(matches!(outcome, TaskOutcome::Failed(_)), "{outcome:?}");
 }
 
-// L27
+// OT6
 #[tokio::test]
 async fn a_worker_that_runs_too_long_is_killed() {
     let slow = if cfg!(windows) {
@@ -109,4 +109,13 @@ async fn a_worker_that_runs_too_long_is_killed() {
     let outcome = run_task(&slow, "x", "t", Duration::from_secs(1), "a/b").await;
     assert_eq!(outcome, TaskOutcome::TimedOut);
     assert!(started.elapsed() < Duration::from_secs(30), "{:?}", started.elapsed());
+}
+
+// A task worker must never automatically delete other, active, or unpublished worktrees.
+#[test]
+fn the_worker_preserves_worktrees_for_explicit_owner_cleanup() {
+    let script = include_str!("../hooks/task-worker.ps1");
+    assert!(!script.contains("Remove-Item"));
+    assert!(!script.contains("worktree remove"));
+    assert!(!script.contains("branch -D"));
 }

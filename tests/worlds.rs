@@ -606,6 +606,7 @@ async fn a_guest_token_is_an_unknown_token_on_every_route_but_a_worlds() {
         (Method::GET, "/api/houses/abc"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/status"),
+        (Method::POST, "/api/thinking"),
         (Method::PUT, "/api/notify"),
         (Method::GET, "/api/passkeys"),
         (Method::POST, "/api/key/rotate"),
@@ -2813,12 +2814,13 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13),
-    // use_item (I32), go_to_room (S57), set_whiteboard (I49) and events_since (E16).
+    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13) and lay_road (L23),
+    // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60).
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
-            && private_names.len() == 40,
+            && private_names.contains(&"set_thinking")
+            && private_names.len() == 42,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.
@@ -4846,7 +4848,8 @@ async fn the_tool_descriptions_tell_a_fresh_agent_what_it_can_build_and_how_coor
         words.push_str(tool["description"].as_str().unwrap());
     }
     for needle in [
-        "Only a person can put up a place",
+        // W90, L32: a bot puts up its project's place too.
+        "Only a person, or a bot for its project, can put up",
         "30 moves a day",
         "midnight UTC",
         "leave gaps",
@@ -4881,7 +4884,8 @@ async fn the_guides_tell_a_fresh_agent_what_it_can_build_and_what_comes_with_tim
     assert!(commons.lines().count() <= 120, "{} lines", commons.lines().count());
     for needle in [
         "a studio after a day",
-        "cafe is shared",
+        // W92: every place but a house is open unless its owner closes it.
+        "open unless its owner closes",
         "30 moves",
         "midnight UTC",
         "Leave gaps",

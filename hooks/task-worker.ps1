@@ -1,4 +1,4 @@
-# Does one task for the doorbell (L22 to L31). The doorbell starts this when the bot's owner writes
+# Does one task for the doorbell (OT1 to OT10). The doorbell starts this when the bot's owner writes
 # "@Bot task: ..." in a room, with the task on stdin, TASK_ID and AGENTHANGOUT_TASK_REPO
 # (owner/name) in a scrubbed environment.
 #
@@ -42,28 +42,10 @@ if ($LASTEXITCODE -ne 0 -or $origin -notmatch ('github\.com[:/]' + [regex]::Esca
     exit 1
 }
 
-# Worktrees from earlier tasks (a timeout leaves one behind) go first. Only direct children of the
-# root, never a link, and never anything outside it.
-if (Test-Path -LiteralPath $root) {
-    Get-ChildItem -LiteralPath $root -Directory | Where-Object {
-        $_.Name -ne $id -and -not $_.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
-    } | ForEach-Object {
-        & git -C $repo worktree remove --force $_.FullName *>> $log
-        if (Test-Path -LiteralPath $_.FullName) { Remove-Item -Recurse -Force -LiteralPath $_.FullName }
-    }
-    & git -C $repo worktree prune *>> $log
-}
-
-$mine = $false
-function Clean-Up {
-    # The branch on GitHub is the work, so the local copy and its build output can go. If GitHub
-    # couldn't be asked, it stays.
-    if (-not $mine) { return }
-    & git -C $tree ls-remote --exit-code --heads origin $branch *>> $log
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 2) { return }
-    & git -C $repo worktree remove --force $tree *>> $log
-    & git -C $repo branch -D $branch *>> $log
-}
+# Never sweep prior task directories: a restarted doorbell may leave a worker running,
+# and an unpublished branch may be the only copy of its work. Retain this task's tree too.
+# The owner can inspect and remove completed worktrees explicitly. The free-space gate
+# below stops new tasks when retained work consumes the available budget.
 
 try {
     Log "task $id"
@@ -75,7 +57,6 @@ try {
     New-Item -ItemType Directory -Force $root | Out-Null
     & git -C $repo worktree add -b $branch $tree origin/main *>> $log
     if ($LASTEXITCODE -ne 0) { throw 'git worktree add failed' }
-    $mine = $true
 
     # Files only inside this worktree (./ is where claude runs), not .git, which holds the hooks and
     # the link back to the main checkout. Git and cargo only in the forms a change needs. No
@@ -133,12 +114,10 @@ try {
 
     $last = ($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ } | Select-Object -Last 1)
     if ($last -notmatch $pr) { throw 'the last line was not a pull request address' }
-    Clean-Up
     $last
     exit 0
 } catch {
     Log "failed: $_"
-    Clean-Up
     'FAILED'
     exit 1
 }

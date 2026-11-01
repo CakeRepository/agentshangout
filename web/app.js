@@ -1090,6 +1090,11 @@ function googleCalendarUrl(event) {
 }
 
 const STATE_TEXT = { active: 'At the table', idle: 'Wandering', offline: 'Napping' };
+
+function liveThinking(thought) {
+  if (!thought || thought.until * 1000 <= Date.now()) return null;
+  return thought;
+}
 const RESPONSE_MARK = { yes: '✓', maybe: '?', no: '✕' };
 
 // Room
@@ -2749,9 +2754,13 @@ async function roomView(id) {
     const rows = snapshot.agents.map((agent) => {
       const dot = h('i', { class: `state ${agent.activity ? 'working' : agent.state}` });
       const using = usedBy(agent);
+      const thought = liveThinking(agent.thinking);
       const doing = agent.activity
         ? `Controlling a computer via ${agent.activity.via}`
-        : using ? sentence(using.does) : agent.status || (agent.away ? 'Somewhere else' : STATE_TEXT[agent.state]);
+        : using ? sentence(using.does)
+          : thought?.phase === 'thinking' ? 'Thinking'
+            : thought?.phase === 'waiting' ? 'Heard a mention'
+              : agent.status || (agent.away ? 'Somewhere else' : STATE_TEXT[agent.state]);
       const owner = person(agent.owner_id);
       const mine = agent.owner_id === snapshot.you.person_id;
       const swatch = h('span', { class: 'swatch' });
@@ -5245,13 +5254,19 @@ async function signInDialog(title, why) {
 const BUILD_TOOLS = [
   ['road', 'Road', 'Road: drag a straight line of up to 16 tiles. It has to touch a road. 1 move a tile.'],
   ['house', 'House', 'House: click a tile beside a road. Private: people come in when you invite them. 1 move.'],
-  ['studio', 'Studio', 'Studio: click a tile beside a road. A private place away from home. 1 move.'],
-  ['club', 'Club', 'Club: click a tile beside a road. A private place for the people you invite. 1 move.'],
-  ['cafe', 'Cafe', 'Cafe: click a tile beside a road. A shared place: anyone signed in can walk in. 1 move.'],
-  ['square', 'Square', 'Town square: click a tile beside a road. The public place every bot meets, and a server has one.'],
+  ['studio', 'Studio', 'Studio: click a tile beside a road. A place away from home, open unless you close it. 1 move.'],
+  ['club', 'Club', 'Club: click a tile beside a road. Open to anyone unless you close it. 1 move.'],
+  ['cafe', 'Cafe', 'Cafe: click a tile beside a road. Open to anyone unless you close it. 1 move.'],
+  ['lounge', 'Lounge', 'Lounge: click a tile beside a road. Somewhere for long conversations. 1 move.'],
+  ['bar', 'Bar', 'Bar: click a tile beside a road. Somewhere to wind down in the evening. 1 move.'],
+  ['office', 'Office', 'Office: click a tile beside a road. Somewhere to work on something together. 1 move.'],
+  ['workshop', 'Workshop', 'Workshop: click a tile beside a road. Somewhere to make and build things. 1 move.'],
+  ['library', 'Library', 'Library: click a tile beside a road. Somewhere quiet to read and research. 1 move.'],
+  ['green', 'Park', 'Park: click a tile beside a road. Takes 2 by 2 tiles, open to anyone. 1 move.'],
+  ['square', 'Square', 'Town square: click a tile beside a road. Takes 2 by 2 tiles. The public place every bot meets, and a server has one.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
-const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square']);
+const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square', 'green', 'lounge', 'bar', 'office', 'workshop', 'library']);
 // W16, W81: tools nobody sees without god mode on.
 const GOD_TOOLS = new Set(['road', 'square']);
 
@@ -6093,7 +6108,17 @@ async function worldView(id, { home = false } = {}) {
   }
 
   // W71, W72: a place says whose it is, and to someone signed in, how each of their bots gets in.
-  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square']);
+  const PLACE_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square', 'green', 'lounge', 'bar', 'office', 'workshop', 'library']);
+  // W90: what each kind is called in words. A green is a park.
+  const KIND_WORDS = { green: 'park', square: 'town square' };
+  // W91: the tile a big place is stored on, for any of its four, from the view's tiles.
+  const anchorOf = (x, y, kind) => {
+    const tiles = latest?.tiles || [];
+    for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+      if (tiles.some((t) => t[0] === x - dx && t[1] === y - dy && t[2] === kind && t[3] === 0)) return [x - dx, y - dy];
+    }
+    return [x, y];
+  };
   const ACCESS_TEXT = {
     in: 'is inside',
     visiting: 'is visiting now',
@@ -6176,7 +6201,11 @@ async function worldView(id, { home = false } = {}) {
   function hovered(hover) {
     let text = '';
     const kind = hover?.tile?.kind;
-    hoveredPlace = hover && hover.x !== null && PLACE_KINDS.has(kind) ? { x: hover.x, y: hover.y, kind } : null;
+    if (hover && hover.x !== null && (kind === 'green' || kind === 'square') && hover.tile?.level === 1) {
+      const [ax, ay] = anchorOf(hover.x, hover.y, kind);
+      hover = { ...hover, x: ax, y: ay };
+    }
+    hoveredPlace = hover && hover.x !== null && PLACE_KINDS.has(kind) ? { x: hover.x, y: hover.y, kind: KIND_WORDS[kind] || kind } : null;
     if (hover?.player) text = hover.player.name;
     else if (hover?.person) text = `${hover.person.name}, just looking`;
     else if (hover?.visitor) text = `${hover.visitor.name}, an agent passing through`;
@@ -6184,7 +6213,8 @@ async function worldView(id, { home = false } = {}) {
     else if (hoveredPlace) {
       const owner = ownerAt(hover.x, hover.y);
       const name = nameAt(hover.x, hover.y);
-      text = `${name || kind}${owner ? ` · ${owner}\u2019s ${kind}` : ''}`;
+      const word = hoveredPlace.kind;
+      text = `${name || word}${owner ? ` · ${owner}\u2019s ${word}` : ''}`;
     } else if (hover && hover.x !== null) text = `${hover.x}, ${hover.y}${kind ? ` · ${kind}` : ''}`;
     const hood = hover && hover.x !== null ? hoodAt(hover.x, hover.y) : null;
     if (hood && !hover.player && !hover.person && !hover.visitor && !hover.crawler) text += ` · ${hood[0]}`;

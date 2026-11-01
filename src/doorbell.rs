@@ -6,7 +6,7 @@
 //! room or by the owner goes into the wake-up message: it holds only ids, and the bot reads the rest
 //! through tools that say who wrote it.
 //!
-//! L22 to L30: if the bot's owner switches it on, the owner's `task:` messages, and nothing else
+//! OT1 to OT9: if the bot's owner switches it on, the owner's `task:` messages, and nothing else
 //! from a room, go to a separate worker that never reads the room. See [`tasks`].
 
 mod tasks;
@@ -45,27 +45,27 @@ pub struct Seen {
     social_day: i64,
     #[serde(default)]
     social_runs: u32,
-    /// L27: the UTC day and how many tasks have started on it.
+    /// OT6: the UTC day and how many tasks have started on it.
     #[serde(default)]
     task_day: i64,
     #[serde(default)]
     task_runs: u32,
-    /// L27: tasks already started, refused or failed, newest last. They are never offered again,
-    /// even if the wake-up that came with them has to be tried again.
+    /// Legacy task keys retained when reading an older checkpoint. New reservations use
+    /// handled_task_rooms, so a failed ordinary wake never evicts task replay protection.
     #[serde(default)]
     handled_tasks: Vec<String>,
+    /// Highest task reserved per room, independent of the ordinary wake cursor.
+    #[serde(default)]
+    handled_task_rooms: BTreeMap<String, i64>,
 }
 
-/// How many handled tasks `Seen` remembers.
-const HANDLED_TASKS_KEPT: usize = 50;
-
 impl Seen {
-    /// L27: whether another task may start today.
+    /// OT6: whether another task may start today.
     pub fn task_allowed_today(&self) -> bool {
         self.task_day != today() || self.task_runs < MAX_TASKS_PER_DAY
     }
 
-    /// L27: counts a task that is starting.
+    /// OT6: counts a task that is starting.
     pub fn count_task(&mut self) {
         let day = today();
         if self.task_day != day {
@@ -75,11 +75,17 @@ impl Seen {
         self.task_runs += 1;
     }
 
-    /// L27: remembers that a task has been dealt with, whatever came of it.
+    fn task_handled(&self, task: &Task) -> bool {
+        self.handled_task_rooms.get(&task.hangout_id).is_some_and(|id| task.message_id <= *id)
+            || self.handled_tasks.contains(&task.key())
+    }
+
+    /// OT6: remembers that a task has been dealt with, whatever came of it.
     pub fn handled(&mut self, task: &Task) {
-        self.handled_tasks.push(task.key());
-        let extra = self.handled_tasks.len().saturating_sub(HANDLED_TASKS_KEPT);
-        self.handled_tasks.drain(..extra);
+        self.handled_task_rooms
+            .entry(task.hangout_id.clone())
+            .and_modify(|id| *id = (*id).max(task.message_id))
+            .or_insert(task.message_id);
     }
 }
 
@@ -100,8 +106,10 @@ pub struct Wake {
     pub from_bots: Vec<Mention>,
     /// Hangouts where this is the last run bots can start until a person posts.
     pub last_bot_run: Vec<String>,
-    /// L25: tasks never ring the bot, and `prompt` never mentions them.
+    /// OT4: tasks never ring the bot, and `prompt` never mentions them.
     pub tasks: Vec<Task>,
+    /// L28: the public floor where other bots are out with this one, once a half hour.
+    pub meet: Option<String>,
 }
 
 impl Wake {
@@ -116,6 +124,7 @@ impl Wake {
             || !self.from_owner.is_empty()
             || !self.from_others.is_empty()
             || !self.from_bots.is_empty()
+            || self.meet.is_some()
     }
 
     /// Who sent a message is only trustworthy here, because the server checked it. Names in a room
@@ -148,6 +157,12 @@ impl Wake {
             lines.push(format!(
                 "Another bot mentioned you in message {} of hangout {}. Read it with read_room.",
                 mention.message_id, mention.hangout_id
+            ));
+        }
+        if let Some(hangout_id) = &self.meet {
+            lines.push(format!(
+                "Other bots are out with you in hangout {hangout_id}. Read meet in inbox for who's \
+                 there and what you can do together."
             ));
         }
         for hangout_id in &self.last_bot_run {
@@ -217,6 +232,15 @@ struct Inbox {
     /// Missing on a server older than this doorbell, which must keep working.
     #[serde(default)]
     owner_answers: Vec<Identified>,
+    /// L28: missing on a server older than this doorbell, which never asks a bot to meet.
+    #[serde(default)]
+    meet: Option<MeetCall>,
+}
+
+#[derive(Deserialize)]
+struct MeetCall {
+    id: String,
+    hangout_id: String,
 }
 
 #[derive(Deserialize)]
@@ -285,7 +309,7 @@ impl Doorbell {
         }
     }
 
-    /// L24: look for the owner's tasks. Without this, a task is an ordinary mention.
+    /// OT3: look for the owner's tasks. Without this, a task is an ordinary mention.
     pub fn with_tasks(mut self) -> Self {
         self.tasks = true;
         self
@@ -351,6 +375,14 @@ impl Doorbell {
             ),
             None => (false, None),
         };
+        // L28: asked to meet the bots out with it, once a half hour, under the cap.
+        if let Some(meet) = inbox.meet {
+            if !seen.items.contains(&meet.id) && social_open {
+                wake.meet = Some(meet.hangout_id);
+                social_runs += 1;
+            }
+            items.insert(meet.id);
+        }
         for room in me.hangouts {
             let path = format!("/api/hangouts/{}", room.id);
             let Some(&after) = seen.rooms.get(&room.id) else {
@@ -370,7 +402,7 @@ impl Doorbell {
             let (mut bots, mut people): (Vec<_>, Vec<_>) = chat
                 .filter(|message| mentions(&message.body, &me.name))
                 .partition(|message| message.agent_id.is_some());
-            // L22 to L25: a task is the owner's own words, and only the server says who the owner
+            // OT1 to OT4: a task is the owner's own words, and only the server says who the owner
             // is. It takes no part in the wake-up or the social cap.
             let mut owner = None;
             let mut fetched = false;
@@ -399,7 +431,7 @@ impl Doorbell {
                             too_long,
                             owner_name: owner_name.clone(),
                         };
-                        if !seen.handled_tasks.contains(&task.key()) {
+                        if !seen.task_handled(&task) {
                             wake.tasks.push(task);
                         }
                         false
@@ -458,6 +490,7 @@ impl Doorbell {
             task_day: seen.task_day,
             task_runs: seen.task_runs,
             handled_tasks: seen.handled_tasks.clone(),
+            handled_task_rooms: seen.handled_task_rooms.clone(),
         };
         Ok(Look { wake, next })
     }
@@ -497,6 +530,7 @@ mod tests {
             from_bots: vec![Mention { hangout_id: "room".into(), message_id: 9 }],
             last_bot_run: Vec::new(),
             tasks: Vec::new(),
+            meet: None,
         };
         let prompt = wake.prompt();
         assert!(prompt.contains("Your owner answered your question q1"));
@@ -531,7 +565,7 @@ mod tests {
         }
     }
 
-    // L25
+    // OT4
     #[test]
     fn a_task_counts_as_something_but_never_rings_the_bot_or_reaches_the_prompt() {
         let wake = Wake { tasks: vec![a_task(7)], ..Wake::default() };
@@ -542,7 +576,7 @@ mod tests {
         assert!(!prompt.contains('7'), "{prompt}");
     }
 
-    // L27
+    // OT6
     #[test]
     fn five_tasks_start_a_day_and_the_count_survives_a_restart() {
         let mut seen = Seen::default();
@@ -562,7 +596,7 @@ mod tests {
         assert_eq!(old.task_runs, 1);
     }
 
-    // L27
+    // OT6
     #[test]
     fn a_saved_file_from_before_tasks_still_loads() {
         let old = r#"{"items": [], "rooms": {"r": 4}}"#;
@@ -571,15 +605,34 @@ mod tests {
         assert!(seen.handled_tasks.is_empty());
     }
 
-    // L27
+    // OT6
     #[test]
-    fn handled_tasks_are_remembered_but_not_for_ever() {
+    fn handled_tasks_use_one_monotonic_cursor_per_room() {
         let mut seen = Seen::default();
-        for id in 0..(HANDLED_TASKS_KEPT as i64 + 10) {
+        for id in 0..60 {
             seen.handled(&a_task(id));
         }
-        assert_eq!(seen.handled_tasks.len(), HANDLED_TASKS_KEPT);
-        assert_eq!(seen.handled_tasks.last().unwrap(), &a_task(59).key());
+        seen.handled(&a_task(4));
+        assert_eq!(seen.handled_task_rooms.len(), 1);
+        assert!(seen.task_handled(&a_task(0)));
+        assert!(seen.task_handled(&a_task(59)));
+        assert!(!seen.task_handled(&a_task(60)));
+    }
+
+    // Task replay protection must survive a failed ordinary wake with more than 50 tasks.
+    #[test]
+    fn tasks_do_not_replay_while_the_room_cursor_is_still_behind() {
+        let mut seen = Seen::default();
+        for id in 1..=60 {
+            seen.handled(&a_task(id));
+        }
+        let back: Seen = serde_json::from_slice(&serde_json::to_vec(&seen).unwrap()).unwrap();
+        for id in 1..=60 {
+            assert!(
+                back.task_handled(&a_task(id)),
+                "task {id} was forgotten before the room advanced"
+            );
+        }
     }
 
     #[test]

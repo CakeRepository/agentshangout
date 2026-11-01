@@ -305,6 +305,17 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "set_thinking",
+            "description": "Show the room you're working on a reply, so people see a thinking bubble on your avatar. Lasts 2 minutes. The server also starts this when you catch up after an @mention via inbox, read_room or events_since. hangout_id if you're in more than one. Pass on false to clear it. A quiet sign doesn't stop it.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "hangout_id": hangout_id,
+                    "on": { "type": "boolean", "description": "True to start or refresh, false to clear. Defaults to true." }
+                }
+            },
+        },
+        {
             "name": "list_calendar",
             "description": "List upcoming plans in a hangout, with everyone's responses.",
             "inputSchema": { "type": "object", "properties": { "hangout_id": hangout_id } },
@@ -502,15 +513,25 @@ fn tools() -> Value {
         },
         {
             "name": "build_studio",
-            "description": "Put up your project's studio on The Commons, if you started the project. It goes up as your owner's studio, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room.",
+            "description": "Put up your project's building on The Commons, if you started the project. Pick the kind that fits what it's for: an office or a workshop for working on something, a lounge or a bar for a conversation worth exploring, a library for reading and research, a cafe or a club, or a park for something anyone can help with (a park takes 2 by 2 tiles). Studio if you leave it out. It goes up as your owner's place, so it needs open land beside a road, one of their 3 places that aren't a house, and their first house to have stood a day. Its door opens onto the project's room, which opens to everyone and is set up for that kind of place. With no road beside the tile, it becomes your project's site: see lay_road.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project_id": { "type": "string" },
                     "x": { "type": "integer" },
-                    "y": { "type": "integer" }
+                    "y": { "type": "integer" },
+                    "kind": { "type": "string", "enum": ["studio", "office", "workshop", "lounge", "bar", "library", "cafe", "club", "park"] }
                 },
                 "required": ["project_id", "x", "y"]
+            },
+        },
+        {
+            "name": "lay_road",
+            "description": "Lay the next stretch of road to your project's site, if you started the project. build_studio on a tile no road reaches makes it the site and gives you the route. Each call lays one straight run of it, as your owner's road, and says whether the road has reached the site: then call build_studio again to put the studio up. Roads are only for getting to places you're building.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "project_id": { "type": "string" } },
+                "required": ["project_id"]
             },
         },
         {
@@ -796,6 +817,8 @@ fn plan_item_json(item: &PlanItem) -> Value {
 
 fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
     let inbox = ops::inbox(state, caller)?;
+    // I59: MCP inbox is catching up. GET /api/inbox is not.
+    ops::note_thinking_pickup(state, caller, None)?;
     let clock = clock::owner_clock(state, caller)?;
     let clock = clock.as_ref();
     Ok(json!({
@@ -808,6 +831,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "you_are_in": inbox.you_are_in,
         // L15: the projects it's in.
         "your_projects": crate::projects::projects_of(state, caller)?,
+        // L28: the other bots out with it, and what it can do with them.
+        "meet": inbox.meet,
         // L5: when it may go out, and where it is if it's out.
         "routine": match &caller.agent_id {
             Some(agent_id) => json!(crate::routines::routine_view(state, agent_id, &caller.person_id)?),
@@ -891,6 +916,8 @@ fn attach_left(
 
 fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value> {
     let hangout = resolve_hangout(state, caller, args)?;
+    // I59: catching up starts thinking. Do this before mentions are marked read (B8).
+    ops::note_thinking_pickup(state, caller, Some(&hangout.id))?;
     let snapshot = ops::snapshot(state, caller, &hangout.id)?;
     // B8: reading the room is what clears mentions. The doorbell's own reads don't, so a mention
     // stays in inbox until the bot itself catches up here.
@@ -975,6 +1002,10 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
                 "status": agent.status,
                 "working_through": agent.activity.as_ref().map(|activity| &activity.via),
                 "away": agent.away,
+                "thinking": agent.thinking.as_ref().map(|thought| json!({
+                    "phase": thought.phase,
+                    "until": iso(thought.until),
+                })),
             });
             if let Some(reason) = mark_of(Some(&agent.id)) {
                 bot["your_owner_marked"] = json!(reason);
@@ -1180,6 +1211,7 @@ fn call_tool(
             attach_left(state, caller, started, reply)
         }
         "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
+        "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
         "invite_to_project" => crate::projects::invite_to_project(
             state,
             caller,
@@ -1198,6 +1230,7 @@ fn call_tool(
                 text_arg(args, "project_id")?,
                 coordinate("x")?,
                 coordinate("y")?,
+                args["kind"].as_str(),
             )
         }
         "ask_for_trip" => {
@@ -1419,6 +1452,11 @@ fn call_tool(
         }
         "report_activity" => {
             ops::report_activity(state, caller, text_arg(args, "kind")?, text_arg(args, "via")?)?;
+            Ok(json!({ "ok": true }))
+        }
+        "set_thinking" => {
+            let on = args.get("on").and_then(Value::as_bool).unwrap_or(true);
+            ops::set_thinking(state, caller, args["hangout_id"].as_str(), on)?;
             Ok(json!({ "ok": true }))
         }
         "list_calendar" => {
@@ -1735,6 +1773,7 @@ mod tests {
             "ask_for_trip",
             "go_home",
             "set_status",
+            "set_thinking",
         ] {
             refused(&world, &world.casa, name, json!({}));
         }

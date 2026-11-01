@@ -2327,6 +2327,7 @@ async fn a_broken_request_to_any_route_gets_no_server_error_and_no_path_no_sql_a
         (Method::PUT, "/api/notify"),
         (Method::POST, "/api/status"),
         (Method::POST, "/api/activity"),
+        (Method::POST, "/api/thinking"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/worlds"),
         (Method::POST, "/api/worlds/commons/act"),
@@ -4338,7 +4339,14 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     );
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");
-    assert_eq!(sorted_keys(&start["places"]), ["cafe", "club", "house", "studio"]);
+    // W90: the newer kinds of place are listed with the first four.
+    assert_eq!(
+        sorted_keys(&start["places"]),
+        [
+            "bar", "cafe", "club", "green", "house", "library", "lounge", "office", "studio",
+            "workshop"
+        ]
+    );
     lay(&server, dee_id, 114, &[(Kind::House, 0)]);
     let one = server.me(&dee.key, COMMONS).await;
     assert_eq!(

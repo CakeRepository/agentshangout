@@ -789,7 +789,18 @@ pub enum Kind {
     Studio,
     /// W81: the town square. A world has one.
     Square,
+    /// W90: a park, open to the sky. Called `green` because the old city's `park` was a zone.
+    Green,
+    Lounge,
+    Bar,
+    Office,
+    Workshop,
+    Library,
 }
+
+/// W90: the places that came after the first four, which have a table of their own.
+pub const NEWER_PLACES: [Kind; 6] =
+    [Kind::Green, Kind::Lounge, Kind::Bar, Kind::Office, Kind::Workshop, Kind::Library];
 
 impl Kind {
     pub fn as_str(self) -> &'static str {
@@ -805,6 +816,12 @@ impl Kind {
             Kind::Club => "club",
             Kind::Studio => "studio",
             Kind::Square => "square",
+            Kind::Green => "green",
+            Kind::Lounge => "lounge",
+            Kind::Bar => "bar",
+            Kind::Office => "office",
+            Kind::Workshop => "workshop",
+            Kind::Library => "library",
         }
     }
 
@@ -821,14 +838,47 @@ impl Kind {
             Kind::Club,
             Kind::Studio,
             Kind::Square,
+            Kind::Green,
+            Kind::Lounge,
+            Kind::Bar,
+            Kind::Office,
+            Kind::Workshop,
+            Kind::Library,
         ]
         .into_iter()
         .find(|kind| kind.as_str() == word)
     }
 
+    /// W90: a place named the way a person or a bot would ask for it. `park` is a green, because
+    /// the old city's park was something else.
+    pub fn parse_place(word: &str) -> Option<Kind> {
+        match word {
+            "park" => Some(Kind::Green),
+            _ => Kind::parse(word).filter(|kind| kind.is_building()),
+        }
+    }
+
+    /// W91: a place that takes 2 by 2 tiles, from its tile to the one across and down from it.
+    pub fn is_big(self) -> bool {
+        matches!(self, Kind::Square | Kind::Green)
+    }
+
     /// W54: what a person places by hand: somewhere they can go into.
     pub fn is_building(self) -> bool {
-        matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio | Kind::Square)
+        matches!(
+            self,
+            Kind::House
+                | Kind::Cafe
+                | Kind::Club
+                | Kind::Studio
+                | Kind::Square
+                | Kind::Green
+                | Kind::Lounge
+                | Kind::Bar
+                | Kind::Office
+                | Kind::Workshop
+                | Kind::Library
+        )
     }
 }
 
@@ -1112,6 +1162,87 @@ pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(),
     }
 }
 
+/// L22: how far from its site a route is looked for, in tiles either way.
+const ROUTE_REACH: i64 = 48;
+
+/// L22: the tiles a road needs, in order from beside the nearest road to beside `site`, keeping to
+/// the streets (W85) apart from the last 3 tiles, which are a lane. Empty if a road is already
+/// beside the site, and `None` if nothing can reach it. `tiles` must reach 3 tiles past every tile
+/// looked at, for the side streets.
+pub fn route_to(land: &Land, hoods: &[Hood], tiles: &Tiles, site: Pos) -> Option<Vec<Pos>> {
+    let is_road = |pos: Pos| tiles.get(&pos).is_some_and(|tile| tile.kind == Kind::Road);
+    let beside_road = |pos: Pos| neighbours(pos).into_iter().flatten().any(is_road);
+    if beside_road(site) {
+        return Some(Vec::new());
+    }
+    let (sx, sy) = (i64::from(site.0), i64::from(site.1));
+    let near_site = |pos: Pos| {
+        (i64::from(pos.0) - sx).abs() + (i64::from(pos.1) - sy).abs() <= LANE_TILES as i64
+    };
+    let passable = |pos: Pos| {
+        pos != site
+            && (i64::from(pos.0) - sx).abs() <= ROUTE_REACH
+            && (i64::from(pos.1) - sy).abs() <= ROUTE_REACH
+            && !tiles.contains_key(&pos)
+            && land.at(pos).is_some_and(|ground| ground.is_open())
+            && (near_site(pos) || on_street(hoods, tiles, pos))
+    };
+    // Out from the site, so the first tile that touches a road is the nearest way in.
+    let mut came_from: std::collections::HashMap<Pos, Option<Pos>> =
+        std::collections::HashMap::new();
+    let mut queue = std::collections::VecDeque::new();
+    for pos in neighbours(site).into_iter().flatten() {
+        if passable(pos) {
+            came_from.insert(pos, None);
+            queue.push_back(pos);
+        }
+    }
+    while let Some(pos) = queue.pop_front() {
+        if beside_road(pos) {
+            // Back towards the site: that's the order a road is laid in, from the road outwards.
+            let mut path = vec![pos];
+            let mut at = pos;
+            while let Some(Some(next)) = came_from.get(&at) {
+                path.push(*next);
+                at = *next;
+            }
+            return Some(path);
+        }
+        for next in neighbours(pos).into_iter().flatten() {
+            if !came_from.contains_key(&next) && passable(next) {
+                came_from.insert(next, Some(pos));
+                queue.push_back(next);
+            }
+        }
+    }
+    None
+}
+
+/// L22: a route cut into straight runs of up to 16 tiles, first to last, each of which W85 allows on
+/// its own: all on streets, or a lane of 3 tiles or fewer.
+pub fn route_runs(hoods: &[Hood], tiles: &Tiles, path: &[Pos]) -> Vec<(Pos, Pos)> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < path.len() {
+        let street = on_street(hoods, tiles, path[start]);
+        let mut end = start;
+        while end + 1 < path.len() {
+            let next = path[end + 1];
+            let straight = (next.0 == path[start].0 && path[end].0 == path[start].0)
+                || (next.1 == path[start].1 && path[end].1 == path[start].1);
+            let long = end + 1 - start + 1 > MAX_ROAD_TILES as usize;
+            let lane = !street && end + 1 - start + 1 > LANE_TILES;
+            if !straight || long || lane || on_street(hoods, tiles, next) != street {
+                break;
+            }
+            end += 1;
+        }
+        runs.push((path[start], path[end]));
+        start = end + 1;
+    }
+    runs
+}
+
 /// Both corners, on the map and the right way round. Everything after this can use plain maths,
 /// because a coordinate is now between 0 and 255.
 fn corners(land: &Land, span: Span) -> Result<(Pos, Pos), &'static str> {
@@ -1177,14 +1308,29 @@ pub fn plan_road(land: &Land, tiles: &Tiles, player: u64, span: Span) -> Planned
 /// roads that keep a side street (W15).
 pub fn plan_place(land: &Land, tiles: &Tiles, player: u64, kind: Kind, x: i64, y: i64) -> Planned {
     if !kind.is_building() {
-        return Err("a building is a house, cafe, club or studio");
+        return Err(NOT_A_PLACE);
     }
     let pos = land.locate(x, y).ok_or(OFF_MAP)?;
-    let (px, py) = pos;
-    let beside_road =
+    // W91: a big place needs all four of its tiles open, and a road beside any of them.
+    let cells = footprint(kind, pos);
+    if cells.len() > 1 {
+        for &(cx, cy) in &cells[1..] {
+            let cell = land.locate(i64::from(cx), i64::from(cy)).ok_or(OFF_MAP)?;
+            match spot(land, tiles, cell) {
+                Spot::Free if is_reserved(tiles, cell) => return Err(KEPT),
+                Spot::Free => {}
+                Spot::Road | Spot::Built => {
+                    return Err("a park or a square needs 2 by 2 open tiles")
+                }
+                Spot::Blocked(why) => return Err(why),
+            }
+        }
+    }
+    let beside_road = cells.iter().any(|&(px, py)| {
         [(px.wrapping_sub(1), py), (px + 1, py), (px, py.wrapping_sub(1)), (px, py + 1)]
             .iter()
-            .any(|at| tiles.get(at).is_some_and(|tile| tile.kind == Kind::Road));
+            .any(|at| tiles.get(at).is_some_and(|tile| tile.kind == Kind::Road))
+    });
     match spot(land, tiles, pos) {
         Spot::Free if is_reserved(tiles, pos) => Err(KEPT),
         Spot::Free if !beside_road => Err("a building needs a road beside it"),
@@ -1193,6 +1339,54 @@ pub fn plan_place(land: &Land, tiles: &Tiles, player: u64, kind: Kind, x: i64, y
         }
         Spot::Road | Spot::Built => Err("that tile is already built on"),
         Spot::Blocked(why) => Err(why),
+    }
+}
+
+/// W90: what a place can be.
+pub const NOT_A_PLACE: &str =
+    "a place is a house, cafe, club, studio, park, lounge, bar, office, workshop or library";
+
+/// W91: the tiles a place stands on: its own, and for a big one the three across and down from it.
+pub fn footprint(kind: Kind, (x, y): Pos) -> Vec<Pos> {
+    if !kind.is_big() {
+        return vec![(x, y)];
+    }
+    let mut cells = vec![(x, y)];
+    for (dx, dy) in [(1, 0), (0, 1), (1, 1)] {
+        if let (Some(cx), Some(cy)) = (x.checked_add(dx), y.checked_add(dy)) {
+            cells.push((cx, cy));
+        }
+    }
+    cells
+}
+
+/// W91: fills in the rest of each big place's tiles, as the same place at level 1, where nothing
+/// else is. A big place is stored on one tile, so everything that reads tiles goes through this.
+pub fn spread_places(tiles: &mut Tiles) {
+    let parts: Vec<(Pos, Tile)> = tiles
+        .iter()
+        .filter(|(_, tile)| tile.kind.is_big() && tile.level == 0)
+        .flat_map(|(&pos, &tile)| {
+            footprint(tile.kind, pos)
+                .into_iter()
+                .skip(1)
+                .map(move |part| (part, Tile { level: 1, ..tile }))
+        })
+        .collect();
+    for (pos, tile) in parts {
+        tiles.entry(pos).or_insert(tile);
+    }
+}
+
+/// W91: the tile a big place is stored on, for any of its tiles.
+pub fn place_anchor(tiles: &Tiles, pos: Pos) -> Pos {
+    match tiles.get(&pos) {
+        Some(tile) if tile.kind.is_big() && tile.level == 1 => [(1, 0), (0, 1), (1, 1)]
+            .into_iter()
+            .filter_map(|(dx, dy)| Some((pos.0.checked_sub(dx)?, pos.1.checked_sub(dy)?)))
+            .find(|at| tiles.get(at).is_some_and(|t| t.kind == tile.kind && t.level == 0))
+            .unwrap_or(pos),
+        _ => pos,
     }
 }
 
@@ -1322,7 +1516,9 @@ fn served_tiles(grid: &Grid) -> Vec<bool> {
 /// Roads and places among a set of tiles.
 fn count<'a>(tiles: impl Iterator<Item = &'a Tile>) -> (u32, u32) {
     tiles.fold((0, 0), |(roads, places), tile| {
-        (roads + u32::from(tile.kind == Kind::Road), places + u32::from(tile.kind.is_building()))
+        // W91: the rest of a big place's tiles aren't places of their own.
+        let place = tile.kind.is_building() && tile.level == 0;
+        (roads + u32::from(tile.kind == Kind::Road), places + u32::from(place))
     })
 }
 
