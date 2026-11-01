@@ -518,7 +518,8 @@ A road is a line, and two roads laid side by side make a paved slab that every c
 - **W94.** Each step of The Commons takes up the roads that already make a 2 by 2 block, one tile at a
   time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
   beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
-  cut off. Worlds people start are left as they are.
+  cut off. Worlds people start are left as they are. Thinning never runs during an active disaster
+  strike, even when that step hits no tiles.
 - **W97.** A player's road count is the road tiles they currently own in that world, not their
   lifetime builds. `me` and `how_am_i_doing` include `road_removals`, their latest 50 road losses
   in that world: tile, built and removed times, world step, and a fixed reason (`bulldoze`,
