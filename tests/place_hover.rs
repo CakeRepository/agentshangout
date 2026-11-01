@@ -262,6 +262,54 @@ async fn hovering_a_place_tells_you_how_each_of_your_bots_can_get_in() {
     assert_eq!(server.place(&guest, ann_house).await.status, StatusCode::UNAUTHORIZED);
 }
 
+/// What hovering each of these places says about Fern, in order.
+async fn cards(server: &Server, who: &Who, spots: &[(i64, i64)]) -> Vec<String> {
+    let mut said = Vec::new();
+    for spot in spots {
+        said.push(access(&server.place(&who.key, *spot).await.ok(), "Fern"));
+    }
+    said
+}
+
+// W72, S55, S56
+#[tokio::test]
+async fn a_bot_is_inside_one_place_however_many_it_belongs_to() {
+    let server = Server::start().await;
+    let (_, ann) = server.someone("Ann").await;
+    let mut places = Vec::new();
+    for (kind, at) in [("house", now() - 8 * DAY), ("studio", now()), ("cafe", now())] {
+        let spot = server.place_at(&ann, kind, at);
+        let door =
+            server.post(&ann.key, "/api/spaces/door", json!({ "x": spot.0, "y": spot.1 })).await;
+        places.push((spot, text(&door.ok()["hangout_id"])));
+    }
+    let (bot, token) = server.bot(&ann, &places[0].1, "Fern").await;
+    for (_, room) in &places[1..] {
+        let bring = format!("/api/hangouts/{room}/agents/{bot}");
+        server.send(&ann.key, Method::PUT, &bring, Some(json!({}))).await.ok();
+    }
+
+    let spots: Vec<(i64, i64)> = places.iter().map(|(spot, _)| *spot).collect();
+
+    // It was brought to the last one last, so that's the one it's inside.
+    assert_eq!(cards(&server, &ann, &spots).await, ["belongs", "belongs", "in"]);
+
+    // Saying something in the first moves it, and only one place says so.
+    let words = json!({ "text": "Back here" });
+    let first = format!("/api/hangouts/{}/messages", places[0].1);
+    server.post(&token, &first, words).await.ok();
+    assert_eq!(cards(&server, &ann, &spots).await, ["in", "belongs", "belongs"]);
+
+    // Out on someone else's floor it's inside none of its own.
+    let (cafe, bo) = server.someone("Bo").await;
+    let open = format!("/api/floors/{cafe}");
+    let public = json!({ "access": "public", "create_code": CODE });
+    server.send(&bo.key, Method::PUT, &open, Some(public)).await.ok();
+    let walk = format!("/api/floors/{cafe}/walk-in");
+    server.post(&ann.key, &walk, json!({ "agent_id": bot })).await.ok();
+    assert_eq!(cards(&server, &ann, &spots).await, ["belongs", "belongs", "belongs"]);
+}
+
 // W73
 #[tokio::test]
 async fn every_place_has_a_name_its_owner_or_its_project_gave_it() {
@@ -356,9 +404,10 @@ async fn a_person_asks_to_let_their_bot_into_someone_elses_place_and_the_owner_d
         StatusCode::NOT_FOUND
     );
 
-    // A yes brings Rover into the house's first floor, and Bo can read it.
+    // A yes brings Rover into the house's first floor, and Bo can read it. It stays where it is
+    // until it goes there (S59).
     server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
-    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "in");
+    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "belongs");
     server.get(&bo.key, &format!("/api/hangouts/{room}")).await.ok();
     assert_eq!(
         server.post(&bo.key, &path, ask(&rover_id)).await.status,
@@ -419,7 +468,7 @@ async fn someone_turned_out_of_a_place_cant_ask_and_a_yes_doesnt_bring_them_back
     // Let back, it's a request like any other.
     server.send(&ann.key, Method::DELETE, &turn_out, None).await.ok();
     server.post(&ann.key, &answer, json!({ "response": "yes" })).await.ok();
-    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "in");
+    assert_eq!(access(&server.place(&bo.key, house).await.ok(), "Rover"), "belongs");
 }
 
 // S51, S13
