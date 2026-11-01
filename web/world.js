@@ -4183,6 +4183,11 @@ export class World {
 
   focus(x, y, options = {}) {
     if (!this.ready) return;
+    // The first size a map gets frames the town, so going to a tile before then would be undone.
+    if (!this.cssW) {
+      this.focusOnceSized = [x, y, options];
+      return;
+    }
     this.stopFollow('other');
     x = clamp(Number(x) || 0, 0, this.n - 1);
     y = clamp(Number(y) || 0, 0, this.n - 1);
@@ -5418,6 +5423,10 @@ export class World {
       this.skyDirty = true;
     }
     if (first && this.ready) this.frameTown();
+    if (first && this.focusOnceSized) {
+      this.focus(...this.focusOnceSized);
+      this.focusOnceSized = null;
+    }
     this.clampCam();
     // W73: a canvas that is resized is cleared, and the browser shows that before the next frame comes.
     // So it's all painted now, or the sky shows where the map was. The sky is opaque, so with no view

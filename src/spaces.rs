@@ -433,10 +433,10 @@ async fn ask_to_let_in(
             "you have {MAX_OPEN_REQUESTS} requests waiting already"
         )));
     }
-    if let (Some(owner_id), Some(floor)) = (&place.owner_id, floors.first()) {
+    if let Some(owner_id) = &place.owner_id {
         let notice = crate::notify::Notice {
             event: "place.asked",
-            hangout_id: floor.id.clone(),
+            hangout_id: space.id.clone(),
             text: format!(
                 "{} asks to let their bot {} into {}.",
                 caller.name, agent.name, space.name
@@ -490,11 +490,15 @@ async fn answer_place_request(
         "no" => "no",
         _ => return Err(ApiError::bad_request("response must be yes or no")),
     };
-    let floor =
-        state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
-    // S13, S27: a yes is a way of joining, so it's no way round either of them. Refused, it still waits.
+    // S12: the floor it began with, because whoever runs a space chooses which floor is lowest.
+    let floor = state.db.floor(&space.id)?.ok_or_else(ApiError::not_found)?;
+    // S13, S27: a yes is a way of joining, so it's no way round either of them. R20: its owner may have
+    // told it to stay home since they asked. Refused, it still waits.
     if status == "yes" {
         check_can_join(&state, &asked_by, &floor.id)?;
+        if state.db.bot_home(&agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
+            return Err(ApiError::conflict("that bot stays home now"));
+        }
     }
     if !state.db.answer_place_request(&id, status, now)? {
         return Err(ApiError::conflict("that request was just answered"));
@@ -692,7 +696,7 @@ pub fn leave_own_space(state: &AppState, caller: &Caller, hangout_id: &str) -> A
     for floor in state.db.floors_of(&space.id)? {
         if state.db.is_member(&floor.id, &caller.person_id)? {
             state.db.remove_member(&floor.id, &caller.person_id)?;
-            ops::announce(state, &floor.id, &format!("{} left the hangout.", caller.name))?;
+            ops::announce(state, &floor.id, &ops::left_line(&caller.name))?;
             ops::refresh(state, &floor.id);
         }
     }
@@ -898,6 +902,13 @@ async fn change_floor(
         }
     }
     let opening = body.access.as_deref() == Some("public") && floor.access != "public";
+    // S8, S15: opening a floor is a way onto it, and running a space gives nobody that.
+    if opening
+        && caller.person_id != space.owner_id
+        && !state.db.is_member(&floor.id, &caller.person_id)?
+    {
+        return Err(ApiError::forbidden("only someone on this floor can open it"));
+    }
     let closing = body.access.as_deref() == Some("private") && floor.access == "public";
     let at = now();
     // Read first: opening drops other owners' bots, and closing drops whoever walked in.
@@ -1015,18 +1026,13 @@ async fn turn_out(
     }
     let person = someone_in_space(&state, &space, &person_id)?;
     let floors = state.db.floors_of(&space.id)?;
-    // S27: a member saw these links, and all the join check knows is the account. A walk-in never
-    // saw one.
-    let mut saw = Vec::new();
-    for floor in &floors {
-        if state.db.is_member(&floor.id, &person.id)? {
-            saw.push(floor.id.clone());
+    let left = ops::left_line(&person.name);
+    let answered = state.db.turn_out(&space.id, &person.id, &left, now())?;
+    // They're out by now, so a plan that won't settle is no reason to say they aren't.
+    for plan in &answered {
+        if let Err(error) = ops::settle(&state, plan) {
+            tracing::error!(status = %error.status, "a plan didn't settle after a turn-out");
         }
-    }
-    state.db.turn_out(&space.id, &person.id, now())?;
-    for floor_id in &saw {
-        state.db.set_invite_code(floor_id, &auth::new_invite_code())?;
-        state.db.end_plan_links(floor_id)?;
     }
     for floor in &floors {
         state.presence.forget(&floor.id, &person.id);

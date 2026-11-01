@@ -1300,7 +1300,6 @@ pub fn cancel_pass(state: &AppState, caller: &Caller, pass_id: &str) -> ApiResul
 
 /// Ends a pass, and at once any trip it's covering, in the name of whoever `by` is.
 fn end_pass(state: &AppState, by: &Caller, pass: &Pass, house: &House, now: i64) -> ApiResult<()> {
-    decline_scenes_on_key(state, pass, house, now)?;
     let ended = state.db.end_trip_for_pass(&pass.id, &by.name, now)?;
     state.db.delete_pass(&pass.id)?;
     if ended > 0 {
@@ -1311,14 +1310,6 @@ fn end_pass(state: &AppState, by: &Caller, pass: &Pass, house: &House, now: i64)
         others.retain(|id| *id != by.person_id);
         ping(state, others, "trip.ended", &house.porch_id, &line);
         ops::refresh_city(state, &house.city_id);
-    }
-    Ok(())
-}
-
-/// H12: a scene this pass's key approved that hasn't run goes with the key.
-fn decline_scenes_on_key(state: &AppState, pass: &Pass, house: &House, now: i64) -> ApiResult<()> {
-    if let Some(giver) = state.db.key_giver(&pass.agent_id, &house.id, "scenes")? {
-        state.db.decline_scenes_on_key(&house.id, &pass.agent_name, &giver, now)?;
     }
     Ok(())
 }
@@ -1431,9 +1422,6 @@ pub fn take_key(state: &AppState, caller: &Caller, pass_id: &str, key: &str) -> 
     ops::require_human(caller, "take a key back")?;
     if !KEYS.contains(&key) {
         return Err(ApiError::bad_request("key must be living_room or scenes"));
-    }
-    if key == "scenes" {
-        decline_scenes_on_key(state, &pass, &house, now())?;
     }
     state.db.remove_pass_key(&pass.id, key)?;
     refresh_house(state, &house);

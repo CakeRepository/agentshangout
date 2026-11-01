@@ -130,10 +130,28 @@ fn preview_of(
     })
 }
 
+/// F10, S27: to someone turned out of the space a plan is in, its link is one that doesn't exist.
+fn check_not_turned_out(
+    state: &AppState,
+    caller: Option<&Caller>,
+    invite: &OpenInvite,
+) -> ApiResult<()> {
+    if let (Some(caller), Some(space)) =
+        (caller, state.db.space_for_room(&invite.event.hangout_id)?)
+    {
+        if state.db.is_turned_out(&space.id, &caller.person_id)? {
+            return Err(ApiError::not_found());
+        }
+    }
+    Ok(())
+}
+
 pub fn preview(state: &AppState, caller: Option<&Caller>, code: &str) -> ApiResult<PlanPreview> {
+    let invite = open_invite(state, code)?;
+    check_not_turned_out(state, caller, &invite)?;
     let person_id =
         caller.filter(|caller| !caller.is_agent()).map(|caller| caller.person_id.as_str());
-    preview_of(state, open_invite(state, code)?, person_id)
+    preview_of(state, invite, person_id)
 }
 
 /// Everything that can refuse an answer, checked before anyone is made (F12).
@@ -145,6 +163,7 @@ pub fn check_answer(
     response: &str,
     your_name: Option<&str>,
 ) -> ApiResult<()> {
+    check_not_turned_out(state, caller, invite)?;
     if caller.is_some_and(Caller::is_agent) {
         return Err(ApiError::forbidden("only a person can answer through a plan's link"));
     }
@@ -210,8 +229,10 @@ pub fn answer(
 }
 
 /// F20: the plan as a calendar file, with nothing a link doesn't show.
-pub fn plan_ics(state: &AppState, code: &str) -> ApiResult<String> {
-    let mut event = open_invite(state, code)?.event;
+pub fn plan_ics(state: &AppState, caller: Option<&Caller>, code: &str) -> ApiResult<String> {
+    let invite = open_invite(state, code)?;
+    check_not_turned_out(state, caller, &invite)?;
+    let mut event = invite.event;
     event.notes.clear();
     Ok(ical::single(&event, now()))
 }

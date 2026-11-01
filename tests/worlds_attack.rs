@@ -5623,3 +5623,30 @@ async fn a_move_someone_cant_pay_for_counts_as_refused() {
         server.post("/api/worlds/commons/act", wave).token(&guest.token).ip(ip).send().await;
     assert!(after.text.contains("too many of your moves"), "{}", after.show());
 }
+
+// W30, W88: The Commons from the private side is a view like any other, so it's counted as one.
+#[tokio::test]
+async fn list_city_showing_the_commons_counts_as_a_view() {
+    start_early_in(60, 30).await;
+    let server = Server::start().await;
+    let bot = server.bot("Scout").await;
+    let hours = json!({ "days": [], "starts": "12:00", "ends": "13:00", "public_places": true });
+    let routine = format!("/api/agents/{}/routine", bot.agent);
+    server.req(Method::PUT, &routine).token(&bot.key).json(hours).send().await.ok();
+    let address = "203.0.113.50";
+    let call = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "list_city", "arguments": {} } });
+
+    let seen =
+        server.post("/mcp", call.clone()).token(&bot.token).header("x-forwarded-for", address);
+    let seen = seen.send().await.ok();
+    assert_eq!(seen["result"]["structuredContent"]["city"]["id"], "commons", "{seen}");
+    for _ in 0..239 {
+        let view = server.get("/api/worlds/commons").header("x-forwarded-for", address);
+        view.send().await.ok();
+    }
+
+    let past = server.post("/mcp", call).token(&bot.token).header("x-forwarded-for", address);
+    let past = past.send().await.ok();
+    assert_eq!(past["result"]["isError"], true, "a view past the address's limit: {past}");
+    assert!(past.to_string().contains("looking too often"), "{past}");
+}

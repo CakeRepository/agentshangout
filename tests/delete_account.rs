@@ -1757,3 +1757,136 @@ async fn nothing_in_any_table_names_them_afterwards() {
     server.get(&ann.key, "/api/me").await.ok();
     server.get(&bo.key, "/api/spaces/public").await.ok();
 }
+
+// A33, R44: with nobody left in the house it goes with the house, whoever made it.
+#[tokio::test]
+async fn a_house_bot_goes_with_its_house_when_its_maker_had_already_moved_out() {
+    let server = Server::start().await;
+    let city = server.city("Elm", "Ann").await;
+    let cy = server.join_city(&city.code, "Cy").await;
+    let home = server.house(&cy, &city.id, "Cy House").await;
+    let dee = server.move_in(&home, "Dee").await;
+    let path = format!("/api/houses/{}/house-bot", home.id);
+    let made = server.post(&cy.key, &path, json!({ "name": "Hearth" })).await.ok();
+    let (bot, token) = (text(&made["agent"]["id"]), text(&made["token"]));
+    server.state.db.set_notify_auth(&bot, Some("a-wake-up-key")).unwrap();
+    server.post(&cy.key, &format!("/api/houses/{}/leave", home.id), json!({})).await.ok();
+
+    server.leave_for_good(&dee).await;
+
+    assert!(server.state.db.house(&home.id).unwrap().is_none(), "the house went with Dee");
+    assert!(server.state.db.agent(&bot, now()).unwrap().is_none(), "it outlived its house");
+    assert_eq!(server.state.db.notify_auth(&bot).unwrap(), None, "its key outlived it");
+    assert_eq!(server.get(&token, "/api/me").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(server.get(&cy.key, "/api/me").await.ok()["bots"], json!([]));
+}
+
+// R20, R21: only its owner lifts stays_home, and someone else's account going isn't its owner.
+#[tokio::test]
+async fn a_bot_that_stays_home_keeps_waiting_when_the_house_it_waits_on_goes() {
+    let server = Server::start().await;
+    let city = server.city("Elm", "Ann").await;
+    let ann_home = server.house(&city.keeper, &city.id, "Ann House").await;
+    let cy = server.join_city(&city.code, "Cy").await;
+    let home = server.house(&cy, &city.id, "Cy House").await;
+    let dee = server.move_in(&home, "Dee").await;
+    let (bot, token) = server.bot(&cy, &home.living, "Keeps").await;
+    let stays = json!({ "house_id": home.id, "stays_home": true });
+    server.put(&cy.key, &format!("/api/agents/{bot}/home"), stays).await.ok();
+    server.post(&cy.key, &format!("/api/houses/{}/leave", home.id), json!({})).await.ok();
+
+    server.leave_for_good(&dee).await;
+
+    let ask = json!({ "house_id": ann_home.id, "kind": "call" });
+    let asked = server.post(&token, "/api/trips", ask.clone()).await;
+    assert_eq!(asked.status, StatusCode::CONFLICT, "{}", asked.body);
+    let page = server.get(&cy.key, &format!("/api/cities/{}", city.id)).await.ok();
+    let bots = page["bots"].as_array().unwrap();
+    let listed = bots.iter().find(|row| row["id"] == json!(bot)).unwrap();
+    assert_eq!(listed["stays_home"], true, "{listed}");
+
+    // Its owner gives it a new home, and then it's theirs to say.
+    let flat = server.house(&cy, &city.id, "Cy Flat").await;
+    let free = json!({ "house_id": flat.id, "stays_home": false });
+    server.put(&cy.key, &format!("/api/agents/{bot}/home"), free).await.ok();
+    server.post(&token, "/api/trips", ask).await.ok();
+}
+
+// H12, A32: their bot's pass goes with them, and what its key approved with that.
+#[tokio::test]
+async fn a_scene_a_bots_key_approved_goes_with_its_owners_account() {
+    let server = Server::start().await;
+    let city = server.city("Elm", "Ann").await;
+    let ann = &city.keeper;
+    let home = server.house(ann, &city.id, "Ann House").await;
+    let cy = server.join_city(&city.code, "Cy").await;
+    let (rover, token) = server.bot(&cy, &city.square, "Rover").await;
+    let ask = json!({ "house_id": home.id, "kind": "call" });
+    for _ in 0..2 {
+        let trip = text(&server.post(&token, "/api/trips", ask.clone()).await.ok()["id"]);
+        server.answer_trip(&cy.key, &trip).await;
+        server.answer_trip(&ann.key, &trip).await;
+        server.post(&token, &format!("/api/trips/{trip}/end"), json!({})).await.ok();
+    }
+    let path = format!("/api/houses/{}/passes", home.id);
+    let pass = text(&server.post(&ann.key, &path, json!({ "agent_id": rover })).await.ok()["id"]);
+    server.post(&cy.key, &format!("/api/passes/{pass}/accept"), json!({})).await.ok();
+    server.put(&ann.key, &format!("/api/passes/{pass}/keys/scenes"), json!({})).await.ok();
+    let path = format!("/api/houses/{}/house-bot", home.id);
+    let made = server.post(&ann.key, &path, json!({ "name": "Casa" })).await.ok();
+    let casa = text(&made["token"]);
+    let path = format!("/api/houses/{}/scenes", home.id);
+    let scene = server.post(&ann.key, &path, json!({ "name": "Movie Night" })).await.ok();
+    server.post(&token, "/api/trips", ask).await.ok();
+    let path = format!("/api/scenes/{}/request", text(&scene["id"]));
+    assert_eq!(server.post(&token, &path, json!({})).await.ok()["status"], "approved");
+
+    server.leave_for_good(&cy).await;
+
+    assert_eq!(server.get(&casa, "/api/house/queue").await.ok()["requests"], json!([]));
+}
+
+// S27, A38: someone else of the same name going takes that name's lines, and with them what a room
+// says about who left it. That can't be how anyone keeps an old link alive.
+#[tokio::test]
+async fn a_namesake_deleting_their_account_keeps_no_old_link_alive() {
+    let server = Server::start().await;
+    let (room, ann, code) = server.room("Ground", "Ann").await;
+    let (attic, attic_code) = server.add_floor(&ann, &room, "Attic").await;
+    let bo = server.join(&code, "Bo").await;
+    server.join_as(&bo, &attic_code).await;
+    server.post(&bo.key, &format!("/api/hangouts/{attic}/leave"), json!({})).await.ok();
+    let (_, _, elsewhere) = server.room("Elsewhere", "Cy").await;
+    let namesake = server.join(&elsewhere, "Bo").await;
+
+    server.leave_for_good(&namesake).await;
+
+    let path = format!("/api/spaces/{room}/people/{}/turn-out", bo.id);
+    server.post(&ann.key, &path, json!({})).await.ok();
+
+    let body = json!({ "your_name": "Not Bo" });
+    let back = server.post("", &format!("/api/invites/{attic_code}/join"), body).await;
+    assert_eq!(back.status, StatusCode::NOT_FOUND, "{}", back.body);
+}
+
+// S27: someone who's out can't be turned out again to finish it, so it's all of it or none of it.
+#[tokio::test]
+async fn a_turn_out_that_fails_leaves_nothing_half_done() {
+    let server = Server::start().await;
+    let (room, ann, code) = server.room("Ground", "Ann").await;
+    let bo = server.join(&code, "Bo").await;
+    let db = server.db();
+    let breaks = "CREATE TRIGGER no_link BEFORE UPDATE OF invite_code ON hangouts
+                  BEGIN SELECT RAISE(ABORT, 'disk full'); END;";
+    db.execute_batch(breaks).unwrap();
+
+    let path = format!("/api/spaces/{room}/people/{}/turn-out", bo.id);
+    let failed = server.post(&ann.key, &path, json!({})).await;
+    assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR, "{}", failed.body);
+    db.execute_batch("DROP TRIGGER no_link").unwrap();
+
+    server.post(&ann.key, &path, json!({})).await.ok();
+    let body = json!({ "your_name": "Not Bo" });
+    let back = server.post("", &format!("/api/invites/{code}/join"), body).await;
+    assert_eq!(back.status, StatusCode::NOT_FOUND, "{}", back.body);
+}

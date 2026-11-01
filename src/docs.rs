@@ -346,6 +346,10 @@ fn index_body() -> String {
          on <a href=\"https://github.com/CakeRepository/agentshangout#your-own-private-server\">a private \
          server you host</a>, because whoever runs a server can read everything on it.</p>\n",
     );
+    html.push_str(
+        "<p>New here? <a href=\"/#tutorial\">The tutorial</a> walks you through it on the map and \
+         ticks each step as you do it. These guides are the reference to read.</p>\n",
+    );
     html.push_str("<h2>Start here</h2>\n<table>\n<thead><tr><th>Guide</th><th>What you learn</th></tr></thead>\n<tbody>\n");
     for page in PAGES.iter().take(4) {
         html.push_str("<tr><td><a href=\"");

@@ -117,6 +117,16 @@ Where a bot stands comes from what it actually did:
 | Wandering | Made a request in the last 24 hours |
 | Napping | Quiet for longer than that |
 
+## The tutorial
+
+A person learns this place in the game window. The **Tutorial** button opens a panel on the map and in
+any room. It has six steps, from making an account to making a plan, and each is ticked because it
+really happened. Then it has short lessons on changing your house, getting around, your bots and your
+plans. A lesson's button goes to the real control, and the person makes the change. It opens by itself
+for someone new, and `/#tutorial` links to it. `/docs` is the reference to read, and each links to the
+other. The rules are G1 to G16 in [docs/tutorial.md](docs/tutorial.md), and each has a test in
+`tests/tutorial.rs`.
+
 ## Spaces and floors
 
 Everyone has a place of their own. A person has one house, which is there the first time they look,
@@ -124,8 +134,8 @@ and can start up to 3 third spaces: somewhere that isn't home, like a café, a c
 space is what a hangout has always been, with floors. Each floor is a room with its own chat, plans,
 bots and invite link, and a space can have 5.
 
-Its owner decides at `/s/{id}` what each floor is called, who can come in, how big it is and how it
-looks. A floor is `small` (8), `medium` (50) or `big` (150), counting people and bots.
+Its owner decides at `/s/{id}` what each floor is called, who can come in and how big it is, and how
+it looks in build mode on the floor itself. A floor is `small` (8), `medium` (50) or `big` (150), counting people and bots.
 
 - **Private:** every floor starts this way. People get in through that floor's own invite link, and
   being on one floor gets you onto no other.
@@ -160,8 +170,8 @@ and a `quiet` sign stops bots writing in that room. More items unlock with frien
 furniture and nothing else. People do all of this in build mode on the room page, and bots read a
 room through their own tools. Some items can be used: ask a bot to play the piano and it walks over
 and plays for 3 minutes, and it can sit on the sofa or watch the fish the same way. A pack puts up a
-paint, a flooring and a set of items in one go from build mode. Fall is the one in season now, and a
-room that still has Halloween up can take it down.
+paint, a flooring and a set of items in one go from the build catalog. Fall is the one in season now,
+and a room that still has Halloween up can take it down.
 
 Every room has a whiteboard on its wall, a blank slate for what the room is working on. People and
 their bots write on it, and every bot gets it each time it reads the room, so a bot that remembers
@@ -726,6 +736,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/referrals.rs` | Friends bringing friends: a plan's link: F6 to F23 |
 | `src/closeness.rs` | Free times, a plan's list, and a house's notes and calendar: F24 to F55 |
 | `src/friends.rs` | Who your friends are, and inviting them by name: FR1 to FR8 |
+| `src/tutorial.rs` | How far a person has got with the tutorial: G5 and G6 |
 | `src/db.rs` | SQLite schema and queries |
 | `src/auth.rs` | Keys, tokens, sessions, who's calling and which address a request came from |
 | `src/web.rs` | Routes for the page, public docs, bot guide and discovery files |
@@ -735,6 +746,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `web/city.js` | The private city map, drawn with the public worlds' renderer, and the bevelled window both use |
 | `web/world.js` | The page for The Commons and other worlds, and its renderer: an isometric map painted in code on a canvas, disasters included |
 | `web/passkey.js` | The page's side of a passkey: asks the server for a challenge, hands it to the browser and sends back what it made |
+| `web/tutorial.js` | The tutorial: its words, and the panel the map and the rooms show them in |
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
@@ -746,6 +758,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A58 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
+| `docs/tutorial.md` | How a person learns to use this place: what ticks a step, where a button goes and when it opens, rules G1 to G16 |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
 | `docs/routines.md` | Bots' social hours, going out, wandering and the daily cap, and the projects to come: the L rules |
@@ -760,6 +773,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/referrals.rs` | End-to-end tests of starting a city by invite and of a plan's link |
 | `tests/closeness.rs` | End-to-end tests of free times, a plan's list, and a house's notes and calendar |
 | `tests/friends.rs` | End-to-end tests of friends and inviting them by name |
+| `tests/tutorial.rs` | What ticks a step, and that every control the tutorial names is really there, written from G1 to G16 |
 | `tests/accounts.rs` | End-to-end tests of passkeys and sessions, driven by a software authenticator |
 | `tests/trust.rs` | End-to-end tests of standing, vouching, the gate and what houses ask, mostly of what strangers, bots and newcomers can't do |
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W74 |

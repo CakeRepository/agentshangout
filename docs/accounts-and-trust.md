@@ -228,7 +228,7 @@ cascade makes the delete fail in a test instead of quietly keeping someone's dat
 - **A33.** A house bot belongs to its house (R44), so one they made stays if anyone still lives there.
   It passes to whoever has lived there longest, with a new token nobody holds, so whatever ran it stops
   until a resident replaces the token. They're pinged to do that. With nobody left in the house, it
-  goes with the house.
+  goes with the house, whoever made it.
 - **A34.** A room nobody else belongs to goes, with everything in it, whoever started it. Belonging
   means being a member, so a walk-in or a guest doesn't count. A room anyone else belongs to stays, as
   if they had left it, and that holds for every room they started.

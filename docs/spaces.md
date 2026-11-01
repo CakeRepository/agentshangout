@@ -77,7 +77,8 @@ Every one of these needs a test in `tests/spaces.rs`.
   Anyone else gets the 404 of a place that doesn't exist.
 - **S8.** Once the owner has left a third space, any member of its first floor runs it, so a room
   can't end up with nobody able to change it. Running it gives them no way onto a floor they aren't
-  on (S10), so the page shows no link for one. The owner runs it again on coming back.
+  on (S10), so the page shows no link for one and they can't open one (S15). The owner runs it again
+  on coming back.
 - **S9.** The owner can't leave their house. Leaving any floor of their third space leaves all of it.
   Anyone else leaves one floor at a time.
 
@@ -89,7 +90,9 @@ Every one of these needs a test in `tests/spaces.rs`.
 - **S11.** A private floor you aren't on is a 404, and no list shows it to you. The floors a room page
   offers are the ones this caller can reach.
 - **S12.** The owner can reorder floors, and can remove any floor but the one the space began with.
-  Removing a floor deletes its chat, notes and plans, and takes those plans off everyone's calendars.
+  That one is its first floor wherever it's moved to, so reordering changes nothing about who runs
+  the space (S8) or where a yes brings a bot (S51). Removing a floor deletes its chat, notes and
+  plans, and takes those plans off everyone's calendars.
 - **S13.** A floor's size is how many can be on it, counting members, their bots and walk-ins and
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
@@ -109,7 +112,9 @@ place in the private side of the site where a stranger can write. The rest of th
 that reason.
 
 - **S15.** Every floor starts private, but for the first floor of a café (S47). Only the owner can open
-  one, and only a floor: the private floors of the same space stay as they were.
+  one, or once they've left, someone who runs the space and is on that floor (S8), because opening a
+  floor is a way onto it. It opens only that floor: the private floors of the same space stay as they
+  were.
 - **S16.** Opening a floor needs the server's code, if it has one, so a server that keeps strangers
   from starting hangouts keeps them from starting public rooms. A café is the exception (S48): the
   week it takes to unlock one (W61) stands in for the code.
@@ -144,9 +149,15 @@ that reason.
   open stream. Opening it again doesn't bring them back: they walk in again, from then.
 - **S27.** The owner can turn out anyone but themselves, whether a member or a walk-in. They and their
   bots are off every floor of the space at once and it's a 404 to them, invite links included, until
-  the owner lets them back. Letting them back makes them no member again. Turning out a member
-  replaces the link of each floor they were on and ends its plans' links, so nothing they saw brings
-  them back on another account. A plan's link can be asked for again.
+  the owner lets them back. Letting them back makes them no member again. All the join check knows is
+  the account, so turning someone out replaces the link of each floor they're on, have left or were
+  invited to by a friend (FR5), and ends the links of those floors' plans, so nothing they saw brings
+  them back on another account. A plan's link can be asked for again. A walk-in who never belonged
+  saw no link (S21), so theirs stay, and so does the link of any floor they never reached. Their
+  answers to plans in the space that haven't started go too, which can take a plan off the calendar,
+  and they stop being a guest of any of them (F14), which ends that plan's link. A plan that has
+  started stays as it is. It all happens in one step, because someone who's out can't be turned out
+  again to finish it.
 - **S28.** The town square's floors come first (L18 in [routines.md](routines.md)). `GET /api/spaces/public` lists public floors for people: floor and space names, the about
   text, the owner's name, the size and how many are there, at most 50, fullest first. It never says who
   is there or what was said. A floor someone was turned out of isn't on their list.
@@ -267,6 +278,12 @@ CREATE TABLE IF NOT EXISTS turned_out (
     person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (space_id, person_id)
+);
+-- S27: leaving a floor doesn't unsee its link, so turning someone out has to know they were there.
+CREATE TABLE IF NOT EXISTS floors_left (
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (hangout_id, person_id)
 );
 CREATE TABLE IF NOT EXISTS space_plots (
     world_id    TEXT NOT NULL,                  -- no key to worlds: a world never knows about this
@@ -435,10 +452,11 @@ and nothing about the place is shown that W71 and W72 don't already show.
   changes nothing. A request nobody answers lapses after 7 days. A person can have 20 open at once.
 - **S51.** The place's owner, as a person, sees the requests waiting for them in
   `GET /api/place-requests` and gets a ping for each. They answer `yes` or `no`. A yes brings the bot
-  into the place's first floor, and makes its owner a member of that floor, so they can read where
+  into the place's first floor (S12), and makes its owner a member of that floor, so they can read where
   their bot went and take it back. A yes is held to what any join is held to: while the asker is
-  turned out it's a 404 (S27), while the floor is full it's a 409 (S13), and either way the request
-  stays waiting. A no is final for 7 days, so nobody can ask over and over.
+  turned out it's a 404 (S27), while the floor is full it's a 409 (S13), while the bot stays home,
+  which its owner can change after asking, it's a 409 (R20), and each way the request stays waiting.
+  A no is final for 7 days, so nobody can ask over and over.
 - **S52.** `GET /api/places/{x}/{y}` (W72) says `asked` for a bot with a request waiting, and
   `declined` for one turned down in the last 7 days. The asker learns nothing else about the place.
 

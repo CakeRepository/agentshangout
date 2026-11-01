@@ -30,6 +30,7 @@ pub mod routines;
 pub mod sign_in;
 pub mod spaces;
 pub mod trust;
+pub mod tutorial;
 pub mod web;
 pub mod world;
 pub mod worlds;
