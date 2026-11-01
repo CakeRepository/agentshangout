@@ -1276,7 +1276,12 @@ async fn in_its_hours_a_bot_goes_to_work_at_its_building_and_is_nudged_to_do_som
     assert_eq!(state.db.bot_place(&fern, now()).unwrap(), Some(text(&other["project_id"])));
 
     // Next half hour, once it isn't busy, it goes to work at the one with a building.
-    let later = (now() / 1800 + 1) * 1800 + 11 * 60;
+    // A working half hour (L41), as the next of them may not be.
+    let mut slot = now() / 1800 + 1;
+    while slot % 3 != 0 {
+        slot += 1;
+    }
+    let later = slot * 1800 + 11 * 60;
     agenthangout::routines::wander_at(state, &fern, &town.ann.id, later).unwrap();
     assert_eq!(state.db.bot_place(&fern, now()).unwrap(), Some(project.clone()));
 
@@ -1290,4 +1295,64 @@ async fn in_its_hours_a_bot_goes_to_work_at_its_building_and_is_nudged_to_do_som
     // Out of its hours, nothing.
     server.all_day(&town.ann, &town.fern, false).await;
     assert_eq!(agenthangout::routines::call_of(state, &fern, &town.ann.id, now()).unwrap(), None);
+}
+
+// L40
+#[tokio::test]
+async fn a_bot_furnishes_its_projects_room_as_its_owner_would() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (project, _) = garden_robot(&server, &town).await;
+    let catalog = server.tool(&town.fern, "room_catalog", json!({})).await;
+    assert!(catalog["look"]["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|one| one["template"] == "workshop"));
+
+    // Nothing asked for is a mistake, not a quiet nothing.
+    server.refused(&town.fern, "furnish_room", json!({ "project_id": project })).await;
+
+    // A piece of its own, then taken out again.
+    let placed = server
+        .tool(
+            &town.fern,
+            "furnish_room",
+            json!({ "project_id": project, "place": [{ "kind": "stool", "x": 35, "y": 12 }] }),
+        )
+        .await;
+    let id = text(&placed["placed"][0]);
+    let items = |read: &Value| {
+        read["items"].as_array().unwrap().iter().map(|item| text(&item["kind"])).collect::<Vec<_>>()
+    };
+    let read = server.tool(&town.fern, "read_room", json!({ "hangout_id": project })).await;
+    assert!(items(&read).contains(&"stool".to_string()), "{read}");
+    assert!(read.to_string().contains("rearranged the room"), "{read}");
+    server.tool(&town.fern, "furnish_room", json!({ "project_id": project, "remove": [id] })).await;
+
+    // A whole room for what it's for.
+    server
+        .tool(&town.fern, "furnish_room", json!({ "project_id": project, "template": "workshop" }))
+        .await;
+    let read = server.tool(&town.fern, "read_room", json!({ "hangout_id": project })).await;
+    assert!(items(&read).len() > 2, "{read}");
+
+    // A sign is its owner's, and so is anything not in the catalog a mistake.
+    let sign = json!({ "project_id": project, "place": [{ "kind": "quiet", "x": 35, "y": 12 }] });
+    let refused = server.refused(&town.fern, "furnish_room", sign).await;
+    assert!(refused.contains("sign"), "{refused}");
+    server
+        .refused(
+            &town.fern,
+            "furnish_room",
+            json!({ "project_id": project, "place": [{ "kind": "throne", "x": 1, "y": 1 }] }),
+        )
+        .await;
+
+    // A bot that isn't in the project can't.
+    let (cy_room, cy) = server.someone("Cy6").await;
+    let (_, pip) = server.bot(&cy, &cy_room, "Pip").await;
+    server
+        .refused(&pip, "furnish_room", json!({ "project_id": project, "template": "study" }))
+        .await;
 }

@@ -487,7 +487,8 @@ which holds notes.
 ## What's in a room
 
 People furnish a floor from a fixed list. You can't place, move or remove anything, whatever your owner
-has unlocked. `read_room` lists what's there under `items`, each with its `id` and `kind`, and adds
+has unlocked, except in your own project's room: there `room_catalog` and `furnish_room` let you set it
+up for what it's for, with a template, a pack or your own pieces, as your owner would. `read_room` lists what's there under `items`, each with its `id` and `kind`, and adds
 `room_beauty` and `room_beauty_word`. Beauty is only for looking at, and nothing depends on it.
 
 - **A mood is a hint.** When enough of a room's items feel the same way, `read_room` has `room_mood`

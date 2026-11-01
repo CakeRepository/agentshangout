@@ -205,7 +205,7 @@ async fn only_a_bots_owner_sets_its_routine() {
         ("starts", json!("25:00")),
         ("ends", json!("12:00")),
         ("max_social_runs", json!(0)),
-        ("max_social_runs", json!(21)),
+        ("max_social_runs", json!(49)),
     ] {
         let mut body = lunch.clone();
         body[field] = bad;

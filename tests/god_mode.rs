@@ -13,7 +13,7 @@ use std::{
 use agenthangout::{
     app, auth,
     db::Db,
-    now,
+    now, routines,
     world::{self, Ground, Kind},
     worlds::{self, Move},
     AppState, Config,
@@ -881,9 +881,19 @@ async fn public_floors_list_the_town_square_first_while_it_stands() {
     assert_eq!(room["town_square"], false);
 }
 
-// L19
+/// A time in a half hour whose number leaves `rest` over `turns`, from the next one on, 11 minutes
+/// in so a bot that just did something isn't busy (L31).
+fn half_hour(turns: i64, rest: i64) -> i64 {
+    let mut slot = now() / 1800 + 1;
+    while slot % turns != rest {
+        slot += 1;
+    }
+    slot * 1800 + 11 * 60
+}
+
+// L19, L41
 #[tokio::test]
-async fn a_bot_with_no_project_wanders_to_the_town_square() {
+async fn a_bot_with_no_project_meets_at_the_town_square_and_explores_in_turn() {
     let (server, justin, _) = Server::start().await;
     let (cafe, cy) = server.someone("Cy").await;
     server
@@ -896,12 +906,13 @@ async fn a_bot_with_no_project_wanders_to_the_town_square() {
         .ok();
     let (_, square) = server.town_square(&justin).await;
 
-    // Whichever half hour it is, and however many bots there are, they all come here.
+    // In a meeting half hour, however many bots there are, they all come here.
+    let meeting = half_hour(2, 0);
     let (room, bo) = server.someone("Bo").await;
     for name in ["Rover", "Fido", "Patch"] {
         let (bot_id, bot) = server.bot(&bo, &room, name).await;
         server.all_day(&bo, &bot_id, true).await;
-        server.post(&bot, "/api/doorbell", json!({})).await.ok();
+        routines::wander_at(&server.state, &bot_id, &bo.id, meeting).unwrap();
         assert_eq!(server.out_at(&bot).await, square.as_str(), "{name}");
     }
 
@@ -912,13 +923,19 @@ async fn a_bot_with_no_project_wanders_to_the_town_square() {
         .ok();
     let (fern_id, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.all_day(&justin, &fern_id, true).await;
-    server.post(&fern, "/api/doorbell", json!({})).await.ok();
+    routines::wander_at(&server.state, &fern_id, &justin.id, meeting).unwrap();
     assert_eq!(server.out_at(&fern).await, square.as_str());
+
+    // The half hour after, it explores: here the only other place is Cy's cafe.
+    let (scout_id, scout) = server.bot(&bo, &room, "Scout").await;
+    server.all_day(&bo, &scout_id, true).await;
+    routines::wander_at(&server.state, &scout_id, &bo.id, half_hour(2, 1)).unwrap();
+    assert_eq!(server.out_at(&scout).await, cafe.as_str());
 }
 
-// L19, L9
+// L41, L9
 #[tokio::test]
-async fn a_bot_in_a_project_wanders_as_it_did() {
+async fn a_bot_explores_its_owners_places_too_and_meets_when_there_is_nowhere_else() {
     let (server, justin, _) = Server::start().await;
     let (_, square) = server.town_square(&justin).await;
     let hall = server
@@ -929,9 +946,11 @@ async fn a_bot_in_a_project_wanders_as_it_did() {
     server.tool(&fern, "start_project", json!({ "name": "Garden robot" })).await;
     server.all_day(&justin, &fern_id, true).await;
 
-    // The only public floor is one its owner belongs to, which L9 never wanders to and L19 would.
-    server.post(&fern, "/api/doorbell", json!({})).await.ok();
-    assert!(server.out_at(&fern).await.is_null(), "L9 picked for it");
+    // Exploring, the only public floor is the square, so it meets there: its owner belonging to it
+    // doesn't keep it away.
+    routines::wander_at(&server.state, &fern_id, &justin.id, half_hour(2, 1)).unwrap();
+    assert_eq!(server.out_at(&fern).await, square.as_str());
+    server.tool(&fern, "come_back", json!({})).await;
 
     // It can still go there itself (L6).
     server.tool(&fern, "go_out", json!({ "floor_id": square })).await;

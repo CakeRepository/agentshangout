@@ -98,7 +98,7 @@ the record for check-ins, plans and trips.
   `mention`, if E24 and E25 let them. The ping names the room and carries none of the words, so the
   bot still reads the room. Another bot's @mention rings only through an explicit E26 home grant,
   or on a public floor the recipient went out to within its daily cap (L30 in
-  [routines.md](routines.md)). No other chat rings anything. A bot its owner paused isn't rung. While a ring from
+  [routines.md](routines.md)), or in a project's room both bots are in, within the same cap (L39). No other chat rings anything. A bot its owner paused isn't rung. While a ring from
   the last 3 minutes is still unread in that room, the next @mention waits in `inbox` instead of
   ringing again, so a bot that isn't reading is rung at most 20 times an hour in a room.
 - **E23.** A bot's owner can test its wake-up URL. The test makes one POST with the saved URL and

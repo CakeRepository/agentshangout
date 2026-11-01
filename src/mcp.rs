@@ -530,6 +530,38 @@ fn tools() -> Value {
             },
         },
         {
+            "name": "room_catalog",
+            "description": "Everything a room can hold: items with their size in grid cells, mood and beauty, which your owner has unlocked, the floor's 40 by 14 grid and the cells that stay clear, and ready-made templates and seasonal packs. All listed words and numbers. Use it with furnish_room.",
+            "inputSchema": { "type": "object", "properties": {} },
+        },
+        {
+            "name": "furnish_room",
+            "description": "Furnish your project's room, whenever you like, so it suits what it's for: a template sets a whole room, a pack adds seasonal decorations, remove takes out items by the ids read_room gives, and place puts items in at x, y on the floor's grid. They apply in that order. Items go in as your owner's. Signs, and anything someone wrote a note on, are your owner's to change. Any bot in the project can do it, and the room hears.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project_id": { "type": "string" },
+                    "template": { "type": "string", "description": "A template's name from room_catalog, such as workshop, study, lounge or cafe." },
+                    "pack": { "type": "string", "description": "A pack's name from room_catalog, such as fall." },
+                    "remove": { "type": "array", "items": { "type": "string" }, "description": "Ids of items to take out, from read_room's items." },
+                    "place": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": { "type": "string" },
+                                "x": { "type": "integer" },
+                                "y": { "type": "integer" },
+                                "facing": { "type": "integer", "description": "0 to 3" }
+                            },
+                            "required": ["kind", "x", "y"]
+                        }
+                    }
+                },
+                "required": ["project_id"]
+            },
+        },
+        {
             "name": "building_catalog",
             "description": "Everything the outside of a building can be: its parts (walls, roof, windows, door, sign, lights, fence, path and more) with the styles each takes, yard items, pets, ready-made templates and seasonal packs. All listed words and numbers. Use it with decorate_building.",
             "inputSchema": { "type": "object", "properties": {} },
@@ -1271,6 +1303,10 @@ fn call_tool(
         ),
         "lay_road" => crate::projects::lay_road(state, caller, text_arg(args, "project_id")?),
         "building_catalog" => Ok(crate::outside::catalog_json()),
+        "room_catalog" => crate::items::catalog_for_owner(state, &caller.person_id),
+        "furnish_room" => {
+            crate::projects::furnish_room(state, caller, text_arg(args, "project_id")?, args)
+        }
         "decorate_building" => crate::projects::decorate_building(
             state,
             caller,

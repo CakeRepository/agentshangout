@@ -1391,7 +1391,18 @@ async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Jso
     ops::require_human(&caller, "see the catalog")?;
     let friends = state.db.friend_count(&caller.person_id)?;
     let god = god_mode::is_on_for(&state, &caller)?;
-    Ok(Json(json!({
+    Ok(Json(catalog_json(friends, god)))
+}
+
+/// L40: the catalog for a bot furnishing its project's room, unlocked as its owner has it (I19).
+pub fn catalog_for_owner(state: &AppState, owner_id: &str) -> ApiResult<Value> {
+    let friends = state.db.friend_count(owner_id)?;
+    Ok(catalog_json(friends, god_mode::is_on(state, owner_id)?))
+}
+
+/// I22: the catalog, with what this many friends unlocks.
+fn catalog_json(friends: i64, god: bool) -> Value {
+    json!({
         "items": CATALOG.iter().map(|kind| {
             let unlocked = god || kind.friends <= friends;
             json!({
@@ -1434,7 +1445,84 @@ async fn catalog(State(state): State<AppState>, caller: Caller) -> ApiResult<Jso
             "templates": TEMPLATES,
             "packs": PACKS,
         },
-    })))
+    })
+}
+
+/// One item a bot asks to place for its project (L40), as a person's would be (I1).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotItem {
+    kind: String,
+    x: i64,
+    y: i64,
+    #[serde(default)]
+    facing: i64,
+}
+
+/// L40: a bot in a project furnishes its project's room as its owner would: a template, then a pack,
+/// then items to take out and items to put in. Signs are its owner's to place or take down, and so is
+/// anything someone wrote a note on. Items go in as its owner's, unlocked as theirs are (I19).
+pub fn furnish_for_project(
+    state: &AppState,
+    caller: &Caller,
+    floor_id: &str,
+    template: Option<&str>,
+    pack: Option<&str>,
+    remove: &[String],
+    add: &[BotItem],
+) -> ApiResult<Value> {
+    let place = place_of(state, caller, floor_id)?;
+    let mut said = serde_json::Map::new();
+    if let Some(word) = template {
+        let template = template_of(word)
+            .ok_or_else(|| ApiError::bad_request("that isn't a template: see room_catalog"))?;
+        said.insert("template".into(), use_template(state, caller, &place, template)?);
+    }
+    if let Some(word) = pack {
+        let pack = pack_of(word)
+            .filter(|pack| !pack.over)
+            .ok_or_else(|| ApiError::bad_request("that isn't a pack: see room_catalog"))?;
+        said.insert("pack".into(), put_up(state, caller, &place, pack)?);
+    }
+    let written_on = state.db.item_note_counts(floor_id, i64::MIN)?;
+    let mut removed = 0;
+    for id in remove {
+        let Some(item) = state.db.floor_item(id)?.filter(|item| item.hangout_id == floor_id) else {
+            return Err(ApiError::not_found());
+        };
+        if kind_of(&item.kind).is_some_and(|kind| kind.sign) {
+            return Err(ApiError::forbidden("a sign is your owner's to take down"));
+        }
+        if written_on.contains_key(&item.id) {
+            return Err(ApiError::forbidden("someone wrote a note on that, so it stays"));
+        }
+        if state.db.remove_item(&item.id)? {
+            removed += 1;
+        }
+    }
+    let friends = state.db.friend_count(&caller.person_id)?;
+    let god = god_mode::is_on(state, &caller.person_id)?;
+    let mut placed_ids = Vec::new();
+    for item in add {
+        let kind = kind_of(&item.kind)
+            .ok_or_else(|| ApiError::bad_request(format!("{} isn't in the catalog", item.kind)))?;
+        check_facing(item.facing)?;
+        if kind.sign {
+            return Err(ApiError::forbidden("a sign is your owner's to place"));
+        }
+        if kind.friends > friends && !god {
+            return Err(ApiError::forbidden(format!(
+                "{} needs your owner to have {}",
+                item.kind,
+                friends_text(kind.friends)
+            )));
+        }
+        placed_ids.push(store_item(state, caller, floor_id, kind, (item.x, item.y, item.facing))??);
+    }
+    ops::refresh(state, floor_id);
+    said.insert("removed".into(), json!(removed));
+    said.insert("placed".into(), json!(placed_ids));
+    Ok(Value::Object(said))
 }
 
 async fn place(

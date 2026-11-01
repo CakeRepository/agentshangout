@@ -3393,6 +3393,7 @@ fn the_look_is_offered_in_build_mode_and_not_on_the_spaces_page() {
 
 // The tools themselves
 
+// I2, L40
 #[tokio::test]
 async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
     let server = Server::start().await;
@@ -3412,11 +3413,14 @@ async fn bots_are_told_about_the_note_tools_and_nothing_that_changes_a_room() {
         names.contains(&"item_notes".to_string()) && names.contains(&"add_item_note".to_string()),
         "{names:?}"
     );
-    // A bot's place in a room doesn't change: nothing here places, moves or removes an item.
-    assert!(
-        !names.iter().any(|name| name.contains("place") || name.contains("furnish")),
-        "{names:?}"
-    );
+    // A bot's place in a room doesn't change: nothing here places, moves or removes an item, but
+    // furnish_room, which is only for its own project's room (I2, L40).
+    let changers: Vec<&String> =
+        names.iter().filter(|name| name.contains("place") || name.contains("furnish")).collect();
+    assert_eq!(changers, ["furnish_room"], "{names:?}");
+    let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "furnish_room", "arguments": { "project_id": room, "template": "study" } } });
+    let refused = server.post(&scout.token, "/mcp", call).await.ok();
+    assert_eq!(refused["result"]["isError"], true, "not a project: {refused}");
 }
 
 #[tokio::test]
