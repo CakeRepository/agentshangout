@@ -3502,6 +3502,49 @@ async fn every_road_the_guide_shows_works_as_written_and_costs_a_move_a_tile_and
     );
 }
 
+// W45, W87
+#[tokio::test]
+async fn first_moves_still_work_once_the_road_the_guide_shows_is_built() {
+    let server = Server::start().await;
+    let guide = server.get("/agents.md").send().await.text;
+    let joined = server.tool("join", json!({})).await;
+    let token = joined["player_token"].as_str().unwrap().to_string();
+
+    // Somebody has laid the road the guide shows, as they have on the live map.
+    let from = &guide[guide.find("{\"type\": \"").unwrap()..];
+    let mut shown: Value = serde_json::from_str(&from[..=from.find('}').unwrap()]).unwrap();
+    shown["player_token"] = json!(token);
+    assert_eq!(server.tool("build", shown).await["cost"], 10);
+
+    // An agent does what First moves says: a straight run of streets with one end beside a road.
+    let look = server
+        .tool("look", json!({ "player_token": token, "x": 52, "y": 42, "w": 24, "h": 16 }))
+        .await;
+    let at = |tile: &Value| (tile[0].as_i64().unwrap(), tile[1].as_i64().unwrap());
+    let streets: Vec<(i64, i64)> = look["streets"].as_array().unwrap().iter().map(at).collect();
+    let built = look["built"].as_array().unwrap().iter();
+    let roads: Vec<(i64, i64)> = built.filter(|tile| tile[2] == "road").map(at).collect();
+    // Longer than a lane, so it's the streets that let it through (W85).
+    let run =
+        |(x, y): (i64, i64), (dx, dy): (i64, i64)| (0..4).map(move |i| (x + dx * i, y + dy * i));
+    let (first, step) = streets
+        .iter()
+        .flat_map(|&tile| [(1, 0), (-1, 0), (0, 1), (0, -1)].map(|step| (tile, step)))
+        .find(|&(tile, step)| {
+            roads.contains(&(tile.0 - step.0, tile.1 - step.1))
+                && run(tile, step).all(|next| streets.contains(&next))
+        })
+        .expect("no run of streets starts beside a road");
+    let last = run(first, step).last().unwrap();
+    let done = server
+        .tool(
+            "build",
+            json!({ "player_token": token, "type": "road", "x": first.0, "y": first.1, "x2": last.0, "y2": last.1 }),
+        )
+        .await;
+    assert_eq!((done["cost"].as_i64(), done["changed"].as_i64()), (Some(4), Some(4)), "{done}");
+}
+
 // W45
 #[tokio::test]
 async fn every_number_the_public_pages_promise_is_the_one_the_server_uses() {
@@ -4437,4 +4480,45 @@ async fn the_guides_explain_the_land_the_score_the_goal_side_streets_visitors_an
     // The page says it too, as text and never as markup.
     let page = read_web("app.js");
     assert!(page.contains("your_town") && page.contains("Goal:") && page.contains("/me`"));
+}
+
+// W16, W45
+#[tokio::test]
+async fn the_guides_send_a_new_agent_to_look_and_recommend_an_issue_for_a_bug() {
+    let server = Server::start().await;
+    let guide = server.get("/agents.md").send().await.text;
+    let llms = server.get("/llms.txt").send().await.text;
+    let commons = &guide[..guide.find("## Private rooms").unwrap()];
+    // First moves sends an agent to streets, and doesn't read as a road to copy.
+    let first = commons.split("### First moves").nth(1).unwrap().split("### ").next().unwrap();
+    assert!(first.contains("`streets`"), "First moves never mentions streets: {first}");
+    assert!(
+        first.contains("use the ends you read from `streets`"),
+        "First moves still reads as a road to copy: {first}"
+    );
+    // A line with nothing new on it is refused, in the guide and in the tool.
+    assert!(
+        commons.contains("nothing new"),
+        "the guide never says a line with nothing new is refused"
+    );
+    let tools = server.rpc("tools/list", json!({})).await.body["result"]["tools"].clone();
+    let describe = |name: &str| {
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .map(|tool| tool["description"].as_str().unwrap().to_string())
+            .unwrap_or_default()
+    };
+    assert!(describe("build").contains("nothing new"), "{}", describe("build"));
+    assert!(describe("look").contains("streets"), "{}", describe("look"));
+    // Both guides recommend an issue for a bug, and keep the owner-first rule word for word.
+    for (name, text) in [("agents.md", &guide), ("llms.txt", &llms)] {
+        assert!(text.contains("offer to write an issue"), "{name} never recommends an issue");
+        assert!(
+            text.contains("Don't open an issue or a pull request unless they ask you to"),
+            "{name} lost the owner-first rule"
+        );
+    }
 }

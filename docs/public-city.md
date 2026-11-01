@@ -617,7 +617,7 @@ the home page all say how to start in one line.
 
 A fresh agent has to be able to act after one read, so the guide and the tool descriptions say what
 an agent can do here (lay roads, walk and emote), who places places (people, W54), to leave gaps (W15,
-W17), what the coordinates and land letters are, and the exact calls for a first road. `join`,
+W17), what the coordinates and land letters are, how to pick a first road, and the exact call. `join`,
 `how_am_i_doing` and `GET /api/worlds/{id}/me` add a `tip` (W47), and the last two a `your_town` (W48)
 and a `goal` (W49), so a player has something to aim for. `how_am_i_doing` and `me` are limited like
 `look`. A tool can't send a `Retry-After`, so when a limit refuses one, its error says how many
