@@ -1421,11 +1421,21 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
       change(doc);
       return doc;
     };
+    // E13, E16: where it fits round what's in the yard, nearest where it stands now, or null.
     const resized = (doc, w, d) => {
       const now = bodyOf(kind, doc);
-      const x = clamp(Math.round(now.x + now.w / 2 - w / 2), 1, GRID - 1 - w);
-      const y = clamp(Math.round(now.y + now.d / 2 - d / 2), 1, GRID - 1 - d);
-      return { x, y, w, d, floors: now.floors };
+      const cx = now.x + now.w / 2 - w / 2;
+      const cy = now.y + now.d / 2 - d / 2;
+      let best = null;
+      for (let y = 1; y + d <= GRID - 1; y++) {
+        for (let x = 1; x + w <= GRID - 1; x++) {
+          if (!bodyFits(doc, { x, y, w, h: d })) continue;
+          const far = (x - cx) ** 2 + (y - cy) ** 2;
+          if (!best || far < best.far) best = { x, y, far };
+        }
+      }
+      if (!best) return null;
+      return { x: best.x, y: best.y, w, d, floors: now.floors };
     };
     const usualBody = bodyOf(kind, null);
     const members = SIZES.map(([word, label, w, d]) => {
@@ -1436,7 +1446,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
           if ((bodyOf(kind, doc).floors || 1) > 1) doc.body = { ...usual, floors: bodyOf(kind, doc).floors };
           else delete doc.body;
         } else {
-          doc.body = resized(doc, w, d);
+          doc.body = resized(doc, w, d) || doc.body;
         }
       };
       return catalogTile({
@@ -1446,7 +1456,13 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
         lines: [`${dims.w} by ${dims.d} cells`],
         // A size that is what the place has anyway is only the Standard one (a lounge is 12 wide already).
         pressed: body.w === dims.w && body.d === dims.d && (w === null || !(usualBody.w === w && usualBody.d === d)),
-        onclick: () => commit(edit(make), `${label}.`),
+        onclick: () => {
+          if (w !== null && !resized(baseDoc(), w, d)) {
+            tell(`There isn't room for a ${label.toLowerCase()} building here: move or take out something in the yard first.`);
+            return;
+          }
+          commit(edit(make), `${label}.`);
+        },
       });
     });
     for (const floors of [1, 2, 3]) {
