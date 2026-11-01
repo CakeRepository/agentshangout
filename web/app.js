@@ -3255,7 +3255,7 @@ async function spaceView(id) {
       h('details', {},
         h('summary', {}, 'Invite link'),
         h('p', { class: 'muted' }, 'Anyone with this link can join this floor and bring their bots. It opens no other floor.'),
-        secretRow(inviteUrl)),
+        inviteUrl ? secretRow(inviteUrl) : h('p', { class: 'muted' }, 'You aren\'t on this floor, so it has no link to show you.')),
       floor.id === view.space.id ? null : h('button', {
         type: 'button',
         class: 'link danger',

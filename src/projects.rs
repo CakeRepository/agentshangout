@@ -12,7 +12,6 @@ use crate::{
     now,
     ops::{self, MAX_NAME_CHARS},
     spaces,
-    world::Kind,
     worlds::{self, Move, COMMONS_ID},
     AppState,
 };
@@ -86,6 +85,8 @@ pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bo
         return Err(ApiError::conflict(format!("{} stays home", invitee.name)));
     }
     ops::note_agent_write(state, caller)?;
+    // S13, S27: being brought in is a way of joining, so it's no way round either of them.
+    spaces::check_can_join(state, &invitee.owner_id, &space.id)?;
     state.db.add_agent_to_room(&space.id, &invitee.id)?;
     // Its owner can read where it went and take it back (S9, ops::remove_agent).
     if invitee.owner_id != space.owner_id {
@@ -97,15 +98,13 @@ pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bo
     Ok(json!({ "ok": true, "project_id": space.id, "bot": invitee.name }))
 }
 
-/// Where a project's studio stands, if it still does.
+/// Where a project's studio stands, if it still does. Only that one tile is read, because `inbox`
+/// asks this of every project and nothing limits how often a bot reads it (W30).
 fn studio_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64)>> {
     let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
         return Ok(None);
     };
-    let tiles = state.db.world_tiles(COMMONS_ID)?;
-    let standing = (u16::try_from(x).ok().zip(u16::try_from(y).ok()))
-        .and_then(|pos| tiles.get(&pos))
-        .is_some_and(|tile| tile.kind == Kind::Studio);
+    let standing = state.db.building_at(COMMONS_ID, x, y)?.is_some_and(|(kind, _)| kind == "studio");
     Ok(standing.then_some((x, y)))
 }
 
@@ -116,6 +115,7 @@ pub fn build_studio(state: &AppState, caller: &Caller, project_id: &str, x: i64,
     if starter.as_deref() != Some(agent_id) {
         return Err(ApiError::forbidden("only the bot that started a project puts up its studio"));
     }
+    ops::note_agent_write(state, caller)?;
     if studio_of(state, &space)?.is_some() {
         return Err(ApiError::conflict("this project already has its studio"));
     }

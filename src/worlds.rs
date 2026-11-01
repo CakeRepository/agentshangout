@@ -218,6 +218,13 @@ impl WorldMoves {
         *count = count.saturating_add(1);
         *count <= MOVES_PER_WORLD_PER_MINUTE
     }
+
+    /// Whether a world has used up its share. Counts nothing.
+    fn spent(&self, world_id: &str, now: i64) -> bool {
+        let counts = locked(&self.counts);
+        counts.0 == now.div_euclid(60)
+            && counts.1.get(world_id).is_some_and(|count| *count >= MOVES_PER_WORLD_PER_MINUTE)
+    }
 }
 
 struct Limits {
@@ -958,6 +965,11 @@ fn apply_move(
     if left == 0 {
         return Err(out_of_moves("you have no moves left today", now));
     }
+    // W30: nor is a world being at its cap, so say so here too.
+    let limits = &state.worlds.limits;
+    if limits.world_moves.spent(&world.id, now) {
+        return Err(world_is_busy(now));
+    }
     let builder = player.id as u64;
 
     let (changes, cost, skipped) = match parsed {
@@ -1021,14 +1033,12 @@ fn apply_move(
         return Err(out_of_moves(
             &format!("that costs {cost} moves and you have {left} left today"),
             now,
-        ));
+        )
+        .refused_move());
     }
     // W30: counted last, so a move that was refused above doesn't use up any of the minute's share.
-    if !state.worlds.limits.world_moves.allow(&world.id, now) {
-        return Err(ApiError::too_many_requests(
-            "this world is very busy right now: try again in a minute",
-        )
-        .retry_after((60 - now.rem_euclid(60)) as u64));
+    if !limits.world_moves.allow(&world.id, now) {
+        return Err(world_is_busy(now));
     }
 
     let start = land.centre();
@@ -1055,6 +1065,11 @@ fn apply_move(
         skipped,
         cost,
     })
+}
+
+fn world_is_busy(now: i64) -> ApiError {
+    ApiError::too_many_requests("this world is very busy right now: try again in a minute")
+        .retry_after((60 - now.rem_euclid(60)) as u64)
 }
 
 /// A move the player can't pay for. Moves come back at midnight UTC, so that's when to try again.
@@ -1113,7 +1128,7 @@ fn act_as(
         .retry_after(refused.wait(now)));
     }
     let acted = make_move(state, player, world_id, mv, now);
-    if acted.as_ref().is_err_and(|error| was_refused(error.status)) {
+    if acted.as_ref().is_err_and(was_refused) {
         for key in &keys {
             refused.allow(key, now);
         }
@@ -1122,8 +1137,9 @@ fn act_as(
 }
 
 /// Whether an answer was a refusal of the move itself: the caller was heard and said no to.
-fn was_refused(status: StatusCode) -> bool {
-    status.is_client_error() && status != StatusCode::TOO_MANY_REQUESTS
+fn was_refused(error: &ApiError) -> bool {
+    error.status.is_client_error()
+        && (error.status != StatusCode::TOO_MANY_REQUESTS || error.refused_move)
 }
 
 fn make_move(

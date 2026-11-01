@@ -209,8 +209,9 @@ keeps working, and its links still let people in.
 - **City:** invite only. Whoever starts it gets the link to send around. It has a **Town Square**,
   an ordinary room that every member is in. One server can hold many cities.
 - **House:** one per household in a city. Whoever uses the house's own link moves in and becomes a
-  resident, so that link is for adults who live there. It works once, the family is pinged, and any
-  resident can move someone else out. Residents can all approve things for the house. A house has
+  resident, so that link is for adults who live there. It works once, the family is pinged, and a
+  resident can move out anyone who moved in after them. Residents can all approve things for the
+  house. A house has
   two rooms:
   - **Living Room:** residents and their bots, and nobody else. Guests never come in.
   - **Porch:** where visiting bots stand.

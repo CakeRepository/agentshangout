@@ -1525,11 +1525,13 @@ const PASS_COLS: &str =
      (SELECT group_concat(k.key, ',') FROM pass_keys k WHERE k.pass_id = p.id)";
 const PASSES: &str = "passes p JOIN agents a ON a.id = p.agent_id";
 /// H10: where a bot on a trip `t` to house `ho` is a guest. The Porch always, and the Living Room
-/// while its accepted pass there has the Living Room key.
+/// while its accepted pass there has the Living Room key and whoever gave it still lives there.
 const GUEST_ROOM: &str = "(ho.porch = ?1 OR (ho.living_room = ?1 AND EXISTS (
     SELECT 1 FROM passes pk JOIN pass_keys k ON k.pass_id = pk.id
     WHERE pk.house_id = ho.id AND pk.agent_id = t.agent_id AND pk.accepted_by IS NOT NULL
-      AND k.key = 'living_room')))";
+      AND k.key = 'living_room'
+      AND EXISTS (SELECT 1 FROM residents gr JOIN people gp ON gp.id = gr.person_id
+                  WHERE gr.house_id = ho.id AND gp.name = k.granted_by))))";
 const SCENE_REQUEST_COLS: &str = "r.id, r.scene_id, s.name, r.house_id, r.asked_by, r.status, \
      r.answered_by, r.expires_at, r.created_at";
 const SCENE_REQUESTS: &str = "scene_requests r JOIN scenes s ON s.id = r.scene_id";
@@ -1748,6 +1750,16 @@ fn end_friend_invites(conn: &Connection, kind: &str, place_id: &str) -> rusqlite
         params![kind, place_id],
     )?;
     Ok(())
+}
+
+/// How moving in by a house's link went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveIn {
+    Moved,
+    /// The link had already been used or replaced.
+    LinkGone,
+    /// They live in another house in this city. The link is untouched.
+    LivesElsewhere,
 }
 
 /// R5: whether someone lives in a house in this city other than `house_id`.
@@ -2401,7 +2413,9 @@ impl Db {
                             JOIN passes pk ON pk.house_id = ho.id AND pk.agent_id = t.agent_id
                             JOIN pass_keys k ON k.pass_id = pk.id
                             WHERE t.agent_id = ?1 AND t.status = 'here' AND t.ends_at > ?2
-                              AND pk.accepted_by IS NOT NULL AND k.key = 'living_room')
+                              AND pk.accepted_by IS NOT NULL AND k.key = 'living_room'
+                              AND EXISTS (SELECT 1 FROM residents gr JOIN people gp ON gp.id = gr.person_id
+                                          WHERE gr.house_id = ho.id AND gp.name = k.granted_by))
                 OR h.id IN (SELECT v.hangout_id FROM floor_visits v
                             JOIN floors f ON f.hangout_id = v.hangout_id
                             WHERE v.agent_id = ?1 AND v.until > ?2 AND f.access = 'public')
@@ -3545,16 +3559,6 @@ impl Db {
         Ok(())
     }
 
-    /// R5: uses up a house's link. True for the one caller whose code was still the link, however
-    /// many arrive at the same moment.
-    pub fn take_house_invite(&self, house_id: &str, code: &str, new_code: &str) -> rusqlite::Result<bool> {
-        let changed = self.conn().execute(
-            "UPDATE houses SET invite_code = ? WHERE id = ? AND invite_code = ?",
-            params![new_code, house_id, code],
-        )?;
-        Ok(changed > 0)
-    }
-
     /// The house a Living Room or Porch belongs to. A Town Square has none.
     pub fn house_for_room(&self, hangout_id: &str) -> rusqlite::Result<Option<House>> {
         self.conn()
@@ -4065,6 +4069,29 @@ impl Db {
     /// False, with nothing changed, if they live in another house in this city. That's decided here
     /// so two requests at the same moment can't both get past it (R5).
     pub fn add_resident(&self, house_id: &str, person_id: &str, now: i64) -> rusqlite::Result<bool> {
+        Ok(self.enter_house(house_id, person_id, None, now)? == MoveIn::Moved)
+    }
+
+    /// R5: uses up a house's link and moves someone in, as one step, so however many arrive at the
+    /// same moment one person gets in and a link is only used up by someone it lets in.
+    pub fn move_in(
+        &self,
+        house_id: &str,
+        person_id: &str,
+        code: &str,
+        new_code: &str,
+        now: i64,
+    ) -> rusqlite::Result<MoveIn> {
+        self.enter_house(house_id, person_id, Some((code, new_code)), now)
+    }
+
+    fn enter_house(
+        &self,
+        house_id: &str,
+        person_id: &str,
+        link: Option<(&str, &str)>,
+        now: i64,
+    ) -> rusqlite::Result<MoveIn> {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         let (city_id, living_room, porch): (String, String, String) = tx.query_row(
@@ -4073,7 +4100,16 @@ impl Db {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         if lives_elsewhere_in_city(&tx, &city_id, person_id, house_id)? {
-            return Ok(false);
+            return Ok(MoveIn::LivesElsewhere);
+        }
+        if let Some((code, new_code)) = link {
+            let taken = tx.execute(
+                "UPDATE houses SET invite_code = ? WHERE id = ? AND invite_code = ?",
+                params![new_code, house_id, code],
+            )?;
+            if taken == 0 {
+                return Ok(MoveIn::LinkGone);
+            }
         }
         join_city(&tx, &city_id, person_id, now)?;
         tx.execute(
@@ -4087,7 +4123,29 @@ impl Db {
             )?;
         }
         tx.commit()?;
-        Ok(true)
+        Ok(MoveIn::Moved)
+    }
+
+    /// R5: whether `first` moved into this house before `second`. A tie on the clock goes by who
+    /// came first in the table.
+    pub fn moved_in_before(&self, house_id: &str, first: &str, second: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM residents a JOIN residents b ON b.house_id = a.house_id
+             WHERE a.house_id = ?1 AND a.person_id = ?2 AND b.person_id = ?3
+               AND (a.joined_at, a.rowid) < (b.joined_at, b.rowid)",
+            params![house_id, first, second],
+        )
+    }
+
+    /// Grants hold a name, and names never change, so this says whether a grant's giver is here.
+    pub fn has_resident_named(&self, house_id: &str, name: &str) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM residents r JOIN people p ON p.id = r.person_id
+             WHERE r.house_id = ? AND p.name = ?",
+            params![house_id, name],
+        )
     }
 
     /// Takes the person and their bots out of both rooms and forgets where their bots lived in
@@ -4500,6 +4558,22 @@ impl Db {
         )
     }
 
+    /// R7: trips under way here that this person said yes to, not counting any a pass covers.
+    pub fn live_trips_agreed_by(
+        &self,
+        house_id: &str,
+        person_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id FROM trips WHERE house_id = ? AND host_ok_id = ? AND pass_id IS NULL
+               AND status = 'here' AND ends_at > ?",
+        )?;
+        let rows = stmt.query_map(params![house_id, person_id, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
     /// Moves the end of a trip that's under way. False if it isn't.
     pub fn set_trip_ends_at(&self, trip_id: &str, ends_at: i64, now: i64) -> rusqlite::Result<bool> {
         let changed = self.conn().execute(
@@ -4616,12 +4690,15 @@ impl Db {
         Ok(())
     }
 
-    /// H11: who gave this bot the key, if its accepted pass to this house has it.
+    /// H11: who gave this bot the key, if its accepted pass to this house has it and they still
+    /// live there.
     pub fn key_giver(&self, agent_id: &str, house_id: &str, key: &str) -> rusqlite::Result<Option<String>> {
         self.conn()
             .query_row(
                 "SELECT k.granted_by FROM passes p JOIN pass_keys k ON k.pass_id = p.id
-                 WHERE p.agent_id = ? AND p.house_id = ? AND p.accepted_by IS NOT NULL AND k.key = ?",
+                 WHERE p.agent_id = ?1 AND p.house_id = ?2 AND p.accepted_by IS NOT NULL AND k.key = ?3
+                   AND EXISTS (SELECT 1 FROM residents gr JOIN people gp ON gp.id = gr.person_id
+                               WHERE gr.house_id = ?2 AND gp.name = k.granted_by)",
                 params![agent_id, house_id, key],
                 |row| row.get(0),
             )
@@ -4768,6 +4845,33 @@ impl Db {
     }
 
     /// What the house bot may see: approved requests that haven't lapsed, oldest first.
+    /// R7: approved scenes this person said yes to that haven't run. `answered_by` is a name.
+    pub fn decline_scenes_approved_by(&self, house_id: &str, name: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE scene_requests SET status = 'declined'
+             WHERE house_id = ? AND answered_by = ? AND status = 'approved' AND expires_at > ?",
+            params![house_id, name, now],
+        )?;
+        Ok(())
+    }
+
+    /// H12: approved scenes a bot asked for on its key that haven't run.
+    pub fn decline_scenes_on_key(
+        &self,
+        house_id: &str,
+        asked_by: &str,
+        giver: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE scene_requests SET status = 'declined'
+             WHERE house_id = ? AND asked_by = ? AND answered_by = ?
+               AND status = 'approved' AND expires_at > ?",
+            params![house_id, asked_by, giver, now],
+        )?;
+        Ok(())
+    }
+
     pub fn scene_queue(&self, house_id: &str, now: i64) -> rusqlite::Result<Vec<QueueItem>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
@@ -5022,6 +5126,15 @@ impl Db {
         conn.query_row("SELECT code FROM plan_invites WHERE event_id = ?", [event_id], |row| {
             row.get(0)
         })
+    }
+
+    /// S27: ends the links of every plan in a room. Each can be asked for again.
+    pub fn end_plan_links(&self, hangout_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "DELETE FROM plan_invites WHERE event_id IN (SELECT id FROM events WHERE hangout_id = ?)",
+            [hangout_id],
+        )?;
+        Ok(())
     }
 
     pub fn replace_plan_invite(

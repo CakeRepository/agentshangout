@@ -378,6 +378,10 @@ async fn ask_to_let_in(
     let space = place
         .space
         .ok_or_else(|| ApiError::conflict("nobody has opened this place yet, so there's nowhere to let a bot in"))?;
+    // S27: it's a 404 to them, so the owner hears nothing from someone they turned out.
+    if state.db.is_turned_out(&space.id, &caller.person_id)? {
+        return Err(ApiError::not_found());
+    }
     let now = now();
     let floors = state.db.floors_of(&space.id)?;
     let rooms: Vec<String> = state.db.hangouts_for_agent(&agent.id, now)?.into_iter().map(|room| room.id).collect();
@@ -444,11 +448,15 @@ async fn answer_place_request(
         "no" => "no",
         _ => return Err(ApiError::bad_request("response must be yes or no")),
     };
+    let floor = state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
+    // S13, S27: a yes is a way of joining, so it's no way round either of them. Refused, it still waits.
+    if status == "yes" {
+        check_can_join(&state, &asked_by, &floor.id)?;
+    }
     if !state.db.answer_place_request(&id, status, now)? {
         return Err(ApiError::conflict("that request was just answered"));
     }
     if status == "yes" {
-        let floor = state.db.floors_of(&space.id)?.into_iter().next().ok_or_else(ApiError::not_found)?;
         state.db.add_agent_to_room(&floor.id, &agent_id)?;
         state.db.add_member(&floor.id, &asked_by, now)?;
         let name = state.db.agent(&agent_id, now)?.map_or_else(|| "a bot".to_string(), |agent| agent.name);
@@ -596,7 +604,7 @@ pub fn check_fits(state: &AppState, hangout_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// Before someone joins by an invite link. S27: a link gets nobody back in after being turned out.
+/// Before someone joins, however they came to. S27: nothing gets them back in after being turned out.
 pub fn check_can_join(state: &AppState, person_id: &str, hangout_id: &str) -> ApiResult<()> {
     if let Some(space) = state.db.space_for_room(hangout_id)? {
         if state.db.is_turned_out(&space.id, person_id)? {
@@ -683,9 +691,12 @@ async fn space_view(
     let now = now();
     let mut floors = Vec::new();
     for floor in state.db.floors_of(&space.id)? {
+        // S8, S10: running a space gives nobody a way onto a floor they aren't on.
+        let on_it = space.owner_id == caller.person_id
+            || state.db.is_member(&floor.id, &caller.person_id)?;
         let code = state.db.hangout(&floor.id)?.map(|room| room.invite_code).unwrap_or_default();
         floors.push(FloorDetail {
-            invite_url: api::invite_url(&state, &code),
+            invite_url: if on_it { api::invite_url(&state, &code) } else { String::new() },
             here: state.db.on_floor(&floor.id, now)?,
             capacity: capacity(&floor.size),
             floor,
@@ -916,7 +927,19 @@ async fn turn_out(
     }
     let person = someone_in_space(&state, &space, &person_id)?;
     let floors = state.db.floors_of(&space.id)?;
+    // S27: a member saw these links, and all the join check knows is the account. A walk-in never
+    // saw one.
+    let mut saw = Vec::new();
+    for floor in &floors {
+        if state.db.is_member(&floor.id, &person.id)? {
+            saw.push(floor.id.clone());
+        }
+    }
     state.db.turn_out(&space.id, &person.id, now())?;
+    for floor_id in &saw {
+        state.db.set_invite_code(floor_id, &auth::new_invite_code())?;
+        state.db.end_plan_links(floor_id)?;
+    }
     for floor in &floors {
         state.presence.forget(&floor.id, &person.id);
     }
