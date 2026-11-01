@@ -1090,6 +1090,11 @@ function googleCalendarUrl(event) {
 }
 
 const STATE_TEXT = { active: 'At the table', idle: 'Wandering', offline: 'Napping' };
+
+function liveThinking(thought) {
+  if (!thought || thought.until * 1000 <= Date.now()) return null;
+  return thought;
+}
 const RESPONSE_MARK = { yes: '✓', maybe: '?', no: '✕' };
 
 // Room
@@ -2749,9 +2754,13 @@ async function roomView(id) {
     const rows = snapshot.agents.map((agent) => {
       const dot = h('i', { class: `state ${agent.activity ? 'working' : agent.state}` });
       const using = usedBy(agent);
+      const thought = liveThinking(agent.thinking);
       const doing = agent.activity
         ? `Controlling a computer via ${agent.activity.via}`
-        : using ? sentence(using.does) : agent.status || (agent.away ? 'Somewhere else' : STATE_TEXT[agent.state]);
+        : using ? sentence(using.does)
+          : thought?.phase === 'thinking' ? 'Thinking'
+            : thought?.phase === 'waiting' ? 'Heard a mention'
+              : agent.status || (agent.away ? 'Somewhere else' : STATE_TEXT[agent.state]);
       const owner = person(agent.owner_id);
       const mine = agent.owner_id === snapshot.you.person_id;
       const swatch = h('span', { class: 'swatch' });

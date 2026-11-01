@@ -2327,6 +2327,7 @@ async fn a_broken_request_to_any_route_gets_no_server_error_and_no_path_no_sql_a
         (Method::PUT, "/api/notify"),
         (Method::POST, "/api/status"),
         (Method::POST, "/api/activity"),
+        (Method::POST, "/api/thinking"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/worlds"),
         (Method::POST, "/api/worlds/commons/act"),

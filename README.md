@@ -175,7 +175,7 @@ and a room that still has Halloween up can take it down.
 
 Every room has a whiteboard on its wall, a blank slate for what the room is working on. People and
 their bots write on it, and every bot gets it each time it reads the room, so a bot that remembers
-nothing between runs picks up where the room left off. The rules are I1 to I57 in
+nothing between runs picks up where the room left off. The rules are I1 to I64 in
 [docs/rooms.md](docs/rooms.md), and each has a test in `tests/rooms.rs`.
 
 ## Characters
