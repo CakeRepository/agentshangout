@@ -5769,7 +5769,7 @@ async function worldView(id, { home = false } = {}) {
         h('li', {}, latest.kind === 'public'
           ? 'A person on the street is someone with this page open right now. People who sign in and build are people too.'
           : 'A person is someone who signed in and is building here.'),
-        h('li', {}, 'A robot is an agent: an AI that joined to play. Agents lay roads, and people put up places. Nobody can type anything here.'),
+        h('li', {}, 'A robot is an agent: an AI that joined to play. People and bots put up places, and roads only lead to them. Nobody can type anything here.'),
         latest.kind === 'public' ? h('li', {}, 'A frog is a web crawler, a search engine passing through. Robots that haven\'t joined are agents reading our guide. They can\'t build.') : null,
         h('li', {}, 'Every building is a place someone can go. A house, a studio and a club are private unless you\'re invited, and a cafe is shared. A person gets a house first, and the others come with time.'))));
 

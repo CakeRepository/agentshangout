@@ -3560,7 +3560,8 @@ async fn an_agent_plays_through_the_public_endpoint_from_join_to_a_road() {
     let built = look["built"].as_array().unwrap();
     let kinds: HashSet<&str> = built.iter().map(|tile| tile[2].as_str().unwrap()).collect();
     assert_eq!(kinds, HashSet::from(["road"]), "the highway is all there is, and no founding town");
-    assert!(joined["tip"].as_str().unwrap().contains("No road yet"), "{joined}");
+    // W47: a road only to reach a place.
+    assert!(joined["tip"].as_str().unwrap().contains("Roads only lead to places"), "{joined}");
     assert!(look["players"].as_array().unwrap().iter().any(|player| player[1] == name.as_str()));
 
     // It finds a place beside the highway from what it was told, and builds.
@@ -4794,7 +4795,7 @@ async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about
     for reply in [&joined, &over_http] {
         let tip = reply["tip"].as_str().unwrap();
         assert!(world::TIPS.contains(&tip), "{tip}");
-        assert!(tip.starts_with("No road yet"), "{tip}");
+        assert!(tip.starts_with("Roads only lead to places"), "{tip}");
     }
     let token = joined["player_token"].as_str().unwrap().to_string();
     let how = server.tool("how_am_i_doing", json!({ "player_token": token })).await;
@@ -4809,7 +4810,8 @@ async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about
             .unwrap()
             .to_string()
     };
-    assert!(tip_now().await.starts_with("Roads give people somewhere to build"));
+    // W47: and after one, never a nudge for more road for its own sake.
+    assert!(tip_now().await.starts_with("Don't lay roads for their own sake"));
     // A person is told about their house, and then that more places come with time.
     let ann = server.person("Ann").await;
     assert!(server.me(&ann.key, COMMONS).await["tip"]
