@@ -60,6 +60,7 @@ const PAINTS = {
   ink: { upper: '#23293a', stripe: '#292f42', lower: '#1a1f2d', panel: '#141824' },
   sky: { upper: '#86bedb', stripe: '#90c6e1', lower: '#5f93ad', panel: '#527f97' },
   haunted: { upper: '#2c2042', stripe: '#33264c', lower: '#20172f', panel: '#2b1a2e', webs: true },
+  harvest: { upper: '#9a4a24', stripe: '#a65528', lower: '#4a2e1e', panel: '#3c2418', turned: true },
 };
 const FLOORINGS = {
   oak: { a: '#a97b4e', b: '#a27347', line: '#8b6039', style: 'planks' },
@@ -68,6 +69,7 @@ const FLOORINGS = {
   carpet: { a: '#4d6a78', b: '#4a6673', line: '#415a66', style: 'carpet' },
   grass: { a: '#5f9a4f', b: '#6ba85a', line: '#4f8441', style: 'grass' },
   crypt: { a: '#57545f', b: '#4e4b56', line: '#34323c', style: 'flagstones' },
+  leaves: { a: '#5a3c26', b: '#533621', line: '#3f2a1a', style: 'leaves' },
 };
 const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
 
@@ -204,7 +206,7 @@ export function skyFor(hour) {
   return { top: '#2a2f6b', low: '#c2607a', stars: true, dim: 0.16 };
 }
 
-function paintWindow(g, x, y, w, h, sky) {
+function paintWindow(g, x, y, w, h, sky, turned) {
   r(g, '#20283e', x - 3, y - 3, w + 6, h + 7);
   const gradient = g.createLinearGradient(0, y, 0, y + h);
   gradient.addColorStop(0, sky.top);
@@ -214,14 +216,79 @@ function paintWindow(g, x, y, w, h, sky) {
   if (sky.stars) {
     for (let i = 0; i < 9; i++) r(g, '#fff', x + ((i * 37) % w), y + ((i * 23) % (h - 8)), 1, 1);
   }
-  g.fillStyle = sky.stars ? '#141a3a' : '#5f8f6d';
+  const autumn = turned && !sky.stars;
+  g.fillStyle = sky.stars ? '#141a3a' : autumn ? '#8a6a30' : '#5f8f6d';
   for (let i = 0; i < w; i++) {
     const hill = Math.round(5 + 3 * Math.sin((i + x) / 9));
     g.fillRect(x + i, y + h - hill, 1, hill);
   }
+  if (autumn) {
+    // A treeline of small clumps along the ridge, gone red, orange and gold.
+    const crowns = ['#b33a1f', '#e8802a', '#d9a520', '#8c2a1e', '#f0a03c', '#7f8c3a', '#d4502a'];
+    for (let k = 0; k * 6 + 3 < w; k++) {
+      const cx = k * 6 + 3;
+      const base = y + h - Math.round(5 + 3 * Math.sin((cx + x) / 9));
+      const crown = crowns[(k * 3) % crowns.length];
+      r(g, crown, x + cx - 2, base - 3, 5, 3);
+      r(g, crown, x + cx - 1, base - 4 - (k % 2), 3, 1 + (k % 2));
+      r(g, shade(crown, 0.25), x + cx - 2, base - 3, 2, 1);
+      r(g, '#3f2a1c', x + cx, base, 1, 1);
+    }
+  }
   r(g, '#20283e', x + w / 2 - 1, y, 2, h);
   r(g, '#20283e', x, y + h / 2 - 1, w, 2);
   r(g, '#d8c7a3', x - 5, y + h + 3, w + 10, 2);
+}
+
+// A garland of autumn leaves on twine, pinned over the windows and swagging in the gaps either side
+// of the whiteboard.
+function paintGarland(g) {
+  const leaf = ['#b33a1f', '#e8802a', '#d9a520', '#d4502a', '#f0a03c', '#8c2a1e', '#eab34a', '#7f8c3a'];
+  const stringOf = [
+    [2, 8, 34, 6, 5], [34, 6, 72, 5, 3], [72, 5, 110, 6, 3], [110, 6, 144, 10, 22],
+    [336, 10, 370, 6, 14], [370, 6, 408, 5, 3], [408, 5, 446, 6, 3], [446, 6, 478, 8, 5],
+  ];
+  let n = 0;
+  for (const [x0, y0, x1, y1, sag] of stringOf) {
+    const span = x1 - x0;
+    const twineY = (x) => {
+      const u = (x - x0) / span;
+      return Math.round(y0 + (y1 - y0) * u + sag * 4 * u * (1 - u));
+    };
+    for (let x = x0; x <= x1; x++) r(g, '#c9a86a', x, twineY(x), 1, 1);
+    for (let x = x0 + 1; x < x1; x += 2) r(g, '#8a5c37', x, twineY(x) + 1, 1, 1);
+    // Leaves hang on the twine in clusters of two or three, and every so often an acorn or a berry.
+    const step = sag > 10 ? 6 : 9;
+    for (let x = x0 + 4; x < x1 - 2; x += step, n++) {
+      const y = twineY(x);
+      const pick = (k) => leaf[(n * 3 + k * 5) % leaf.length];
+      if (n % 4 === 3) {
+        r(g, '#6b4628', x, y + 1, 1, 2);
+        r(g, '#8a5c37', x - 1, y + 3, 3, 1);
+        r(g, '#c9a86a', x - 1, y + 4, 3, 2);
+        r(g, '#a8843f', x + 1, y + 4, 1, 2);
+        continue;
+      }
+      if (n % 4 === 2) {
+        r(g, '#8c2a1e', x, y + 1, 2, 2);
+        r(g, '#d4502a', x, y + 1, 1, 1);
+        r(g, pick(1), x - 4, y, 3, 2);
+        continue;
+      }
+      for (const [dx, dy, size] of [[-3, 1, 1], [0, 1, 2], [3, 1, 1]]) {
+        const color = pick(dx + 4);
+        const lx = x + dx;
+        const ly = y + dy;
+        r(g, color, lx - 1, ly, 3, 2 + size);
+        r(g, color, lx - 2, ly + 1, 5, size);
+        r(g, shade(color, 0.28), lx - 1, ly, 1, 1);
+        r(g, shade(color, -0.3), lx + 1, ly + 1 + size, 1, 1);
+      }
+    }
+    // A pin at each end.
+    r(g, '#3f2a1c', x0, y0 - 1, 2, 3);
+    r(g, '#3f2a1c', x1, y1 - 1, 2, 3);
+  }
 }
 
 // Cobwebs in the top corners, and bats asleep on the wall in the gaps either side of the whiteboard.
@@ -253,6 +320,50 @@ function paintWebs(g) {
     r(g, bat, x + 3, y + 1, 1, 1);
     r(g, '#ff8a3d', x - 1, y - 1, 1, 1);
     r(g, '#ff8a3d', x + 1, y - 1, 1, 1);
+  }
+}
+
+// Each is its size, then the rectangles of the leaf, then of its vein.
+const FALLEN_LEAVES = [
+  [[7, 6], [[3, 0, 1, 1], [1, 1, 5, 1], [0, 2, 7, 2], [1, 4, 5, 1], [3, 5, 1, 1]], [[3, 1, 1, 4]]],
+  [[5, 3], [[0, 1, 5, 1], [1, 0, 2, 1], [2, 2, 2, 1]], [[1, 1, 3, 1]]],
+  [[6, 5], [[2, 0, 2, 1], [1, 1, 4, 1], [0, 2, 6, 1], [1, 3, 4, 1], [2, 4, 2, 1]], [[2, 2, 3, 1]]],
+];
+const FALLEN_COLORS = ['#8c2a1e', '#a8401f', '#b86a1e', '#a8841f', '#5f6b2e', '#c8641e'];
+const LEAF_HEAPS = [[58, 150], [425, 165], [250, 238]];
+
+// Leaves drift against the walls and thin out where people walk. Two small mixers place them, so
+// that no rows or columns show, and most of each drift lies close to its wall.
+function paintFallenLeaves(g) {
+  const near = (n, reach) => Math.floor((n * n * reach) / 1e6);
+  for (let i = 0; i < 120; i++) {
+    const one = Math.imul(i + 1, 2654435761) >>> 0;
+    const two = Math.imul(i + 7, 2246822519) >>> 0;
+    const across = (one >>> 8) % 1000;
+    const down = (two >>> 8) % 1000;
+    const drift = (one >>> 3) % 10;
+    let x = Math.floor((across * (W - 10)) / 1000);
+    let y = WALL + 3 + Math.floor((down * (H - WALL - 12)) / 1000);
+    if (drift < 4) y = WALL + 3 + near(down, 32);
+    else if (drift < 6) x = near(across, 60);
+    else if (drift < 8) x = W - 10 - near(across, 60);
+    else if (drift === 8) y = H - 8 - near(down, 32);
+    else {
+      const [heapX, heapY] = LEAF_HEAPS[(one >>> 12) % LEAF_HEAPS.length];
+      x = heapX + (across % 25) - 12;
+      y = heapY + (down % 15) - 7;
+    }
+    const [size, blade, vein] = FALLEN_LEAVES[(two >>> 4) % FALLEN_LEAVES.length];
+    const color = FALLEN_COLORS[(one >>> 16) % FALLEN_COLORS.length];
+    const turn = (two >>> 2) % 4;
+    const fill = (tone, rects) => {
+      for (const [dx, dy, w, h] of rects) {
+        const [left, top, wide, tall] = turn & 1 ? [dy, dx, h, w] : [dx, dy, w, h];
+        r(g, tone, x + (turn & 2 ? size[turn & 1] - left - wide : left), y + top, wide, tall);
+      }
+    };
+    fill(color, blade);
+    fill(shade(color, -0.35), vein);
   }
 }
 
@@ -309,6 +420,7 @@ function paintFloor(g, { a, b, line, style }) {
     r(g, line, 0, y + 9, W, 1);
     for (let x = (row * 37) % 60; x < W; x += 60) r(g, line, x, y, 1, 9);
   }
+  if (style === 'leaves') paintFallenLeaves(g);
 }
 
 // Under the table.
@@ -332,9 +444,10 @@ function paintRoom(g, hour, look) {
   r(g, '#c9a86a', 0, 45, W, 1);
   r(g, '#1b2236', 0, 64, W, 3);
 
-  paintWindow(g, 36, 10, 72, 32, sky);
-  paintWindow(g, 372, 10, 72, 32, sky);
+  paintWindow(g, 36, 10, 72, 32, sky, paint.turned);
+  paintWindow(g, 372, 10, 72, 32, sky, paint.turned);
   if (paint.webs) paintWebs(g);
+  if (paint.turned) paintGarland(g);
 
   // Floor
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
@@ -1691,6 +1804,1097 @@ function paintResearchBench(g, x, y, t, wide, deep) {
   r(g, '#20283e', x + 8, top + 3, 6, 1);
 }
 
+// The Fall pack, for Thanksgiving and the leaves changing.
+
+const FALL_WOOD = ['#3f2a1c', '#6b4628', '#8a5c37', '#a0703f'];
+const FALL_STRAW = ['#a8843f', '#c9a86a', '#e3c987'];
+
+// A rounded lump of stacked rows, `hw` out each side and `hh` up and down from its middle. `low` cuts
+// it off below its middle.
+function paintLump(g, color, cx, cy, hw, hh, low = hh) {
+  for (let dy = -hh; dy <= low; dy++) {
+    const w = Math.max(1, Math.round(hw * Math.sqrt(1 - (dy / (hh + 0.5)) ** 2)));
+    r(g, color, cx - w, cy + dy, w * 2, 1);
+  }
+}
+
+// The Fall pack's trees and leaves. Nothing here draws a curve: a round clump is a stack of rows, as
+// with the pumpkin. Leaves that fall hold where they were for someone who asked for less motion.
+
+const LEAVES_RED = ['#8c2a1e', '#b33a1f', '#d4502a'];
+const LEAVES_ORANGE = ['#c8641e', '#e8802a', '#f0a03c'];
+const LEAVES_GOLD = ['#d9a520', '#eab34a', '#f6d98a'];
+const LEAVES_GREEN = ['#5f6b2e', '#7f8c3a', '#a3a84a'];
+
+// One loose leaf, two pixels square with a darker underside.
+function leavesLeaf(g, color, x, y) {
+  r(g, color, x, y, 2, 2);
+  r(g, shade(color, -0.22), x + 1, y + 1, 2, 1);
+}
+
+// A leaf let go: it drifts down swaying, lies a moment on the floor and goes. `phase` is where it is
+// in its cycle.
+function leavesFall(g, color, x, top, ground, phase, sway, t, seed) {
+  if (phase >= 48) return;
+  if (phase >= 34) {
+    r(g, color, x, ground - 1, 3, 1);
+    return;
+  }
+  const drop = Math.round(phase * ((ground - top) / 34));
+  const over = Math.round(Math.sin(t / 260 + seed * 2) * sway);
+  leavesLeaf(g, color, x + over, top + drop);
+}
+
+// A whole number scrambled from another, so leaves land the same way every time.
+function leavesMix(n) {
+  n = Math.imul(n ^ (n >>> 15), 0x2c1b3c6d);
+  n = Math.imul(n ^ (n >>> 12), 0x297a2d39);
+  return (n ^ (n >>> 15)) >>> 0;
+}
+
+// A clump of leaves: a few rows with ragged ends, so no edge is a smooth curve.
+function leavesCloud(g, color, cx, cy, hw, hh, low, seed) {
+  for (let dy = -hh; dy <= low; dy++) {
+    const w = Math.round(hw * Math.sqrt(1 - (dy / (hh + 0.5)) ** 2));
+    const m = leavesMix(cx * 31 + cy * 17 + dy * 7 + seed);
+    const left = Math.max(1, w + (m % 3) - 1);
+    const right = Math.max(1, w + ((m >>> 4) % 3) - 1);
+    r(g, color, cx - left, cy + dy, left + right, 1);
+  }
+}
+
+// A crown built in layers from clumps [dx, dy, hw, hh, lit] around (x, y): all dark, then the mid tone
+// moved up and left, then light only on the lit ones, then dabs of single leaves, some of them past the
+// edge. `tones(dx, dy)` gives [dark, mid, light, top] and `dabs` is { n, seed, color(dx, dy), wide, top }.
+function paintCrown(g, x, y, clumps, tones, dabs) {
+  for (const [dx, dy, hw, hh] of clumps) leavesCloud(g, tones(dx, dy)[0], x + dx, y + dy, hw, hh, hh, 1);
+  for (const [dx, dy, hw, hh] of clumps) {
+    leavesCloud(g, tones(dx, dy)[1], x + dx - 1, y + dy - 2, Math.max(1, hw - 1), hh - 1, hh - 3, 2);
+  }
+  for (const [dx, dy, hw, hh, lit] of clumps) {
+    if (lit > 0) leavesCloud(g, tones(dx, dy)[2], x + dx - 2, y + dy - 3, Math.max(1, hw - 2), Math.max(2, hh - 3), 0, 3);
+    if (lit > 1) leavesCloud(g, tones(dx, dy)[3], x + dx - 3, y + dy - 4, Math.max(1, hw - 3), Math.max(2, hh - 4), -1, 4);
+  }
+  for (let i = 0; i < dabs.n; i++) {
+    const m = leavesMix(i * 7919 + dabs.seed);
+    const [dx, dy, hw, hh] = clumps[m % clumps.length];
+    const n = leavesMix(m);
+    let ox = (n % (2 * hw + 3)) - hw - 1;
+    let oy = ((n >>> 8) % (2 * hh + 3)) - hh - 1;
+    if (i % 6 === 0) {
+      if (Math.abs(dx) > 6) ox = Math.sign(dx) * (hw + 1);
+      else oy = dy < 0 ? -hh - 1 : hh + 1;
+    }
+    const px = dx + ox;
+    const py = dy + oy;
+    if (Math.abs(px) > dabs.wide - 2 || py < dabs.top) continue;
+    r(g, dabs.color(px, py), x + px, y + py, (n >>> 16) & 1 ? 2 : 1, (n >>> 16) & 1 ? 1 : 2);
+  }
+}
+
+function paintMapleTree(g, x, y, t, wide) {
+  const k = Math.min(1, Math.max(0.7, wide / 36));
+  const s = (v) => Math.round(v * k);
+  const [deep, red, bright] = LEAVES_RED;
+  const [, orange, amber] = LEAVES_ORANGE;
+  const cy = y - 40;
+  r(g, SHADOW, x - 17, y - 2, 34, 2);
+  // The trunk flares at its foot, with roots, and forks up into the crown.
+  r(g, FALL_WOOD[1], x - 10, y - 2, 20, 2);
+  r(g, FALL_WOOD[1], x - 8, y - 5, 16, 3);
+  r(g, FALL_WOOD[1], x - 4, y - 36, 8, 32);
+  r(g, FALL_WOOD[2], x - 10, y - 2, 3, 2);
+  r(g, FALL_WOOD[2], x - 8, y - 5, 2, 3);
+  r(g, FALL_WOOD[2], x - 4, y - 36, 2, 32);
+  r(g, FALL_WOOD[0], x + 2, y - 36, 2, 32);
+  r(g, FALL_WOOD[0], x + 3, y - 5, 3, 3);
+  r(g, FALL_WOOD[0], x + 6, y - 2, 3, 2);
+  r(g, FALL_WOOD[0], x - 1, y - 24, 1, 6);
+  r(g, FALL_WOOD[0], x - 2, y - 14, 2, 1);
+  // Lumps wider at the shoulders and lopsided, the last number saying how much light each takes.
+  const lumps = [
+    [-12, 6, 6, 5, 0], [-4, 10, 7, 5, 0], [5, 11, 6, 5, 0], [12, 6, 6, 5, 0],
+    [-13, -3, 5, 6, 1], [-6, 0, 8, 7, 0], [4, 0, 8, 7, 0], [13, -3, 5, 6, 0],
+    [-12, -9, 6, 6, 2], [11, -10, 6, 6, 1], [-7, -13, 7, 6, 2], [3, -15, 7, 6, 2],
+    [-2, -19, 6, 5, 2], [-9, -18, 4, 4, 2], [12, -17, 4, 4, 1], [-15, -14, 3, 4, 1],
+  ].map(([dx, dy, hw, hh, lit]) => [s(dx), dy, Math.max(2, s(hw)), hh, lit]);
+  const tint = (ux, uy) => {
+    const l = (-ux / 19 - uy / 26) / 2 + ((leavesMix(ux * 9 + uy * 5) % 5) - 2) / 14;
+    if (l < -0.5) return deep;
+    if (l < -0.15) return red;
+    if (l < 0.1) return bright;
+    if (l < 0.38) return orange;
+    return l > 0.6 && ux < -3 ? LEAVES_GOLD[1] : amber;
+  };
+  paintCrown(g, x, cy, lumps, () => [deep, red, bright, orange], { n: 76, seed: 11, color: tint, wide: 19, top: -26 });
+  // The gap where the branches show under the leaves.
+  r(g, FALL_WOOD[1], x - 3, y - 34, 6, 10);
+  r(g, FALL_WOOD[0], x + 1, y - 34, 2, 10);
+  r(g, FALL_WOOD[2], x - 3, y - 34, 1, 10);
+  r(g, FALL_WOOD[1], x - 5, y - 36, 2, 3);
+  r(g, FALL_WOOD[1], x - 7, y - 38, 2, 3);
+  r(g, FALL_WOOD[1], x + 3, y - 36, 2, 3);
+  r(g, FALL_WOOD[1], x + 5, y - 38, 2, 3);
+  r(g, FALL_WOOD[0], x + 6, y - 38, 1, 3);
+  // Leaves on the ground, then three that let go.
+  leavesLeaf(g, red, x - 15, y - 3);
+  leavesLeaf(g, orange, x + 12, y - 3);
+  leavesLeaf(g, LEAVES_GOLD[0], x - 11, y - 1);
+  r(g, bright, x + 15, y - 1, 3, 1);
+  const drift = [bright, amber, LEAVES_GOLD[1]];
+  const from = [-5, 1, 6];
+  for (let i = 0; i < 3; i++) {
+    leavesFall(g, drift[i], x + s(from[i]), y - 28, y, (t / 40 + i * 19 + 8) % 56, 3, t, i);
+  }
+}
+
+// Where along a branch (from x0, y0 going `dir`, `run` across and `rise` up) the i-th step is: it
+// climbs, then droops at the tip.
+function leavesBranchAt(x0, y0, dir, run, rise, i) {
+  return [x0 + dir * i, y0 - Math.floor((i * rise) / run) + Math.max(0, i - (run - 3))];
+}
+
+function paintBirchTree(g, x, y, t, wide) {
+  const k = Math.min(1, Math.max(0.7, wide / 36));
+  const s = (v) => Math.round(v * k);
+  const cy = y - 46;
+  r(g, SHADOW, x - 11, y - 2, 22, 2);
+  // The white trunk rises into the crown and forks into slim branches that droop at their tips.
+  r(g, '#f4f1e8', x - 2, y - 46, 4, 46);
+  r(g, '#d8c7a3', x + 1, y - 46, 2, 46);
+  r(g, '#f4f1e8', x - 3, y - 3, 6, 3);
+  r(g, '#d8c7a3', x + 2, y - 3, 1, 3);
+  r(g, '#f4f1e8', x - 1, y - 58, 2, 12);
+  r(g, '#d8c7a3', x + 1, y - 58, 1, 12);
+  for (let i = 0; i < 7; i++) {
+    r(g, FALL_WOOD[0], x - 2 + (i % 2) * 2, y - 6 - i * 5, 2 + (i % 3 === 0 ? 1 : 0), 1);
+    if (i % 2 === 0) r(g, FALL_WOOD[1], x - 1, y - 8 - i * 5, 1, 2);
+  }
+  const branches = [[30, -1, 12, 9], [33, 1, 13, 11], [40, -1, 14, 14], [42, 1, 14, 15], [48, -1, 9, 10], [50, 1, 9, 11]];
+  const lumps = [];
+  branches.forEach(([up, dir, run, rise], b) => {
+    const reach = Math.max(2, s(run));
+    for (let i = 0; i <= reach; i++) {
+      const [px, py] = leavesBranchAt(x, y - up, dir, reach, rise, i);
+      r(g, '#d8c7a3', px, py, 1, 2);
+    }
+    [0.4, 0.7, 1].forEach((at, j) => {
+      const [px, py] = leavesBranchAt(x, y - up, dir, reach, rise, Math.round(reach * at));
+      const m = leavesMix(b * 5 + j * 11 + 3);
+      lumps.push([px - x + (m % 3) - 1, py - cy + (j === 1 ? -2 : 2), 3, 2 + ((m >>> 6) % 2), 0]);
+    });
+  });
+  [[0, -13], [-5, -10], [5, -9], [0, -6], [-3, -2], [4, -1]].forEach(([dx, dy]) => lumps.push([dx, dy, 3, 2, 0]));
+  lumps.forEach((c) => { c[4] = c[0] + c[1] < -6 ? 1 : 0; });
+  // Colour goes with distance from the middle: late green, olive, gold, then orange at the edge.
+  const tone = (dx, dy) => {
+    const d = Math.hypot(dx / 19, (dy * 0.8) / 20);
+    return d < 0.2 ? LEAVES_GREEN[0] : d < 0.36 ? LEAVES_GREEN[1] : d < 0.5 ? LEAVES_GREEN[2]
+      : d < 0.64 ? LEAVES_GOLD[0] : d < 0.7 ? LEAVES_GOLD[1] : LEAVES_ORANGE[1];
+  };
+  const shades = (dx, dy) => {
+    const c = tone(dx, dy);
+    return [shade(c, -0.28), c, shade(c, 0.18), shade(c, 0.3)];
+  };
+  const speck = (dx, dy) => shade(tone(dx, dy), ((leavesMix(dx * 3 + dy) % 3) - 1) * 0.18);
+  paintCrown(g, x, cy, lumps, shades, { n: 34, seed: 5, color: speck, wide: 19, top: -20 });
+  // Gold leaves let go, slower than the maple's.
+  for (let i = 0; i < 2; i++) {
+    leavesFall(g, i ? LEAVES_GOLD[2] : LEAVES_GOLD[0], x + s(i ? 6 : -6), y - 28, y, (t / 70 + i * 28) % 56, 2, t, i + 3);
+  }
+  leavesLeaf(g, LEAVES_GOLD[0], x - 12, y - 2);
+  r(g, LEAVES_ORANGE[1], x + 10, y - 1, 3, 1);
+}
+
+function paintLeafPile(g, x, y, t, wide) {
+  const k = Math.min(1, Math.max(0.5, wide / 24));
+  const s = (v) => Math.sign(v) * Math.max(1, Math.round(Math.abs(v) * k));
+  const [deep, red, bright] = LEAVES_RED;
+  const [rust, orange, amber] = LEAVES_ORANGE;
+  const [dim, gold, pale] = LEAVES_GOLD;
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  // A raked mound in round clumps of one color each, the darkest at its foot.
+  paintLump(g, deep, x, y - 1, s(11), 12, 0);
+  paintLump(g, red, x - s(6), y - 3, s(5), 4, 2);
+  paintLump(g, rust, x + s(7), y - 3, s(4), 4, 2);
+  paintLump(g, bright, x + s(1), y - 4, s(5), 4, 2);
+  paintLump(g, dim, x - s(9), y - 3, s(2), 2, 1);
+  paintLump(g, red, x + s(2), y - 8, s(7), 5, 2);
+  paintLump(g, orange, x - s(5), y - 8, s(5), 4);
+  paintLump(g, gold, x + s(6), y - 8, s(4), 3);
+  paintLump(g, amber, x - s(4), y - 10, s(4), 3);
+  paintLump(g, orange, x + s(2), y - 11, s(4), 2);
+  paintLump(g, gold, x - s(1), y - 12, s(3), 1);
+  paintLump(g, pale, x - s(6), y - 11, s(2), 1);
+  r(g, deep, x - s(2), y - 5, 3, 1);
+  r(g, deep, x + s(5), y - 6, 2, 1);
+  r(g, bright, x + s(5), y - 10, 2, 1);
+  // Loose leaves round it, and one on top that flutters.
+  leavesLeaf(g, orange, x - 12, y - 2);
+  leavesLeaf(g, red, x + 10, y - 3);
+  r(g, gold, x + 8, y - 1, 3, 1);
+  r(g, amber, x - 9, y - 1, 2, 1);
+  const flap = Math.floor(t / 300) % 2;
+  r(g, bright, x + 1 - flap, y - 15 - flap, 3 - flap, 2 + flap);
+  r(g, deep, x + 2, y - 14, 2, 1);
+}
+
+function paintRake(g, x, y) {
+  const [wood, grain, pale] = [FALL_WOOD[1], FALL_WOOD[2], FALL_WOOD[3]];
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  // A wooden handle standing over a fan of tines.
+  r(g, wood, x - 1, y - 38, 3, 24);
+  r(g, pale, x - 1, y - 38, 1, 24);
+  r(g, FALL_WOOD[0], x + 1, y - 38, 1, 24);
+  r(g, FALL_STRAW[1], x - 1, y - 38, 3, 2);
+  r(g, grain, x, y - 26, 1, 1);
+  r(g, FALL_WOOD[0], x - 1, y - 20, 3, 1);
+  r(g, FALL_WOOD[0], x - 2, y - 15, 5, 2);
+  r(g, FALL_STRAW[0], x - 3, y - 14, 7, 2);
+  r(g, FALL_STRAW[1], x - 6, y - 12, 12, 2);
+  r(g, FALL_STRAW[2], x - 6, y - 12, 12, 1);
+  for (let i = 0; i < 6; i++) {
+    r(g, FALL_STRAW[i % 2 ? 0 : 1], x - 6 + i * 2, y - 10, 1, 8);
+  }
+  // A small heap at its foot and a leaf caught in the tines.
+  paintLump(g, LEAVES_RED[1], x + 2, y - 1, 6, 3, 0);
+  paintLump(g, LEAVES_ORANGE[1], x - 3, y - 1, 4, 2, 0);
+  r(g, LEAVES_GOLD[1], x + 3, y - 4, 3, 1);
+  r(g, LEAVES_ORANGE[2], x + 7, y - 1, 3, 1);
+  r(g, LEAVES_RED[2], x - 4, y - 9, 3, 2);
+  r(g, LEAVES_GOLD[0], x + 1, y - 8, 3, 2);
+}
+
+// A bloom five pixels across with petal teeth along its top and bottom and a pale heart.
+function leavesBloom(g, x, y, [dark, mid, light]) {
+  r(g, mid, x + 1, y, 1, 1);
+  r(g, mid, x + 3, y, 1, 1);
+  r(g, mid, x, y + 1, 5, 3);
+  r(g, dark, x + 4, y + 2, 1, 2);
+  r(g, dark, x + 1, y + 4, 1, 1);
+  r(g, dark, x + 3, y + 4, 1, 1);
+  r(g, light, x, y + 1, 1, 1);
+  r(g, light, x + 2, y + 2, 1, 1);
+}
+
+function paintMums(g, x, y) {
+  const clay = LEAVES_ORANGE[0];
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  // A terracotta pot, wider at the rim.
+  r(g, shade(clay, -0.32), x - 5, y - 7, 10, 7);
+  r(g, clay, x - 5, y - 7, 8, 7);
+  r(g, shade(clay, 0.22), x - 5, y - 7, 2, 6);
+  r(g, shade(clay, -0.15), x - 4, y - 1, 8, 1);
+  r(g, shade(clay, -0.2), x - 6, y - 10, 12, 4);
+  r(g, clay, x - 6, y - 10, 11, 3);
+  r(g, shade(clay, 0.25), x - 6, y - 10, 11, 1);
+  // Dark green behind the blooms, showing between them and at the base.
+  r(g, LEAVES_GREEN[0], x - 9, y - 22, 18, 11);
+  r(g, LEAVES_GREEN[0], x - 5, y - 25, 10, 3);
+  r(g, LEAVES_GREEN[1], x - 11, y - 13, 3, 2);
+  r(g, LEAVES_GREEN[1], x + 8, y - 12, 3, 2);
+  r(g, LEAVES_GREEN[2], x - 3, y - 12, 2, 1);
+  // A dome of twelve rosettes, mostly plum with gold ones mixed through.
+  const plum = ['#5a2a4c', '#7a3a66', '#a3608f'];
+  const gold = ['#a8843f', LEAVES_GOLD[0], LEAVES_GOLD[2]];
+  const blooms = [
+    [-2, -26, 0], [-8, -23, 0], [-4, -23, 1], [0, -23, 0], [4, -23, 0],
+    [-10, -20, 0], [-6, -20, 0], [-2, -20, 0], [2, -20, 1], [6, -20, 0],
+    [-11, -16, 1], [7, -16, 0],
+  ];
+  for (const [dx, dy, golden] of blooms) leavesBloom(g, x + dx, y + dy, golden ? gold : plum);
+  r(g, LEAVES_GREEN[1], x - 3, y - 16, 2, 1);
+  r(g, LEAVES_GREEN[1], x + 3, y - 15, 2, 1);
+}
+
+function paintCornStalks(g, x, y, t) {
+  const sway = Math.floor(t / 600) % 2;
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  const [dark, mid, light] = FALL_STRAW;
+  // Stalks bundled upright, each its own column, and fanning out above the twine.
+  for (let i = -3; i <= 3; i++) {
+    const tone = i < 0 ? light : i > 1 ? dark : mid;
+    r(g, tone, x + i * 2 - 1, y - 16, 2, 16);
+    if (i < 3) r(g, FALL_WOOD[1], x + i * 2 + 1, y - 15, 1, 14);
+    r(g, tone, x + i * 2 - 1, y - 1, 3, 1);
+  }
+  for (let i = -3; i <= 3; i++) {
+    const tone = i < 0 ? light : i > 1 ? dark : mid;
+    const lean = Math.round(i * 1.6);
+    r(g, tone, x + lean - 1, y - 28, 2, 13);
+    const out = Math.round(i * 3.3) + (i === 0 ? 0 : sway * Math.sign(i));
+    r(g, tone, x + out - 1, y - 38, 2, 11);
+    r(g, i % 2 ? dark : light, x + out + Math.sign(i) * 2 - 1, y - 44 + Math.abs(i), 1, 8 - Math.abs(i));
+  }
+  r(g, dark, x - 8, y - 12, 3, 1);
+  r(g, mid, x - 9, y - 13, 2, 1);
+  r(g, dark, x + 5, y - 9, 3, 1);
+  r(g, mid, x + 7, y - 10, 2, 1);
+  // Twine round the bundle.
+  r(g, FALL_WOOD[2], x - 7, y - 18, 14, 2);
+  r(g, FALL_WOOD[1], x - 7, y - 16, 14, 1);
+  r(g, FALL_WOOD[2], x + 2, y - 16, 1, 4);
+  r(g, FALL_WOOD[2], x - 1, y - 16, 1, 3);
+  // Ears of corn peeking out of the bundle.
+  r(g, LEAVES_GREEN[1], x - 5, y - 30, 5, 11);
+  r(g, LEAVES_GREEN[2], x - 5, y - 30, 1, 11);
+  r(g, LEAVES_GREEN[0], x - 1, y - 30, 1, 11);
+  r(g, LEAVES_GOLD[1], x - 4, y - 34, 3, 5);
+  r(g, LEAVES_GOLD[2], x - 4, y - 34, 1, 4);
+  r(g, LEAVES_GOLD[0], x - 2, y - 33, 1, 4);
+  r(g, LEAVES_GREEN[0], x + 2, y - 26, 5, 8);
+  r(g, LEAVES_GREEN[1], x + 2, y - 26, 1, 8);
+  r(g, LEAVES_GOLD[0], x + 3, y - 29, 3, 4);
+  r(g, LEAVES_GOLD[1], x + 3, y - 29, 1, 3);
+}
+
+// The Thanksgiving feast. Steam and flames move with `t`, and for someone who asked for less motion
+// everything sits in a complete, still pose.
+
+const FEAST_CREAM = '#f4f1e8';
+const FEAST_LINEN = '#d8c7a3';
+
+// A lump lit from the upper left: a dark body, a lighter middle and a bright patch.
+function feastBall(g, base, cx, cy, rx, ry) {
+  paintLump(g, shade(base, -0.24), cx, cy, rx, ry);
+  paintLump(g, base, cx - 1, cy - 1, rx - 1, ry - 1);
+  paintLump(g, shade(base, 0.2), cx - 2, cy - 2, Math.max(1, rx - 3), Math.max(1, ry - 3));
+}
+
+// A glossy apple with a stem and one shine.
+function feastApple(g, base, cx, cy) {
+  feastBall(g, base, cx, cy, 3, 3);
+  r(g, FALL_WOOD[0], cx, cy - 4, 1, 2);
+  r(g, '#f6d98a', cx - 2, cy - 2, 1, 1);
+}
+
+// A wisp of steam that drifts up and thins out as it goes.
+function feastSteam(g, cx, base, t, height) {
+  for (let i = 0; i < 2; i++) {
+    const rise = Math.floor(t / 70 + i * height / 2) % height;
+    const alpha = (0.6 - (rise * 0.5) / height).toFixed(2);
+    r(g, `rgba(255,255,255,${alpha})`, cx - 2 + i * 4 + (Math.floor(rise / 3) % 2), base - rise, 1, 2);
+  }
+}
+
+// A taper candle in a brass holder, with a flame that flickers.
+function feastCandle(g, cx, base, t, i) {
+  const flick = Math.floor(t / 210 + i) % 2;
+  r(g, '#d9a520', cx - 1, base - 1, 4, 2);
+  r(g, '#a8843f', cx - 1, base + 1, 4, 1);
+  r(g, FEAST_CREAM, cx, base - 7, 2, 7);
+  r(g, FEAST_LINEN, cx + 1, base - 7, 1, 7);
+  r(g, FLAME[1], cx, base - 10 + flick, 2, 3 - flick);
+  r(g, FLAME[0], cx, base - 9 + flick, 1, 2);
+  r(g, FLAME[2], cx, base - 8, 1, 1);
+}
+
+// The roast on its platter, with a leg on each side and a few sprigs of parsley and cranberry.
+function feastTurkey(g, cx, cy, t, rx) {
+  const gold = '#c8641e';
+  const reach = rx - 3;
+  paintLump(g, FEAST_LINEN, cx, cy + 1, rx, 5);
+  paintLump(g, FEAST_CREAM, cx, cy, rx - 1, 4);
+  for (const side of [-1, 1]) {
+    paintLump(g, '#a04e17', cx + side * reach, cy + 1, 3, 2);
+    paintLump(g, gold, cx + side * reach - 1, cy, 2, 1);
+    r(g, FEAST_CREAM, side < 0 ? cx - reach - 5 : cx + reach + 3, cy + 1, 2, 2);
+  }
+  feastBall(g, gold, cx, cy, 7, 4);
+  r(g, '#f0a03c', cx - 4, cy - 3, 4, 1);
+  r(g, '#f0a03c', cx - 5, cy - 2, 2, 1);
+  r(g, '#8c4a14', cx + 2, cy - 1, 1, 1);
+  r(g, '#8c4a14', cx - 1, cy + 1, 2, 1);
+  r(g, '#8c4a14', cx + 4, cy, 1, 1);
+  r(g, '#7f8c3a', cx - rx + 1, cy + 4, 3, 1);
+  r(g, '#5f6b2e', cx - rx + 2, cy + 3, 1, 1);
+  r(g, '#7f8c3a', cx + rx - 4, cy + 4, 3, 1);
+  r(g, '#b33a1f', cx - rx + 4, cy + 4, 1, 1);
+  r(g, '#b33a1f', cx + rx - 5, cy + 4, 1, 1);
+  feastSteam(g, cx - 1, cy - 5, t, 11);
+}
+
+// A pumpkin pie from above, small enough for a table: crust, filling, a slice gone and cream on top.
+function feastTablePie(g, cx, cy) {
+  paintLump(g, '#b8870f', cx, cy + 1, 5, 3);
+  paintLump(g, '#eab34a', cx, cy, 5, 3);
+  paintLump(g, '#c8641e', cx, cy, 4, 2);
+  r(g, '#e8802a', cx - 2, cy - 1, 2, 1);
+  r(g, FALL_STRAW[1], cx + 1, cy, 5, 2);
+  r(g, '#a04e17', cx + 1, cy - 1, 2, 1);
+  r(g, FEAST_CREAM, cx - 3, cy - 1, 3, 2);
+  r(g, FEAST_CREAM, cx - 2, cy - 2, 1, 1);
+}
+
+// A bowl heaped with cranberries.
+function feastBowl(g, cx, cy) {
+  paintLump(g, '#a8843f', cx, cy + 1, 5, 3);
+  paintLump(g, FEAST_LINEN, cx, cy, 5, 3);
+  paintLump(g, '#8c2a1e', cx, cy - 1, 4, 2);
+  r(g, '#b33a1f', cx - 3, cy - 2, 2, 1);
+  r(g, '#d4502a', cx - 1, cy - 3, 2, 1);
+  r(g, '#d4502a', cx + 1, cy - 1, 1, 1);
+  r(g, '#b33a1f', cx + 2, cy - 2, 2, 1);
+  r(g, '#f6d98a', cx - 2, cy - 3, 1, 1);
+}
+
+// A long table laid for everyone, from above and in front, with a runner down its length.
+function paintHarvestTable(g, x, y, t, wide, deep) {
+  const top = paintTop(g, x, y, wide, deep, 12, FALL_WOOD[3], '#6f4728', FALL_WOOD[1]);
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  r(g, FALL_WOOD[2], left + 1, y - 10, across - 2, 2);
+  r(g, shade(FALL_WOOD[3], -0.12), left, top + 16, across, 1);
+  r(g, shade(FALL_WOOD[3], 0.14), left, top, 1, deep - 6);
+  r(g, shade(FALL_WOOD[3], -0.2), left + across - 1, top, 1, deep - 6);
+  r(g, FEAST_CREAM, left + 1, top + 3, across - 2, 12);
+  r(g, '#d9a520', left + 1, top + 3, across - 2, 1);
+  r(g, '#d9a520', left + 1, top + 14, across - 2, 1);
+  r(g, FEAST_LINEN, left + 1, top + 13, across - 2, 1);
+  for (const end of [left + 3, left + across - 7]) {
+    r(g, '#b33a1f', end, top + 5, 4, 1);
+    r(g, '#b33a1f', end, top + 12, 4, 1);
+    r(g, '#d4502a', end + 1, top + 7, 2, 4);
+  }
+  r(g, FEAST_CREAM, x - 5, y - 12, 10, 8);
+  r(g, FEAST_LINEN, x + 3, y - 12, 2, 8);
+  r(g, '#d9a520', x - 5, y - 6, 10, 1);
+  for (let i = 0; i < 5; i++) r(g, '#d9a520', x - 5 + i * 2, y - 4, 1, 1);
+  feastCandle(g, x - 14, top + 7, t, 0);
+  feastCandle(g, x + 13, top + 7, t, 1);
+  feastTurkey(g, x, top + 9, t, 11);
+  feastTablePie(g, x - 19, top + 10);
+  feastBowl(g, x + 19, top + 10);
+}
+
+// The same table running back into the room, with the food in a line down the runner.
+function paintHarvestTableEnd(g, x, y, t, wide) {
+  const left = x - wide / 2 + 1;
+  const across = wide - 2;
+  const back = y - 36;
+  r(g, SHADOW, left, y - 2, across, 2);
+  r(g, FALL_WOOD[1], left + 1, y - 12, 3, 10);
+  r(g, FALL_WOOD[1], left + across - 4, y - 12, 3, 10);
+  r(g, FALL_WOOD[2], left + 1, y - 10, across - 2, 2);
+  r(g, FALL_WOOD[3], left, back, across, 22);
+  r(g, shade(FALL_WOOD[3], 0.14), left, back, across, 1);
+  r(g, shade(FALL_WOOD[3], 0.14), left, back, 1, 22);
+  r(g, shade(FALL_WOOD[3], -0.2), left + across - 1, back, 1, 22);
+  r(g, '#6f4728', left, y - 14, across, 2);
+  r(g, FEAST_CREAM, x - 6, back + 1, 12, 21);
+  r(g, '#d9a520', x - 6, back + 1, 1, 21);
+  r(g, '#d9a520', x + 5, back + 1, 1, 21);
+  r(g, FEAST_LINEN, x + 3, back + 1, 2, 21);
+  for (let i = 0; i < 3; i++) r(g, '#b33a1f', x - 2, back + 4 + i * 6, 4, 1);
+  r(g, FEAST_CREAM, x - 5, y - 14, 10, 8);
+  r(g, FEAST_LINEN, x + 3, y - 14, 2, 8);
+  r(g, '#d9a520', x - 5, y - 8, 10, 1);
+  for (let i = 0; i < 5; i++) r(g, '#d9a520', x - 5 + i * 2, y - 6, 1, 1);
+  feastTablePie(g, x, back + 5);
+  feastCandle(g, x - 10, y - 27, t, 0);
+  feastCandle(g, x + 9, y - 27, t, 1);
+  feastTurkey(g, x, y - 24, t, 8);
+  feastBowl(g, x, y - 18);
+}
+
+// A whole pumpkin pie on a round wooden stand, with a slice gone and a dollop of cream.
+function paintPumpkinPie(g, x, y, t) {
+  r(g, SHADOW, x - 8, y - 2, 16, 2);
+  r(g, FALL_WOOD[1], x - 5, y - 3, 10, 3);
+  r(g, FALL_WOOD[2], x - 5, y - 3, 10, 1);
+  r(g, FALL_WOOD[1], x - 1, y - 8, 3, 5);
+  r(g, FALL_WOOD[2], x - 1, y - 8, 1, 5);
+  paintLump(g, FALL_WOOD[1], x, y - 10, 9, 2);
+  paintLump(g, FALL_WOOD[3], x, y - 11, 9, 2);
+  r(g, shade(FALL_WOOD[3], 0.18), x - 4, y - 13, 6, 1);
+  paintLump(g, '#b8870f', x, y - 11, 8, 4);
+  paintLump(g, '#eab34a', x, y - 12, 8, 4);
+  for (const nick of [-7, -3, 2, 6]) r(g, '#d9a520', x + nick, y - 9, 1, 1);
+  paintLump(g, '#c8641e', x, y - 12, 6, 3);
+  r(g, '#e8802a', x - 4, y - 14, 3, 1);
+  r(g, '#e8802a', x + 1, y - 15, 2, 1);
+  r(g, FALL_STRAW[1], x + 1, y - 12, 7, 3);
+  r(g, FALL_STRAW[2], x + 2, y - 12, 5, 1);
+  r(g, '#a04e17', x + 1, y - 14, 1, 2);
+  r(g, '#d9a520', x + 7, y - 13, 1, 3);
+  paintLump(g, FEAST_CREAM, x - 3, y - 14, 3, 2);
+  r(g, FEAST_LINEN, x - 4, y - 13, 5, 1);
+  r(g, FEAST_CREAM, x - 3, y - 17, 2, 1);
+  const rise = Math.floor(t / 90) % 5;
+  r(g, 'rgba(255,255,255,.4)', x - 1 + (Math.floor(rise / 2) % 2), y - 19 - rise, 1, 2);
+  r(g, 'rgba(255,255,255,.28)', x + 4 - (Math.floor(rise / 2) % 2), y - 19 - ((rise + 2) % 5), 1, 2);
+}
+
+// A wicker horn lying on the floor, curled to a point on the left, with fruit tumbling out of its
+// mouth along the floor to the right: tall at the mouth and low at the end.
+function paintCornucopia(g, x, y) {
+  const left = x - 19;
+  const lift = (i) => (i < 12 ? Math.round(((12 - i) * (12 - i)) / 14) : 0);
+  const thick = (i) => 3 + Math.floor(i * 0.5);
+  r(g, SHADOW, left, y - 2, 38, 2);
+  for (let i = 0; i < 24; i++) {
+    const bottom = y - 3 - lift(i);
+    const topRow = bottom - thick(i);
+    r(g, FALL_STRAW[1], left + i, topRow, 1, thick(i));
+    for (let k = 0; k < thick(i); k++) {
+      if ((i + k) % 4 < 2) r(g, FALL_STRAW[0], left + i, topRow + k, 1, 1);
+    }
+    r(g, FALL_STRAW[2], left + i, topRow, 1, 1);
+    r(g, shade(FALL_STRAW[0], -0.25), left + i, bottom - 1, 1, 1);
+  }
+  r(g, FALL_STRAW[0], left, y - 16, 1, 2);
+  r(g, FALL_STRAW[2], left + 1, y - 16, 1, 1);
+  for (const band of [8, 16]) {
+    r(g, FALL_WOOD[1], left + band, y - 3 - lift(band) - thick(band), 1, thick(band));
+  }
+  paintLump(g, FALL_STRAW[0], x + 5, y - 11, 3, 7);
+  paintLump(g, FALL_STRAW[2], x + 4, y - 11, 3, 7);
+  paintLump(g, FALL_WOOD[0], x + 5, y - 11, 2, 5);
+  // Corn lying behind the rest, husk to the right.
+  r(g, '#d9a520', x + 10, y - 8, 6, 3);
+  r(g, '#eab34a', x + 10, y - 8, 6, 1);
+  r(g, '#7f8c3a', x + 16, y - 8, 3, 3);
+  r(g, '#a3a84a', x + 17, y - 9, 1, 1);
+  feastBall(g, '#c8641e', x + 4, y - 15, 3, 3);
+  feastApple(g, '#b33a1f', x + 8, y - 12);
+  for (const [gx, gy] of [[7, 5], [10, 6], [9, 9]]) feastBall(g, '#7a3a66', x + gx, y - gy, 2, 2);
+  feastBall(g, '#e8802a', x + 12, y - 4, 3, 3);
+  r(g, '#c8641e', x + 12, y - 6, 1, 4);
+  feastApple(g, '#a3a84a', x + 16, y - 3);
+  r(g, '#d9a520', x + 17, y - 3, 2, 2);
+}
+
+// The horn seen from its mouth: a ring of weave around a dark hollow, with fruit heaped over the top.
+function paintCornucopiaEnd(g, x, y) {
+  r(g, SHADOW, x - 9, y - 2, 18, 2);
+  paintLump(g, FALL_STRAW[0], x, y - 10, 9, 8);
+  paintLump(g, FALL_STRAW[1], x - 1, y - 11, 8, 7);
+  paintLump(g, FALL_STRAW[2], x - 2, y - 12, 5, 4);
+  for (let k = 0; k < 6; k++) r(g, FALL_STRAW[0], x - 7 + k * 3, y - 4 - (k % 2) * 8, 1, 2);
+  paintLump(g, FALL_WOOD[0], x, y - 10, 6, 6);
+  r(g, '#7f8c3a', x - 5, y - 18, 5, 3);
+  r(g, '#d9a520', x - 1, y - 19, 4, 4);
+  r(g, '#eab34a', x + 1, y - 21, 4, 3);
+  feastBall(g, '#7a3a66', x - 5, y - 13, 2, 2);
+  feastBall(g, '#7a3a66', x - 3, y - 10, 2, 2);
+  feastBall(g, '#7a3a66', x - 6, y - 9, 2, 2);
+  feastApple(g, '#b33a1f', x + 2, y - 11);
+  feastApple(g, '#d4502a', x + 6, y - 8);
+  feastBall(g, '#c8641e', x - 3, y - 5, 3, 2);
+}
+
+// A bushel basket heaped with apples, a hoop handle over it and one that rolled onto the floor.
+function paintAppleBasket(g, x, y) {
+  r(g, SHADOW, x - 9, y - 2, 20, 2);
+  r(g, FALL_STRAW[0], x - 7, y - 17, 2, 7);
+  r(g, FALL_STRAW[0], x + 5, y - 17, 2, 7);
+  r(g, FALL_STRAW[0], x - 6, y - 19, 12, 2);
+  r(g, FALL_STRAW[2], x - 6, y - 19, 11, 1);
+  for (let k = 0; k < 10; k++) {
+    const half = 8 - Math.floor(k / 4);
+    const row = y - 12 + k;
+    r(g, FALL_STRAW[1], x - half, row, half * 2, 1);
+    r(g, FALL_STRAW[2], x - half, row, 2, 1);
+    r(g, shade(FALL_STRAW[0], -0.1), x + half - 2, row, 2, 1);
+    for (let i = 2; i < half * 2 - 2; i++) {
+      if ((i + k) % 3 === 0) r(g, FALL_STRAW[0], x - half + i, row, 1, 1);
+    }
+  }
+  r(g, FALL_STRAW[2], x - 8, y - 13, 16, 1);
+  r(g, FALL_WOOD[2], x - 9, y - 12, 18, 2);
+  r(g, FALL_WOOD[3], x - 9, y - 12, 18, 1);
+  r(g, FALL_WOOD[1], x - 5, y - 2, 11, 1);
+  feastApple(g, '#b33a1f', x - 4, y - 17);
+  feastApple(g, '#d4502a', x + 3, y - 17);
+  feastApple(g, '#b33a1f', x - 6, y - 14);
+  feastBall(g, '#a3a84a', x, y - 14, 3, 3);
+  r(g, '#d9a520', x + 1, y - 14, 2, 2);
+  r(g, '#f6d98a', x - 2, y - 16, 1, 1);
+  r(g, FALL_WOOD[0], x, y - 18, 1, 2);
+  feastApple(g, '#d4502a', x + 6, y - 14);
+  feastApple(g, '#8c2a1e', x + 10, y - 4);
+  r(g, '#7f8c3a', x + 11, y - 8, 2, 1);
+}
+
+// An oak barrel on its side in a cradle, with a tap, a mug underneath and a drip that falls into it.
+function paintCiderBarrel(g, x, y, t) {
+  const left = x - 12;
+  r(g, SHADOW, left - 1, y - 2, 26, 2);
+  for (const cx of [x - 8, x + 7]) {
+    r(g, FALL_WOOD[2], cx - 5, y - 3, 10, 3);
+    r(g, FALL_WOOD[0], cx - 5, y - 1, 10, 1);
+  }
+  const centre = y - 16;
+  const belly = (i) => 10 + Math.round(5 * (1 - ((i - 11.5) / 12) ** 2));
+  for (let i = 0; i < 24; i++) {
+    const high = belly(i);
+    const top = centre - Math.ceil(high / 2);
+    r(g, FALL_WOOD[3], left + i, top, 1, high);
+    r(g, shade(FALL_WOOD[3], 0.2), left + i, top, 1, 2);
+    r(g, shade(FALL_WOOD[3], 0.1), left + i, top + 2, 1, 2);
+    r(g, FALL_WOOD[2], left + i, top + high - 4, 1, 2);
+    r(g, FALL_WOOD[1], left + i, top + high - 2, 1, 2);
+  }
+  for (const seam of [-3, 0, 3]) r(g, shade(FALL_WOOD[2], -0.2), left + 1, centre + seam, 22, 1);
+  r(g, shade(FALL_WOOD[3], 0.2), left, centre - 3, 1, 6);
+  for (const hoop of [3, 7, 15, 19]) {
+    const high = belly(hoop);
+    const top = centre - Math.ceil(high / 2);
+    r(g, FALL_WOOD[0], left + hoop, top, 2, high);
+    r(g, FALL_WOOD[1], left + hoop, top + 1, 1, high - 2);
+  }
+  for (const cx of [x - 8, x + 7]) {
+    r(g, FALL_WOOD[1], cx - 4, y - 9, 8, 3);
+    r(g, FALL_WOOD[3], cx - 4, y - 9, 8, 1);
+    r(g, FALL_WOOD[0], cx - 3, y - 6, 6, 4);
+  }
+  r(g, FALL_STRAW[1], x + 3, y - 24, 3, 1);
+  r(g, '#eab34a', x - 2, y - 13, 3, 1);
+  r(g, '#d9a520', x, y - 12, 1, 5);
+  r(g, '#d9a520', x - 1, y - 8, 2, 1);
+  const drip = Math.floor(t / 180) % 3;
+  r(g, '#f0a03c', x, y - 6 + drip, 1, 1);
+  r(g, '#c8641e', x - 2, y - 4, 4, 4);
+  r(g, '#f0a03c', x - 2, y - 4, 4, 1);
+  r(g, '#a04e17', x + 2, y - 3, 1, 2);
+  feastApple(g, '#b33a1f', x - 6, y - 26);
+  r(g, '#7f8c3a', x - 4, y - 28, 3, 1);
+}
+
+// The barrel from its round end, with two dark hoops around the head and a mug beside the cradle.
+function paintCiderBarrelEnd(g, x, y) {
+  r(g, SHADOW, x - 12, y - 2, 25, 2);
+  r(g, FALL_WOOD[1], x - 9, y - 3, 18, 3);
+  r(g, FALL_WOOD[0], x - 9, y - 1, 18, 1);
+  r(g, FALL_WOOD[2], x - 9, y - 3, 18, 1);
+  paintLump(g, FALL_WOOD[0], x, y - 16, 9, 9);
+  paintLump(g, FALL_WOOD[3], x, y - 16, 8, 8);
+  paintLump(g, shade(FALL_WOOD[3], 0.16), x - 2, y - 18, 4, 5);
+  for (const at of [-4, 0, 4]) r(g, shade(FALL_WOOD[2], -0.08), x + at, y - 22, 1, 12);
+  paintLump(g, FALL_WOOD[0], x, y - 16, 6, 6);
+  paintLump(g, FALL_WOOD[3], x, y - 16, 5, 5);
+  paintLump(g, shade(FALL_WOOD[3], 0.16), x - 1, y - 17, 3, 3);
+  for (const at of [-3, 0, 3]) r(g, FALL_WOOD[2], x + at, y - 20, 1, 8);
+  r(g, FALL_WOOD[0], x - 1, y - 17, 3, 3);
+  r(g, FALL_STRAW[1], x, y - 16, 1, 1);
+  r(g, '#c8641e', x + 5, y - 7, 4, 4);
+  r(g, '#f0a03c', x + 5, y - 7, 4, 1);
+  r(g, '#a04e17', x + 9, y - 6, 1, 2);
+}
+
+// A bit of straw with two orange pumpkins, a white one and a striped gourd with a crooked neck.
+function paintGourds(g, x, y, t, wide) {
+  const crowded = wide < 24;
+  const nudge = crowded ? 4 : 0;
+  r(g, SHADOW, x - 12 + nudge, y - 2, 24 - nudge * 2, 2);
+  for (let i = 0; i < 12; i++) {
+    const at = x - 11 + nudge + i * (crowded ? 1 : 2) + (i % 2);
+    r(g, FALL_STRAW[i % 3], at, y - 3 - (i % 3), 1, 3 + (i % 3));
+    r(g, FALL_STRAW[(i + 1) % 3], at + (i % 2 ? -1 : 1), y - 2, 1, 2);
+  }
+  const big = x - 6 + nudge;
+  feastBall(g, '#e8802a', big, y - 9, crowded ? 5 : 6, crowded ? 5 : 6);
+  for (const rib of [-3, 0, 3]) r(g, '#c8641e', big + rib, y - 14, 1, 10);
+  r(g, FALL_WOOD[1], big - 1, y - 17, 3, 3);
+  r(g, '#7f8c3a', big + 2, y - 16, 2, 1);
+  const stripe = '#7f8c3a';
+  const gourd = x + 8 - nudge;
+  feastBall(g, '#d9a520', gourd, y - 4, 4, 3);
+  for (const bar of [-2, 0, 2]) {
+    const edge = Math.abs(bar) > 1 ? 1 : 0;
+    r(g, stripe, gourd + bar, y - 7 + edge, 1, 7 - edge * 2);
+  }
+  r(g, '#d9a520', gourd - 1, y - 11, 2, 5);
+  r(g, stripe, gourd, y - 11, 1, 5);
+  r(g, '#d9a520', gourd, y - 12, 3, 2);
+  r(g, stripe, gourd + 1, y - 12, 1, 1);
+  r(g, '#d9a520', gourd + 2, y - 11, 1, 2);
+  if (!crowded) {
+    feastBall(g, '#e8802a', x + 3, y - 8, 4, 3);
+    r(g, '#c8641e', x + 2, y - 10, 1, 5);
+    r(g, '#c8641e', x + 5, y - 10, 1, 5);
+    r(g, FALL_WOOD[1], x + 3, y - 12, 2, 2);
+  }
+  feastBall(g, FEAST_CREAM, x - 1 + nudge, y - 4, 4, 3);
+  for (const rib of [-2, 1]) r(g, FEAST_LINEN, x - 1 + nudge + rib, y - 6, 1, 5);
+  r(g, '#7f8c3a', x - 1 + nudge, y - 8, 2, 1);
+}
+
+// The farmyard. The crow hops and looks round, the turkey bobs and the fan breathes, and all of it
+// stands still for someone who asked for less motion.
+
+const FARM_INK = '#2b2430';
+
+// A small round pumpkin or gourd, w by h, with its top left at x and y.
+function paintFarmGourd(g, x, y, w, h, body, stem) {
+  const mid = x + Math.floor(w / 2);
+  r(g, shade(body, -0.22), x, y + 2, w, h - 2);
+  r(g, body, x + 1, y + 1, w - 2, h - 1);
+  r(g, shade(body, -0.22), x + 2, y, w - 4, 1);
+  r(g, body, x + 2, y + 1, w - 4, 1);
+  r(g, shade(body, -0.2), mid, y + 1, 1, h - 2);
+  r(g, shade(body, 0.28), x + 1, y + 2, 1, Math.max(1, h - 4));
+  r(g, stem, mid, y - 1, 1, 2);
+}
+
+function paintScarecrow(g, x, y, t) {
+  const burlap = FALL_STRAW[1];
+  const plaid = ['#b33a1f', '#8c2a1e', '#d4502a'];
+  const step = Math.floor(t / 600) % 6;
+  const hop = step === 4 ? 2 : 0;
+  const turned = step === 2 || step === 3;
+  r(g, SHADOW, x - 8, y - 2, 16, 2);
+  // Straw legs, ragged at the bottom, on a post.
+  r(g, FALL_WOOD[1], x - 1, y - 18, 2, 18);
+  r(g, FALL_WOOD[2], x - 1, y - 18, 1, 18);
+  for (const side of [-1, 1]) {
+    const left = side < 0 ? x - 6 : x + 2;
+    r(g, FALL_STRAW[0], left, y - 18, 4, 14);
+    r(g, FALL_STRAW[1], left, y - 18, 3, 14);
+    r(g, FALL_STRAW[2], left, y - 17, 1, 9);
+    r(g, '#5a2a4c', left, y - 18, 4, 2);
+    r(g, FALL_STRAW[2], left - 1, y - 5, 2, 4);
+    r(g, FALL_STRAW[1], left + 1, y - 4, 2, 3);
+    r(g, FALL_STRAW[0], left + 3, y - 4, 2, 3);
+    r(g, FALL_STRAW[2], left + 2, y - 2, 1, 2);
+  }
+  // The crossbar, under a red flannel shirt with straw coming out of the cuffs.
+  r(g, FALL_WOOD[1], x - 12, y - 28, 24, 2);
+  r(g, plaid[0], x - 5, y - 31, 10, 15);
+  r(g, plaid[0], x - 12, y - 30, 8, 4);
+  r(g, plaid[0], x + 4, y - 30, 8, 4);
+  r(g, plaid[2], x - 5, y - 31, 1, 15);
+  r(g, plaid[2], x - 12, y - 30, 8, 1);
+  r(g, plaid[2], x + 4, y - 30, 8, 1);
+  for (let i = 0; i < 4; i++) r(g, plaid[1], x - 3 + i * 3, y - 30, 1, 14);
+  for (let i = 0; i < 4; i++) r(g, plaid[1], x - 5, y - 28 + i * 4, 10, 1);
+  r(g, plaid[1], x - 12, y - 28, 8, 1);
+  r(g, plaid[1], x + 4, y - 28, 8, 1);
+  r(g, '#f6d98a', x - 4, y - 25, 1, 1);
+  r(g, '#f6d98a', x + 2, y - 21, 1, 1);
+  r(g, FALL_WOOD[0], x - 1, y - 23, 2, 1);
+  r(g, '#eab34a', x, y - 23, 1, 1);
+  r(g, '#eab34a', x, y - 19, 1, 1);
+  // Straw tufts at the cuffs.
+  for (const side of [-1, 1]) {
+    const edge = side < 0 ? x - 12 : x + 9;
+    r(g, FALL_STRAW[1], edge, y - 31, 3, 2);
+    r(g, FALL_STRAW[2], edge, y - 32, 1, 2);
+    r(g, FALL_STRAW[2], edge + 2, y - 32, 1, 1);
+    r(g, FALL_STRAW[0], edge + 1, y - 27, 2, 2);
+  }
+  // A burlap head with button eyes and a stitched smile.
+  r(g, FALL_STRAW[0], x - 5, y - 40, 10, 10);
+  r(g, burlap, x - 5, y - 40, 9, 9);
+  r(g, FALL_STRAW[2], x - 4, y - 39, 2, 3);
+  r(g, FALL_STRAW[1], x - 6, y - 38, 1, 6);
+  r(g, FALL_STRAW[0], x + 5, y - 38, 1, 6);
+  r(g, FALL_STRAW[2], x - 8, y - 36, 3, 1);
+  r(g, FALL_STRAW[2], x + 5, y - 35, 3, 1);
+  r(g, FALL_WOOD[0], x - 4, y - 37, 3, 3);
+  r(g, FALL_WOOD[0], x + 1, y - 37, 3, 3);
+  r(g, '#8a5c37', x - 3, y - 36, 1, 1);
+  r(g, '#8a5c37', x + 2, y - 36, 1, 1);
+  r(g, '#f4f1e8', x - 4, y - 37, 1, 1);
+  r(g, '#f4f1e8', x + 1, y - 37, 1, 1);
+  r(g, '#d4502a', x - 5, y - 34, 2, 1);
+  r(g, '#d4502a', x + 3, y - 34, 2, 1);
+  for (const [dx, dy] of [[-3, -33], [-2, -32], [-1, -32], [1, -32], [2, -32], [3, -33]]) {
+    r(g, FALL_WOOD[0], x + dx, y + dy, 1, 1);
+  }
+  // A floppy straw hat with an autumn leaf in its band.
+  r(g, FALL_STRAW[0], x - 10, y - 42, 20, 2);
+  r(g, FALL_STRAW[1], x - 9, y - 43, 18, 2);
+  r(g, FALL_STRAW[0], x - 12, y - 40, 4, 2);
+  r(g, FALL_STRAW[0], x + 8, y - 40, 4, 2);
+  r(g, FALL_STRAW[2], x - 9, y - 43, 6, 1);
+  r(g, FALL_STRAW[1], x - 5, y - 47, 10, 5);
+  r(g, FALL_STRAW[1], x - 4, y - 48, 8, 1);
+  r(g, FALL_STRAW[2], x - 4, y - 47, 2, 3);
+  r(g, FALL_STRAW[0], x + 3, y - 47, 2, 5);
+  r(g, '#8c2a1e', x - 5, y - 44, 10, 2);
+  r(g, '#e8802a', x + 2, y - 46, 3, 3);
+  r(g, '#f0a03c', x + 2, y - 46, 1, 1);
+  // The crow stands on the right arm, then hops and looks round.
+  const top = y - 30 - hop;
+  r(g, FARM_INK, x + 7, top - 5, 5, 5);
+  r(g, FARM_INK, x + 8, top - 6, 3, 1);
+  r(g, '#4a4052', x + 8, top - 5, 2, 3);
+  r(g, FARM_INK, x + 11, top - 3, 1, 3);
+  if (turned) {
+    r(g, FARM_INK, x + 10, top - 8, 3, 3);
+    r(g, '#d9a520', x + 13, top - 7, 2, 1);
+    r(g, '#f4f1e8', x + 11, top - 7, 1, 1);
+  } else {
+    r(g, FARM_INK, x + 5, top - 8, 3, 3);
+    r(g, '#d9a520', x + 3, top - 7, 2, 1);
+    r(g, '#f4f1e8', x + 6, top - 7, 1, 1);
+  }
+  r(g, FARM_INK, x + 7, top - 6, 2, 2);
+  if (!hop) {
+    r(g, FALL_WOOD[0], x + 8, top, 1, 1);
+    r(g, FALL_WOOD[0], x + 10, top, 1, 1);
+  }
+}
+
+// A bale tied with two bands of twine, straw sticking out at its edges.
+function paintHayBale(g, x, y) {
+  const [dark, mid, light] = FALL_STRAW;
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  r(g, dark, x - 11, y - 14, 22, 12);
+  r(g, mid, x - 11, y - 14, 21, 11);
+  r(g, light, x - 11, y - 17, 22, 3);
+  r(g, mid, x - 10, y - 17, 17, 1);
+  r(g, light, x - 10, y - 17, 9, 1);
+  r(g, dark, x - 11, y - 14, 22, 1);
+  r(g, dark, x - 11, y - 3, 22, 1);
+  for (let i = 0; i < 18; i++) {
+    const left = x - 10 + ((i * 7) % 18);
+    const top = y - 13 + ((i * 5) % 9);
+    r(g, i % 2 ? dark : light, left, top, 3 + (i % 3), 1);
+  }
+  for (let i = 0; i < 6; i++) r(g, i % 2 ? dark : light, x - 9 + i * 4, y - 17 + (i % 2), 2, 1);
+  // Twine, with a small knot in the front of each band.
+  for (const band of [-6, 4]) {
+    r(g, FALL_WOOD[1], x + band, y - 17, 2, 15);
+    r(g, FALL_WOOD[2], x + band, y - 17, 1, 15);
+    r(g, FALL_WOOD[0], x + band + 1, y - 14, 1, 11);
+  }
+  r(g, FALL_WOOD[0], x - 7, y - 9, 4, 1);
+  r(g, FALL_WOOD[2], x + 3, y - 9, 4, 1);
+  // Stray stalks at the edges and top.
+  r(g, light, x - 12, y - 12, 1, 3);
+  r(g, mid, x - 12, y - 6, 1, 2);
+  r(g, light, x + 11, y - 11, 1, 3);
+  r(g, mid, x + 11, y - 5, 1, 2);
+  r(g, light, x - 3, y - 18, 1, 1);
+  r(g, light, x + 8, y - 18, 1, 1);
+  r(g, mid, x + 1, y - 18, 1, 1);
+}
+
+// The cut end of a bale, with the twine going round it.
+function paintHayEnd(g, x, y, t, wide) {
+  const [dark, mid, light] = FALL_STRAW;
+  const half = Math.min(6, wide / 2 - 1);
+  r(g, SHADOW, x - half - 1, y - 2, half * 2 + 2, 2);
+  r(g, dark, x - half, y - 14, half * 2, 12);
+  r(g, mid, x - half + 1, y - 13, half * 2 - 2, 10);
+  r(g, light, x - half, y - 17, half * 2, 3);
+  r(g, mid, x - half + 1, y - 17, half * 2 - 2, 1);
+  for (let i = 0; i < 4; i++) {
+    r(g, i % 2 ? light : dark, x - half + 2 + i, y - 12 + i, half * 2 - 4 - i * 2, 1);
+    r(g, i % 2 ? dark : light, x - half + 2 + i, y - 4 - i, half * 2 - 4 - i * 2, 1);
+  }
+  r(g, FALL_WOOD[1], x - half, y - 17, half * 2, 1);
+  r(g, FALL_WOOD[1], x - half, y - 9, half * 2, 2);
+  r(g, light, x - half - 1, y - 11, 1, 3);
+  r(g, mid, x + half, y - 6, 1, 3);
+  r(g, light, x - 2, y - 18, 1, 1);
+  r(g, mid, x + 2, y - 18, 1, 1);
+}
+
+// A plump turkey seen from the front, nose in the air. The fan breathes and the head bobs.
+function paintTurkey(g, x, y, t) {
+  const breath = Math.floor(t / 700) % 2;
+  const bob = Math.floor(t / 450) % 2;
+  const a = 12 - breath;
+  const b = 16 - breath;
+  const fan = ['#f6d98a', '#d9a520', '#e8802a', '#c8641e', '#6b4628'];
+  const edges = [1, 0.88, 0.74, 0.58, 0.4];
+  r(g, SHADOW, x - 9, y - 2, 18, 2);
+  // The fan: bands of colour, widest at the tips.
+  const base = y - 13;
+  for (let dy = 0; dy <= b; dy++) {
+    edges.forEach((edge, k) => {
+      const inside = edge * edge - (dy / b) * (dy / b);
+      if (inside <= 0) return;
+      const half = Math.round(a * Math.sqrt(inside));
+      if (half > 0) r(g, fan[k], x - half, base - dy, half * 2, 1);
+    });
+  }
+  for (let i = -3; i <= 3; i++) {
+    for (let dy = 5; dy <= b - 1; dy++) {
+      const reach = Math.round((i * (dy + 2)) / 3.2);
+      if (reach * reach * b * b + dy * dy * a * a < 0.8 * a * a * b * b) r(g, i === 0 ? fan[4] : shade(fan[4], 0.08), x + reach, base - dy, 1, 1);
+    }
+  }
+  // Plump body, chest out, with a beard.
+  const brown = FALL_WOOD[1];
+  r(g, brown, x - 4, y - 17, 8, 1);
+  r(g, brown, x - 6, y - 16, 12, 1);
+  r(g, brown, x - 7, y - 15, 14, 9);
+  r(g, FALL_WOOD[0], x - 6, y - 6, 12, 1);
+  r(g, FALL_WOOD[0], x - 4, y - 5, 8, 1);
+  r(g, FALL_WOOD[2], x - 5, y - 15, 9, 9);
+  r(g, FALL_WOOD[3], x - 4, y - 15, 5, 3);
+  r(g, FALL_WOOD[3], x - 4, y - 12, 6, 5);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) r(g, FALL_WOOD[2], x - 4 + col * 3 + (row % 2), y - 12 + row * 2, 2, 1);
+  }
+  r(g, '#f6d98a', x - 3, y - 15, 2, 1);
+  r(g, FALL_WOOD[0], x, y - 14, 1, 4);
+  r(g, FALL_WOOD[0], x - 1, y - 11, 3, 1);
+  // Wings tucked in at the sides, tipped with russet.
+  for (const side of [-1, 1]) {
+    const left = side < 0 ? x - 9 : x + 6;
+    r(g, FALL_WOOD[0], left, y - 15, 3, 9);
+    r(g, FALL_WOOD[1], left + (side < 0 ? 1 : 0), y - 15, 2, 8);
+    r(g, '#c8641e', left, y - 7, 3, 1);
+    r(g, '#e8802a', left + (side < 0 ? 0 : 1), y - 8, 2, 1);
+  }
+  // Legs and big feet.
+  for (const side of [-1, 1]) {
+    const left = x + side * 4 - 1;
+    r(g, '#a8843f', left, y - 5, 2, 4);
+    r(g, '#d9a520', left, y - 5, 1, 3);
+    r(g, '#d9a520', left - 2, y - 2, 6, 1);
+    r(g, '#a8843f', left - 2, y - 1, 6, 1);
+    r(g, '#d9a520', left - 3, y - 1, 1, 1);
+    r(g, '#d9a520', left + 4, y - 1, 1, 1);
+  }
+  // The head, held up high, with a heavy-lidded look down its beak.
+  const head = y - 27 + bob;
+  const skin = '#d99a8c';
+  r(g, skin, x - 1, head + 6, 3, 5 - bob);
+  r(g, shade(skin, -0.16), x + 1, head + 6, 1, 5 - bob);
+  r(g, skin, x - 3, head + 1, 6, 6);
+  r(g, skin, x - 2, head, 4, 1);
+  r(g, shade(skin, 0.18), x - 3, head + 1, 1, 4);
+  r(g, shade(skin, -0.16), x + 2, head + 2, 1, 4);
+  r(g, '#d4502a', x - 1, head - 2, 2, 3);
+  r(g, '#8c2a1e', x, head - 2, 1, 2);
+  r(g, '#d4502a', x - 1, head + 7, 3, 4);
+  r(g, '#8c2a1e', x, head + 8, 2, 3);
+  r(g, '#eab34a', x - 2, head + 5, 4, 2);
+  r(g, '#d9a520', x - 1, head + 6, 3, 1);
+  r(g, '#1b2030', x - 2, head + 3, 1, 1);
+  r(g, '#1b2030', x + 1, head + 3, 1, 1);
+  r(g, '#7a3a66', x - 3, head + 2, 3, 1);
+  r(g, '#7a3a66', x + 1, head + 2, 2, 1);
+}
+
+// A wreath of turning leaves, hung on a slim stand the way the dartboard is.
+const FARM_RING = ['#b33a1f', '#e8802a', '#d9a520', '#7f8c3a', '#d4502a', '#f0a03c', '#8c2a1e', '#c8641e'];
+
+function paintWreath(g, x, y) {
+  const cy = y - 26;
+  const inRing = (dx, dy) => {
+    const d2 = dx * dx + dy * dy;
+    return d2 <= 110 && d2 >= 28;
+  };
+  r(g, SHADOW, x - 6, y - 2, 12, 2);
+  r(g, FALL_WOOD[0], x - 5, y - 3, 10, 2);
+  r(g, FALL_WOOD[1], x - 4, y - 3, 8, 1);
+  r(g, FALL_WOOD[1], x - 1, y - 15, 2, 12);
+  r(g, FALL_WOOD[2], x - 1, y - 15, 1, 12);
+  for (let dy = -10; dy <= 10; dy++) {
+    let runStart = 0;
+    let runColor = null;
+    for (let dx = -10; dx <= 11; dx++) {
+      let color = null;
+      if (dx <= 10 && inRing(dx, dy)) {
+        const sector = Math.floor(((Math.atan2(dy, dx) + Math.PI) / (Math.PI * 2)) * 8) % 8;
+        color = FARM_RING[sector];
+        if (!inRing(dx - 1, dy - 1) && (dx < 0 || dy < 0)) color = shade(color, 0.2);
+        else if (!inRing(dx + 1, dy + 1)) color = shade(color, -0.22);
+        else if ((dx * 3 + dy * 5) % 7 === 0) color = shade(color, -0.12);
+      }
+      if (color !== runColor) {
+        if (runColor) r(g, runColor, x + runStart, cy + dy, dx - runStart, 1);
+        runStart = dx;
+        runColor = color;
+      }
+    }
+  }
+  // Gourds, berries and a burlap bow.
+  paintFarmGourd(g, x - 10, cy + 3, 5, 5, '#e8802a', '#5f6b2e');
+  paintFarmGourd(g, x + 6, cy + 4, 4, 4, '#d9a520', '#5f6b2e');
+  for (const [dx, dy] of [[5, -9], [7, -8], [6, -11], [-8, -8]]) {
+    r(g, '#5a2a4c', x + dx, cy + dy, 2, 2);
+    r(g, '#7a3a66', x + dx, cy + dy, 1, 1);
+  }
+  r(g, '#7f8c3a', x - 9, cy - 4, 2, 2);
+  r(g, '#a3a84a', x - 9, cy - 4, 1, 1);
+  r(g, FALL_STRAW[0], x - 4, y - 13, 2, 4);
+  r(g, FALL_STRAW[0], x + 2, y - 13, 2, 4);
+  r(g, FALL_STRAW[1], x - 6, y - 20, 5, 5);
+  r(g, FALL_STRAW[1], x + 1, y - 20, 5, 5);
+  r(g, FALL_STRAW[2], x - 6, y - 20, 5, 1);
+  r(g, FALL_STRAW[2], x + 1, y - 20, 5, 1);
+  r(g, FALL_STRAW[0], x - 6, y - 16, 5, 1);
+  r(g, FALL_STRAW[0], x + 1, y - 16, 5, 1);
+  r(g, FALL_STRAW[0], x - 1, y - 19, 2, 4);
+  r(g, FALL_STRAW[2], x - 1, y - 19, 1, 1);
+}
+
+// Pumpkins and leaves heaped in a wooden barrow: wheel at the left, handles at the right.
+function paintWheelbarrow(g, x, y) {
+  r(g, SHADOW, x - 12, y - 2, 24, 2);
+  paintFarmGourd(g, x - 9, y - 22, 7, 7, '#d4502a', '#5f6b2e');
+  paintFarmGourd(g, x - 3, y - 23, 8, 8, '#e8802a', '#5f6b2e');
+  paintFarmGourd(g, x + 4, y - 21, 6, 6, '#f0a03c', '#7f8c3a');
+  r(g, '#b33a1f', x - 6, y - 19, 4, 3);
+  r(g, '#d9a520', x + 2, y - 19, 3, 3);
+  r(g, '#8c2a1e', x - 9, y - 17, 3, 2);
+  r(g, '#e8802a', x + 8, y - 19, 3, 3);
+  r(g, '#f6d98a', x + 8, y - 19, 1, 1);
+  r(g, '#7f8c3a', x - 1, y - 17, 3, 2);
+  // Handles to the right, one nearer than the other.
+  r(g, FALL_WOOD[0], x + 8, y - 17, 4, 1);
+  r(g, FALL_WOOD[2], x + 7, y - 16, 4, 1);
+  r(g, FALL_WOOD[1], x + 6, y - 14, 6, 2);
+  r(g, FALL_WOOD[3], x + 6, y - 14, 6, 1);
+  r(g, FALL_STRAW[1], x + 10, y - 14, 2, 2);
+  // The tray, its boards narrowing to the bottom.
+  for (let i = 0; i < 9; i++) {
+    const inset = Math.floor((i + 1) / 2);
+    const left = x - 10 + inset;
+    const wide = 20 - inset * 2;
+    r(g, i % 3 === 2 ? FALL_WOOD[1] : FALL_WOOD[2], left, y - 16 + i, wide, 1);
+    r(g, FALL_WOOD[3], left, y - 16 + i, 1, 1);
+    r(g, FALL_WOOD[0], left + wide - 1, y - 16 + i, 1, 1);
+  }
+  r(g, FALL_WOOD[3], x - 10, y - 17, 20, 1);
+  r(g, FALL_WOOD[0], x - 10, y - 16, 20, 1);
+  r(g, FALL_WOOD[2], x - 10, y - 16, 19, 1);
+  r(g, FALL_WOOD[1], x - 5, y - 7, 11, 1);
+  // A leaf caught on the front.
+  r(g, '#e8802a', x - 11, y - 14, 2, 2);
+  r(g, '#b33a1f', x - 10, y - 12, 2, 1);
+  // Rear leg, front fork and the wheel.
+  r(g, FALL_WOOD[1], x + 4, y - 8, 2, 6);
+  r(g, FALL_WOOD[0], x + 3, y - 3, 4, 1);
+  r(g, FALL_WOOD[1], x - 6, y - 9, 2, 5);
+  r(g, FALL_WOOD[0], x - 12, y - 9, 8, 8);
+  r(g, FALL_WOOD[0], x - 11, y - 10, 6, 10);
+  r(g, FALL_WOOD[2], x - 11, y - 8, 6, 6);
+  r(g, FALL_WOOD[2], x - 10, y - 9, 4, 8);
+  r(g, FALL_WOOD[3], x - 10, y - 8, 1, 3);
+  r(g, '#c9a86a', x - 9, y - 6, 2, 2);
+  r(g, FALL_WOOD[0], x - 9, y - 6, 1, 1);
+}
+
+// From the end: the wheel in front, the heap above it and the two handles coming at you.
+function paintWheelbarrowEnd(g, x, y) {
+  r(g, SHADOW, x - 7, y - 2, 14, 2);
+  paintFarmGourd(g, x - 5, y - 23, 6, 7, '#e8802a', '#5f6b2e');
+  paintFarmGourd(g, x + 0, y - 22, 5, 6, '#d4502a', '#5f6b2e');
+  r(g, '#d9a520', x - 3, y - 18, 3, 3);
+  r(g, '#7f8c3a', x + 1, y - 17, 3, 2);
+  for (let i = 0; i < 7; i++) {
+    r(g, i % 3 === 2 ? FALL_WOOD[1] : FALL_WOOD[2], x - 6 + Math.floor(i / 3), y - 16 + i, 12 - Math.floor(i / 3) * 2, 1);
+  }
+  r(g, FALL_WOOD[3], x - 6, y - 17, 12, 1);
+  r(g, FALL_WOOD[0], x - 2, y - 9, 4, 9);
+  r(g, FALL_WOOD[2], x - 1, y - 8, 2, 7);
+  r(g, FALL_WOOD[3], x - 1, y - 7, 1, 3);
+  r(g, FALL_WOOD[1], x - 7, y - 12, 2, 10);
+  r(g, FALL_WOOD[1], x + 5, y - 12, 2, 10);
+  r(g, FALL_WOOD[3], x - 7, y - 12, 1, 10);
+  r(g, FALL_STRAW[1], x - 7, y - 3, 2, 2);
+  r(g, FALL_STRAW[1], x + 5, y - 3, 2, 2);
+}
+
 // These are listed words on the server. A word this page doesn't know is left out, so a newer
 // server can't break an older page. `rise` is how far up from its front edge it's painted, and a
 // `sign` changes what bots can do, so it's painted over everything else.
@@ -1865,6 +3069,23 @@ const ITEMS = {
   anvil: { paint: paintAnvil, side: endOf(12, '#6d7890', '#3b4158'), rise: 15 },
   sewing_table: { paint: paintSewingTable, rise: 28 },
   research_bench: { paint: paintResearchBench, rise: 32 },
+  maple_tree: { paint: paintMapleTree, side: paintMapleTree, rise: 66 },
+  birch_tree: { paint: paintBirchTree, side: paintBirchTree, rise: 66 },
+  leaf_pile: { paint: paintLeafPile, side: paintLeafPile, rise: 16 },
+  rake: { paint: paintRake, rise: 38 },
+  mums: { paint: paintMums, rise: 26 },
+  corn_stalks: { paint: paintCornStalks, rise: 44 },
+  harvest_table: { paint: paintHarvestTable, side: paintHarvestTableEnd, rise: 36 },
+  pumpkin_pie: { paint: paintPumpkinPie, rise: 22 },
+  cornucopia: { paint: paintCornucopia, side: paintCornucopiaEnd, rise: 20 },
+  apple_basket: { paint: paintAppleBasket, rise: 20 },
+  cider_barrel: { paint: paintCiderBarrel, side: paintCiderBarrelEnd, rise: 30 },
+  gourds: { paint: paintGourds, side: paintGourds, rise: 18 },
+  scarecrow: { paint: paintScarecrow, rise: 48 },
+  hay_bale: { paint: paintHayBale, side: paintHayEnd, rise: 18 },
+  turkey: { paint: paintTurkey, rise: 30 },
+  wreath: { paint: paintWreath, rise: 36 },
+  wheelbarrow: { paint: paintWheelbarrow, side: paintWheelbarrowEnd, rise: 24 },
 };
 
 // Notes going up from whoever's making the music, drifting apart as they go.
