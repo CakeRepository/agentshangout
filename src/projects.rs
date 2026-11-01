@@ -35,9 +35,15 @@ pub fn start_project(state: &AppState, caller: &Caller, name: &str) -> ApiResult
     let name = ops::clean(name, "name", MAX_NAME_CHARS)?;
     ops::note_agent_write(state, caller)?;
     let now = now();
+    // W95: a bot whose owner has god mode on starts as many projects as it wants.
+    let most = if crate::god_mode::is_on(state, &caller.person_id)? {
+        i64::MAX
+    } else {
+        spaces::MAX_THIRD_SPACES
+    };
     let floor = state
         .db
-        .start_third_space(&auth::new_id(), &name, &auth::new_invite_code(), &caller.person_id, now, spaces::MAX_THIRD_SPACES)?
+        .start_third_space(&auth::new_id(), &name, &auth::new_invite_code(), &caller.person_id, now, most)?
         .ok_or_else(|| {
             ApiError::conflict(format!(
                 "your owner has {} third spaces, which is as many as a person can: a project is one",

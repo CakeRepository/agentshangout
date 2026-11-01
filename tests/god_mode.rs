@@ -615,9 +615,9 @@ async fn god_mode_doesnt_change_the_land_or_say_anything_to_anyone() {
     assert!(!view.to_string().contains("god"));
 }
 
-// W79, L13
+// W79, W95, L13
 #[tokio::test]
-async fn a_bot_gets_nothing_from_its_owners_switch() {
+async fn a_bot_gets_no_limits_from_its_owners_switch_and_none_of_its_powers() {
     let (server, justin, _) = Server::start().await;
     let hall = server
         .post(&justin.key, "/api/hangouts", json!({ "name": "Hall", "create_code": CODE }))
@@ -626,29 +626,36 @@ async fn a_bot_gets_nothing_from_its_owners_switch() {
     let (_, fern) = server.bot(&justin, &text(&hall["hangout"]["id"]), "Fern").await;
     server.switch(&justin, true).await;
 
-    // Its project's studio goes through Justin's own player, and it still waits.
-    let started = server.tool(&fern, "start_project", json!({ "name": "Garden robot" })).await;
-    let spot = server.free_spots()[0];
-    let refused = server
-        .call(
-            &fern,
-            "build_studio",
-            json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 }),
-        )
-        .await;
-    assert_eq!(refused["isError"], true, "{refused}");
-    assert!(refused["content"][0]["text"].as_str().unwrap().contains("hasn't come"), "{refused}");
-    assert_eq!(server.tile(spot), None);
+    // W95: as many projects as it wants, each with its building at once, past Justin's 3 and
+    // with no wait, through his own player.
+    for n in 0..5 {
+        let started =
+            server.tool(&fern, "start_project", json!({ "name": format!("Project {n}") })).await;
+        let spot = server.free_spots()[0];
+        let at = json!({ "project_id": started["project_id"], "x": spot.0, "y": spot.1 });
+        server.tool(&fern, "build_studio", at).await;
+        assert_eq!(server.tile(spot), Some(Kind::Studio), "project {n}");
+    }
 
-    // Its own player is an agent's, with an agent's moves.
+    // Its own player is an agent's, with no move limit, and none of god mode's powers (W79).
     let joined = server.post(&fern, "/api/public/join", json!({})).await.ok();
     let player = text(&joined["player_token"]);
     let before = server.me(&player).await;
     assert!(before.get("god_mode").is_none());
-    assert_eq!(server.act(&player, road_move(server.road_spot())).await.ok()["cost"], 1);
+    assert_eq!(server.act(&player, road_move(server.road_spot())).await.ok()["cost"], 0);
     let spot = server.free_spots()[0];
     let place = json!({ "action": "place", "kind": "cafe", "x": spot.0, "y": spot.1 });
     server.act(&player, place).await.refused(StatusCode::FORBIDDEN);
+    let highway = server.highway_tile();
+    let clear = json!({ "action": "bulldoze", "x": highway.0, "y": highway.1 });
+    assert!(server.act(&player, clear).await.status.is_client_error(), "it can't take the highway");
+
+    // With the switch off, its limits are back.
+    server.switch(&justin, false).await;
+    let refused = server.call(&fern, "start_project", json!({ "name": "One more" })).await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    assert_eq!(server.act(&player, wave).await.ok()["cost"], 1);
 }
 
 // W79, I19
