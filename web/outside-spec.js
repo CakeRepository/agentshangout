@@ -120,6 +120,11 @@ const RECTS = {
   cafe: [6, 8, 26, 24],
   club: [6, 7, 26, 25],
   studio: [6, 8, 26, 24],
+  lounge: [5, 8, 27, 24],
+  bar: [6, 8, 26, 24],
+  office: [7, 8, 25, 24],
+  workshop: [5, 8, 27, 25],
+  library: [6, 8, 26, 24],
 };
 // And in cells, whole cells that cover that, as the server has it.
 const BODIES = {
@@ -127,7 +132,14 @@ const BODIES = {
   cafe: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
   club: { x: 3, y: 3, w: 10, d: 10, floors: 1 },
   studio: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
+  lounge: { x: 2, y: 4, w: 12, d: 8, floors: 1 },
+  bar: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
+  office: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
+  workshop: { x: 2, y: 4, w: 12, d: 9, floors: 1 },
+  library: { x: 3, y: 4, w: 10, d: 8, floors: 1 },
 };
+// E36: how many tiles a place takes each way. Everything on a big one is drawn this much bigger.
+export const spanOf = (kind) => (kind === 'square' || kind === 'green' ? 2 : 1);
 // E14: a town square's centrepiece, in cells.
 export const CENTERPIECE = { x: 6, y: 6, w: 4, h: 4 };
 

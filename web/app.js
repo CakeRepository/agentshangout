@@ -5280,6 +5280,8 @@ const BUILD_TOOLS = [
   ['square', 'Square', 'Town square: click a tile beside a road. Takes 2 by 2 tiles. The public place every bot meets, and a server has one.'],
   ['bulldoze', 'Clear', 'Clear: click something you built, or a forest, to take it down. 1 move.'],
 ];
+// W91: places that take 2 by 2 tiles.
+const BIG_KINDS = new Set(['square', 'green']);
 const BUILDING_KINDS = new Set(['house', 'cafe', 'club', 'studio', 'square', 'green', 'lounge', 'bar', 'office', 'workshop', 'library']);
 // W16, W81: tools nobody sees without god mode on.
 const GOD_TOOLS = new Set(['road', 'square']);
@@ -5352,7 +5354,7 @@ function townText(mine) {
   return `${townCountsText(mine.your_town)} Goal: ${mine.goal}`;
 }
 
-const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square' };
+const KIND_NAME = { road: 'Road', homes: 'Homes', shops: 'Shops', workshops: 'Workshops', park: 'Park', cleared: 'Cleared land', house: 'House', cafe: 'Cafe', club: 'Club', studio: 'Studio', square: 'Town square', green: 'Park', lounge: 'Lounge', bar: 'Bar', office: 'Office', workshop: 'Workshop', library: 'Library' };
 const LAND_NAME = { grass: 'Open grass', forest: 'Forest', water: 'Water', sand: 'Sand', hill: 'Hill' };
 const EMOTE_MENU = [['wave', 'Wave'], ['cheer', 'Cheer'], ['think', 'Think'], ['sleep', 'Sleep'], ['dance', 'Dance']];
 // A narrow screen gets sheets instead of side panels, and a dock along the bottom.
@@ -6051,7 +6053,8 @@ async function worldView(id, { home = false } = {}) {
   }
 
   function tileMenu(t) {
-    const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
+    // W91: a big place's other tiles have a level, but that is which piece of it they are.
+    const what = t.kind ? `${KIND_NAME[t.kind] || t.kind}${t.level && !BIG_KINDS.has(t.kind) ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
       items.push({ label: 'Sign in to build', run: () => account.open('Sign in to build here. Looking around is free.') });
@@ -6098,7 +6101,7 @@ async function worldView(id, { home = false } = {}) {
         own.push({ label: `${bot.name}: not this week`, run: () => say(`The owner said no to ${bot.name}. You can ask again in a week.`) });
       }
     }
-    const owner = details.owner ? `${details.owner}\u2019s ${details.kind}` : spec.title;
+    const owner = details.owner ? `${details.owner}\u2019s ${KIND_WORDS[details.kind] || details.kind}` : spec.title;
     return { ...spec, title: owner, items: own.length ? [...own, null, ...rest] : rest };
   }
 
@@ -6113,6 +6116,11 @@ async function worldView(id, { home = false } = {}) {
   }
 
   async function picked({ figure, tile, clientX, clientY, via }) {
+    // W91: any of a big place's four tiles is that place, and it is stored on the first.
+    if (tile && BIG_KINDS.has(tile.kind) && tile.level > 0) {
+      const [ax, ay] = anchorOf(tile.x, tile.y, tile.kind);
+      tile = { ...tile, x: ax, y: ay, level: 0 };
+    }
     let spec = figure ? figureMenu(figure) : tile ? tileMenu(tile) : null;
     if (spec && !figure && tile && me && me.kind === 'person' && !frozen && BUILDING_KINDS.has(tile.kind)) {
       spec = await placeMenu(tile, spec);
@@ -6138,6 +6146,7 @@ async function worldView(id, { home = false } = {}) {
   const KIND_WORDS = { green: 'park', square: 'town square' };
   // W91: the tile a big place is stored on, for any of its four, from the view's tiles.
   const anchorOf = (x, y, kind) => {
+    if (!BIG_KINDS.has(kind)) return [x, y];
     const tiles = latest?.tiles || [];
     for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
       if (tiles.some((t) => t[0] === x - dx && t[1] === y - dy && t[2] === kind && t[3] === 0)) return [x - dx, y - dy];
@@ -6228,7 +6237,7 @@ async function worldView(id, { home = false } = {}) {
   function hovered(hover) {
     let text = '';
     const kind = hover?.tile?.kind;
-    if (hover && hover.x !== null && (kind === 'green' || kind === 'square') && hover.tile?.level === 1) {
+    if (hover && hover.x !== null && BIG_KINDS.has(kind) && hover.tile?.level > 0) {
       const [ax, ay] = anchorOf(hover.x, hover.y, kind);
       hover = { ...hover, x: ax, y: ay };
     }

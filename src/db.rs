@@ -813,7 +813,7 @@ const STAMP_EPOCH_MS: i64 = 1_735_689_600_000;
 static LAST_OUTSIDE_STAMP: AtomicI64 = AtomicI64::new(0);
 /// E31: a row for a tile shows only while the place standing there has its player and its kind. Takes
 /// the row as `o`.
-const OUTSIDE_IS_LIVE: &str = "JOIN world_places p ON p.world_id = o.world_id AND p.x = o.x
+const OUTSIDE_IS_LIVE: &str = "JOIN world_every_place p ON p.world_id = o.world_id AND p.x = o.x
     AND p.y = o.y AND p.player_id = o.player_id AND p.kind = o.kind";
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -8235,6 +8235,7 @@ fn q_write_changes(
                     tile.player.map(|player| player as i64),
                     now
                 ])?;
+                q_wear_waiting_outside(conn, world_id, (*x, *y), tile.kind.as_str(), tile.player)?;
             }
             Change::Set((x, y), tile) if tile.kind == Kind::Square => {
                 remove.execute(params![world_id, x, y])?;
@@ -8340,7 +8341,7 @@ fn q_wear_waiting_outside(
          WHERE rowid = (
              SELECT o.rowid FROM place_outsides o
               WHERE o.world_id = ?1 AND o.player_id = ?2 AND o.kind = ?3
-                AND NOT EXISTS (SELECT 1 FROM world_places p
+                AND NOT EXISTS (SELECT 1 FROM world_every_place p
                                  WHERE p.world_id = o.world_id AND p.x = o.x AND p.y = o.y
                                    AND p.player_id = o.player_id AND p.kind = o.kind)
               ORDER BY o.changed_at DESC, o.stamp DESC LIMIT 1)",
@@ -9610,7 +9611,7 @@ impl Db {
     ) -> rusqlite::Result<Option<(String, i64, Option<String>)>> {
         self.conn()
             .query_row(
-                "SELECT b.kind, b.player_id, p.person_id FROM world_places b
+                "SELECT b.kind, b.player_id, p.person_id FROM world_every_place b
                  JOIN players p ON p.id = b.player_id
                  WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
                 params![world_id, x, y],
@@ -9655,7 +9656,7 @@ impl Db {
                  outside = excluded.outside, stamp = excluded.stamp, changed_at = excluded.changed_at",
             params![world_id, player_id, kind, x, y, outside, stamp, now],
         )?;
-        let waiting = "NOT EXISTS (SELECT 1 FROM world_places p
+        let waiting = "NOT EXISTS (SELECT 1 FROM world_every_place p
                                     WHERE p.world_id = o.world_id AND p.x = o.x AND p.y = o.y
                                       AND p.player_id = o.player_id AND p.kind = o.kind)";
         tx.execute(

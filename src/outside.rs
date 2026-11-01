@@ -43,9 +43,14 @@ pub const MAX_REFUSAL_CHARS: usize = 160;
 /// E27: how long the map of outsides is kept when nothing says it changed.
 const MAP_KEPT: Duration = Duration::from_secs(10);
 
-const BUILDINGS: &[&str] = &["house", "cafe", "club", "studio"];
-const EVERYWHERE: &[&str] = &["house", "cafe", "club", "studio", "square"];
-const SQUARES: &[&str] = &["square"];
+const BUILDINGS: &[&str] =
+    &["house", "cafe", "club", "studio", "lounge", "bar", "office", "workshop", "library"];
+const EVERYWHERE: &[&str] = &[
+    "house", "cafe", "club", "studio", "lounge", "bar", "office", "workshop", "library", "square",
+    "green",
+];
+/// E14: the places with no building, which take 2 by 2 tiles (W91).
+const OPEN_AIR: &[&str] = &["square", "green"];
 
 // What a thing is, which is how the catalog is grouped, as a room's is (I46).
 const SIZE: &str = "size";
@@ -483,7 +488,7 @@ pub const PARTS: [Part; 25] = [
         "centerpiece",
         "Centrepiece",
         GROUND,
-        SQUARES,
+        OPEN_AIR,
         &[
             ("fountain", "Fountain"),
             ("statue", "Statue"),
@@ -911,14 +916,14 @@ pub fn packs() -> Vec<Pack> {
                 { "kind": "hay_bale", "x": 2, "y": 15 },
                 // Somewhere for dinner, on the right of the front, with the food in front of it.
                 { "kind": "harvest_table", "x": 12, "y": 13 },
-                { "kind": "cornucopia", "x": 11, "y": 15 },
+                { "kind": "cornucopia", "x": 2, "y": 14 },
                 { "kind": "pumpkin_pie", "x": 13, "y": 15 },
                 { "kind": "turkey", "x": 14, "y": 15 },
                 { "kind": "mums", "x": 15, "y": 15 },
                 // Down the side, clear of a door on that wall.
-                { "kind": "leaf_pile", "x": 13, "y": 11 },
-                { "kind": "rake", "x": 15, "y": 11 },
-                { "kind": "cider_barrel", "x": 13, "y": 4 },
+                { "kind": "leaf_pile", "x": 14, "y": 11 },
+                { "kind": "rake", "x": 14, "y": 12 },
+                { "kind": "cider_barrel", "x": 14, "y": 4 },
                 { "kind": "apple_basket", "x": 14, "y": 5 },
                 { "kind": "wreath", "x": 15, "y": 5 },
             ],
@@ -953,7 +958,7 @@ pub fn templates() -> Vec<Template> {
                     { "kind": "apple_tree", "x": 1, "y": 13 },
                     { "kind": "rose_bush", "x": 13, "y": 13, "color": 0xe5_48_4d },
                     { "kind": "flower_bed", "x": 11, "y": 14, "color": 0xf4_8f_b1 },
-                    { "kind": "flower_bed", "x": 13, "y": 3, "color": 0xff_d5_4f, "facing": 1 },
+                    { "kind": "flower_bed", "x": 14, "y": 3, "color": 0xff_d5_4f, "facing": 1 },
                 ],
             }),
         ),
@@ -977,7 +982,7 @@ pub fn templates() -> Vec<Template> {
                 "items": [
                     { "kind": "cypress", "x": 1, "y": 13 },
                     { "kind": "cypress", "x": 1, "y": 14 },
-                    { "kind": "deck_chair", "x": 13, "y": 12, "color": 0xff_ff_ff },
+                    { "kind": "deck_chair", "x": 14, "y": 11, "color": 0xff_ff_ff },
                 ],
             }),
         ),
@@ -1003,7 +1008,7 @@ pub fn templates() -> Vec<Template> {
                     { "kind": "pine", "x": 1, "y": 1 },
                     { "kind": "pine", "x": 14, "y": 1 },
                     { "kind": "log_pile", "x": 1, "y": 14 },
-                    { "kind": "fire_pit", "x": 13, "y": 3 },
+                    { "kind": "fire_pit", "x": 14, "y": 3 },
                 ],
             }),
         ),
@@ -1025,8 +1030,8 @@ pub fn templates() -> Vec<Template> {
                 },
                 "items": [
                     { "kind": "palm", "x": 1, "y": 13 },
-                    { "kind": "deck_chair", "x": 15, "y": 12, "color": 0xff_8a_65 },
-                    { "kind": "parasol", "x": 13, "y": 11, "color": 0x2f_5d_9a },
+                    { "kind": "deck_chair", "x": 15, "y": 13, "color": 0xff_8a_65 },
+                    { "kind": "parasol", "x": 14, "y": 11, "color": 0x2f_5d_9a },
                     { "kind": "boat", "x": 11, "y": 14, "color": 0xff_ff_ff },
                 ],
             }),
@@ -1168,7 +1173,7 @@ pub fn templates() -> Vec<Template> {
         template(
             "fairground",
             "Fairground",
-            SQUARES,
+            OPEN_AIR,
             json!({
                 "parts": {
                     "centerpiece": { "style": "bandstand", "color": 0xe5_48_4d },
@@ -1186,7 +1191,7 @@ pub fn templates() -> Vec<Template> {
         template(
             "park",
             "Park",
-            SQUARES,
+            OPEN_AIR,
             json!({
                 "parts": {
                     "centerpiece": { "style": "tree" },
@@ -1211,8 +1216,10 @@ pub fn templates() -> Vec<Template> {
 /// `web/outside-spec.js`. A town square has no body (E14).
 pub fn default_body(kind: &str) -> Option<Body> {
     let (x, y, w, d) = match kind {
-        "house" | "cafe" | "studio" => (3, 4, 10, 8),
+        "house" | "cafe" | "studio" | "bar" | "office" | "library" => (3, 4, 10, 8),
         "club" => (3, 3, 10, 10),
+        "lounge" => (2, 4, 12, 8),
+        "workshop" => (2, 4, 12, 9),
         _ => return None,
     };
     Some(Body { x, y, w, d, floors: 1 })
@@ -1397,9 +1404,10 @@ fn check_pets(pets: &[Pet]) -> ApiResult<()> {
 /// be in range, so this is where the document is checked as a whole.
 fn check_fit(kind: &str, outside: &Outside) -> ApiResult<()> {
     let mut standing: Vec<Cells> = Vec::new();
-    if kind == "square" {
+    if OPEN_AIR.contains(&kind) {
+        // E14: a park starts with nothing in its middle, and a square with its fountain.
         let style = outside.parts.get("centerpiece").and_then(|chosen| chosen.style.as_deref());
-        if style != Some("none") {
+        if style.unwrap_or(if kind == "green" { "none" } else { "fountain" }) != "none" {
             standing.push(CENTREPIECE);
         }
     } else if let Some(body) = outside.body.or_else(|| default_body(kind)) {
@@ -1429,8 +1437,8 @@ pub fn check(kind: &str, outside: &Outside) -> ApiResult<()> {
         check_part(kind, word, chosen)?;
     }
     if let Some(body) = &outside.body {
-        if kind == "square" {
-            return Err(refuse("a town square has no body"));
+        if OPEN_AIR.contains(&kind) {
+            return Err(refuse("a town square or a park has no building"));
         }
         check_body(body)?;
     }
@@ -1458,15 +1466,19 @@ pub fn routes() -> Router<AppState> {
 
 /// The place on a tile of The Commons, or 404 (E6).
 struct Standing {
+    x: i64,
+    y: i64,
     kind: String,
     player_id: i64,
     owner_id: Option<String>,
 }
 
 fn standing(state: &AppState, x: i64, y: i64) -> ApiResult<Standing> {
+    // W91: any tile of a big place is that place, and it's stored on its first.
+    let (x, y) = state.db.place_anchor_at(COMMONS_ID, x, y)?;
     let (kind, player_id, owner_id) =
         state.db.place_standing(COMMONS_ID, x, y)?.ok_or_else(ApiError::not_found)?;
-    Ok(Standing { kind, player_id, owner_id })
+    Ok(Standing { x, y, kind, player_id, owner_id })
 }
 
 /// E8: a person's changes in a minute, whatever they change.
@@ -1490,11 +1502,13 @@ async fn read(
 ) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "see an outside: it's for people")?;
     let place = standing(&state, x, y)?;
-    let outside = match state.db.outside_at(COMMONS_ID, x, y)? {
+    let outside = match state.db.outside_at(COMMONS_ID, place.x, place.y)? {
         Some(text) => document(&text),
         None => json!({}),
     };
     Ok(Json(json!({
+        "x": place.x,
+        "y": place.y,
         "kind": place.kind,
         "outside": outside,
         "yours": place.owner_id.as_deref() == Some(caller.person_id.as_str()),
@@ -1520,11 +1534,18 @@ async fn change(
         serde_json::from_value(body).map_err(|error| refuse(format!("not an outside: {error}")))?;
     check(&place.kind, &outside)?;
     if is_empty(&outside) {
-        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (x, y))?;
+        state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
     } else {
         let text =
             serde_json::to_string(&outside).map_err(|_| ApiError::bad_request("not an outside"))?;
-        state.db.save_outside(COMMONS_ID, place.player_id, &place.kind, (x, y), &text, now())?;
+        state.db.save_outside(
+            COMMONS_ID,
+            place.player_id,
+            &place.kind,
+            (place.x, place.y),
+            &text,
+            now(),
+        )?;
     }
     state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "outside": outside })))
@@ -1543,7 +1564,7 @@ async fn clear(
         return Err(ApiError::forbidden("only the owner of a place or the keeper can clear it"));
     }
     allow_change(&state, &caller)?;
-    state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (x, y))?;
+    state.db.clear_outside(COMMONS_ID, place.player_id, &place.kind, (place.x, place.y))?;
     state.worlds.mark_stale(COMMONS_ID);
     Ok(Json(json!({ "ok": true })))
 }

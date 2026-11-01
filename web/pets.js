@@ -5,7 +5,7 @@
 // This module imports only web/outside-spec.js, so the rules can be run in Node. It never loads
 // web/world.js, which would be a cycle.
 
-import { CELL, CENTERPIECE, bodyOf, hexOf, itemsOf, rectOf } from './outside-spec.js';
+import { CELL, CENTERPIECE, bodyOf, hexOf, itemsOf, partOf, rectOf, spanOf } from './outside-spec.js';
 
 const TAU = 6.2832;
 const INK = '#2a211d';
@@ -818,12 +818,19 @@ const MARGIN = 1.8; // the yard's edge, where the fence stands
 const KEEP = 1.2; // how far it keeps from a building
 const KEEP_ITEM = 0.8;
 
+// E14: whether something stands in the middle. A square has a fountain unless its style is `none`, and a
+// park has nothing unless one is chosen.
+function centred(kind, outside) {
+  const style = partOf(outside, 'centerpiece').style;
+  return (typeof style === 'string' ? style : kind === 'green' ? 'none' : 'fountain') !== 'none';
+}
+
 // The obstacles in a yard, in units: [u0, v0, u1, v1, keep].
 function obstaclesOf(kind, outside) {
   const list = [];
   const rect = rectOf(kind, outside);
   if (rect) list.push([rect[0], rect[1], rect[2], rect[3], KEEP]);
-  else if (!bodyOf(kind, outside)) list.push([CENTERPIECE.x * CELL, CENTERPIECE.y * CELL, (CENTERPIECE.x + CENTERPIECE.w) * CELL, (CENTERPIECE.y + CENTERPIECE.h) * CELL, KEEP]);
+  else if (!bodyOf(kind, outside) && centred(kind, outside)) list.push([CENTERPIECE.x * CELL, CENTERPIECE.y * CELL, (CENTERPIECE.x + CENTERPIECE.w) * CELL, (CENTERPIECE.y + CENTERPIECE.h) * CELL, KEEP]);
   for (const item of itemsOf(outside)) list.push([item.u0, item.v0, item.u1, item.v1, KEEP_ITEM]);
   return list;
 }
@@ -1207,6 +1214,8 @@ export function makePet(id, x, y, pet, outside, key, kind, door = null) {
     collar: doc.collar,
     rules,
     kind,
+    // E36: how many tiles the yard is spread over, each way.
+    span: spanOf(kind),
     outside,
     obs: obstaclesOf(kind, outside),
     seed,
@@ -1244,8 +1253,8 @@ export function makePet(id, x, y, pet, outside, key, kind, door = null) {
 }
 
 function place(p) {
-  p.px = p.tx + p.u / 32;
-  p.py = p.ty + p.v / 32;
+  p.px = p.tx + (p.u * p.span) / 32;
+  p.py = p.ty + (p.v * p.span) / 32;
   const rect = rectOf(p.kind, p.outside);
   p.behind = Boolean(rect) && (p.u < rect[0] || p.v < rect[1]);
 }

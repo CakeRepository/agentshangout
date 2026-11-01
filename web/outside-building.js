@@ -5,8 +5,8 @@
 // while the module loads. Every table below holds literals and its own functions, and runs later.
 
 import {
-  BRICKS, GLASS_BOT, GLASS_TOP, P, TRIM, awning as mapAwning, box, brickChimney, clamp, dark, door as mapDoor, ell, fp,
-  fp3, gable as mapGable, grad, ih, layout, lerp, line, lite, mixHex, onL, onR, paintWall, pathOf, picket, rgba, rr, seeded,
+  BRICKS, GLASS_BOT, GLASS_TOP, P, TRIM, awning as mapAwning, box, brickChimney, clamp, dark, door as mapDoor, drawTree, ell,
+  fp, fp3, gable as mapGable, grad, ih, layout, ledge, lerp, line, lite, mixHex, onL, onR, paintWall, pathOf, picket, rgba, rr, seeded,
   shadeFace, shadow, sign as mapSign, slope as mapSlope, topFace,
 } from './world.js';
 import { bodyOf, hexOf, isOn, numberOf, partOf, rectOf, styleOf } from './outside-spec.js';
@@ -14,12 +14,23 @@ import { bodyOf, hexOf, isOn, numberOf, partOf, rectOf, styleOf } from './outsid
 const TAU = 6.2832;
 
 // What each kind of place has when nothing is chosen: `h` is a storey's height, `win` a window's width,
-// height and sill, and `door` a door's width and height.
+// height and sill, and `door` a door's width and height. The rest is what a kind is known for (W90), and
+// stays when something else about it changes: `up` the height of each storey above the first, `rows` the
+// rows of windows on the first storey and on the others, `lit` how many of its windows shine at night out
+// of a hundred, `frame` its window frames, `shade` how far a flat roof's shadow stands above its walls, `pk` how
+// steep its pitched roof is, `over` how far it overhangs, `pshade` how far that roof's shadow stands above its
+// walls, `curtain` the curtains in its windows, `shift` how far its door sits from the
+// middle of its wall, and `wtop` the height its windows stop at.
 const KINDS = {
   house: { h: 11, win: [4, 5, 4], door: [4.4, 8], roof: 'gable' },
   cafe: { h: 13, win: [5, 6, 4], door: [4.4, 8.5], roof: 'flat' },
-  club: { h: 17, win: [4.4, 6, 5], door: [4.4, 8.5], roof: 'flat' },
+  club: { h: 17, win: [4.4, 6, 5], door: [4.4, 8.5], roof: 'flat', doorCol: '#2a2436' },
   studio: { h: 15, win: [4.4, 7, 5], door: [4.4, 8.5], roof: 'flat' },
+  lounge: { h: 11, win: [4.4, 5.5, 3.5], door: [4.4, 8], roof: 'flat', lit: 90, curtain: '#b45a6a' },
+  bar: { h: 13, win: [3.6, 4.4, 4], door: [4.4, 8.5], roof: 'flat', lit: 100, doorCol: '#1e1a22', wtop: 9.6 },
+  office: { h: 30, up: 18, win: [3.6, 5.5, 3.5], door: [4.4, 9], roof: 'flat', lit: 55, frame: '#5a6a80', doorCol: '#3a5a7a', shade: 4, shift: -0.4, rows: [3, 2], parapet: 1.5, coping: '#9aa0aa' },
+  workshop: { h: 14, win: [4, 5, 6], door: [4.4, 8], roof: 'gable', lit: 70, frame: '#4a4a4a', roofCol: '#6a6f78', over: 1.2, pk: 42 / 76.5, pshade: 8, smoke: true },
+  library: { h: 16, win: [2.8, 9, 4], door: [4.4, 10], roof: 'gable', lit: 75, frame: '#7a6a50', doorCol: '#5a3a24', roofCol: '#5f6f7f', over: 1.4, pk: 49 / 72, pshade: 8, shift: -0.2 },
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -512,7 +523,7 @@ function windowArt(B, x, z, w, h, o) {
   const t = -(z + h);
   if (!S.day) {
     const n = S.n++;
-    if (ih(S.seed, n, 5) % 100 >= B.glowPct) return;
+    if (ih(S.seed, n, 5) % 100 >= (o.lit ?? B.glowPct)) return;
     const gc = B.glowColor;
     shapePath(g, o.style, x, t, w, h, 0);
     g.save();
@@ -959,7 +970,7 @@ function surfRoof(B, base, top, edge, rows, bright = 0) {
   (ROOFING_ART[B.roofing] || ROOFING_ART.shingles)(B, base, top, edge, rows, bright);
 }
 
-const riseFor = (B, half) => Math.round(clamp(half * (9 / 7) * ((B.pitch ?? 2) / 2), 3, 24) * 100) / 100;
+const riseFor = (B, half) => Math.round(clamp(half * (9 / 7) * (B.k.pk ?? 1) * ((B.pitch ?? 2) / 2), 3, 24) * 100) / 100;
 
 // A roof's own report of itself, so what stands on it, hangs from it or goes through it knows where to be.
 // `eave` is the polyline of the roof's visible edge (a string of lights hangs from it).
@@ -1104,9 +1115,9 @@ const ROOF_ART = {
   flat(B, R, zE, o, extra = {}, spec = {}) {
     const { g } = B;
     const [u0, v0, u1, v1] = R;
-    const t = extra.parapet ?? (B.trimStyle === 'bold' ? 3.2 : B.trimStyle === 'none' ? 1.8 : 2.5);
+    const t = extra.parapet ?? B.k.parapet ?? (B.trimStyle === 'bold' ? 3.2 : B.trimStyle === 'none' ? 1.8 : 2.5);
     const c = B.roofHex;
-    const cope = c ? lite(c, 0.32) : null;
+    const cope = c ? lite(c, 0.32) : B.k.coping || null;
     onL(g, u0, v1, () => {
       rr(g, grad(g, 0, -zE - t, 0, -zE, lite(cope || '#e8e2d2', 0.1), cope || '#d8d1c0'), -0.3, -zE - t, u1 - u0 + 0.6, t);
       rr(g, 'rgba(25,15,35,.24)', 0, -zE - 0.8, u1 - u0, 0.8);
@@ -1125,7 +1136,7 @@ const ROOF_ART = {
     return {
       zTop: zt,
       deck: { R: [u0 + 1, v0 + 1, u1 - 1, v1 - 1], z: zt },
-      sh: zE + (B.kind === 'studio' ? 6 : 2),
+      sh: zE + (B.k.shade ?? (B.kind === 'studio' ? 6 : 2)),
       eave: [[u0, v1, zt], [u1, v1, zt], [u1, v0, zt]],
       chim: [u1 - 7, v0 + 3, zt - 0.5, zt + 9],
       lowZ: zt,
@@ -1425,8 +1436,8 @@ function cylinder(g, x, y0, y1, rx, ry, col) {
 const CHIMNEY_ART = {
   none() {},
   brick(B, at, col, smoke) {
-    const [u, v, z0, z1] = at;
-    const w = 3.4;
+    const [u, v, z0, z1, wide] = at;
+    const w = wide || 3.4;
     if (!col) {
       brickChimney(B.S, u, v, z0, z1, w, smoke);
       return;
@@ -2507,6 +2518,11 @@ function kindWall(S, kind, c) {
   if (kind === 'house') return S.v === 1 ? { k: 'brick', c: BRICKS[S.pal % 4] } : { k: 'siding', c: c.wall };
   if (kind === 'cafe') return { k: 'siding', c: '#e8d9b8' };
   if (kind === 'club') return { k: 'brick', c: '#5a4668' };
+  if (kind === 'lounge') return { k: 'siding', c: '#e6bcae' };
+  if (kind === 'bar') return { k: 'brick', c: '#4a3a3a' };
+  if (kind === 'office') return { k: 'concrete', c: '#c9ccd2' };
+  if (kind === 'workshop') return { k: 'brick', c: BRICKS[(S.pal + 1) % 4] };
+  if (kind === 'library') return { k: 'siding', c: '#ece4cf' };
   return { k: 'brick', c: BRICKS[S.pal % 4] };
 }
 
@@ -2533,7 +2549,7 @@ function look(S, kind, outside, c) {
   const floors = clamp(body ? body.floors : 1, 1, 3);
   const foundation = word('foundation', FOUNDATION_ART, 'none');
   const Z0 = foundation === 'raised' ? 3.2 : 0;
-  const Hu = k.h * 0.9;
+  const Hu = k.up ?? k.h * 0.9;
   const zf = [Z0, Z0 + k.h];
   for (let f = 1; f < floors; f++) zf.push(zf[f] + Hu);
   const trimStyle = word('trim', TRIM_ART, 'plain');
@@ -2544,7 +2560,7 @@ function look(S, kind, outside, c) {
   const roofStyle = word('roof', ROOF_ART, k.roof);
   const wallStyle = word('walls', WALL_ART, null);
   const countRaw = numberOf(outside, 'windows', null);
-  const chimney = word('chimney', CHIMNEY_ART, kind === 'house' ? 'brick' : 'none');
+  const chimney = word('chimney', CHIMNEY_ART, kind === 'house' || k.smoke ? 'brick' : 'none');
   const B = {
     S,
     g: S.g,
@@ -2565,12 +2581,13 @@ function look(S, kind, outside, c) {
     trim: TRIM_ART[trimStyle],
     trimHex,
     frameCol: trimStyle === 'none' ? null : trimHex || TRIM,
+    winFrame: trimStyle === 'none' ? null : trimHex || k.frame || TRIM,
     fascia: trimHex || '#efe8d6',
     roofStyle,
     roofHex,
     pitch: Number.isInteger(pitchRaw) ? clamp(pitchRaw, 1, 3) : null,
     roofing,
-    roofBase: roofing === 'solar' ? ROOFING_COLOR.solar : roofHex || ROOFING_COLOR[roofing] || c.roof,
+    roofBase: roofing === 'solar' ? ROOFING_COLOR.solar : roofHex || ROOFING_COLOR[roofing] || k.roofCol || c.roof,
     winStyle: word('windows', WINDOW_ART, null),
     winCount: Number.isInteger(countRaw) ? clamp(countRaw, 0, 6) : null,
     glassColor: hex('windows'),
@@ -2580,7 +2597,7 @@ function look(S, kind, outside, c) {
     curtainCol: hex('curtains'),
     boxes: word('window_boxes', BOX_ART, 'none'),
     doorStyle: word('door', DOOR_ART, null),
-    doorCol: hex('door') || (kind === 'club' ? '#2a2436' : c.door),
+    doorCol: hex('door') || k.doorCol || c.door,
     porch: word('porch', PORCH_ART, 'none'),
     porchCol: hex('porch'),
     awningSet: !!word('awning', AWNING_ART, null),
@@ -2588,6 +2605,7 @@ function look(S, kind, outside, c) {
     awningCol: hex('awning'),
     signStyle: word('sign', SIGN_ART, 'none'),
     signCol: hex('sign'),
+    glowSet: !!word('glow', GLOW_ART, null),
     glowPct: GLOW_ART[word('glow', GLOW_ART, 'evening')],
     glowColor: hex('glow'),
     wallLight: word('wall_lights', WALL_LIGHT_ART, 'porch_lamp'),
@@ -2599,7 +2617,7 @@ function look(S, kind, outside, c) {
     chimneySet: !!word('chimney', CHIMNEY_ART, null),
     rooftop: keysOf(ROOFTOP_ART).filter((w) => isOn(outside, 'rooftop', w)),
     rooftopCol: hex('rooftop'),
-    overhang: 1.8 + (trimStyle === 'bold' ? 0.5 : 0),
+    overhang: (k.over ?? 1.8) + (trimStyle === 'bold' ? 0.5 : 0),
     yardFence: !!outside && !!partOf(outside, 'fence').style,
   };
   return B;
@@ -2641,7 +2659,44 @@ const OLD_PLAN = {
     for (let i = doorFace ? 1 : 0; i < lay.count; i++) wins.push({ x: lay.start + i * lay.step, w: 4.4, h: 7, z: 5 });
     return { door: doorFace ? 3 : null, wins };
   },
+  lounge(len, doorFace) {
+    const curtain = KINDS.lounge.curtain;
+    if (doorFace) {
+      const w = len / 2 - 6;
+      return { wins: [{ x: 2.5, w, h: 5.5, curtain, fixed: true }, { x: len / 2 + 3, w, h: 5.5, curtain, fixed: true }] };
+    }
+    return { wins: [{ x: 3, w: len - 6, h: 5.5, curtain, fixed: true }] };
+  },
+  bar(len) {
+    return { wins: [{ x: 2.5, w: 3.6, h: 4.4 }, { x: len - 6.1, w: 3.6, h: 4.4 }] };
+  },
+  office(len, doorFace) {
+    // Three rows of windows, and the door takes the place of the first row's middle ones.
+    const lay = layout(len, 3.6, 2.2, 1.8);
+    const wins = [];
+    for (let row = doorFace ? 1 : 0; row < 3; row++) {
+      for (let i = 0; i < lay.count; i++) wins.push({ x: lay.start + i * lay.step, w: 3.6, h: 5.5, row });
+    }
+    return { wins };
+  },
+  workshop(len, doorFace) {
+    const wins = [];
+    if (!doorFace) for (let i = 0; i < 3; i++) wins.push({ x: 3 + i * 6, w: 4, h: 5 });
+    return { wins };
+  },
+  library(len, doorFace) {
+    const lay = layout(len, 2.8, 2.6, 2);
+    const wins = [];
+    for (let i = 0; i < lay.count; i++) {
+      const x = lay.start + i * lay.step;
+      if (!(doorFace && Math.abs(x - len / 2) < 4)) wins.push({ x, w: 2.8, h: 9 });
+    }
+    return { wins };
+  },
 };
+
+// How far apart a kind's rows of windows are.
+const ROW = 8.5;
 
 function planFace(B, blk, side, len) {
   if (blk.plan[side]) return blk.plan[side];
@@ -2655,15 +2710,17 @@ function planFace(B, blk, side, len) {
   const plan = { lo, hi, len, door: null, wins: [], sign: null, zBase: blk.z0 - B.Z0, top: blk.z1 - B.Z0 };
   const custom = B.winCount !== null;
   // The ground floor of a block that has one.
-  const ground = blk.f0 === 0 ? (blk.tower ? { door: null, wins: [] } : OLD_PLAN[B.kind](len, doorFace)) : null;
+  const ground = blk.f0 === 0 ? (blk.tower ? { wins: [] } : OLD_PLAN[B.kind](len, doorFace)) : null;
   if (doorFace) {
     // A door goes where the kind put it, narrowed to the wall that shows.
-    let x = B.kind === 'house' ? len - dw - 3.6 : B.kind === 'studio' ? 3 : len / 2 - dw / 2;
+    let x = B.kind === 'house' ? len - dw - 3.6 : B.kind === 'studio' ? 3 : B.kind === 'workshop' ? len - dw - 2.6 : len / 2 - dw / 2 + (k.shift || 0);
     if (hi - lo < dw + 2.8) x = lo + (hi - lo - dw) / 2;
     else x = clamp(x, lo + 1.4, hi - dw - 1.4);
     plan.door = { x, w: dw, h: dh };
   }
   const obstacles = [];
+  // What a window above the first row has to keep clear of.
+  const overSign = [];
   if (plan.door) {
     const lamp = B.wallLight === 'porch_lamp' ? 4.4 : 1.6;
     obstacles.push([plan.door.x - 1.6, plan.door.x + dw + lamp]);
@@ -2675,7 +2732,10 @@ function planFace(B, blk, side, len) {
     const right = plan.door.x + dw + 4.6;
     const fits = (x) => x >= lo + 0.5 && x + pw <= hi - 0.5;
     plan.sign = fits(left) ? left : fits(right) ? right : null;
-    if (plan.sign !== null) obstacles.push([plan.sign - 0.8, plan.sign + pw + 0.8]);
+    if (plan.sign !== null) {
+      obstacles.push([plan.sign - 0.8, plan.sign + pw + 0.8]);
+      overSign.push(obstacles[obstacles.length - 1]);
+    }
   }
   for (let f = blk.f0; f < blk.f1; f++) {
     const fh = f === 0 ? B.H : B.Hu;
@@ -2684,13 +2744,17 @@ function planFace(B, blk, side, len) {
     const base = k.win;
     const items = [];
     const isOld = f === 0 && !custom && !blk.tower;
+    // A kind with rows of windows has them on every storey (an office's first has three).
+    const rows = k.rows ? k.rows[f === 0 ? 0 : 1] : 1;
     const [bw, bh] = art.size(base[0], base[1]);
     const place = (x, ww, hh, extra = {}) => {
       const [nw, nh] = extra.fixed ? [ww, hh] : art.size(ww, hh);
-      items.push({ ...extra, x: x + (ww - nw) / 2, w: nw, h: Math.min(nh, fh - sill - 1.6), z, f, old: isOld });
+      const row = extra.row || 0;
+      const room = Math.min(fh - sill - row * ROW - 1.6, k.wtop ? k.wtop - sill : Infinity);
+      items.push({ ...extra, x: x + (ww - nw) / 2, w: nw, h: Math.min(nh, room), z: z + row * ROW, row, f, old: isOld });
     };
     if (f === 0 && !custom && !blk.tower) {
-      for (const w of ground.wins) place(w.x, w.w, w.h, { curtain: w.curtain, fixed: w.fixed });
+      for (const w of ground.wins) place(w.x, w.w, w.h, { curtain: w.curtain, fixed: w.fixed, row: w.row });
     } else {
       const span = blk.spanAll?.[side] || [blk.off[side], blk.off[side] + len];
       const gap = 1.6;
@@ -2698,14 +2762,16 @@ function planFace(B, blk, side, len) {
       let n;
       if (custom) n = Math.min(B.winCount, Math.floor((room + gap) / (bw + gap)));
       else n = layout(hi - lo, bw, 3.4, 2).count;
-      if (custom) {
-        for (let q = 0; q < n; q++) {
-          const cx = span[0] + (room * (q + 0.5)) / n - blk.off[side];
-          place(cx - base[0] / 2, base[0], base[1], {});
+      for (let row = 0; row < rows; row++) {
+        if (custom) {
+          for (let q = 0; q < n; q++) {
+            const cx = span[0] + (room * (q + 0.5)) / n - blk.off[side];
+            place(cx - base[0] / 2, base[0], base[1], { row, curtain: f === 0 ? k.curtain : undefined });
+          }
+        } else {
+          const lay = layout(hi - lo, bw, 3.4, 2);
+          for (let q = 0; q < lay.count; q++) place(lo + lay.start + q * lay.step + (bw - base[0]) / 2, base[0], base[1], { row });
         }
-      } else {
-        const lay = layout(hi - lo, bw, 3.4, 2);
-        for (let q = 0; q < lay.count; q++) place(lo + lay.start + q * lay.step + (bw - base[0]) / 2, base[0], base[1], {});
       }
     }
     // Windows that don't fit on the wall that shows, or that sit on the door or the sign, aren't painted.
@@ -2714,12 +2780,12 @@ function planFace(B, blk, side, len) {
       // A short wall can leave a window with no width (a cafe's long one), and a round or arched window can't have a negative radius.
       if (!(it.w > 0.5 && it.h > 0.5)) continue;
       if (it.x < lo + 0.7 || it.x + it.w > hi - 0.7) continue;
-      if (f === 0 && !it.old && obstacles.some(([a, b]) => it.x - 1 < b && it.x + it.w + 1 > a)) continue;
+      if (f === 0 && !it.old && (it.row ? overSign : obstacles).some(([a, b]) => it.x - 1 < b && it.x + it.w + 1 > a)) continue;
       // The old house's window tucks a unit under its door, and the door is painted over it (E4), so only more than that is a clash.
-      if (it.old && plan.door && Math.min(it.x + it.w, plan.door.x + dw) - Math.max(it.x, plan.door.x) > 1.2) continue;
+      if (it.old && !it.row && plan.door && Math.min(it.x + it.w, plan.door.x + dw) - Math.max(it.x, plan.door.x) > 1.2) continue;
       if (it.old && plan.sign !== null && it.x < plan.sign + 6.4 && it.x + it.w > plan.sign - 0.8) continue;
       const prev = kept[kept.length - 1];
-      if (prev && it.x - (it.old ? 0 : 1.2) < prev.x + prev.w) continue;
+      if (prev && prev.row === it.row && it.x - (it.old ? 0 : 1.2) < prev.x + prev.w) continue;
       kept.push(it);
     }
     plan.wins.push(...kept);
@@ -2734,7 +2800,8 @@ function windowOptions(B, it, index) {
   if (B.curtain === null && curtainStyle) curtainColor = it.curtain || (index % 2 ? '#e8c8d8' : '#d8e4f4');
   return {
     style: B.winStyle || 'square',
-    frame: B.frameCol,
+    frame: B.winFrame,
+    lit: B.glowSet ? null : B.k.lit ?? null,
     glass: B.glassColor,
     curtain: curtainStyle ? { style: curtainStyle, color: curtainColor } : null,
     shutters: B.shutter !== 'none' ? { style: B.shutter, color: B.shutterCol } : null,
@@ -2791,6 +2858,25 @@ function faceLight(B, blk, side, plan) {
   g.restore();
 }
 
+// The band of colour over a club's or a bar's door: where it is up the wall and how tall.
+const BANDS = {
+  club: { z: 11.4, h: 3, all: true },
+  bar: { z: 10, h: 2.4, all: false },
+};
+
+// A workshop's big door, a wide one of boards beside its own door.
+function bigDoor(B, plan) {
+  const { g } = B;
+  const x0 = Math.max(3, plan.lo + 1.2);
+  const x1 = Math.min(3 + plan.len / 2, plan.door.x + 1.5, plan.hi - 1);
+  if (x1 - x0 < 3) return;
+  g.save();
+  g.translate(0, -B.Z0);
+  rr(g, '#5b4a3a', x0, -10, x1 - x0, 10);
+  for (let y = -9; y < 0; y += 2) line(g, 'rgba(30,20,10,.35)', 0.6, x0, y, x1, y);
+  g.restore();
+}
+
 function faceDetail(B, blk) {
   const { g, S } = B;
   return (side, len) => {
@@ -2802,14 +2888,24 @@ function faceDetail(B, blk) {
       paintDoor(B, plan);
       faceLight(B, blk, side, plan);
     };
+    if (S.day && B.kind === 'workshop' && blk.ground && plan.door) bigDoor(B, plan);
     if (B.kind !== 'house') door();
+    // A club's sign band goes right round, a bar's is over its door.
+    const band = Object.hasOwn(BANDS, B.kind) ? BANDS[B.kind] : null;
+    if (band && blk.ground && (band.all || (blk === B.doorBlk && side === S.door))) {
+      g.save();
+      g.translate(0, -B.Z0);
+      mapSign(S, 3, band.z, len - 6, band.h, B.c.awn[0]);
+      g.restore();
+    }
     let i = 0;
     for (const it of plan.wins) windowArt(B, it.x, it.z, it.w, it.h, { ...windowOptions(B, it, i++), fixedSize: true });
     if (B.kind === 'house') door();
-    if (B.kind === 'club' && blk.ground) {
+    if (S.day && B.kind === 'office' && blk.ground) {
+      // An office's ledges, between its rows of windows.
       g.save();
       g.translate(0, -B.Z0);
-      mapSign(S, 3, 11.4, len - 6, 3, B.c.awn[0]);
+      for (const z of [11.5, 20]) ledge(S, plan.lo, z, plan.hi - plan.lo, B.trimHex || '#a9adb5');
       g.restore();
     }
     if (plan.sign !== null) {
@@ -2866,11 +2962,26 @@ function paintRoof(B, spec) {
   return info;
 }
 
-function paintFurniture(B, info) {
+function paintFurniture(B, info, spec) {
   const { g } = B;
-  // The chimney, then what's on the roof.
-  const chimneyOn = B.chimney !== 'none' && info.chim;
-  if (chimneyOn) CHIMNEY_ART[B.chimney](B, info.chim, B.chimneyCol, B.chimneySet);
+  // The chimney, then what's on the roof. A workshop's stands taller and smokes, whatever else is chosen.
+  let chim = info.chim;
+  if (B.k.smoke && B.roofStyle === 'gable' && info.slope?.face === 'L') {
+    const [u0, v0, u1, v1] = spec.R;
+    chim = [u0 + (u1 - u0) * (17 / 22), (v0 + v1) / 2 - Math.min(5.5, (v1 - v0) / 2 - 1.5), info.zTop - 4, info.zTop + 10, 3];
+  }
+  const chimneyOn = B.chimney !== 'none' && chim;
+  if (chimneyOn) CHIMNEY_ART[B.chimney](B, chim, B.chimneyCol, B.chimneySet || !!B.k.smoke);
+  if (B.kind === 'lounge' && info.deck && B.roofStyle === 'flat') {
+    // A lounge's plants, on its roof.
+    const [u0, v0, u1, v1] = spec.R;
+    for (const [fu, fv] of [[4 / 22, 4 / 16], [17 / 22, 4 / 16], [10 / 22, 12 / 16]]) {
+      const u = u0 + fu * (u1 - u0);
+      const v = v0 + fv * (v1 - v0);
+      const [x, y] = P(u, v, spec.zE);
+      drawTree(g, x, y, 'bush', Math.round(u + v));
+    }
+  }
   if (B.kind === 'studio' && info.deck && B.roofStyle === 'flat' && (!B.rooftop.length || B.rooftop.includes('skylights'))) {
     // A studio's roof lights, for the people working underneath.
     const [u0, v0, u1, v1] = info.deck.R;
@@ -3011,11 +3122,11 @@ export function paintBuilding(S, kind, outside, c) {
       if (spec.after !== i) continue;
       B.curCut = spec.cut;
       const info = paintRoof(B, spec);
-      tops.push([spec.R, info.sh ?? info.zTop, spec, i]);
+      tops.push([spec.R, spec.main && B.k.pshade && B.roofStyle === B.k.roof ? spec.zE + B.k.pshade : info.sh ?? info.zTop, spec, i]);
       if (spec.seam) seamOf(B, shaped, info);
       if (spec.main) {
         main = info;
-        paintFurniture(B, info);
+        paintFurniture(B, info, spec);
       }
     }
   }
@@ -3087,15 +3198,15 @@ export function defaultStyles(kind, variant = 0) {
   const base = {
     shape: 'plain',
     door_side: 'auto',
-    walls: kind === 'house' ? (variant === 1 ? 'brick' : 'siding') : kind === 'cafe' ? 'siding' : 'brick',
+    walls: kind === 'house' ? (variant === 1 ? 'brick' : 'siding') : kindWall({ v: variant, pal: 0 }, kind, { wall: '#ffffff' }).k,
     foundation: 'none',
     trim: 'plain',
     roof: k.roof,
     roofing: 'shingles',
-    chimney: kind === 'house' ? 'brick' : 'none',
+    chimney: kind === 'house' || k.smoke ? 'brick' : 'none',
     windows: 'square',
     shutters: 'none',
-    curtains: kind === 'house' || kind === 'cafe' ? 'open' : 'none',
+    curtains: kind === 'house' || kind === 'cafe' || k.curtain ? 'open' : 'none',
     window_boxes: 'none',
     door: 'panel',
     porch: 'none',

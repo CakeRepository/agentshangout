@@ -269,6 +269,12 @@ impl Server {
         spot
     }
 
+    /// A park, the way `square` puts up a town square: a place stored on the first of its four tiles.
+    fn green(&self, who: &Who, spot: (i64, i64)) {
+        let tile = Tile { kind: Kind::Green, level: 0, player: Some(self.player_of(who) as u64) };
+        self.write(&[Change::Set((spot.0 as u16, spot.1 as u16), tile)]);
+    }
+
     fn run_a_disaster(&self) {
         let step = self.state.db.world(COMMONS).unwrap().unwrap().step;
         self.state
@@ -331,7 +337,8 @@ async fn an_outside_is_stored_whole_and_saving_an_empty_one_takes_it_away() {
     let spot = server.house(&ann);
 
     let before = server.get(&ann.key, &Server::url(spot)).await.ok();
-    assert_eq!(before, json!({ "kind": "house", "outside": {}, "yours": true }));
+    let (x, y) = spot;
+    assert_eq!(before, json!({ "x": x, "y": y, "kind": "house", "outside": {}, "yours": true }));
 
     let document = json!({
         "parts": { "walls": { "style": "brick", "color": 0xaa5533 }, "rooftop": { "on": ["flag"] } },
@@ -543,7 +550,9 @@ async fn only_the_owner_of_a_place_can_change_its_outside() {
 
     // Anyone signed in as a person can look, and is told whether it's theirs.
     let seen = server.get(&bo.key, &Server::url(spot)).await.ok();
-    assert_eq!(seen, json!({ "kind": "house", "outside": walls(1), "yours": false }));
+    assert_eq!(seen["kind"], "house");
+    assert_eq!(seen["outside"], walls(1));
+    assert_eq!(seen["yours"], false);
     server.get(&scout, &Server::url(spot)).await.refused(StatusCode::FORBIDDEN);
     server.get("", &Server::url(spot)).await.refused(StatusCode::UNAUTHORIZED);
 }
@@ -1053,6 +1062,70 @@ async fn a_bot_cannot_see_a_pets_rules_or_use_them() {
     }
 }
 
+// E36
+#[tokio::test]
+async fn a_big_place_has_one_outside_and_any_of_its_tiles_reaches_it() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let (x, y) = server.square(&ann);
+    let walls = json!({ "parts": { "ground": { "style": "snow" } } });
+    // Saved from its far tile, it's stored on its first.
+    server.save(&ann, (x + 1, y + 1), walls.clone()).await.ok();
+    for tile in [(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)] {
+        let seen = server.get(&ann.key, &Server::url(tile)).await.ok();
+        assert_eq!(seen["outside"], walls);
+        assert_eq!((seen["x"].as_i64(), seen["y"].as_i64()), (Some(x), Some(y)));
+        assert_eq!(seen["kind"], "square");
+    }
+    let listed = server.get("", "/api/worlds/commons/outsides").await.ok();
+    assert_eq!(listed["outsides"], json!([[x, y, walls]]));
+    // A tile beside it is nothing to do with it.
+    server.get(&ann.key, &Server::url((x + 2, y))).await.refused(StatusCode::NOT_FOUND);
+    server.delete(&ann.key, &Server::url((x + 1, y))).await.ok();
+    assert_eq!(server.outside_of(&ann, (x, y)).await, json!({}));
+}
+
+// E14, E36
+#[tokio::test]
+async fn a_park_has_the_parts_of_a_square_and_starts_with_nothing_in_its_middle() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let spot = server.free_spots()[0];
+    server.green(&ann, spot);
+    assert_eq!(server.get(&ann.key, &Server::url(spot)).await.ok()["kind"], "green");
+    let body = json!({ "body": { "x": 3, "y": 3, "w": 6, "d": 6, "floors": 1 } });
+    server.save(&ann, spot, body).await.refused(StatusCode::BAD_REQUEST);
+    let walls = json!({ "parts": { "walls": { "style": "brick" } } });
+    server.save(&ann, spot, walls).await.refused(StatusCode::BAD_REQUEST);
+    // Nothing chosen, so its middle is free. Choosing something takes it up.
+    let oak = json!({ "kind": "oak", "x": 7, "y": 7 });
+    server.save(&ann, spot, json!({ "items": [oak] })).await.ok();
+    let statue = json!({ "parts": { "centerpiece": { "style": "statue" } }, "items": [oak] });
+    server.save(&ann, spot, statue).await.refused(StatusCode::CONFLICT);
+}
+
+// E10, E30
+#[tokio::test]
+async fn every_kind_of_place_has_an_outside_and_the_newer_ones_wear_a_waiting_one() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    server.house(&ann);
+    let document = json!({ "parts": { "ground": { "style": "leaves" } } });
+    // Each one is a newer place, stored in `world_more_places`, as `place_later` puts it up.
+    let bar = server.place_later(&ann, "bar", 8);
+    server.save(&ann, bar, document.clone()).await.ok();
+    assert_eq!(server.get(&ann.key, &Server::url(bar)).await.ok()["kind"], "bar");
+    assert_eq!(server.outside_of(&ann, bar).await, document);
+    let listed = server.get("", "/api/worlds/commons/outsides").await.ok();
+    assert_eq!(listed["outsides"].as_array().unwrap().len(), 1);
+    // It comes down, and the next bar wears it.
+    server.take_down(&ann, bar, now());
+    let next = server.free_spots()[1];
+    server.put_up(&ann, "bar", next, now() + 8 * DAY);
+    assert_ne!(next, bar);
+    assert_eq!(server.outside_of(&ann, next).await, document);
+}
+
 // E23, E24
 #[test]
 fn every_template_passes_the_checks_on_an_empty_tile_of_each_kind_it_lists() {
@@ -1060,7 +1133,7 @@ fn every_template_passes_the_checks_on_an_empty_tile_of_each_kind_it_lists() {
     assert!(templates.len() >= 8);
     let kinds: HashSet<&str> =
         templates.iter().flat_map(|template| template.kinds.iter().copied()).collect();
-    assert_eq!(kinds, HashSet::from(["house", "cafe", "club", "studio", "square"]));
+    assert_eq!(kinds, HashSet::from(KINDS));
     for template in &templates {
         let document: Outside = serde_json::from_value(template.outside.clone())
             .unwrap_or_else(|error| panic!("{}: {error}", template.template));
@@ -1092,7 +1165,10 @@ async fn a_template_can_be_saved_on_a_place_of_a_kind_it_lists() {
     }
 }
 
-const KINDS: [&str; 5] = ["house", "cafe", "club", "studio", "square"];
+const KINDS: [&str; 11] = [
+    "house", "cafe", "club", "studio", "lounge", "bar", "office", "workshop", "library", "square",
+    "green",
+];
 
 /// E34: the pack's parts that a place of `kind` has, and all its items, as a document.
 fn pack_on(pack: &outside::Pack, kind: &str) -> Value {
@@ -1593,7 +1669,7 @@ fn every_style_in_the_catalog_passes_the_checks_on_every_kind_that_has_the_part(
                 });
             }
         }
-        for kind in ["house", "cafe", "club", "studio", "square"] {
+        for kind in KINDS {
             if part.kinds.contains(&kind) {
                 continue;
             }
@@ -1754,7 +1830,7 @@ fn the_yard_sizes_in_the_page_match_the_catalog() {
 #[test]
 fn the_default_bodies_in_the_page_match_default_body() {
     let bodies = table(&web("outside-spec.js"), "const BODIES = {");
-    assert_eq!(bodies.len(), 4);
+    assert_eq!(bodies.len(), 9);
     for (kind, numbers) in bodies {
         let body = outside::default_body(&kind).unwrap_or_else(|| panic!("BODIES has {kind}"));
         // The numbers in the line are x, y, w, d and floors, in that order.
@@ -2605,10 +2681,10 @@ fn every_rule_in_the_outside_doc_is_named_by_a_test() {
             line.trim_start().strip_prefix("- **E")?.split_once(".**")?.0.parse().ok()
         })
         .collect();
-    // E33 to E35 are written beside the templates, so this only wants every number once.
+    // Rules are written beside what they're about, so this only wants every number once.
     let mut sorted = rules.clone();
     sorted.sort_unstable();
-    assert_eq!(sorted, (1..=35).collect::<Vec<u32>>(), "the rules should be E1 to E35");
+    assert_eq!(sorted, (1..=36).collect::<Vec<u32>>(), "the rules should be E1 to E36");
 
     let tests = std::fs::read_to_string(format!("{root}/tests/outside.rs")).unwrap();
     let mut named: HashSet<u32> = HashSet::new();

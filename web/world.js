@@ -27,9 +27,9 @@ const CELL_M = 2; // cells overlap by this much, so no seam shows where they mee
 const CW = CELL_W + CELL_M * 2;
 const CH = CELL_H + CELL_M * 2;
 const REACH_L = 92; // how far a tile's painting can reach left, right, up and down of its top vertex
-const REACH_R = 72;
+const REACH_R = 96;
 const REACH_U = 176;
-const REACH_D = 72;
+const REACH_D = 92;
 const CHUNK_PIXELS = 42e6; // canvas pixels the cell cache may hold
 const SLAB = 22; // how thick the island's edge is
 const WATER_Z = -5; // water sits a little below the land
@@ -2708,6 +2708,9 @@ function buildingObject(kind, level, variant, door, pal, outside = null) {
   let s = sprites.get(`${LOD}|${key}`);
   if (s) return s;
   const build = outside ? (S, c) => paintOutsideStanding(S, KIND_NAME[kind], outside.outside, c) : BUILDERS[kind][level];
+  // E36: a big place spreads one yard over its four tiles, so its picture is twice the size.
+  const big = Boolean(outside) && isBig(kind);
+  const stand = big ? (k, draw) => sprite(k, OW * 2, OH * 2, OAX * 2, OAY * 2, draw, true) : object;
   const colors = {
     wall: SIDING[pal],
     roof: ROOFS[(pal + variant + 1) % 6],
@@ -2721,20 +2724,24 @@ function buildingObject(kind, level, variant, door, pal, outside = null) {
       info.smoke.length = 0;
       info.shadows.length = 0;
     }
+    g.save();
+    if (big) g.scale(2, 2);
     build({ g, day, v: variant, pal, door, seed: ih(kind, level, variant * 11 + pal), n: 0, info: day ? info : null }, colors);
+    g.restore();
   };
-  s = object(key, run(true));
+  s = stand(key, run(true));
   s.info = info;
   let lit = null;
   let shade = null;
   let yard = null;
   // E29: what's on the ground goes under the shadows, with the land, and not with what stands up.
   if (outside) {
-    s.ground = () => yard || (yard = sprite(`${key}:gr`, 72, 40, 36, 4, (g) => {
+    s.ground = () => yard || (yard = sprite(`${key}:gr`, big ? 144 : 72, big ? 76 : 40, big ? 72 : 36, big ? 6 : 4, (g) => {
+      if (big) g.scale(2, 2);
       paintOutsideGround({ g, day: true, v: variant, pal, door, seed: ih(kind, level, variant * 11 + pal), n: 0, info: null }, KIND_NAME[kind], outside.outside);
     }));
   }
-  s.lit = () => lit || (lit = object(`${key}:lit`, (g) => {
+  s.lit = () => lit || (lit = stand(`${key}:lit`, (g) => {
     // A warm pool of light by the door, then the lit windows. An outside says for itself what lights it.
     if (!outside) {
       const [px, py] = P(16, 22);
@@ -2747,7 +2754,8 @@ function buildingObject(kind, level, variant, door, pal, outside = null) {
     run(false)(g);
   }));
   // The shadow, cast as one shape so overlapping parts don't double up.
-  s.shadow = () => shade || (shade = sprite(`${key}:sh`, 190, 150, 70, 40, (g) => {
+  s.shadow = () => shade || (shade = sprite(`${key}:sh`, big ? 380 : 190, big ? 300 : 150, big ? 140 : 70, big ? 80 : 40, (g) => {
+    if (big) g.scale(2, 2);
     g.beginPath();
     for (const [R, H] of info.shadows) {
       const throwLen = Math.min(H * 0.85, 30);
@@ -4599,7 +4607,9 @@ export class World {
     for (const i of new Set([...this.outsides.keys(), ...next.keys()])) {
       if (this.outsides.get(i)?.key === next.get(i)?.key) continue;
       const x = i % n;
-      this.markDirty(x, (i - x) / n);
+      const y = (i - x) / n;
+      const span = isBig(this.kind[i]) ? 2 : 1;
+      for (let dy = 0; dy < span; dy++) for (let dx = 0; dx < span; dx++) this.markDirty(x + dx, y + dy);
     }
     this.outsides = next;
     const pets = new Map();
@@ -5502,6 +5512,11 @@ export class World {
     }
     if (k === K_PARK) return parkObject(roll % 4, this.parkMask(x, y));
     if (k === K_CLEARED) return stumpObject(roll % 4);
+    // E36: with an outside a big place is one picture, on its first tile.
+    if (isBig(k)) {
+      const corner = this.cornerOf(x, y, k);
+      if (this.outsides.has((y - (corner >> 1)) * this.n + x - (corner & 1))) return corner ? null : this.buildingAt(x, y, k, 0);
+    }
     // W91: a big place is four pieces, each for its corner of it.
     if (k === K_GREEN) return parkObject(this.cornerOf(x, y, k), this.greenMask(x, y));
     if (k === K_SQUARE) return this.buildingAt(x, y, k, this.cornerOf(x, y, k));
@@ -5568,8 +5583,6 @@ export class World {
     const hr = x + 1 < n ? this.height[i + 1] : -SLAB;
     const hl = y + 1 < n ? this.height[i + n] : -SLAB;
     const seed = ih(x, y, 4) & 3;
-    const yard = this.objs[i]?.ground?.();
-    if (yard) g.drawImage(yard.c, lx - yard.ax, ly - h - yard.ay, yard.w, yard.h);
     if (hl < h) {
       for (const [mat, from, to] of this.faceSegments(code, h, hl)) {
         if (from <= to) continue;
@@ -5585,6 +5598,13 @@ export class World {
       }
     }
     if (code === WATER_L && this.owns(ch, lx, ly)) ch.sparkles.push(lx + ((ih(x, y, 8) % 31) - 15), ly + 12 + (ih(x, y, 9) % 10), ih(x, y, 10) % 300);
+  }
+
+  // E29: what's on the ground, over all of the land, because a big place's covers four tiles.
+  paintYard(g, x, y, lx, ly) {
+    const i = y * this.n + x;
+    const yard = this.objs[i]?.ground?.();
+    if (yard) g.drawImage(yard.c, lx - yard.ax, ly - this.height[i] - yard.ay, yard.w, yard.h);
   }
 
   paintShadow(g, x, y, lx, ly) {
@@ -5639,6 +5659,7 @@ export class World {
     }
     // The land first, then shadows on it, then everything that stands up, back to front.
     for (let k = 0; k < tiles.length; k += 2) this.paintGround(g, ch, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
+    for (let k = 0; k < tiles.length; k += 2) this.paintYard(g, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     for (let k = 0; k < tiles.length; k += 2) this.paintShadow(g, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     for (let k = 0; k < tiles.length; k += 2) this.paintObject(g, ch, tiles[k], tiles[k + 1], (tiles[k] - tiles[k + 1]) * HW, (tiles[k] + tiles[k + 1]) * HH);
     ch.dirty = false;

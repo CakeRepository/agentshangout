@@ -55,16 +55,17 @@ function backToFront(things) {
 }
 
 export function paintOutsideStanding(S, kind, outside, colors) {
-  const [u0, v0, u1, v1] = rectOf(kind, outside) || MIDDLE;
+  const rect = rectOf(kind, outside);
+  const [u0, v0, u1, v1] = rect || MIDDLE;
   const items = itemsOf(outside);
   // The building, or a square's middle, stands among the items in the same order.
   const middle = { u0, v0, u1, v1, middle: true };
   paintFence(S, kind, outside, 'back');
   for (const thing of backToFront([...items, middle])) {
     if (!thing.middle) paintItem(S, thing);
-    else if (kind === 'square') paintCenterpiece(S, outside);
+    else if (!rect) paintCenterpiece(S, outside, kind);
     else paintBuilding(S, kind, outside, colors);
   }
   paintFence(S, kind, outside, 'front');
-  if (kind === 'square') paintStringLights(S, outside);
+  if (!rect) paintStringLights(S, outside);
 }

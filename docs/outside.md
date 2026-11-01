@@ -21,7 +21,7 @@ what the map already shows.
 | Question | Decision |
 | --- | --- |
 | What can change | Everything on the tile: size, walls, roof, windows, doors, porch, rooftop, lights, fence, ground, paths, the yard and pets |
-| Which places | Every one: house, café, club, studio and town square |
+| Which places | Every one: house, café, club, studio, lounge, bar, office, workshop, library, town square and park |
 | Who changes it | The place's owner, as a person. A bot doesn't |
 | What it costs | Nothing. No moves, no waiting and nothing to unlock |
 | Colours | Any colour, as a number |
@@ -98,8 +98,8 @@ what the map already shows.
   | `ground`, `path` | | see the catalog | colour |
   | `centerpiece` | The middle of a town square | see the catalog | colour |
 
-  A town square has `fence`, `gate`, `ground`, `path`, `string_lights` and `centerpiece`. Every other
-  place has all of them but `centerpiece`.
+  A town square and a park have `fence`, `gate`, `ground`, `path`, `string_lights` and `centerpiece`.
+  Every other place has all of them but `centerpiece`.
 - **E11.** `fence`'s `number` says which sides have it: 1 is the north-east edge, 2 the south-east, 4 the
   south-west and 8 the north-west, and a place with no number has all four.
 - **E12.** The catalog is meant to keep growing, towards what people put outside in games like The Sims
@@ -111,8 +111,13 @@ what the map already shows.
   `y`, `w` and `d` in cells, and how many `floors` it has. `w` and `d` are at least 5, `x` and `y` at
   least 1, and it stops at least 1 cell from the far edges, so there's always room for a fence. `floors`
   is 1, 2 or 3. Anything else is refused with 400.
-- **E14.** A town square has no `body`, so giving one one is refused with 400. Its centrepiece stands on
-  the 4 by 4 cells in the middle, unless its `style` is `none`.
+- **E14.** A town square and a park have no `body`, so giving one one is refused with 400. Their
+  centrepiece stands on the 4 by 4 cells in the middle, unless its `style` is `none`, and a park with no
+  centrepiece chosen has none, as a square has a fountain.
+- **E36.** A town square and a park take 2 by 2 tiles (W91), and they have one outside between them. It
+  has the same 16 by 16 cells, spread over the four tiles, so everything on one is drawn twice the size,
+  which suits a place that big. Any of the four tiles reaches it, and the answer says which tile it's
+  stored on. With no outside they look as they did.
 
 ### The yard
 
@@ -175,7 +180,8 @@ dressed for fall inside and out.
 ### Showing it
 
 - **E25.** `PUT /api/places/{x}/{y}/outside` replaces the whole document, and the answer is what was
-  stored. `GET` on the same path is the outside and the place's kind, with `yours`, for someone signed in.
+  stored. `GET` on the same path is the outside and the place's kind, with `yours`, and `x` and `y`, the tile it's
+  stored on (E36), for someone signed in.
   `DELETE` is the same as saving an empty one, for its owner or the keeper.
 - **E26.** A world view's `outsides` is two numbers, `[count, stamp]`, that change when any outside does.
   It says nothing else, so W59 holds: the view still shows a place as a tile. Only The Commons has it.
@@ -240,7 +246,7 @@ CREATE TABLE IF NOT EXISTS place_outsides (
 | Request | Body | Reply | Who |
 | --- | --- | --- | --- |
 | `GET /api/outside` | | `Catalog` | Someone signed in, as a person (E9) |
-| `GET /api/places/{x}/{y}/outside` | | `{kind, outside, yours}` | Someone signed in, as a person |
+| `GET /api/places/{x}/{y}/outside` | | `{x, y, kind, outside, yours}` | Someone signed in, as a person |
 | `PUT /api/places/{x}/{y}/outside` | `Outside` | `{outside}` | The place's owner (E6) |
 | `DELETE /api/places/{x}/{y}/outside` | | `{ok}` | The place's owner or the keeper (E7) |
 | `GET /api/worlds/{id}/outsides` | | `{outsides: [[x, y, outside]]}` | Anyone, limited like a view (E27) |

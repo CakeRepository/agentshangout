@@ -25,6 +25,8 @@ const NUDGE_KEYS = { ArrowLeft: [-1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1], Ar
 // is the back, so the edge from it to the right corner is the back right.
 const SIDES = [[1, 'Back right'], [2, 'Front right'], [4, 'Front left'], [8, 'Back left']];
 // E13: the sizes offered, as width and depth in cells. `null` is what a place has with no `body`.
+// E14: a square and a park have no building, and both take 2 by 2 tiles (E36).
+const hasNoBuilding = (kind) => kind === 'square' || kind === 'green';
 const SIZES = [['small', 'Small', 7, 6], ['standard', 'Standard', null, null], ['wide', 'Wide', 12, 8], ['deep', 'Deep', 8, 12], ['large', 'Large', 13, 12]];
 
 const SWATCH_NAMES = new Map([
@@ -225,8 +227,10 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
 
   // E14, E16: what is already standing on the tile, which nothing else can stand on.
   function solidOf(doc) {
-    if (kind === 'square') {
-      return partOf(doc, 'centerpiece').style === 'none' ? null : { x: CENTERPIECE.x, y: CENTERPIECE.y, w: CENTERPIECE.w, h: CENTERPIECE.h };
+    if (hasNoBuilding(kind)) {
+      // A square has a fountain unless it says `none`, and a park has nothing until one is chosen.
+      const style = partOf(doc, 'centerpiece').style;
+      return (typeof style === 'string' ? style : kind === 'green' ? 'none' : 'fountain') === 'none' ? null : { x: CENTERPIECE.x, y: CENTERPIECE.y, w: CENTERPIECE.w, h: CENTERPIECE.h };
     }
     const body = bodyOf(kind, doc);
     return body && { x: body.x, y: body.y, w: body.w, h: body.d };
@@ -683,9 +687,9 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
   function drawPets(g, behind, calm) {
     for (const pet of pets) {
       if (Boolean(pet.behind) !== behind) continue;
-      const u = (pet.px - pet.tx) * 32;
-      const v = (pet.py - pet.ty) * 32;
-      [pet.dx, pet.dy] = P(u, v);
+      // E36: the stage draws the yard at single size, so a pet goes where its own `u` and `v` say. On the
+      // map those are spread over the tiles a big place takes.
+      [pet.dx, pet.dy] = P(pet.u, pet.v);
       try {
         drawPet(g, pet, clock, calm);
       } catch (error) {
@@ -1423,6 +1427,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
       const y = clamp(Math.round(now.y + now.d / 2 - d / 2), 1, GRID - 1 - d);
       return { x, y, w, d, floors: now.floors };
     };
+    const usualBody = bodyOf(kind, null);
     const members = SIZES.map(([word, label, w, d]) => {
       const dims = w === null ? bodyOf(kind, null) : { w, d };
       const make = (doc) => {
@@ -1439,7 +1444,8 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
         picture: lazyPicture(`size:${word}`, `${placeKey()}|size|${word}|${keyOf(baseDoc())}`, PIC_W, PIC_H, () => snapshot(still(make), SIZES_IN_VIEW, PIC_W, PIC_H)),
         label,
         lines: [`${dims.w} by ${dims.d} cells`],
-        pressed: body.w === dims.w && body.d === dims.d,
+        // A size that is what the place has anyway is only the Standard one (a lounge is 12 wide already).
+        pressed: body.w === dims.w && body.d === dims.d && (w === null || !(usualBody.w === w && usualBody.d === d)),
         onclick: () => commit(edit(make), `${label}.`),
       });
     });
@@ -1632,7 +1638,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
       const mine = parts.filter((part) => part.group === group);
       const yard = catalog.yard.filter((entry) => entry.group === group);
       const members = [];
-      if (group === 'size' && kind !== 'square') members.push(h('div', { class: 'outside-part' }, h('h4', {}, 'How big'), sizeTiles()));
+      if (group === 'size' && !hasNoBuilding(kind)) members.push(h('div', { class: 'outside-part' }, h('h4', {}, 'How big'), sizeTiles()));
       members.push(...mine.map(partBlock));
       if (yard.length) {
         members.push(h('div', { class: 'outside-part' },
@@ -1972,6 +1978,13 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
         return;
       }
       kind = got.kind || kind;
+      // E36: the answer says which tile it's stored on. Everything from here on goes under that one.
+      if (isWhole(got.x) && isWhole(got.y) && (got.x !== tile.x || got.y !== tile.y)) {
+        tile = { x: got.x, y: got.y };
+        look = world.placeLook(tile.x, tile.y);
+        pets = [];
+        petKey = '';
+      }
       accepted = clone(got.outside);
       shown = accepted;
     } catch (error) {

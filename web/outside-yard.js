@@ -415,6 +415,48 @@ const GROUNDS = {
   },
 };
 
+// The paving some places stand on (W90): how far it reaches past the building behind and in front, and its
+// two colours. A café's is the oldest.
+const PAVED = {
+  cafe: [6, '#d6ccb1', '#b3a887'],
+  office: [2, '#d1d4d9', '#aeb2b9'],
+  workshop: [4, '#c9c2b0', '#a59d88'],
+  library: [4, '#dcd5c2', '#b9b19c'],
+};
+
+// A park's lawn when nothing is chosen, as a park tile has always had one: mown stripes, blades of grass
+// and a flower bed in each corner. It is drawn at the tile's size, which E36 scales up for a big place.
+function lawn(S) {
+  const g = S.g;
+  const base = '#7db84a';
+  const rand = randOf(S, 3);
+  g.fillStyle = grad(g, -32, 0, 32, 32, lite(base, 0.04), dark(base, 0.04));
+  g.fillRect(-40, -6, 80, 46);
+  for (let i = 0; i < 26; i++) {
+    const r = 2 + rand() * 6;
+    ell(g, rand() < 0.55 ? rgba(lite(base, 0.34), 0.2) : rgba(dark(base, 0.34), 0.2), (rand() - 0.5) * 68, rand() * 34, r * 1.8, r * 0.9);
+  }
+  for (let k = 0; k < 4; k++) fp3(g, 'rgba(255,255,220,.06)', [k * 8, 0], [k * 8 + 4, 0], [k * 8 + 4, 32], [k * 8, 32]);
+  for (let i = 0; i < 30; i++) {
+    const x = (rand() - 0.5) * 64;
+    const y = 3 + rand() * 28;
+    stroke(g, rand() < 0.5 ? rgba(dark(base, 0.4), 0.5) : rgba(lite(base, 0.45), 0.5), 0.8, [[x, y], [x + (rand() - 0.5) * 1.6, y - 1.5 - rand() * 1.4]]);
+  }
+  grain(g, 0.05);
+  const bloom = [['#ff8fb8', '#ffd75e'], ['#c9a9ff', '#fff3a8'], ['#ff9f7a', '#ffe6f0']][Math.floor(rand() * 3)];
+  for (const [cu, cv] of [[6, 6], [26, 6], [6, 26], [26, 26]]) {
+    disc(g, '#6b5133', cu, cv, 3.8);
+    disc(g, '#4f3a26', cu, cv, 3.3);
+    for (let i = 0; i < 9; i++) {
+      const a = rand() * TAU;
+      const d = rand() * 3;
+      const [x, y] = P(cu + Math.cos(a) * d, cv + Math.sin(a) * d);
+      ell(g, bloom[i % 2], x, y - 1.4, 1.1, 0.9);
+      line(g, '#3d6f2a', 0.6, x, y, x, y - 1);
+    }
+  }
+}
+
 export function paintGroundCover(S, kind, outside) {
   const g = S.g;
   const style = styleOf(outside, 'ground', Object.keys(GROUNDS), null);
@@ -423,9 +465,21 @@ export function paintGroundCover(S, kind, outside) {
     if (kind === 'square') {
       paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
       paving(S, [7, 7, 25, 25], '#c7bc9f', '#a79c7e');
-    } else if (kind === 'cafe') {
+    } else if (kind === 'green') {
+      g.save();
+      g.beginPath();
+      g.moveTo(0, -BLEED);
+      g.lineTo(32 + BLEED * 2, 16);
+      g.lineTo(0, 32 + BLEED);
+      g.lineTo(-32 - BLEED * 2, 16);
+      g.closePath();
+      g.clip();
+      lawn(S);
+      g.restore();
+    } else if (Object.hasOwn(PAVED, kind)) {
       const r = rectOf(kind, outside);
-      if (r) paving(S, [Math.max(1, r[0] - 2), Math.max(1, r[1] - 2), Math.min(31, r[2] + 2), Math.min(31, r[3] + 6)], '#d6ccb1', '#b3a887');
+      const [front, c0, c1] = PAVED[kind];
+      if (r) paving(S, [Math.max(1, r[0] - 2), Math.max(1, r[1] - 2), Math.min(31, r[2] + 2), Math.min(31, r[3] + front)], c0, c1);
     }
     return;
   }
@@ -1228,8 +1282,9 @@ const CENTERS = {
   },
 };
 
-export function paintCenterpiece(S, outside) {
-  const style = styleOf(outside, 'centerpiece', Object.keys(CENTERS), 'fountain');
+// E14: a square keeps its fountain, and a park has nothing in its middle until one is chosen.
+export function paintCenterpiece(S, outside, kind) {
+  const style = styleOf(outside, 'centerpiece', Object.keys(CENTERS), kind === 'green' ? 'none' : 'fountain');
   CENTERS[style](S, hexOf(partOf(outside, 'centerpiece').color, null), outside);
 }
 
