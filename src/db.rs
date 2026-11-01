@@ -16,6 +16,8 @@ pub const ACTIVE_SECS: i64 = 10 * 60;
 pub const IDLE_SECS: i64 = 24 * 60 * 60;
 /// A doorbell checks every 15 seconds, so one that's been quiet this long has stopped.
 pub const LISTENING_SECS: i64 = 60;
+/// S61: how long a bot stays away from home with nothing to do.
+pub const BOT_STAY_SECS: i64 = 30 * 60;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS people (
@@ -4069,13 +4071,16 @@ impl Db {
     }
 
     /// S56: the one room a bot is in now, whatever else it belongs to. A trip comes first, because
-    /// only going home ends one (S39), and then a walk-in. A bot in no room at all has no place.
+    /// only going home ends one (S39), and then a walk-in. Then the room it last went to, until
+    /// S61 sends it home. A bot with no home and nowhere to be has no place.
     pub fn bot_place(&self, agent_id: &str, now: i64) -> rusqlite::Result<Option<String>> {
         let conn = self.conn();
-        let went: Option<String> = conn
-            .query_row("SELECT hangout_id FROM bot_places WHERE agent_id = ?", [agent_id], |row| {
-                row.get(0)
-            })
+        let went: Option<(String, i64)> = conn
+            .query_row(
+                "SELECT hangout_id, since FROM bot_places WHERE agent_id = ?",
+                [agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .optional()?;
         let porch: Option<String> = conn
             .query_row(
@@ -4088,7 +4093,7 @@ impl Db {
         if let Some(porch) = porch {
             // H10: it's in the Living Room only if it went there, and it still has the key.
             return Ok(match went {
-                Some(room) if guest_on_trip(&conn, &room, agent_id, now)? => Some(room),
+                Some((room, _)) if guest_on_trip(&conn, &room, agent_id, now)? => Some(room),
                 _ => Some(porch),
             });
         }
@@ -4104,10 +4109,25 @@ impl Db {
         if walked.is_some() {
             return Ok(walked);
         }
+        // S61: the room it's doing something in, or else home: the house it lives in, its owner's
+        // house, or the first room it was brought into that its owner runs.
+        let staying = went.filter(|(_, since)| now - since < BOT_STAY_SECS).map(|(room, _)| room);
         conn.query_row(
-            "SELECT hangout_id FROM room_agents WHERE agent_id = ?1
-             ORDER BY hangout_id = ?2 DESC, rowid LIMIT 1",
-            params![agent_id, went],
+            "SELECT r.hangout_id FROM room_agents r
+             JOIN agents a ON a.id = r.agent_id
+             JOIN hangouts h ON h.id = r.hangout_id
+             LEFT JOIN floors f ON f.hangout_id = r.hangout_id
+             LEFT JOIN spaces s ON s.id = f.space_id
+             LEFT JOIN bot_homes b ON b.agent_id = r.agent_id
+             LEFT JOIN houses ho ON ho.id = b.house_id
+                                AND r.hangout_id IN (ho.living_room, ho.porch)
+             WHERE r.agent_id = ?1
+               AND (r.hangout_id = ?2 OR ho.id IS NOT NULL
+                    OR COALESCE(s.owner_id, h.created_by) = a.owner_id)
+             ORDER BY r.hangout_id = ?2 DESC, r.hangout_id = ho.living_room DESC,
+                      ho.id IS NOT NULL DESC, s.kind = 'house' DESC, r.rowid
+             LIMIT 1",
+            params![agent_id, staying],
             |row| row.get(0),
         )
         .optional()
@@ -4122,6 +4142,23 @@ impl Db {
     ) -> rusqlite::Result<()> {
         self.conn().execute(
             "INSERT INTO bot_places (agent_id, hangout_id, since) VALUES (?1, ?2, ?3)
+             ON CONFLICT (agent_id) DO UPDATE SET hangout_id = excluded.hangout_id, since = excluded.since",
+            params![agent_id, hangout_id, now],
+        )?;
+        Ok(())
+    }
+
+    /// S61: a bot doing something in a room it belongs to starts its half hour there again. A room
+    /// it's only a guest in isn't one to come back to, so nothing changes for those.
+    pub fn note_bot_here(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_places (agent_id, hangout_id, since)
+             SELECT agent_id, hangout_id, ?3 FROM room_agents WHERE agent_id = ?1 AND hangout_id = ?2
              ON CONFLICT (agent_id) DO UPDATE SET hangout_id = excluded.hangout_id, since = excluded.since",
             params![agent_id, hangout_id, now],
         )?;
