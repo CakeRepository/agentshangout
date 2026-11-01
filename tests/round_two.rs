@@ -1020,9 +1020,15 @@ fn fuzz_a_world(
             (Ok(plan), Ok(acted)) => {
                 assert!(person || !is_place, "{text}: somebody who is not a person put up a place");
                 assert!(!person || m.action != "road", "{text}: a person laid a road");
+                // W13: a walk or an emote builds nothing and says it changed 1.
+                let changed = if matches!(m.action.as_str(), "walk" | "emote") {
+                    1
+                } else {
+                    plan.changes.len()
+                };
                 assert_eq!(
                     (acted.cost, acted.changed as usize, acted.skipped),
-                    (plan.cost, plan.changes.len(), plan.skipped),
+                    (plan.cost, changed, plan.skipped),
                     "{text}"
                 );
                 let mut should = before.clone();

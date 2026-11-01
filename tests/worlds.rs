@@ -1672,11 +1672,14 @@ async fn each_move_costs_what_the_table_says() {
         .ok();
     assert_eq!(
         (walk["cost"].as_i64(), walk["changed"].as_i64(), walk["moves_left"].as_i64()),
-        (Some(1), Some(0), Some(25))
+        (Some(1), Some(1), Some(25))
     );
     let wave =
         server.act(&guest.token, COMMONS, json!({ "action": "emote", "emote": "wave" })).await.ok();
-    assert_eq!((wave["cost"].as_i64(), wave["moves_left"].as_i64()), (Some(1), Some(24)));
+    assert_eq!(
+        (wave["cost"].as_i64(), wave["changed"].as_i64(), wave["moves_left"].as_i64()),
+        (Some(1), Some(1), Some(24))
+    );
     assert_eq!(server.moves_left(&guest.token).await, 24);
 
     // A place is one move, from a person with a spot beside a road.

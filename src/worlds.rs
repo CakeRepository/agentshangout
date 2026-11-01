@@ -933,7 +933,7 @@ fn parse_move(mv: &Move) -> Result<Parsed, &'static str> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Acted {
     pub moves_left: u32,
-    /// Tiles built or taken down.
+    /// Tiles built or taken down, or 1 for a walk or an emote.
     pub changed: u32,
     /// Tiles left alone and not charged for.
     pub skipped: u32,
@@ -1131,7 +1131,12 @@ fn apply_move(
     let used = used_today(&player, now) + cost;
     tx.charge(player.id, day_of(&player, now), i64::from(used), now)?;
     tx.wake_world(&world.id, now)?;
-    Ok(Acted { moves_left: left - cost, changed: changes.len() as u32, skipped, cost })
+    // A walk or an emote builds nothing, but it went through, so it says it changed one thing.
+    let changed = match parsed {
+        Parsed::Walk(..) | Parsed::Emote(_) => 1,
+        _ => changes.len() as u32,
+    };
+    Ok(Acted { moves_left: left - cost, changed, skipped, cost })
 }
 
 fn world_is_busy(now: i64) -> ApiError {
