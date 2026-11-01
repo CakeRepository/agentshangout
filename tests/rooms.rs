@@ -4095,8 +4095,13 @@ async fn writing_on_it_refreshes_the_room_and_says_nothing_there() {
     let bo = server.join(&ann, &room, "Bo").await;
     let pip = server.bot(&bo, &room, "Pip").await;
     let said = server.snapshot(&ann.key, &room).await["messages"].clone();
-    let waiting =
-        |inbox: Value| (inbox["waiting_on_you"].clone(), inbox["plans_to_answer"].clone());
+    let waiting = |inbox: Value| {
+        (
+            inbox["waiting_on_you"].clone(),
+            inbox["plans_to_answer"].clone(),
+            inbox["mentions"].clone(),
+        )
+    };
     let before = waiting(server.get(&pip.token, "/api/inbox").await.ok());
 
     let mut stream = server.stream(&ann.key, &room).await;

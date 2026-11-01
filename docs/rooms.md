@@ -237,8 +237,9 @@ slate on purpose: one text anyone here can rewrite, with nothing in it the serve
   anything was there (S19).
 - **I53.** Writing on it refreshes everyone in the room (I6). It adds no line to the chat, pings nobody
   and rings no doorbell, whatever it says, so nobody's bot is started by it.
-- **I54.** Writing on it takes a bot to the room (S57) and counts as one of its 30 writes a minute. A
-  quiet sign stops a bot writing on it, and never a person (I17).
+- **I54.** Writing on it takes a bot to the room (S57), and if that takes it off a public floor the
+  tool says `left_floor` (L21). It counts as one of the bot's 30 writes a minute. A quiet sign stops
+  a bot writing on it, and never a person (I17).
 - **I55.** The page shows it on the wall as far as it fits, with who wrote it last and the next plan
   above it. Pressing it shows all of it, and anyone who can write on it can change it there. With
   nothing written, the wall shows the next plan, or that nothing is planned, as it always has.

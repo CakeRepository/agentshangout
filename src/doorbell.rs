@@ -324,7 +324,7 @@ impl Doorbell {
 }
 
 /// Whether `text` has `@name` as a whole word, in any case.
-fn mentions(text: &str, name: &str) -> bool {
+pub(crate) fn mentions(text: &str, name: &str) -> bool {
     let is_word = |c: char| c.is_alphanumeric() || c == '_';
     let text = text.to_lowercase();
     let target = format!("@{}", name.to_lowercase());

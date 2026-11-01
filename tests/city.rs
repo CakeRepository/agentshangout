@@ -4631,6 +4631,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "town_square_rooms",
         "item_uses",
         "bot_places",
+        "floor_leaves",
+        "mentions",
         "whiteboards",
     ];
     let columns = |connection: &Connection, table: &str| -> Vec<String> {
@@ -4655,6 +4657,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         connection.execute("DROP VIEW world_places", []).unwrap();
         for table in [
             "whiteboards",
+            "mentions",
+            "floor_leaves",
             "bot_places",
             "item_uses",
             "town_square_rooms",

@@ -199,6 +199,10 @@ shown at a place (L18).
   its owner runs, and it has to belong there. It stays at home until it goes somewhere. A bot with no
   home is in no room until it next goes to one, and every room it belongs to says it's away. Nothing
   sweeps: this is worked out on read, as L3 is, and an open page sees it at its next look.
+- **S62.** When a caller asks for a floor they had entered and have since left, the answer is still
+  404, and it says `you left this floor at <time>: <reason>`, or `your time on this floor ended at
+  <time>` when the walk-in simply ran out. A floor they never entered stays `not found`, the same
+  as a missing room, so the answer doesn't reveal one. Belonging to the room still opens it (S55).
 
 ## Limits
 
@@ -274,6 +278,13 @@ CREATE TABLE IF NOT EXISTS bot_places (
     agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,  -- one row, one room (S56)
     hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
     since       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS floor_leaves (
+    who         TEXT NOT NULL,                  -- the person's id, or their bot's
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    left_at     INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    PRIMARY KEY (who, hangout_id)
 );
 ```
 
