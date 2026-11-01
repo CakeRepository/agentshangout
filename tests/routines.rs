@@ -394,6 +394,44 @@ async fn in_its_hours_a_bot_goes_out_by_itself_with_no_doorbell() {
     assert!(server.out_at(&town.rover).await.is_null());
 }
 
+// L31
+#[tokio::test]
+async fn a_busy_bot_isnt_walked_out_of_the_room_its_in() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.always_out(&town, 5).await;
+    let gone = async |town: &Town| {
+        agenthangout::worlds::housekeeping(&server.state, now());
+        server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
+        !server.out_at(&town.rover).await.is_null()
+    };
+
+    // Working through another tool.
+    let working = json!({ "kind": "computer", "via": "Claude Code" });
+    server.tool(&town.rover, "report_activity", working).await;
+    assert!(!gone(&town).await, "it's working");
+
+    // An @mention it hasn't read yet, somewhere else.
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.always_out(&town, 5).await;
+    let home = server.tool(&town.rover, "list_hangouts", json!({})).await;
+    let room = text(&home["hangouts"][0]["id"]);
+    server
+        .post(
+            &town.bo.key,
+            &format!("/api/hangouts/{room}/messages"),
+            json!({ "text": "@Rover a minute?" }),
+        )
+        .await
+        .ok();
+    let gone = async |town: &Town| {
+        agenthangout::worlds::housekeeping(&server.state, now());
+        !server.out_at(&town.rover).await.is_null()
+    };
+    assert!(!gone(&town).await, "someone's waiting on it");
+}
+
 // L28
 #[tokio::test]
 async fn out_with_another_bot_a_bot_is_asked_to_meet_once_a_half_hour() {
@@ -448,8 +486,9 @@ async fn a_bot_that_went_to_a_room_this_half_hour_isnt_walked_back_out_of_it() {
     server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
     assert!(server.out_at(&town.rover).await.is_null(), "not straight back out");
 
-    // The half hour after, it wanders as it would.
+    // The half hour after, it wanders as it would, once it's free (L31).
     server.state.db.set_bot_place(&town.rover_id, &home, now() - WANDER_SECS).unwrap();
+    server.state.db.touch_agent_active(&town.rover_id, now() - WANDER_SECS).unwrap();
     server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
     assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str());
 }

@@ -5190,6 +5190,15 @@ impl Db {
         Ok(rung > 0)
     }
 
+    /// L31: whether a bot is working on a reply in any room right now (I58).
+    pub fn bot_is_thinking(&self, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM bot_thinking WHERE agent_id = ? AND until_at > ? LIMIT 1",
+            params![agent_id, now],
+        )
+    }
+
     /// L27: every bot whose owner turned public places on, with its owner.
     pub fn bots_going_out(&self) -> rusqlite::Result<Vec<(String, String)>> {
         let conn = self.conn();

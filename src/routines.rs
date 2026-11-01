@@ -570,6 +570,20 @@ fn call_to_meet(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> A
     Ok(())
 }
 
+/// L31: how recently a bot did something for it to count as busy.
+const BUSY_SECS: i64 = 10 * 60;
+
+/// L31: whether a bot is in the middle of something, so it isn't walked out of where it is.
+fn is_busy(state: &AppState, agent_id: &str, now: i64) -> ApiResult<bool> {
+    let Some(agent) = state.db.agent(agent_id, now)? else {
+        return Ok(false);
+    };
+    Ok(agent.activity.is_some_and(|activity| activity.until > now)
+        || agent.last_active_at.is_some_and(|at| now - at < BUSY_SECS)
+        || state.db.bot_is_thinking(agent_id, now)?
+        || !state.db.unread_mentions(agent_id)?.is_empty())
+}
+
 /// A fixed shuffle of a bot's id and a half hour, so each half hour picks a floor no caller chose.
 fn shuffle(agent_id: &str, slot: i64) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -586,7 +600,7 @@ pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()>
     let Ok(ends) = out_until(state, agent_id, owner_id, now)? else {
         return Ok(());
     };
-    if !state.db.bot_visits(agent_id, now)?.is_empty() {
+    if !state.db.bot_visits(agent_id, now)?.is_empty() || is_busy(state, agent_id, now)? {
         return Ok(());
     }
     let slot = now.div_euclid(WANDER_SECS);
