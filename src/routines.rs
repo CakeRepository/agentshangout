@@ -72,6 +72,18 @@ fn offset_of(state: &AppState, owner_id: &str) -> ApiResult<i64> {
     Ok(state.db.person_clock(owner_id)?.map_or(0, |saved| saved.utc_offset_minutes))
 }
 
+/// L2, L4: why this bot stays out of public places at any hour, if it does. W89 holds it to the same
+/// for looking at The Commons.
+pub fn kept_in(state: &AppState, agent_id: &str) -> ApiResult<Option<&'static str>> {
+    if state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
+        return Ok(Some("you stay home, so you never go out"));
+    }
+    if !routine_of(state, agent_id)?.public_places {
+        return Ok(Some("your owner hasn't let you go to public places"));
+    }
+    Ok(None)
+}
+
 /// L2, L3, L4: when this bot may go out until, or why it can't go out now.
 fn out_until(
     state: &AppState,
@@ -79,13 +91,10 @@ fn out_until(
     owner_id: &str,
     now: i64,
 ) -> ApiResult<Result<i64, &'static str>> {
-    if state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house) {
-        return Ok(Err("you stay home, so you never go out"));
+    if let Some(reason) = kept_in(state, agent_id)? {
+        return Ok(Err(reason));
     }
     let routine = routine_of(state, agent_id)?;
-    if !routine.public_places {
-        return Ok(Err("your owner hasn't let you go to public places"));
-    }
     Ok(social_until(&routine, offset_of(state, owner_id)?, now).ok_or("it isn't your social hours"))
 }
 

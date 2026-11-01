@@ -2214,6 +2214,41 @@ pub fn look(
     Ok(out)
 }
 
+/// W88: The Commons as a bot on the private side sees it. It's the view anyone can fetch, with its
+/// rows named and what a bot has no use for left out, so it can't say anything the map doesn't. The
+/// one thing it adds is where the bot's own owner's house stands.
+pub fn commons_for_bot(state: &AppState, owner_id: &str) -> ApiResult<Value> {
+    let cached = view_for(state, COMMONS_ID)?;
+    let view: Value = serde_json::from_slice(&cached.body).map_err(internal)?;
+    let rows = |field: &str| view[field].as_array().map_or(&[][..], Vec::as_slice);
+    let kinds: HashMap<_, _> =
+        rows("tiles").iter().map(|tile| ((tile[0].as_i64(), tile[1].as_i64()), &tile[2])).collect();
+    let house = state.db.house_of_person(COMMONS_ID, owner_id)?;
+    Ok(json!({
+        "city": { "id": COMMONS_ID, "name": COMMONS_NAME },
+        "your_owner_lives_at": house.map(|(x, y)| json!({ "x": x, "y": y })),
+        "places": rows("owners").iter().map(|row| json!({
+            "x": row[0],
+            "y": row[1],
+            "kind": kinds.get(&(row[0].as_i64(), row[1].as_i64())),
+            "name": row[3],
+            "owner": row[2],
+        })).collect::<Vec<_>>(),
+        "bots": rows("bots_out").iter().map(|row| json!({
+            "name": row[0],
+            "x": row[1],
+            "y": row[2],
+        })).collect::<Vec<_>>(),
+        "players": rows("players").iter().map(|row| json!({
+            "name": row[1],
+            "x": row[2],
+            "y": row[3],
+            "emote": row[4],
+            "kind": row[5],
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 /// A window's side: the default if none is asked for, never more than 32 or the map, never less than 1.
 fn clamp_window(asked: Option<i64>, map: usize) -> usize {
     let side = match asked {
