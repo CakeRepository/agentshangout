@@ -12,7 +12,6 @@ use crate::{
     now,
     ops::{self, MAX_NAME_CHARS},
     spaces,
-    world::Kind,
     worlds::{self, Move, COMMONS_ID},
     AppState,
 };
@@ -53,10 +52,15 @@ pub fn start_project(state: &AppState, caller: &Caller, name: &str) -> ApiResult
 }
 
 /// The project, if the calling bot is in its floor. Anything else is the 404 of no such project.
-fn project_with(state: &AppState, agent_id: &str, project_id: &str) -> ApiResult<(Space, Option<String>)> {
+fn project_with(
+    state: &AppState,
+    agent_id: &str,
+    project_id: &str,
+) -> ApiResult<(Space, Option<String>)> {
     let project = state.db.project(project_id)?.ok_or_else(ApiError::not_found)?;
-    let in_it = state.db.hangouts_for_agent(agent_id, now())?.iter().any(|room| room.id == project.0.id)
-        && !state.db.walked_onto(agent_id, now())?.contains(&project.0.id);
+    let in_it =
+        state.db.hangouts_for_agent(agent_id, now())?.iter().any(|room| room.id == project.0.id)
+            && !state.db.walked_onto(agent_id, now())?.contains(&project.0.id);
     if !in_it {
         return Err(ApiError::not_found());
     }
@@ -64,7 +68,12 @@ fn project_with(state: &AppState, agent_id: &str, project_id: &str) -> ApiResult
 }
 
 /// L12: a bot in a project brings in a bot it's in a room with right now.
-pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bot: &str) -> ApiResult<Value> {
+pub fn invite_to_project(
+    state: &AppState,
+    caller: &Caller,
+    project_id: &str,
+    bot: &str,
+) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
     let (space, _) = project_with(state, agent_id, project_id)?;
     let wanted = bot.trim();
@@ -74,18 +83,25 @@ pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bo
             continue;
         }
         let here = ops::snapshot(state, caller, &room.id)?.agents;
-        if let Some(agent) = here.into_iter().find(|agent| agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted)) {
+        if let Some(agent) = here
+            .into_iter()
+            .find(|agent| agent.id != agent_id && agent.name.eq_ignore_ascii_case(wanted))
+        {
             found = Some(agent);
             break;
         }
     }
     let invitee = found.ok_or_else(|| {
-        ApiError::conflict(format!("{wanted} isn't in a room with you right now: you bring in bots you're with"))
+        ApiError::conflict(format!(
+            "{wanted} isn't in a room with you right now: you bring in bots you're with"
+        ))
     })?;
     if !may_take_part(state, &invitee.id)? {
         return Err(ApiError::conflict(format!("{} stays home", invitee.name)));
     }
     ops::note_agent_write(state, caller)?;
+    // S13, S27: being brought in is a way of joining, so it's no way round either of them.
+    spaces::check_can_join(state, &invitee.owner_id, &space.id)?;
     state.db.add_agent_to_room(&space.id, &invitee.id)?;
     // Its owner can read where it went and take it back (S9, ops::remove_agent).
     if invitee.owner_id != space.owner_id {
@@ -97,25 +113,31 @@ pub fn invite_to_project(state: &AppState, caller: &Caller, project_id: &str, bo
     Ok(json!({ "ok": true, "project_id": space.id, "bot": invitee.name }))
 }
 
-/// Where a project's studio stands, if it still does.
+/// Where a project's studio stands, if it still does. Only that one tile is read, because `inbox`
+/// asks this of every project and nothing limits how often a bot reads it (W30).
 fn studio_of(state: &AppState, space: &Space) -> ApiResult<Option<(i64, i64)>> {
     let Some((x, y)) = state.db.plot_of(&space.id, COMMONS_ID)? else {
         return Ok(None);
     };
-    let tiles = state.db.world_tiles(COMMONS_ID)?;
-    let standing = (u16::try_from(x).ok().zip(u16::try_from(y).ok()))
-        .and_then(|pos| tiles.get(&pos))
-        .is_some_and(|tile| tile.kind == Kind::Studio);
+    let standing =
+        state.db.building_at(COMMONS_ID, x, y)?.is_some_and(|(kind, _)| kind == "studio");
     Ok(standing.then_some((x, y)))
 }
 
 /// L13: the bot that started a project puts up its studio, as its owner's own place.
-pub fn build_studio(state: &AppState, caller: &Caller, project_id: &str, x: i64, y: i64) -> ApiResult<Value> {
+pub fn build_studio(
+    state: &AppState,
+    caller: &Caller,
+    project_id: &str,
+    x: i64,
+    y: i64,
+) -> ApiResult<Value> {
     let agent_id = bot_of(caller)?;
     let (space, starter) = project_with(state, agent_id, project_id)?;
     if starter.as_deref() != Some(agent_id) {
         return Err(ApiError::forbidden("only the bot that started a project puts up its studio"));
     }
+    ops::note_agent_write(state, caller)?;
     if studio_of(state, &space)?.is_some() {
         return Err(ApiError::conflict("this project already has its studio"));
     }
@@ -137,7 +159,11 @@ pub fn build_studio(state: &AppState, caller: &Caller, project_id: &str, x: i64,
     state.db.set_plot(COMMONS_ID, x, y, &space.id)?;
     // W73: the studio is called what the project is.
     state.worlds.mark_stale(COMMONS_ID);
-    ops::announce(state, &space.id, &format!("{} put up the studio for {} on The Commons.", caller.name, space.name))?;
+    ops::announce(
+        state,
+        &space.id,
+        &format!("{} put up the studio for {} on The Commons.", caller.name, space.name),
+    )?;
     ops::refresh(state, &space.id);
     Ok(json!({ "ok": true, "x": x, "y": y }))
 }
@@ -162,7 +188,8 @@ pub fn projects_of(state: &AppState, caller: &Caller) -> ApiResult<Vec<ProjectVi
         .projects_of_bot(agent_id)?
         .into_iter()
         .map(|(space, starter)| {
-            let mut bots: Vec<String> = state.db.agents_in(&space.id, now)?.into_iter().map(|agent| agent.name).collect();
+            let mut bots: Vec<String> =
+                state.db.agents_in(&space.id, now)?.into_iter().map(|agent| agent.name).collect();
             bots.sort();
             Ok(ProjectView {
                 studio: studio_of(state, &space)?.map(|(x, y)| [x, y]),

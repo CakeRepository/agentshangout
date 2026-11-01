@@ -48,11 +48,7 @@ pub fn webauthn_for(public_url: &str) -> Option<Webauthn> {
     // `domain` is `None` for an IP number.
     let rp_id = url.domain()?;
     let origin = Url::parse(&url.origin().ascii_serialization()).ok()?;
-    WebauthnBuilder::new(rp_id, &origin)
-        .ok()?
-        .rp_name("Agents Hangout")
-        .build()
-        .ok()
+    WebauthnBuilder::new(rp_id, &origin).ok()?.rp_name("Agents Hangout").build().ok()
 }
 
 /// A ceremony that has been started and is waiting on the browser. Each says whose it is, so it
@@ -189,7 +185,9 @@ fn off() -> ApiError {
 }
 
 fn busy() -> ApiError {
-    ApiError::too_many_requests("too many passkey steps are open right now; try again in a few minutes")
+    ApiError::too_many_requests(
+        "too many passkey steps are open right now; try again in a few minutes",
+    )
 }
 
 fn too_many_signups() -> ApiError {
@@ -228,10 +226,7 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.len() & 1 == 1 || !text.is_ascii() {
         return None;
     }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok())
-        .collect()
+    (0..text.len()).step_by(2).map(|at| u8::from_str_radix(&text[at..at + 2], 16).ok()).collect()
 }
 
 // Routes
@@ -282,9 +277,7 @@ pub fn start_registration(
                     "that's as many passkeys as one person can keep; remove one first",
                 ));
             }
-            let handle = state
-                .db
-                .user_handle(&caller.person_id, &Uuid::new_v4().to_string())?;
+            let handle = state.db.user_handle(&caller.person_id, &Uuid::new_v4().to_string())?;
             let handle = Uuid::parse_str(&handle).map_err(broken)?;
             // A2: their own passkeys, so the same one isn't made twice.
             let exclude: Vec<Vec<u8>> = state
@@ -314,17 +307,8 @@ pub fn start_registration(
         .map_err(broken)?;
     let options = creation_options(&challenge)?;
     let pending = match caller {
-        Some(caller) => Pending::Add {
-            person_id: caller.person_id.clone(),
-            label,
-            registration,
-        },
-        None => Pending::NewAccount {
-            name,
-            label,
-            user_handle,
-            registration,
-        },
+        Some(caller) => Pending::Add { person_id: caller.person_id.clone(), label, registration },
+        None => Pending::NewAccount { name, label, user_handle, registration },
     };
     let ceremony_id = state.ceremonies.begin(pending, now, from).ok_or_else(busy)?;
     Ok(Started { ceremony_id, options })
@@ -348,7 +332,9 @@ pub fn finish_registration(
     let (label, registration, owner) = match pending {
         Pending::Login(_) => return Err(lapsed()),
         Pending::Add { person_id, label, registration } => match caller {
-            Some(caller) if caller.person_id == person_id => (label, registration, Owner::Existing(person_id)),
+            Some(caller) if caller.person_id == person_id => {
+                (label, registration, Owner::Existing(person_id))
+            }
             _ => return Err(ApiError::forbidden("that passkey was started by someone else")),
         },
         Pending::NewAccount { name, label, user_handle, registration } => {
@@ -370,9 +356,8 @@ pub fn finish_registration(
             "that passkey can't sign you in without a name; use a device that keeps passkeys",
         ));
     }
-    let passkey = webauthn
-        .finish_passkey_registration(&credential, &registration)
-        .map_err(|error| {
+    let passkey =
+        webauthn.finish_passkey_registration(&credential, &registration).map_err(|error| {
             tracing::debug!(?error, "passkey registration refused");
             unverified()
         })?;
@@ -380,26 +365,23 @@ pub fn finish_registration(
     let id = auth::new_id();
     let credential_id = hex(passkey.cred_id());
     let json = serde_json::to_string(&passkey).map_err(broken)?;
-    let new = NewPasskey {
-        id: &id,
-        credential_id: &credential_id,
-        passkey: &json,
-        label: &label,
-    };
+    let new = NewPasskey { id: &id, credential_id: &credential_id, passkey: &json, label: &label };
     match owner {
-        Owner::Existing(person_id) => match state.db.add_passkey(&person_id, &new, MAX_PASSKEYS, now)? {
-            PasskeyAdded::Added => {
-                tell_passkey_added(state, &person_id);
-                Ok(Registered {
-                    person: state.db.person(&person_id)?.ok_or_else(ApiError::not_found)?,
-                    owner_key: None,
-                })
+        Owner::Existing(person_id) => {
+            match state.db.add_passkey(&person_id, &new, MAX_PASSKEYS, now)? {
+                PasskeyAdded::Added => {
+                    tell_passkey_added(state, &person_id);
+                    Ok(Registered {
+                        person: state.db.person(&person_id)?.ok_or_else(ApiError::not_found)?,
+                        owner_key: None,
+                    })
+                }
+                PasskeyAdded::AlreadyRegistered => Err(already_registered()),
+                PasskeyAdded::TooMany => Err(ApiError::conflict(
+                    "that's as many passkeys as one person can keep; remove one first",
+                )),
             }
-            PasskeyAdded::AlreadyRegistered => Err(already_registered()),
-            PasskeyAdded::TooMany => Err(ApiError::conflict(
-                "that's as many passkeys as one person can keep; remove one first",
-            )),
-        },
+        }
         Owner::New { name, user_handle } => {
             if !state.ceremonies.take_signup(now) {
                 return Err(too_many_signups());
@@ -459,10 +441,8 @@ pub fn start_login(
         webauthn.start_discoverable_authentication().map_err(broken)?;
     challenge.mediation = None;
     let options = serde_json::to_value(&challenge).map_err(broken)?;
-    let ceremony_id = state
-        .ceremonies
-        .begin(Pending::Login(authentication), now, from)
-        .ok_or_else(busy)?;
+    let ceremony_id =
+        state.ceremonies.begin(Pending::Login(authentication), now, from).ok_or_else(busy)?;
     Ok(Started { ceremony_id, options })
 }
 
@@ -501,7 +481,8 @@ fn check_login(
     if client_data["crossOrigin"] == true {
         return Ok(None);
     }
-    let Ok((user_handle, credential_id)) = webauthn.identify_discoverable_authentication(&credential)
+    let Ok((user_handle, credential_id)) =
+        webauthn.identify_discoverable_authentication(&credential)
     else {
         return Ok(None);
     };
@@ -517,18 +498,20 @@ fn check_login(
         tracing::error!("a stored passkey could not be read");
         return Ok(None);
     };
-    let result = match webauthn.finish_discoverable_authentication_v2(&credential, authentication, &passkey) {
-        Ok(result) => result,
-        // A6: the counter only goes up, so one that doesn't is a copy of the passkey.
-        Err(WebauthnError::CredentialPossibleCompromise) => {
-            tracing::warn!("a passkey sign-in was refused because its counter went backwards");
-            return Ok(None);
-        }
-        Err(error) => {
-            tracing::debug!(?error, "passkey sign-in refused");
-            return Ok(None);
-        }
-    };
+    let result =
+        match webauthn.finish_discoverable_authentication_v2(&credential, authentication, &passkey)
+        {
+            Ok(result) => result,
+            // A6: the counter only goes up, so one that doesn't is a copy of the passkey.
+            Err(WebauthnError::CredentialPossibleCompromise) => {
+                tracing::warn!("a passkey sign-in was refused because its counter went backwards");
+                return Ok(None);
+            }
+            Err(error) => {
+                tracing::debug!(?error, "passkey sign-in refused");
+                return Ok(None);
+            }
+        };
     let updated = match passkey.update_credential(&result) {
         Some(true) => match serde_json::to_string(&passkey) {
             Ok(json) => Some(json),
@@ -597,7 +580,8 @@ mod tests {
         assert!(webauthn_for("ftp://example.com").is_none());
 
         let webauthn = webauthn_for("https://agentshangout.com/").unwrap();
-        let origins: Vec<_> = webauthn.get_allowed_origins().iter().map(|url| url.as_str()).collect();
+        let origins: Vec<_> =
+            webauthn.get_allowed_origins().iter().map(|url| url.as_str()).collect();
         assert_eq!(origins, ["https://agentshangout.com/"], "the one origin is the public URL");
     }
 
@@ -651,7 +635,10 @@ mod tests {
             assert!(store.begin(pending(), 1_000, None).is_some());
         }
         assert!(store.begin(pending(), 1_000, None).is_none(), "past the cap, nothing starts");
-        assert!(store.begin(pending(), 1_000 + CEREMONY_SECS, None).is_some(), "room again once they lapse");
+        assert!(
+            store.begin(pending(), 1_000 + CEREMONY_SECS, None).is_some(),
+            "room again once they lapse"
+        );
     }
 
     #[test]
@@ -690,7 +677,10 @@ mod tests {
             .map(|_| store.begin(some_ceremony(), 1_000, Some(here)).unwrap())
             .collect();
         assert!(store.begin(some_ceremony(), 1_000, Some(here)).is_none());
-        assert!(store.begin(some_ceremony(), 1_000, Some(there)).is_some(), "each address is counted on its own");
+        assert!(
+            store.begin(some_ceremony(), 1_000, Some(there)).is_some(),
+            "each address is counted on its own"
+        );
         for _ in 0..MAX_OPEN_PER_ADDRESS + 5 {
             assert!(store.begin(some_ceremony(), 1_000, None).is_some(), "no address, no limit");
         }
@@ -757,7 +747,8 @@ mod tests {
     fn passkeys_off_means_every_start_says_409() {
         let state = state("http://127.0.0.1:8787");
         assert!(!available(&state, None).unwrap());
-        let register = start_registration(&state, None, Some("Ann"), None, None, 1_000).err().unwrap();
+        let register =
+            start_registration(&state, None, Some("Ann"), None, None, 1_000).err().unwrap();
         let login = start_login(&state, None, None, 1_000).err().unwrap();
         assert_eq!(register.status, StatusCode::CONFLICT);
         assert_eq!(login.status, StatusCode::CONFLICT);

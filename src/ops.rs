@@ -75,22 +75,16 @@ pub fn iso(unix: i64) -> String {
 }
 
 pub(crate) fn parse_time(text: &str, field: &str) -> ApiResult<i64> {
-    OffsetDateTime::parse(text.trim(), &Rfc3339)
-        .map(OffsetDateTime::unix_timestamp)
-        .map_err(|_| {
-            ApiError::bad_request(format!(
-                "{field} must be an RFC 3339 time with an offset, like 2026-11-07T18:00:00-06:00"
-            ))
-        })
+    OffsetDateTime::parse(text.trim(), &Rfc3339).map(OffsetDateTime::unix_timestamp).map_err(|_| {
+        ApiError::bad_request(format!(
+            "{field} must be an RFC 3339 time with an offset, like 2026-11-07T18:00:00-06:00"
+        ))
+    })
 }
 
 pub fn publish(state: &AppState, hangout_id: &str, kind: &'static str, data: String) {
     // Sending only fails when nobody is watching, which is fine.
-    let _ = state.hub.send(HubEvent {
-        hangout_id: hangout_id.to_string(),
-        kind,
-        data,
-    });
+    let _ = state.hub.send(HubEvent { hangout_id: hangout_id.to_string(), kind, data });
 }
 
 /// Pings one person and their bots in this room.
@@ -113,11 +107,8 @@ fn notify_side(
             .filter(|agent| agent.owner_id == person_id)
             .map(|agent| agent.id),
     );
-    let notice = notify::Notice {
-        event,
-        hangout_id: hangout_id.to_string(),
-        text: text.to_string(),
-    };
+    let notice =
+        notify::Notice { event, hangout_id: hangout_id.to_string(), text: text.to_string() };
     notify::send(state, &owners, &notice);
     Ok(())
 }
@@ -170,7 +161,11 @@ fn has_guests(state: &AppState, hangout_id: &str) -> ApiResult<bool> {
 
 /// For a line that repeats a plan or a check-in. Guests can't see those, so a Porch or a public
 /// floor gets no line at all: the people who belong there have the plan and check-in panels.
-pub(crate) fn announce_in_house_only(state: &AppState, hangout_id: &str, body: &str) -> ApiResult<()> {
+pub(crate) fn announce_in_house_only(
+    state: &AppState,
+    hangout_id: &str,
+    body: &str,
+) -> ApiResult<()> {
     if has_guests(state, hangout_id)? {
         return Ok(());
     }
@@ -378,13 +373,14 @@ pub fn propose_event(
     })?;
     // Proposing counts as a yes from the proposer's side.
     let via_agent = caller.is_agent().then_some(caller.name.as_str());
-    state
-        .db
-        .upsert_rsvp(&id, &caller.person_id, "yes", via_agent, "", now)?;
+    state.db.upsert_rsvp(&id, &caller.person_id, "yes", via_agent, "", now)?;
     announce_in_house_only(
         state,
         hangout_id,
-        &format!("{} proposed \"{title}\". It needs {min_yes} yes to go on the calendar.", caller.name),
+        &format!(
+            "{} proposed \"{title}\". It needs {min_yes} yes to go on the calendar.",
+            caller.name
+        ),
     )?;
     notify_others(
         state,
@@ -435,9 +431,7 @@ pub fn rsvp(
     }
     note_agent_write(state, caller)?;
     let via_agent = caller.is_agent().then_some(caller.name.as_str());
-    state
-        .db
-        .upsert_rsvp(event_id, &caller.person_id, response, via_agent, &note, now())?;
+    state.db.upsert_rsvp(event_id, &caller.person_id, response, via_agent, &note, now())?;
     settle(state, event_id)?;
     refresh(state, &event.hangout_id);
     state.db.event(event_id)?.ok_or_else(ApiError::not_found)
@@ -607,9 +601,7 @@ pub fn answer_check_in(
         _ => return Err(ApiError::conflict("that check-in was already answered")),
     }
     note_agent_write(state, caller)?;
-    state
-        .db
-        .answer_check_in(check_in_id, response, &caller.name, caller.is_agent(), &note)?;
+    state.db.answer_check_in(check_in_id, response, &caller.name, caller.is_agent(), &note)?;
     let word = if response == "go" { "go" } else { "hold" };
     let text = format!("{} said {word} to {}: {}", caller.name, check_in.asker, check_in.about);
     announce_in_house_only(state, &check_in.hangout_id, &text)?;
@@ -642,7 +634,12 @@ pub fn ask_owner(
     let Some(agent_id) = &caller.agent_id else {
         return Err(ApiError::forbidden("only bots ask their owner"));
     };
-    no_guests(state, caller, hangout_id, "ask their owner from a Porch: use one of your own rooms")?;
+    no_guests(
+        state,
+        caller,
+        hangout_id,
+        "ask their owner from a Porch: use one of your own rooms",
+    )?;
     let question = clean(question, "question", MAX_ABOUT_CHARS)?;
     note_agent_write(state, caller)?;
 
@@ -852,10 +849,7 @@ pub fn set_agent_notify(
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {
-    let person = state
-        .db
-        .person_by_feed(feed_token)?
-        .ok_or_else(ApiError::not_found)?;
+    let person = state.db.person_by_feed(feed_token)?.ok_or_else(ApiError::not_found)?;
     let now = now();
     let events: Vec<FeedEvent> = state.db.feed_events(&person.id, now - FEED_HISTORY_SECS)?;
     Ok(ical::feed(&person.name, &events, now))
@@ -987,10 +981,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     let looks = looks::in_room(state, caller, &present, &agents)?;
     Ok(Snapshot {
         hangout,
-        you: You {
-            person_id: caller.person_id.clone(),
-            agent_id: caller.agent_id.clone(),
-        },
+        you: You { person_id: caller.person_id.clone(), agent_id: caller.agent_id.clone() },
         people,
         agents,
         messages,
@@ -1107,9 +1098,7 @@ pub fn create_agent(
     let id = auth::new_id();
     let token = auth::new_agent_token();
     let now = now();
-    state
-        .db
-        .create_agent(&id, &caller.person_id, &name, &auth::hash_secret(&token), now)?;
+    state.db.create_agent(&id, &caller.person_id, &name, &auth::hash_secret(&token), now)?;
     state.db.add_agent_to_room(hangout_id, &id)?;
     // A bot made in a house's Living Room or Porch lives in that house.
     if let Some(house) = state.db.house_for_room(hangout_id)? {
@@ -1157,10 +1146,8 @@ pub fn bring_agent(
         }
         // A bot that stays home may be in its own Living Room and nowhere else, so its keys
         // never sit in a room full of other people's words.
-        let own_living_room = state
-            .db
-            .house(&home.house_id)?
-            .is_some_and(|house| house.living_room_id == hangout_id);
+        let own_living_room =
+            state.db.house(&home.house_id)?.is_some_and(|house| house.living_room_id == hangout_id);
         if home.stays_home && !own_living_room {
             return Err(ApiError::conflict(format!(
                 "{} stays home: it can only be in its own house's Living Room",

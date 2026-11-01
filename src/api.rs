@@ -2,6 +2,7 @@
 
 use std::convert::Infallible;
 
+use crate::notify;
 use axum::{
     extract::{
         rejection::{JsonRejection, QueryRejection},
@@ -15,7 +16,6 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use crate::notify;
 use futures_util::stream::{self, Stream};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -220,7 +220,9 @@ fn reply_with_session(
 pub(crate) fn check_create_code(state: &AppState, code: Option<&str>) -> ApiResult<()> {
     if let Some(expected) = &state.config.create_code {
         if code != Some(expected.as_str()) {
-            return Err(ApiError::forbidden("that isn't the code for starting new hangouts or cities here"));
+            return Err(ApiError::forbidden(
+                "that isn't the code for starting new hangouts or cities here",
+            ));
         }
     }
     Ok(())
@@ -247,15 +249,10 @@ fn person_for(
     your_name: Option<&str>,
 ) -> ApiResult<(Person, Option<String>)> {
     match caller {
-        Some(caller) if caller.is_agent() => {
-            Err(ApiError::forbidden("only a person can do this"))
-        }
+        Some(caller) if caller.is_agent() => Err(ApiError::forbidden("only a person can do this")),
         // By id, because the caller may have come in with an owner key or a session.
         Some(caller) => {
-            let person = state
-                .db
-                .person(&caller.person_id)?
-                .ok_or_else(ApiError::unauthorized)?;
+            let person = state.db.person(&caller.person_id)?.ok_or_else(ApiError::unauthorized)?;
             Ok((person, None))
         }
         None => {
@@ -287,11 +284,16 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
             "trip": city::my_trip(&state, &caller)?,
             // L5: its social hours, its cap, and where it is if it's out, for its doorbell.
             "routine": routines::routine_view(&state, agent_id, &caller.person_id)?,
-            // H18: bots its owner marked, which its doorbell doesn't wake it for.
-            "ignored_bots": households::marks_for(&state, &caller)?
-                .into_iter()
-                .map(|mark| mark.agent_id)
-                .collect::<Vec<_>>(),
+            // H18: bots its owner marked, which its doorbell doesn't wake it for. A house bot belongs
+            // to the house, so anyone there could read this through it (H16).
+            "ignored_bots": if caller.is_house {
+                Vec::new()
+            } else {
+                households::marks_for(&state, &caller)?
+                    .into_iter()
+                    .map(|mark| mark.agent_id)
+                    .collect::<Vec<_>>()
+            },
         })));
     }
     let hangouts = state.db.hangouts_for_person(&caller.person_id)?;
@@ -542,8 +544,7 @@ async fn start_passkey_login(
     MaybeCaller(caller): MaybeCaller,
     request: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    let started =
-        passkey::start_login(&state, caller.as_ref(), auth::client_ip(&request), now())?;
+    let started = passkey::start_login(&state, caller.as_ref(), auth::client_ip(&request), now())?;
     Ok(Json(json!({ "ceremony_id": started.ceremony_id, "options": started.options })))
 }
 
@@ -658,9 +659,9 @@ fn live_events(
         loop {
             let (hub, state, secret_hash, topic) = &mut context;
             let event = match hub.recv().await {
-                Ok(event) if event.hangout_id == *topic => SseEvent::default()
-                    .event(event.kind)
-                    .data(event.data),
+                Ok(event) if event.hangout_id == *topic => {
+                    SseEvent::default().event(event.kind).data(event.data)
+                }
                 Ok(_) => continue,
                 // Fell behind: the page reloads instead of replaying what it missed.
                 Err(RecvError::Lagged(_)) => SseEvent::default().event("refresh").data("{}"),
@@ -751,7 +752,8 @@ async fn answer_check_in(
     Path(id): Path<String>,
     Json(body): Json<AnswerCheckIn>,
 ) -> ApiResult<Json<Value>> {
-    let check_in = ops::answer_check_in(&state, &caller, &id, &body.response, body.note.as_deref())?;
+    let check_in =
+        ops::answer_check_in(&state, &caller, &id, &body.response, body.note.as_deref())?;
     Ok(Json(json!(check_in)))
 }
 
@@ -1156,11 +1158,7 @@ async fn calendar_feed(
 ) -> ApiResult<Response> {
     let token = file.strip_suffix(".ics").ok_or_else(ApiError::not_found)?;
     let body = ops::calendar_feed(&state, token)?;
-    Ok((
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")],
-        body,
-    )
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, "text/calendar; charset=utf-8")], body)
         .into_response())
 }
 
@@ -1819,7 +1817,10 @@ async fn claim_player(
     })))
 }
 
-async fn my_players(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {
+async fn my_players(
+    State(state): State<AppState>,
+    SignedIn(caller): SignedIn,
+) -> ApiResult<Json<Value>> {
     Ok(Json(worlds::my_players(&state, &caller, now())?))
 }
 
@@ -1856,7 +1857,10 @@ async fn create_world() -> ApiError {
     ApiError::new(StatusCode::GONE, "nobody can start a world any more: The Commons is the one map")
 }
 
-async fn my_world(State(state): State<AppState>, SignedIn(caller): SignedIn) -> ApiResult<Json<Value>> {
+async fn my_world(
+    State(state): State<AppState>,
+    SignedIn(caller): SignedIn,
+) -> ApiResult<Json<Value>> {
     Ok(Json(worlds::my_world(&state, &caller)?))
 }
 
@@ -2064,7 +2068,10 @@ mod tests {
         for path in ["/llms.txt", "/agents.md"] {
             let guide = server.get("", path).await;
             let guide = guide.body.as_str().unwrap();
-            assert!(guide.contains("Don't open an issue or a pull request unless they ask you to"), "{path}");
+            assert!(
+                guide.contains("Don't open an issue or a pull request unless they ask you to"),
+                "{path}"
+            );
         }
     }
 

@@ -15,17 +15,20 @@ pub struct ApiError {
     pub message: String,
     /// Seconds until a refused caller may try again, for a 429.
     pub retry_after: Option<u64>,
+    /// A 429 that was the move's fault rather than a limit's, so it counts as a refused move (W30).
+    pub refused_move: bool,
 }
 
 pub type ApiResult<T> = Result<T, ApiError>;
 
 impl ApiError {
     pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-            retry_after: None,
-        }
+        Self { status, message: message.into(), retry_after: None, refused_move: false }
+    }
+
+    pub fn refused_move(mut self) -> Self {
+        self.refused_move = true;
+        self
     }
 
     pub fn retry_after(mut self, secs: u64) -> Self {
@@ -60,7 +63,8 @@ impl ApiError {
 
     /// For a 429, how many seconds to wait.
     pub fn wait(&self) -> Option<u64> {
-        (self.status == StatusCode::TOO_MANY_REQUESTS).then(|| self.retry_after.unwrap_or(RETRY_SECS))
+        (self.status == StatusCode::TOO_MANY_REQUESTS)
+            .then(|| self.retry_after.unwrap_or(RETRY_SECS))
     }
 }
 

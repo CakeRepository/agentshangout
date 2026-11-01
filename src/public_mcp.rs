@@ -254,7 +254,12 @@ fn call_tool(state: &AppState, headers: &HeaderMap, name: &str, args: &Value) ->
             let args: LookArgs = args_of(args)?;
             worlds::allow_view(state, headers, now)?;
             let player = match &args.player_token {
-                Some(_) => Some(worlds::player_from_token(state, args.player_token.as_deref(), headers, now)?),
+                Some(_) => Some(worlds::player_from_token(
+                    state,
+                    args.player_token.as_deref(),
+                    headers,
+                    now,
+                )?),
                 None => None,
             };
             let centre = match (args.x, args.y) {
@@ -262,12 +267,22 @@ fn call_tool(state: &AppState, headers: &HeaderMap, name: &str, args: &Value) ->
                 (None, None) => None,
                 _ => return Err(ApiError::bad_request("x and y come together")),
             };
-            worlds::look(state, world_of(&args.world_id), centre, args.w, args.h, player.as_ref(), now)
+            worlds::look(
+                state,
+                world_of(&args.world_id),
+                centre,
+                args.w,
+                args.h,
+                player.as_ref(),
+                now,
+            )
         }
         "build" => {
             let args: BuildArgs = args_of(args)?;
             if args.what != "road" {
-                return Err(ApiError::bad_request("type is road: only a person can put up a place"));
+                return Err(ApiError::bad_request(
+                    "type is road: only a person can put up a place",
+                ));
             }
             let mv = Move {
                 action: "road".into(),
@@ -310,7 +325,8 @@ fn call_tool(state: &AppState, headers: &HeaderMap, name: &str, args: &Value) ->
             let args: WhoArgs = args_of(args)?;
             // It reads the player's own tiles and works out a tip, so it is limited like a view.
             worlds::allow_view(state, headers, now)?;
-            let player = worlds::player_from_token(state, args.player_token.as_deref(), headers, now)?;
+            let player =
+                worlds::player_from_token(state, args.player_token.as_deref(), headers, now)?;
             worlds::how_am_i_doing(state, &player, world_of(&args.world_id), now)
         }
         _ => Err(ApiError::bad_request("that isn't one of this server's tools")),
@@ -325,7 +341,13 @@ fn rpc_result(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
-fn dispatch(state: &AppState, headers: &HeaderMap, id: Value, method: &str, params: &Value) -> Value {
+fn dispatch(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: Value,
+    method: &str,
+    params: &Value,
+) -> Value {
     match method {
         "initialize" => {
             let requested = params["protocolVersion"].as_str().unwrap_or_default();

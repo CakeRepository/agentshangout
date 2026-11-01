@@ -67,16 +67,11 @@ fn mix(value: u64) -> u64 {
 
 /// One number from several. The order of the parts matters.
 fn hash(parts: &[u64]) -> u64 {
-    parts
-        .iter()
-        .fold(0x243F_6A88_85A3_08D3, |acc, part| mix(acc ^ part))
+    parts.iter().fold(0x243F_6A88_85A3_08D3, |acc, part| mix(acc ^ part))
 }
 
 fn text_hash(text: &str) -> u64 {
-    text.bytes().fold(
-        0x1357_9BDF_0246_8ACE,
-        |acc, byte| mix(acc ^ u64::from(byte)),
-    )
+    text.bytes().fold(0x1357_9BDF_0246_8ACE, |acc, byte| mix(acc ^ u64::from(byte)))
 }
 
 // Land
@@ -127,10 +122,7 @@ pub struct Land {
 
 impl Land {
     fn filled(size: usize, ground: Ground) -> Land {
-        Land {
-            size,
-            cells: vec![ground; size * size],
-        }
+        Land { size, cells: vec![ground; size * size] }
     }
 
     pub fn size(&self) -> usize {
@@ -170,20 +162,14 @@ impl Land {
 
 /// One string per row, each run of the same ground as a count then a letter, like `40g3f10w`.
 pub fn encode_land(land: &Land) -> Vec<String> {
-    land.cells
-        .chunks(land.size.max(1))
-        .map(encode_row)
-        .collect()
+    land.cells.chunks(land.size.max(1)).map(encode_row).collect()
 }
 
 fn encode_row(row: &[Ground]) -> String {
     let mut text = String::new();
     let mut start = 0;
     while start < row.len() {
-        let run = row[start..]
-            .iter()
-            .take_while(|ground| **ground == row[start])
-            .count();
+        let run = row[start..].iter().take_while(|ground| **ground == row[start]).count();
         text.push_str(&run.to_string());
         text.push(row[start].letter());
         start += run;
@@ -292,19 +278,13 @@ fn fractal(seed: u64, salt: u64, size: usize, cell: usize) -> Field {
     let broad = noise_octave(seed, salt, size, cell);
     let middle = noise_octave(seed, salt + 1, size, (cell / 2).max(2));
     let fine = noise_octave(seed, salt + 2, size, (cell / 4).max(2));
-    (0..size * size)
-        .map(|i| (4 * broad[i] + 2 * middle[i] + fine[i]) / 7)
-        .collect()
+    (0..size * size).map(|i| (4 * broad[i] + 2 * middle[i] + fine[i]) / 7).collect()
 }
 
 /// Noise along a line, for how far a river wanders.
 fn line_noise(seed: u64, at: i64, cell: i64) -> i64 {
     let value = |k: i64| (hash(&[seed, SALT_RIVER, k as u64]) % 1024) as i64;
-    lerp(
-        value(at / cell),
-        value(at / cell + 1),
-        smooth(at % cell, cell),
-    )
+    lerp(value(at / cell), value(at / cell + 1), smooth(at % cell, cell))
 }
 
 /// The value that the top `per_mille` of the field is at or above.
@@ -352,10 +332,7 @@ struct Wet {
 
 impl Wet {
     fn new(size: usize) -> Wet {
-        Wet {
-            size,
-            cells: vec![false; size * size],
-        }
+        Wet { size, cells: vec![false; size * size] }
     }
 
     fn fill(&mut self, x: i64, y: i64) {
@@ -457,10 +434,9 @@ fn river_ends(
     let pick =
         |low: i64, high: i64, shift: u32| low + ((h >> shift) % (high - low + 1) as u64) as i64;
     match (lake, sea) {
-        (Some(lake), Some(side)) => [
-            (lake.x, lake.y),
-            edge_point(n, side, pick(n / 5, n * 4 / 5, 0)),
-        ],
+        (Some(lake), Some(side)) => {
+            [(lake.x, lake.y), edge_point(n, side, pick(n / 5, n * 4 / 5, 0))]
+        }
         (Some(lake), None) => {
             let (dx, dy) = (lake.x - n / 2, lake.y - n / 2);
             let side = match (dx.abs() >= dy.abs(), dx > 0, dy > 0) {
@@ -554,13 +530,15 @@ fn shape_ground(seed: u64, wobble: &Field, wet: &Wet) -> Land {
     let high: Field = relief
         .iter()
         .enumerate()
-        .map(|(i, value)| {
-            if wet.near((i % size) as i64, (i / size) as i64, 3) {
-                0
-            } else {
-                *value
-            }
-        })
+        .map(
+            |(i, value)| {
+                if wet.near((i % size) as i64, (i / size) as i64, 3) {
+                    0
+                } else {
+                    *value
+                }
+            },
+        )
         .collect();
     let hill_line = top_share(&high, 30 + (share % 40) as usize);
     let tree_line = top_share(&trees, 130 + ((share >> 16) % 170) as usize);
@@ -614,11 +592,7 @@ fn raw_terrain(seed: u64, size: usize) -> Land {
     let flags = hash(&[seed, SALT_SHAPE]);
     let side = ((flags >> 8) % 4) as u8;
     let mut sea = (flags % 100 < 55).then_some(side);
-    let lake = if sea.is_none() || (flags >> 16) % 100 < 35 {
-        find_lake(seed, size)
-    } else {
-        None
-    };
+    let lake = if sea.is_none() || (flags >> 16) % 100 < 35 { find_lake(seed, size) } else { None };
     if sea.is_none() && lake.is_none() {
         sea = Some(side);
     }
@@ -763,11 +737,8 @@ fn trace(paths: &Paths, size: usize, mut state: usize) -> Vec<Pos> {
 
 fn route(seed: u64, land: &Land, carve: bool) -> Option<Vec<Pos>> {
     let size = land.size;
-    let entry_cost: Vec<u32> = land
-        .cells
-        .iter()
-        .map(|ground| crossing_cost(*ground, carve))
-        .collect();
+    let entry_cost: Vec<u32> =
+        land.cells.iter().map(|ground| crossing_cost(*ground, carve)).collect();
     let middle = size / 2 * size + size / 2;
     if entry_cost[middle] == 0 {
         return None;
@@ -797,16 +768,7 @@ pub fn highway(seed: u64, land: &Land) -> Vec<Pos> {
 pub fn start_tiles(seed: u64, land: &Land) -> Tiles {
     highway(seed, land)
         .into_iter()
-        .map(|pos| {
-            (
-                pos,
-                Tile {
-                    kind: Kind::Road,
-                    level: 0,
-                    player: None,
-                },
-            )
-        })
+        .map(|pos| (pos, Tile { kind: Kind::Road, level: 0, player: None }))
         .collect()
 }
 
@@ -864,7 +826,6 @@ impl Kind {
     pub fn is_building(self) -> bool {
         matches!(self, Kind::House | Kind::Cafe | Kind::Club | Kind::Studio)
     }
-
 }
 
 /// One built tile. `player` is who built it, and is `None` for the highway.
@@ -967,14 +928,7 @@ fn neighbours((x, y): Pos) -> [Option<Pos>; 4] {
 }
 
 fn is_street(tile: Option<Tile>) -> bool {
-    matches!(
-        tile,
-        Some(Tile {
-            kind: Kind::Road,
-            player: None,
-            ..
-        })
-    )
+    matches!(tile, Some(Tile { kind: Kind::Road, player: None, .. }))
 }
 
 /// W15: whether a tile is kept for a side street. Beside every road with no builder, each tile whose
@@ -1004,17 +958,15 @@ pub fn reserved_in(land: &Land, tiles: &Tiles, [x0, y0, x1, y1]: [i64; 4]) -> Ve
 
 fn reserved_by(pos: Pos, street: impl Fn(Pos) -> bool) -> bool {
     let (x, y) = (i64::from(pos.0), i64::from(pos.1));
-    [(0, -1), (1, 0), (0, 1), (-1, 0)]
-        .into_iter()
-        .any(|(dx, dy)| {
-            (0..SIDE_STREET).any(|back| {
-                // The street starts `back` tiles behind this one, with the road one more behind.
-                let (sx, sy) = (x - dx * back, y - dy * back);
-                let road = (u16::try_from(sx - dx), u16::try_from(sy - dy));
-                (sx + sy).rem_euclid(SIDE_EVERY) == 0
-                    && matches!(road, (Ok(rx), Ok(ry)) if street((rx, ry)))
-            })
+    [(0, -1), (1, 0), (0, 1), (-1, 0)].into_iter().any(|(dx, dy)| {
+        (0..SIDE_STREET).any(|back| {
+            // The street starts `back` tiles behind this one, with the road one more behind.
+            let (sx, sy) = (x - dx * back, y - dy * back);
+            let road = (u16::try_from(sx - dx), u16::try_from(sy - dy));
+            (sx + sy).rem_euclid(SIDE_EVERY) == 0
+                && matches!(road, (Ok(rx), Ok(ry)) if street((rx, ry)))
         })
+    })
 }
 
 // Neighborhoods (W75 to W79)
@@ -1030,9 +982,9 @@ pub const OFF_STREET: &str =
     "roads follow the streets of their neighborhood: look shows them as streets. A lane of 3 tiles or fewer can go anywhere";
 
 const HOOD_NAMES: &[&str] = &[
-    "Maple", "Cedar", "Birch", "Willow", "Juniper", "Ash", "Hazel", "Elder", "Linden", "Rowan", "Alder",
-    "Aspen", "Clover", "Fern", "Heather", "Ivy", "Laurel", "Mallow", "Poppy", "Saffron", "Sorrel",
-    "Tansy", "Thistle", "Yarrow",
+    "Maple", "Cedar", "Birch", "Willow", "Juniper", "Ash", "Hazel", "Elder", "Linden", "Rowan",
+    "Alder", "Aspen", "Clover", "Fern", "Heather", "Ivy", "Laurel", "Mallow", "Poppy", "Saffron",
+    "Sorrel", "Tansy", "Thistle", "Yarrow",
 ];
 const HOMES_ENDS: &[&str] = &["Heights", "Gardens", "Hollow", "Green", "Park", "Rise"];
 const MAKERS_ENDS: &[&str] = &["Works", "Yard", "Mill", "Forge", "Lofts"];
@@ -1078,7 +1030,8 @@ pub fn neighborhoods(seed: u64, size: usize) -> Vec<Hood> {
         let mut gx = 0;
         while gx * HOOD_EVERY + HOOD_EVERY / 2 < size {
             let h = hash(&[seed, 0x4E45_4947, gx as u64, gy as u64]);
-            let jitter = |salt: u64| (hash(&[h, salt]) % (2 * HOOD_JITTER as u64 + 1)) as i64 - HOOD_JITTER;
+            let jitter =
+                |salt: u64| (hash(&[h, salt]) % (2 * HOOD_JITTER as u64 + 1)) as i64 - HOOD_JITTER;
             let x = (gx * HOOD_EVERY + HOOD_EVERY / 2 + jitter(1)).clamp(0, size - 1);
             let y = (gy * HOOD_EVERY + HOOD_EVERY / 2 + jitter(2)).clamp(0, size - 1);
             let character = match hash(&[h, 3]) % 4 {
@@ -1139,7 +1092,10 @@ pub fn on_street(hoods: &[Hood], tiles: &Tiles, pos: Pos) -> bool {
 
 /// W77: a road's new tiles follow the streets, or it's a lane of 3 tiles or fewer.
 pub fn check_streets(hoods: &[Hood], tiles: &Tiles, fresh: &[Pos]) -> Result<(), &'static str> {
-    if hoods.is_empty() || fresh.len() <= LANE_TILES || fresh.iter().all(|pos| on_street(hoods, tiles, *pos)) {
+    if hoods.is_empty()
+        || fresh.len() <= LANE_TILES
+        || fresh.iter().all(|pos| on_street(hoods, tiles, *pos))
+    {
         Ok(())
     } else {
         Err(OFF_STREET)
@@ -1162,22 +1118,12 @@ fn cells(first: Pos, last: Pos) -> impl Iterator<Item = Pos> {
 }
 
 fn sides(first: Pos, last: Pos) -> (u32, u32) {
-    (
-        u32::from(last.0 - first.0) + 1,
-        u32::from(last.1 - first.1) + 1,
-    )
+    (u32::from(last.0 - first.0) + 1, u32::from(last.1 - first.1) + 1)
 }
 
 fn laid(fresh: Vec<Pos>, skipped: u32, tile: Tile, each: u32) -> Plan {
     let cost = fresh.len() as u32 * each;
-    Plan {
-        changes: fresh
-            .into_iter()
-            .map(|pos| Change::Set(pos, tile))
-            .collect(),
-        cost,
-        skipped,
-    }
+    Plan { changes: fresh.into_iter().map(|pos| Change::Set(pos, tile)).collect(), cost, skipped }
 }
 
 /// W15, W16: a straight line of up to 16 tiles that touches a road. Roads already on the line are
@@ -1214,16 +1160,7 @@ pub fn plan_road(land: &Land, tiles: &Tiles, player: u64, span: Span) -> Planned
         return Err("a road has to touch an existing road");
     }
     let skipped = across.max(down) - fresh.len() as u32;
-    Ok(laid(
-        fresh,
-        skipped,
-        Tile {
-            kind: Kind::Road,
-            level: 0,
-            player: Some(player),
-        },
-        ROAD_COST,
-    ))
+    Ok(laid(fresh, skipped, Tile { kind: Kind::Road, level: 0, player: Some(player) }, ROAD_COST))
 }
 
 /// W55: one place on open land with a road beside it. `tiles` must reach 3 tiles past it, for the
@@ -1234,22 +1171,16 @@ pub fn plan_place(land: &Land, tiles: &Tiles, player: u64, kind: Kind, x: i64, y
     }
     let pos = land.locate(x, y).ok_or(OFF_MAP)?;
     let (px, py) = pos;
-    let beside_road = [(px.wrapping_sub(1), py), (px + 1, py), (px, py.wrapping_sub(1)), (px, py + 1)]
-        .iter()
-        .any(|at| tiles.get(at).is_some_and(|tile| tile.kind == Kind::Road));
+    let beside_road =
+        [(px.wrapping_sub(1), py), (px + 1, py), (px, py.wrapping_sub(1)), (px, py + 1)]
+            .iter()
+            .any(|at| tiles.get(at).is_some_and(|tile| tile.kind == Kind::Road));
     match spot(land, tiles, pos) {
         Spot::Free if is_reserved(tiles, pos) => Err(KEPT),
         Spot::Free if !beside_road => Err("a building needs a road beside it"),
-        Spot::Free => Ok(laid(
-            vec![pos],
-            0,
-            Tile {
-                kind,
-                level: 0,
-                player: Some(player),
-            },
-            PLACE_COST,
-        )),
+        Spot::Free => {
+            Ok(laid(vec![pos], 0, Tile { kind, level: 0, player: Some(player) }, PLACE_COST))
+        }
         Spot::Road | Spot::Built => Err("that tile is already built on"),
         Spot::Blocked(why) => Err(why),
     }
@@ -1269,9 +1200,8 @@ pub fn plan_bulldoze(
     gone: &dyn Fn(u64) -> bool,
 ) -> Planned {
     let plan = plan_bulldoze_tile(land, tiles, player, x, y, gone)?;
-    let road = land
-        .locate(x, y)
-        .filter(|pos| tiles.get(pos).is_some_and(|tile| tile.kind == Kind::Road));
+    let road =
+        land.locate(x, y).filter(|pos| tiles.get(pos).is_some_and(|tile| tile.kind == Kind::Road));
     if road.is_some_and(|pos| strands_a_building(tiles, pos)) {
         return Err(NEEDED);
     }
@@ -1290,11 +1220,7 @@ pub fn plan_bulldoze_tile(
     gone: &dyn Fn(u64) -> bool,
 ) -> Planned {
     let pos = land.locate(x, y).ok_or(OFF_MAP)?;
-    let cleared = Tile {
-        kind: Kind::Cleared,
-        level: 0,
-        player: Some(player),
-    };
+    let cleared = Tile { kind: Kind::Cleared, level: 0, player: Some(player) };
     let forest = land.at(pos) == Some(Ground::Forest);
     let Some(tile) = tiles.get(&pos) else {
         if !forest {
@@ -1315,16 +1241,8 @@ pub fn plan_bulldoze_tile(
     if !mine && !abandoned {
         return Err("you can only bulldoze what you built");
     }
-    let change = if forest {
-        Change::Set(pos, cleared)
-    } else {
-        Change::Remove(pos)
-    };
-    Ok(Plan {
-        changes: vec![change],
-        cost: BULLDOZE_COST,
-        skipped: 0,
-    })
+    let change = if forest { Change::Set(pos, cleared) } else { Change::Remove(pos) };
+    Ok(Plan { changes: vec![change], cost: BULLDOZE_COST, skipped: 0 })
 }
 
 /// W17: whether a road tile coming down would leave a place with no road joined to the highway
@@ -1401,11 +1319,13 @@ const GOAL_HOUSE: &str = "Put up your house on a tile beside a road.";
 const GOAL_SECOND_PLACE: &str =
     "Put up a second place: a studio comes a day after your house, a club after 3 and a cafe after 7.";
 const GOAL_ALL_PLACES: &str = "Fill out your places: a person can have a house and 3 others.";
-const GOAL_PERSON_OPEN: &str = "You have all the places a person can. Run them, and invite people in.";
+const GOAL_PERSON_OPEN: &str =
+    "You have all the places a person can. Run them, and invite people in.";
 const GOAL_ROAD: &str = "Lay your first road, starting beside the highway.";
 const GOAL_TEN_ROADS: &str = "Lay 10 tiles of road: a place needs a road beside it.";
 const GOAL_THIRTY_ROADS: &str = "Lay 30 tiles of road, out to where there is room to build.";
-const GOAL_AGENT_OPEN: &str = "Your streets are open. Keep them that way, and go where people are building.";
+const GOAL_AGENT_OPEN: &str =
+    "Your streets are open. Keep them that way, and go where people are building.";
 
 /// A person's rungs in order, then an agent's. A goal is always one of these.
 pub const GOALS: [&str; 8] = [
@@ -1436,11 +1356,14 @@ pub fn goal(town: &Town, person: bool) -> &'static str {
 
 const TIP_OUT_OF_MOVES: &str = "Out of moves for today: they come back at midnight UTC.";
 const TIP_NO_HOUSE: &str = "No house yet: put one on a tile beside a road.";
-const TIP_PLACES_COME: &str = "More places come with time: a studio after a day, a club after 3 and a cafe after 7.";
+const TIP_PLACES_COME: &str =
+    "More places come with time: a studio after a day, a club after 3 and a cafe after 7.";
 const TIP_NO_ROAD: &str = "No road yet: lay one that starts beside the highway.";
-const TIP_MORE_ROADS: &str = "Roads give people somewhere to build: lay them out towards open land.";
+const TIP_MORE_ROADS: &str =
+    "Roads give people somewhere to build: lay them out towards open land.";
 /// W47: said instead of any other while a disaster strikes.
-pub const TIP_STRIKING: &str = "A disaster is striking The Commons: nothing can be built until it is over.";
+pub const TIP_STRIKING: &str =
+    "A disaster is striking The Commons: nothing can be built until it is over.";
 
 /// Every tip there is. A tip is always one of these.
 pub const TIPS: [&str; 6] =
@@ -1526,14 +1449,7 @@ fn joined_roads(grid: &Grid) -> Vec<bool> {
     let mut joined = vec![false; grid.cells.len()];
     let mut walk = Vec::new();
     for (index, cell) in grid.cells.iter().enumerate() {
-        if matches!(
-            cell,
-            Some(Tile {
-                kind: Kind::Road,
-                player: None,
-                ..
-            })
-        ) {
+        if matches!(cell, Some(Tile { kind: Kind::Road, player: None, .. })) {
             joined[index] = true;
             walk.push(index);
         }
@@ -2132,23 +2048,18 @@ const MAX_AGENT_BYTES: usize = 512;
 /// so a multi-byte character cut by the limit can't matter.
 fn mentions(user_agent: &str, id: &str) -> bool {
     let head = &user_agent.as_bytes()[..user_agent.len().min(MAX_AGENT_BYTES)];
-    head.windows(id.len())
-        .any(|window| window.eq_ignore_ascii_case(id.as_bytes()))
+    head.windows(id.len()).any(|window| window.eq_ignore_ascii_case(id.as_bytes()))
 }
 
 /// Which crawler on the list a user agent is, if any. Case doesn't matter. The string is only
 /// looked at: nothing from it is kept or returned, and anything not on the list gives `None`.
 pub fn crawler_from_user_agent(user_agent: &str) -> Option<&'static Crawler> {
-    CRAWLERS
-        .iter()
-        .find(|crawler| mentions(user_agent, crawler.id))
+    CRAWLERS.iter().find(|crawler| mentions(user_agent, crawler.id))
 }
 
 /// The same for fetchers.
 pub fn fetcher_from_user_agent(user_agent: &str) -> Option<&'static Fetcher> {
-    FETCHERS
-        .iter()
-        .find(|fetcher| mentions(user_agent, fetcher.id))
+    FETCHERS.iter().find(|fetcher| mentions(user_agent, fetcher.id))
 }
 
 /// What a user agent on either list is.
@@ -2301,7 +2212,11 @@ mod tests {
         let hoods = neighborhoods(COMMONS_SEED, COMMONS_SIZE);
         assert_eq!(hoods, neighborhoods(COMMONS_SEED, COMMONS_SIZE), "the same every time");
         assert_eq!(hoods.len(), 25, "a point every 24 tiles on a map of 128");
-        assert_ne!(hoods, neighborhoods(COMMONS_SEED + 1, COMMONS_SIZE), "another seed, another town");
+        assert_ne!(
+            hoods,
+            neighborhoods(COMMONS_SEED + 1, COMMONS_SIZE),
+            "another seed, another town"
+        );
         for hood in &hoods {
             assert!((4..=6).contains(&hood.spacing), "{hood:?}");
             assert!(hood.ox < hood.spacing && hood.oy < hood.spacing, "{hood:?}");
@@ -2317,22 +2232,46 @@ mod tests {
 
     #[test]
     fn a_road_follows_the_streets_unless_it_is_a_lane() {
-        let hood = |x, y, spacing, ox, oy| Hood { name: "Test Green".into(), character: Character::Homes, x, y, spacing, ox, oy };
+        let hood = |x, y, spacing, ox, oy| Hood {
+            name: "Test Green".into(),
+            character: Character::Homes,
+            x,
+            y,
+            spacing,
+            ox,
+            oy,
+        };
         let tiles = Tiles::new();
         let run = |y: u16, xs: RangeInclusive<u16>| xs.map(|x| (x, y)).collect::<Vec<Pos>>();
 
         // One neighborhood, with streets every 4 tiles through 0.
         let one = vec![hood(50, 50, 4, 0, 0)];
         assert_eq!(check_streets(&one, &tiles, &run(8, 1..=10)), Ok(()), "along a street");
-        assert_eq!(check_streets(&one, &tiles, &run(9, 1..=10)), Err(OFF_STREET), "between streets");
+        assert_eq!(
+            check_streets(&one, &tiles, &run(9, 1..=10)),
+            Err(OFF_STREET),
+            "between streets"
+        );
         assert_eq!(check_streets(&one, &tiles, &run(9, 1..=3)), Ok(()), "a lane goes anywhere");
-        assert_eq!(check_streets(&one, &tiles, &run(9, 1..=4)), Err(OFF_STREET), "a lane is 3 tiles at most");
+        assert_eq!(
+            check_streets(&one, &tiles, &run(9, 1..=4)),
+            Err(OFF_STREET),
+            "a lane is 3 tiles at most"
+        );
 
         // Two side by side, meeting at x = 50: 2 tiles either side of it are free for joining.
         let two = vec![hood(30, 50, 4, 0, 0), hood(70, 50, 5, 1, 1)];
         assert_eq!(check_streets(&two, &tiles, &run(9, 48..=52)), Ok(()), "where they meet");
-        assert_eq!(check_streets(&two, &tiles, &run(9, 40..=44)), Err(OFF_STREET), "inside the first");
-        assert_eq!(check_streets(&two, &tiles, &run(11, 60..=64)), Ok(()), "on the second's own street");
+        assert_eq!(
+            check_streets(&two, &tiles, &run(9, 40..=44)),
+            Err(OFF_STREET),
+            "inside the first"
+        );
+        assert_eq!(
+            check_streets(&two, &tiles, &run(11, 60..=64)),
+            Ok(()),
+            "on the second's own street"
+        );
     }
 
     // What the tests build with
@@ -2343,15 +2282,8 @@ mod tests {
             .iter()
             .flat_map(|row| row.chars().map(|c| Ground::from_letter(c).unwrap()))
             .collect();
-        assert_eq!(
-            cells.len(),
-            rows.len() * rows.len(),
-            "a picture must be square"
-        );
-        Land {
-            size: rows.len(),
-            cells,
-        }
+        assert_eq!(cells.len(), rows.len() * rows.len(), "a picture must be square");
+        Land { size: rows.len(), cells }
     }
 
     fn lawn(size: usize) -> Land {
@@ -2376,11 +2308,7 @@ mod tests {
     ];
 
     fn tile(kind: Kind, level: u8, player: Option<u64>) -> Tile {
-        Tile {
-            kind,
-            level,
-            player,
-        }
+        Tile { kind, level, player }
     }
 
     /// Highway: roads with no builder, along a row.
@@ -2469,28 +2397,15 @@ mod tests {
             (1, 64, 0x32ea3138aa496792, 0x56f6b1128d5eb646),
             (2, 64, 0x104512d937ec4a45, 0x268f99483ae8ad72),
             (42, 64, 0x0369f4cb7ada082c, 0xb9ba13971ca8a664),
-            (
-                COMMONS_SEED,
-                COMMONS_SIZE,
-                0xd57f374e207f8e77,
-                0x757c14b7155003bf,
-            ),
+            (COMMONS_SEED, COMMONS_SIZE, 0xd57f374e207f8e77, 0x757c14b7155003bf),
             (0xDEAD_BEEF, 128, 0xd871dd7b76e642ca, 0xa1523549c99e8d60),
             (u64::MAX, 64, 0x77a94f99e287ecf5, 0xa16a54eb13a48561),
         ];
         for (seed, size, land_expected, road_expected) in golden {
             let land = terrain(seed, size);
             let road = highway(seed, &land);
-            assert_eq!(
-                land_hash(&land),
-                land_expected,
-                "land for seed {seed} at {size}"
-            );
-            assert_eq!(
-                highway_hash(&road),
-                road_expected,
-                "highway for seed {seed} at {size}"
-            );
+            assert_eq!(land_hash(&land), land_expected, "land for seed {seed} at {size}");
+            assert_eq!(highway_hash(&road), road_expected, "highway for seed {seed} at {size}");
         }
     }
 
@@ -2505,10 +2420,7 @@ mod tests {
             }
         }
         eprintln!("two of forty worlds differ in at least {least}% of their tiles");
-        assert!(
-            least >= 12,
-            "two worlds differ in only {least}% of their tiles"
-        );
+        assert!(least >= 12, "two worlds differ in only {least}% of their tiles");
         let drawn: HashSet<u64> = (0..500).map(|seed| land_hash(&terrain(seed, 64))).collect();
         assert_eq!(drawn.len(), 500);
     }
@@ -2520,20 +2432,11 @@ mod tests {
             let land = terrain(seed, 64);
             let total = land.cells.len();
             let share = |ground| land.count(ground) * 100 / total;
-            let (water, forest, hill) = (
-                share(Ground::Water),
-                share(Ground::Forest),
-                share(Ground::Hill),
-            );
+            let (water, forest, hill) =
+                (share(Ground::Water), share(Ground::Forest), share(Ground::Hill));
             assert!((1..=45).contains(&water), "seed {seed} is {water}% water");
-            assert!(
-                (2..=35).contains(&forest),
-                "seed {seed} is {forest}% forest"
-            );
-            assert!(
-                land.count(Ground::Hill) > 0 && hill <= 12,
-                "seed {seed} has {hill}% hill"
-            );
+            assert!((2..=35).contains(&forest), "seed {seed} is {forest}% forest");
+            assert!(land.count(Ground::Hill) > 0 && hill <= 12, "seed {seed} has {hill}% hill");
             assert!(
                 share(Ground::Grass) >= 35,
                 "seed {seed} is only {}% grass",
@@ -2552,24 +2455,11 @@ mod tests {
                 middle.len()
             );
             // Nothing but grass for a few tiles round the very middle, which is where the highway ends.
-            for (x, y) in [
-                (32, 32),
-                (30, 32),
-                (34, 32),
-                (32, 30),
-                (32, 34),
-                (28, 28),
-                (36, 36),
-            ] {
-                assert!(
-                    land.get(x, y).unwrap().is_open(),
-                    "seed {seed} has no room at {x},{y}"
-                );
+            for (x, y) in [(32, 32), (30, 32), (34, 32), (32, 30), (32, 34), (28, 28), (36, 36)] {
+                assert!(land.get(x, y).unwrap().is_open(), "seed {seed} has no room at {x},{y}");
             }
-            let wet = Wet {
-                size: 64,
-                cells: land.cells.iter().map(|g| *g == Ground::Water).collect(),
-            };
+            let wet =
+                Wet { size: 64, cells: land.cells.iter().map(|g| *g == Ground::Water).collect() };
             for y in 0..64usize {
                 for x in 0..64usize {
                     if land.get(x, y) == Some(Ground::Sand) {
@@ -2595,10 +2485,7 @@ mod tests {
                 // A count, a letter, a count, a letter...
                 let letters = row.chars().filter(|c| c.is_ascii_alphabetic()).count();
                 assert!(
-                    letters >= 1
-                        && row
-                            .chars()
-                            .all(|c| c.is_ascii_digit() || "gfwsh".contains(c)),
+                    letters >= 1 && row.chars().all(|c| c.is_ascii_digit() || "gfwsh".contains(c)),
                     "{row}"
                 );
                 assert!(
@@ -2626,12 +2513,8 @@ mod tests {
 
     #[test]
     fn bad_land_text_is_refused() {
-        let rows = |texts: &[&str]| {
-            texts
-                .iter()
-                .map(|text| text.to_string())
-                .collect::<Vec<String>>()
-        };
+        let rows =
+            |texts: &[&str]| texts.iter().map(|text| text.to_string()).collect::<Vec<String>>();
         let huge = "9".repeat(10_000);
         let bad = [
             rows(&[]),
@@ -2665,16 +2548,8 @@ mod tests {
     fn check_highway(seed: u64, size: usize) {
         let land = terrain(seed, size);
         let road = highway(seed, &land);
-        assert!(
-            road.len() >= size / 2,
-            "seed {seed}: highway of {} tiles",
-            road.len()
-        );
-        assert!(
-            is_edge(&land, road[0]),
-            "seed {seed}: starts at {:?}",
-            road[0]
-        );
+        assert!(road.len() >= size / 2, "seed {seed}: highway of {} tiles", road.len());
+        assert!(is_edge(&land, road[0]), "seed {seed}: starts at {:?}", road[0]);
         assert_eq!(*road.last().unwrap(), land.centre(), "seed {seed}");
         for pair in road.windows(2) {
             let (a, b) = (pair[0], pair[1]);
@@ -2683,11 +2558,7 @@ mod tests {
             assert_eq!(apart, 1, "seed {seed}: {a:?} then {b:?}");
         }
         let distinct: BTreeSet<&Pos> = road.iter().collect();
-        assert_eq!(
-            distinct.len(),
-            road.len(),
-            "seed {seed}: the highway crosses itself"
-        );
+        assert_eq!(distinct.len(), road.len(), "seed {seed}: the highway crosses itself");
         for pos in &road {
             assert!(
                 land.at(*pos).unwrap().is_open(),
@@ -2703,21 +2574,7 @@ mod tests {
         for seed in 0..500 {
             check_highway(seed, 64);
         }
-        for seed in [
-            0,
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-            7,
-            307,
-            999,
-            u64::MAX,
-            u64::MAX - 1,
-            0xDEAD_BEEF,
-        ] {
+        for seed in [0, 1, 2, 3, 4, 5, 6, 7, 307, 999, u64::MAX, u64::MAX - 1, 0xDEAD_BEEF] {
             check_highway(seed, 128);
         }
         for size in [16, 17, 20, 33, 50, 100, 200] {
@@ -2745,16 +2602,11 @@ mod tests {
 
     #[test]
     fn highways_differ_between_seeds() {
-        let roads: HashSet<u64> = (0..100)
-            .map(|seed| highway_hash(&highway(seed, &terrain(seed, 64))))
-            .collect();
+        let roads: HashSet<u64> =
+            (0..100).map(|seed| highway_hash(&highway(seed, &terrain(seed, 64)))).collect();
         // On open land a highway is settled by where on the edge it starts, and a 64 by 64 map has
         // about 250 such places, so a few seeds out of a hundred will share one.
-        assert!(
-            roads.len() >= 75,
-            "only {} different highways in 100 seeds",
-            roads.len()
-        );
+        assert!(roads.len() >= 75, "only {} different highways in 100 seeds", roads.len());
         let sides: HashSet<usize> = (0..100)
             .map(|seed| {
                 let land = terrain(seed, 64);
@@ -2780,20 +2632,12 @@ mod tests {
                 carved += 1;
                 let land = terrain(seed, 64);
                 assert!(!highway(seed, &land).is_empty());
-                let changed = raw
-                    .cells
-                    .iter()
-                    .zip(&land.cells)
-                    .filter(|(a, b)| a != b)
-                    .count();
+                let changed = raw.cells.iter().zip(&land.cells).filter(|(a, b)| a != b).count();
                 assert!(changed <= 64, "seed {seed} carved {changed} tiles");
             }
         }
         eprintln!("{carved} of 500 seeds needed land cut for the highway");
-        assert!(
-            carved <= 25,
-            "{carved} of 500 seeds needed land cut for the highway"
-        );
+        assert!(carved <= 25, "{carved} of 500 seeds needed land cut for the highway");
     }
 
     #[test]
@@ -2816,16 +2660,8 @@ mod tests {
         let road = highway(5, &land);
         assert_eq!(road.last(), Some(&(16, 16)));
         assert!(is_edge(&land, road[0]));
-        let cut = before
-            .cells
-            .iter()
-            .zip(&land.cells)
-            .filter(|(a, b)| a != b)
-            .count();
-        assert_eq!(
-            cut, 3,
-            "one hill and two water tiles, the narrowest way through"
-        );
+        let cut = before.cells.iter().zip(&land.cells).filter(|(a, b)| a != b).count();
+        assert_eq!(cut, 3, "one hill and two water tiles, the narrowest way through");
     }
 
     #[test]
@@ -2843,20 +2679,11 @@ mod tests {
         let mut tiles = highway_row(1, 0..=8);
         let plan = plan_road(&land, &tiles, 7, span(8, 2, 8, 6)).unwrap();
         assert_eq!((plan.cost, plan.skipped, plan.changes.len()), (5, 0, 5));
-        assert_eq!(
-            plan.changes[0],
-            Change::Set((8, 2), tile(Kind::Road, 0, Some(7)))
-        );
+        assert_eq!(plan.changes[0], Change::Set((8, 2), tile(Kind::Road, 0, Some(7))));
         assert_eq!(plan.changes[4].pos(), (8, 6));
         // Along from the end of the highway, and out from its side.
-        assert_eq!(
-            plan_road(&land, &tiles, 7, span(9, 1, 11, 1)).unwrap().cost,
-            3
-        );
-        assert_eq!(
-            plan_road(&land, &tiles, 7, span(4, 2, 4, 2)).unwrap().cost,
-            1
-        );
+        assert_eq!(plan_road(&land, &tiles, 7, span(9, 1, 11, 1)).unwrap().cost, 3);
+        assert_eq!(plan_road(&land, &tiles, 7, span(4, 2, 4, 2)).unwrap().cost, 1);
         // Only the corner touches, and corners aren't touching.
         assert_eq!(
             plan_road(&land, &tiles, 7, span(9, 2, 9, 4)),
@@ -2872,10 +2699,7 @@ mod tests {
         );
         // Once the first is down, the next can join it.
         done(Ok(plan), &mut tiles);
-        assert_eq!(
-            plan_road(&land, &tiles, 9, span(9, 2, 10, 2)).unwrap().cost,
-            2
-        );
+        assert_eq!(plan_road(&land, &tiles, 9, span(9, 2, 10, 2)).unwrap().cost, 2);
     }
 
     #[test]
@@ -2901,27 +2725,18 @@ mod tests {
     fn a_road_is_a_straight_line_of_at_most_sixteen_tiles() {
         let land = lawn(32);
         let tiles = highway_row(5, 0..=2);
-        assert_eq!(
-            plan_road(&land, &tiles, 1, span(3, 5, 18, 5)).unwrap().cost,
-            16
-        );
+        assert_eq!(plan_road(&land, &tiles, 1, span(3, 5, 18, 5)).unwrap().cost, 16);
         assert_eq!(
             plan_road(&land, &tiles, 1, span(3, 5, 19, 5)),
             Err("a road is at most 16 tiles long")
         );
         let tiles = highway_row(5, 0..=2);
-        assert_eq!(
-            plan_road(&land, &tiles, 1, span(2, 6, 2, 21)).unwrap().cost,
-            16
-        );
+        assert_eq!(plan_road(&land, &tiles, 1, span(2, 6, 2, 21)).unwrap().cost, 16);
         assert_eq!(
             plan_road(&land, &tiles, 1, span(2, 6, 2, 22)),
             Err("a road is at most 16 tiles long")
         );
-        assert_eq!(
-            plan_road(&land, &tiles, 1, span(3, 5, 3, 5)).unwrap().cost,
-            1
-        );
+        assert_eq!(plan_road(&land, &tiles, 1, span(3, 5, 3, 5)).unwrap().cost, 1);
         assert_eq!(
             plan_road(&land, &tiles, 1, span(3, 5, 4, 6)),
             Err("a road runs straight, not diagonally")
@@ -2964,10 +2779,7 @@ mod tests {
             plan_road(&land, &tiles, 7, span(4, 2, 4, 4)),
             Err("there is forest in the way: bulldoze it first")
         );
-        assert_eq!(
-            plan_road(&land, &tiles, 7, span(9, 1, 9, 1)).unwrap().cost,
-            1
-        );
+        assert_eq!(plan_road(&land, &tiles, 7, span(9, 1, 9, 1)).unwrap().cost, 1);
         assert_eq!(
             plan_road(&land, &tiles, 7, span(11, 1, 11, 5)),
             Err("a road has to touch an existing road")
@@ -2978,10 +2790,7 @@ mod tests {
             plan_road(&land, &tiles, 7, span(11, 2, 11, 6)),
             Err("there is water or a hill in the way")
         );
-        assert!(
-            plan_road(&land, &tiles, 7, span(11, 2, 11, 5)).is_ok(),
-            "sand is fine"
-        );
+        assert!(plan_road(&land, &tiles, 7, span(11, 2, 11, 5)).is_ok(), "sand is fine");
         tiles.insert((1, 2), tile(Kind::House, 0, Some(8)));
         assert_eq!(
             plan_road(&land, &tiles, 7, span(0, 2, 2, 2)),
@@ -3008,9 +2817,7 @@ mod tests {
             Err("you can only bulldoze what you built")
         );
         assert_eq!(
-            plan_bulldoze(&land, &tiles, 8, 0, 9, &nobody_gone)
-                .unwrap()
-                .changes,
+            plan_bulldoze(&land, &tiles, 8, 0, 9, &nobody_gone).unwrap().changes,
             [Change::Remove((0, 9))]
         );
         // A tile of the old city that grew is still yours to bulldoze.
@@ -3047,10 +2854,7 @@ mod tests {
         let gone = |player: u64| player == 7;
         for x in [1, 3, 4] {
             let plan = plan_bulldoze(&land, &tiles, 9, x, 1, &gone).unwrap();
-            assert_eq!(
-                (plan.cost, plan.changes),
-                (1, vec![Change::Remove((x as u16, 1))])
-            );
+            assert_eq!((plan.cost, plan.changes), (1, vec![Change::Remove((x as u16, 1))]));
         }
         assert_eq!(
             plan_bulldoze(&land, &tiles, 9, 2, 1, &gone),
@@ -3079,10 +2883,7 @@ mod tests {
         let plan = plan_bulldoze(&land, &tiles, 7, 4, 3, &nobody_gone).unwrap();
         assert_eq!(
             (plan.cost, plan.changes.clone()),
-            (
-                1,
-                vec![Change::Set((4, 3), tile(Kind::Cleared, 0, Some(7)))]
-            )
+            (1, vec![Change::Set((4, 3), tile(Kind::Cleared, 0, Some(7)))])
         );
         done(Ok(plan), &mut tiles);
         assert_eq!(
@@ -3093,10 +2894,7 @@ mod tests {
         done(plan_road(&land, &tiles, 8, span(4, 2, 4, 3)), &mut tiles);
         assert_eq!(tiles[&(4, 3)], tile(Kind::Road, 0, Some(8)));
         let plan = plan_bulldoze(&land, &tiles, 8, 4, 3, &nobody_gone).unwrap();
-        assert_eq!(
-            plan.changes,
-            [Change::Set((4, 3), tile(Kind::Cleared, 0, Some(8)))]
-        );
+        assert_eq!(plan.changes, [Change::Set((4, 3), tile(Kind::Cleared, 0, Some(8)))]);
         // Someone else's road on forest isn't yours to clear.
         assert!(plan_bulldoze(&land, &tiles, 7, 4, 3, &nobody_gone).is_err());
     }
@@ -3149,10 +2947,7 @@ mod tests {
                 }
             }
         }
-        assert!(
-            allowed > 0 && refused > 1000,
-            "{allowed} allowed, {refused} refused"
-        );
+        assert!(allowed > 0 && refused > 1000, "{allowed} allowed, {refused} refused");
     }
 
     fn check_plan(
@@ -3199,7 +2994,9 @@ mod tests {
         for x in 0..=40u16 {
             let north = (x + 9) % 6 == 0;
             let south = (x + 11) % 6 == 0;
-            for (y, starts) in [(9, north), (8, north), (7, north), (11, south), (12, south), (13, south)] {
+            for (y, starts) in
+                [(9, north), (8, north), (7, north), (11, south), (12, south), (13, south)]
+            {
                 assert_eq!(kept(&tiles, x, y), starts, "({x}, {y})");
             }
             // Not the fourth tile out.
@@ -3277,13 +3074,20 @@ mod tests {
         }
         assert!(built > 60 && refused >= 10, "{built} built, {refused} refused");
         // What is left beside the highway is the start of every side street.
-        let open: Vec<Pos> = beside.iter().copied().filter(|pos| !tiles.contains_key(pos)).collect();
+        let open: Vec<Pos> =
+            beside.iter().copied().filter(|pos| !tiles.contains_key(pos)).collect();
         assert_eq!(open.len(), refused);
         assert!(open.iter().all(|pos| is_reserved(&tiles, *pos)));
         // Someone else can still leave the highway there, three tiles out.
         let (x, y) = open[0];
         let (top, bottom) = if y < 30 { (y - 2, y) } else { (y, y + 2) };
-        let road = plan_road(&land, &tiles, 2, span(i64::from(x), i64::from(top), i64::from(x), i64::from(bottom))).unwrap();
+        let road = plan_road(
+            &land,
+            &tiles,
+            2,
+            span(i64::from(x), i64::from(top), i64::from(x), i64::from(bottom)),
+        )
+        .unwrap();
         assert_eq!(road.cost, 3);
         apply(&mut tiles, &road.changes);
         assert!(is_reserved(&tiles, (x, y)), "it stays kept after a road is built on it");
@@ -3371,7 +3175,9 @@ mod tests {
         tiles
             .iter()
             .filter(|(_, t)| t.kind.is_building())
-            .filter(|(pos, _)| joined.iter().any(|j| j.0.abs_diff(pos.0) <= 3 && j.1.abs_diff(pos.1) <= 3))
+            .filter(|(pos, _)| {
+                joined.iter().any(|j| j.0.abs_diff(pos.0) <= 3 && j.1.abs_diff(pos.1) <= 3)
+            })
             .map(|(pos, _)| *pos)
             .collect()
     }
@@ -3420,7 +3226,10 @@ mod tests {
                 match plan_bulldoze(&land, &tiles, 1, i64::from(x), i64::from(y), &nobody_gone) {
                     Ok(_) => {
                         allowed += 1;
-                        assert!(!cuts, "seed {seed}: ({x}, {y}) was taken down and cut a building off");
+                        assert!(
+                            !cuts,
+                            "seed {seed}: ({x}, {y}) was taken down and cut a building off"
+                        );
                     }
                     Err(why) => {
                         refused += 1;
@@ -3501,10 +3310,7 @@ mod tests {
             assert!(word.starts_with(|c: char| c.is_ascii_uppercase()), "{word}");
             assert!(word[1..].chars().all(|c| c.is_ascii_lowercase()), "{word}");
             let lower = word.to_lowercase();
-            assert!(
-                !BRANDS.contains(&lower.as_str()),
-                "{word} is someone else's name"
-            );
+            assert!(!BRANDS.contains(&lower.as_str()), "{word} is someone else's name");
             for bad in RUDE {
                 assert!(!lower.contains(bad), "{word} contains {bad}");
             }
@@ -3545,10 +3351,7 @@ mod tests {
         let animals: HashSet<&&str> = ANIMALS.iter().collect();
         assert!(ADJECTIVES.iter().all(|word| !animals.contains(word)));
         let places: HashSet<&&str> = PLACES.iter().collect();
-        assert!(
-            WORLD_ADJECTIVES.iter().all(|word| !places.contains(word)),
-            "a place named twice"
-        );
+        assert!(WORLD_ADJECTIVES.iter().all(|word| !places.contains(word)), "a place named twice");
         // Crawlers are frogs, so no player is one.
         assert!(!ANIMALS.iter().any(|word| ["Frog", "Toad"].contains(word)));
     }
@@ -3576,33 +3379,20 @@ mod tests {
         for n in [0, 1, 2, 3, 1000, u64::MAX] {
             let name = player_name(n);
             let (adjective, animal) = name.split_once(' ').unwrap();
-            assert!(
-                ADJECTIVES.contains(&adjective) && ANIMALS.contains(&animal),
-                "{name}"
-            );
+            assert!(ADJECTIVES.contains(&adjective) && ANIMALS.contains(&animal), "{name}");
         }
-        assert_ne!(
-            player_name(1).split(' ').next(),
-            player_name(2).split(' ').next()
-        );
+        assert_ne!(player_name(1).split(' ').next(), player_name(2).split(' ').next());
     }
 
     #[test]
     fn world_names_come_from_the_seed() {
         assert_eq!(world_name(307), world_name(307));
         let names: HashSet<String> = (0..2000).map(world_name).collect();
-        assert!(
-            names.len() > 1200,
-            "only {} different names in 2000 seeds",
-            names.len()
-        );
+        assert!(names.len() > 1200, "only {} different names in 2000 seeds", names.len());
         for seed in [0, 1, u64::MAX, COMMONS_SEED] {
             let name = world_name(seed);
             let (adjective, place) = name.split_once(' ').unwrap();
-            assert!(
-                WORLD_ADJECTIVES.contains(&adjective) && PLACES.contains(&place),
-                "{name}"
-            );
+            assert!(WORLD_ADJECTIVES.contains(&adjective) && PLACES.contains(&place), "{name}");
         }
     }
 
@@ -3613,24 +3403,15 @@ mod tests {
         while b != 0 {
             (a, b) = (b, a % b);
         }
-        assert_eq!(
-            a, 1,
-            "the stride has to share no factor with the number of names"
-        );
+        assert_eq!(a, 1, "the stride has to share no factor with the number of names");
         assert_eq!(visitor_name(7), visitor_name(7));
         assert_eq!(visitor_name(total + 7), visitor_name(7));
         assert_eq!(visitor_name(u64::MAX), visitor_name(u64::MAX % total));
         let visitors: HashSet<String> = (0..total).map(visitor_name).collect();
         let players: HashSet<String> = (0..total).map(player_name).collect();
-        assert_eq!(
-            visitors.len() as u64,
-            total,
-            "every number gets its own name for a long while"
-        );
+        assert_eq!(visitors.len() as u64, total, "every number gets its own name for a long while");
         assert_eq!(visitors, players, "the same names, from the same lists");
-        let alike = (0..total)
-            .filter(|n| visitor_name(*n) == player_name(*n))
-            .count() as u64;
+        let alike = (0..total).filter(|n| visitor_name(*n) == player_name(*n)).count() as u64;
         assert!(
             alike * 20 < total,
             "{alike} of {total} numbers give a visitor and a player the same name"
@@ -3638,10 +3419,7 @@ mod tests {
         for n in [0, 1, 2, 1000, u64::MAX] {
             let name = visitor_name(n);
             let (adjective, animal) = name.split_once(' ').unwrap();
-            assert!(
-                ADJECTIVES.contains(&adjective) && ANIMALS.contains(&animal),
-                "{name}"
-            );
+            assert!(ADJECTIVES.contains(&adjective) && ANIMALS.contains(&animal), "{name}");
         }
     }
 
@@ -3687,11 +3465,7 @@ mod tests {
     #[test]
     fn real_user_agents_are_recognised_as_the_right_kind() {
         for &(agent, id) in CRAWLER_AGENTS {
-            assert_eq!(
-                crawler_from_user_agent(agent).map(|c| c.id),
-                Some(id),
-                "{agent}"
-            );
+            assert_eq!(crawler_from_user_agent(agent).map(|c| c.id), Some(id), "{agent}");
             assert!(fetcher_from_user_agent(agent).is_none(), "{agent}");
             assert!(
                 matches!(agent_kind(agent), Some(AgentKind::Crawler(c)) if c.id == id),
@@ -3700,11 +3474,7 @@ mod tests {
             assert_eq!(agent_kind(agent).map(|kind| kind.id()), Some(id));
         }
         for &(agent, id) in FETCHER_AGENTS {
-            assert_eq!(
-                fetcher_from_user_agent(agent).map(|f| f.id),
-                Some(id),
-                "{agent}"
-            );
+            assert_eq!(fetcher_from_user_agent(agent).map(|f| f.id), Some(id), "{agent}");
             assert!(crawler_from_user_agent(agent).is_none(), "{agent}");
             assert!(
                 matches!(agent_kind(agent), Some(AgentKind::Fetcher(f)) if f.id == id),
@@ -3714,16 +3484,8 @@ mod tests {
         }
         let crawlers: HashSet<&str> = CRAWLER_AGENTS.iter().map(|(_, id)| *id).collect();
         let fetchers: HashSet<&str> = FETCHER_AGENTS.iter().map(|(_, id)| *id).collect();
-        assert_eq!(
-            crawlers.len(),
-            CRAWLERS.len(),
-            "a crawler has no user agent here"
-        );
-        assert_eq!(
-            fetchers.len(),
-            FETCHERS.len(),
-            "a fetcher has no user agent here"
-        );
+        assert_eq!(crawlers.len(), CRAWLERS.len(), "a crawler has no user agent here");
+        assert_eq!(fetchers.len(), FETCHERS.len(), "a fetcher has no user agent here");
     }
 
     #[test]
@@ -3735,16 +3497,8 @@ mod tests {
             assert_eq!(agent_kind(id).map(|kind| kind.id()), Some(id));
         }
         // The crawlers from the same makers are still crawlers.
-        for agent in [
-            "GPTBot/1.1",
-            "OAI-SearchBot/1.0",
-            "ClaudeBot/1.0",
-            "PerplexityBot/1.0",
-        ] {
-            assert!(
-                matches!(agent_kind(agent), Some(AgentKind::Crawler(_))),
-                "{agent}"
-            );
+        for agent in ["GPTBot/1.1", "OAI-SearchBot/1.0", "ClaudeBot/1.0", "PerplexityBot/1.0"] {
+            assert!(matches!(agent_kind(agent), Some(AgentKind::Crawler(_))), "{agent}");
         }
     }
 
@@ -3755,10 +3509,7 @@ mod tests {
             "Claude-User/1.0 Googlebot/2.1",
             "bingbot ChatGPT-User bingbot",
         ] {
-            assert!(
-                matches!(agent_kind(agent), Some(AgentKind::Fetcher(_))),
-                "{agent}"
-            );
+            assert!(matches!(agent_kind(agent), Some(AgentKind::Fetcher(_))), "{agent}");
         }
     }
 
@@ -3837,11 +3588,7 @@ mod tests {
         let start = Instant::now();
         assert!(agent_kind(&"a".repeat(20_000_000)).is_none());
         assert!(agent_kind(&"\u{1F438}".repeat(5_000_000)).is_none());
-        assert!(
-            start.elapsed().as_millis() < 1000,
-            "a huge string took {:?}",
-            start.elapsed()
-        );
+        assert!(start.elapsed().as_millis() < 1000, "a huge string took {:?}", start.elapsed());
         let controls: String = (0u8..=127).map(char::from).collect();
         assert!(agent_kind(&controls).is_none());
         // A string with listed names in it, cut at every place it can be, panics nowhere.
@@ -3857,15 +3604,10 @@ mod tests {
         for (id, name) in ids.iter().zip(names) {
             assert!(!id.is_empty() && *id == id.to_ascii_lowercase(), "{id}");
             assert!(
-                id.bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
                 "{id}"
             );
-            assert_eq!(
-                *id,
-                name.to_ascii_lowercase(),
-                "a name is its id with capitals"
-            );
+            assert_eq!(*id, name.to_ascii_lowercase(), "a name is its id with capitals");
         }
     }
 
@@ -3888,10 +3630,7 @@ mod tests {
             "ccbot",
             "meta-externalagent",
         ] {
-            assert!(
-                CRAWLERS.iter().any(|crawler| crawler.id == id),
-                "{id} is missing"
-            );
+            assert!(CRAWLERS.iter().any(|crawler| crawler.id == id), "{id} is missing");
         }
         let ids: Vec<&str> = CRAWLERS.iter().map(|c| c.id).collect();
         let names: Vec<&str> = CRAWLERS.iter().map(|c| c.name).collect();
@@ -3907,10 +3646,7 @@ mod tests {
                 "{}",
                 crawler.colour
             );
-            assert!(std::ptr::eq(
-                crawler_from_user_agent(crawler.name).unwrap(),
-                crawler
-            ));
+            assert!(std::ptr::eq(crawler_from_user_agent(crawler.name).unwrap(), crawler));
         }
     }
 
@@ -3926,10 +3662,7 @@ mod tests {
             "mistralai-user",
             "duckassistbot",
         ] {
-            assert!(
-                FETCHERS.iter().any(|fetcher| fetcher.id == id),
-                "{id} is missing"
-            );
+            assert!(FETCHERS.iter().any(|fetcher| fetcher.id == id), "{id} is missing");
         }
         let ids: Vec<&str> = FETCHERS.iter().map(|f| f.id).collect();
         let names: Vec<&str> = FETCHERS.iter().map(|f| f.name).collect();
@@ -3937,18 +3670,12 @@ mod tests {
         assert_eq!(names.iter().collect::<HashSet<_>>().len(), FETCHERS.len());
         check_ids(&ids, &names);
         for fetcher in FETCHERS {
-            assert!(std::ptr::eq(
-                fetcher_from_user_agent(fetcher.name).unwrap(),
-                fetcher
-            ));
+            assert!(std::ptr::eq(fetcher_from_user_agent(fetcher.name).unwrap(), fetcher));
         }
         // One namespace, so a sighting counted under an id is only ever one kind of visitor, and
         // no id hides inside another, which would make the first on the list win.
-        let all: Vec<&str> = CRAWLERS
-            .iter()
-            .map(|c| c.id)
-            .chain(FETCHERS.iter().map(|f| f.id))
-            .collect();
+        let all: Vec<&str> =
+            CRAWLERS.iter().map(|c| c.id).chain(FETCHERS.iter().map(|f| f.id)).collect();
         assert_eq!(all.iter().collect::<HashSet<_>>().len(), all.len());
         for a in &all {
             for b in &all {
@@ -3978,12 +3705,7 @@ mod tests {
 
     #[test]
     fn a_frog_stays_on_the_roads_and_hops_along_them() {
-        for roads in [
-            straight_road(100),
-            tangled_roads(),
-            straight_road(1),
-            straight_road(2),
-        ] {
+        for roads in [straight_road(100), tangled_roads(), straight_road(1), straight_road(2)] {
             for crawler in CRAWLERS {
                 let mut last = crawler_position(crawler.id, 0, &roads).unwrap();
                 for step_no in 1..400 {
@@ -4020,16 +3742,11 @@ mod tests {
                         pair[1]
                     );
                 }
-                assert_eq!(
-                    apart(tour[0], *tour.last().unwrap()),
-                    1,
-                    "the tour is a loop"
-                );
+                assert_eq!(apart(tour[0], *tour.last().unwrap()), 1, "the tour is a loop");
             }
         }
-        let orders: HashSet<Vec<Pos>> = (0..30)
-            .map(|frog| frog_tour(&tangled_roads(), frog))
-            .collect();
+        let orders: HashSet<Vec<Pos>> =
+            (0..30).map(|frog| frog_tour(&tangled_roads(), frog)).collect();
         assert!(orders.len() > 20, "frogs all take the same tour");
     }
 
@@ -4048,14 +3765,11 @@ mod tests {
                 &Roads::from_positions(roads.sorted.iter().rev().copied())
             )
         );
-        let at_zero: HashSet<Option<Pos>> = CRAWLERS
-            .iter()
-            .map(|c| crawler_position(c.id, 0, &roads))
-            .collect();
+        let at_zero: HashSet<Option<Pos>> =
+            CRAWLERS.iter().map(|c| crawler_position(c.id, 0, &roads)).collect();
         assert!(at_zero.len() >= 10, "frogs start in the same few places");
-        let moves: HashSet<Option<Pos>> = (0..50)
-            .map(|step_no| crawler_position("claudebot", step_no, &roads))
-            .collect();
+        let moves: HashSet<Option<Pos>> =
+            (0..50).map(|step_no| crawler_position("claudebot", step_no, &roads)).collect();
         assert!(moves.len() > 20, "a frog doesn't get about");
         assert_eq!(crawler_position("nonsense", 1, &roads), None);
         assert_eq!(crawler_position("", 1, &roads), None);
@@ -4088,20 +3802,14 @@ mod tests {
         let start = Instant::now();
         let pos = crawler_position("applebot", 1234, &long).unwrap();
         assert_eq!(pos.1, 0);
-        eprintln!(
-            "a frog's tour of 60,000 road tiles takes {:?}",
-            start.elapsed()
-        );
+        eprintln!("a frog's tour of 60,000 road tiles takes {:?}", start.elapsed());
     }
 
     #[test]
     fn roads_come_from_tiles_or_positions() {
         let mut tiles = highway_row(3, 0..=4);
         tiles.extend(block(Kind::Homes, 0, 0..=4, 4..=4));
-        assert_eq!(
-            Roads::from_tiles(&tiles),
-            Roads::from_positions((0..=4).rev().map(|x| (x, 3)))
-        );
+        assert_eq!(Roads::from_tiles(&tiles), Roads::from_positions((0..=4).rev().map(|x| (x, 3))));
         assert_eq!(Roads::from_positions([(1, 1), (1, 1), (0, 0)]).len(), 2);
         assert!(Roads::from_tiles(&Tiles::new()).is_empty());
         // The frog on a real world is on its highway.
@@ -4143,20 +3851,12 @@ mod tests {
 
     #[test]
     fn a_visitor_stays_on_the_roads_and_strolls_along_them() {
-        for roads in [
-            straight_road(100),
-            tangled_roads(),
-            straight_road(1),
-            straight_road(2),
-        ] {
+        for roads in [straight_road(100), tangled_roads(), straight_road(1), straight_road(2)] {
             for n in [0, 1, 2, 77, 1 << 40, u64::MAX] {
                 let mut last = visitor_position(n, 0, &roads).unwrap();
                 for step_no in 1..400 {
                     let now = visitor_position(n, step_no, &roads).unwrap();
-                    assert!(
-                        roads.find(now).is_some(),
-                        "visitor {n} is off the roads at {now:?}"
-                    );
+                    assert!(roads.find(now).is_some(), "visitor {n} is off the roads at {now:?}");
                     assert!(
                         apart(last, now) as u64 <= VISITOR_HOP,
                         "visitor {n} jumped from {last:?} to {now:?}"
@@ -4170,24 +3870,16 @@ mod tests {
     #[test]
     fn visitors_are_generated_not_steered() {
         let roads = tangled_roads();
+        assert_eq!(visitor_position(5, 12, &roads), visitor_position(5, 12, &roads));
         assert_eq!(
             visitor_position(5, 12, &roads),
-            visitor_position(5, 12, &roads)
-        );
-        assert_eq!(
-            visitor_position(5, 12, &roads),
-            visitor_position(
-                5,
-                12,
-                &Roads::from_positions(roads.sorted.iter().rev().copied())
-            )
+            visitor_position(5, 12, &Roads::from_positions(roads.sorted.iter().rev().copied()))
         );
         let at_zero: HashSet<Option<Pos>> =
             (0..30).map(|n| visitor_position(n, 0, &roads)).collect();
         assert!(at_zero.len() >= 12, "visitors start in the same few places");
-        let walk: HashSet<Option<Pos>> = (0..60)
-            .map(|step_no| visitor_position(9, step_no, &roads))
-            .collect();
+        let walk: HashSet<Option<Pos>> =
+            (0..60).map(|step_no| visitor_position(9, step_no, &roads)).collect();
         assert!(walk.len() > 20, "a visitor doesn't get about");
         // A visitor isn't a frog, so the same number is somewhere else's business.
         let frogs = CRAWLERS.len() as u64;
@@ -4244,11 +3936,22 @@ mod tests {
     #[test]
     fn each_ladder_goes_through_its_rungs_in_order_and_a_town_that_slips_goes_back() {
         let at = |roads, places, person| goal(&Town { roads, places }, person);
-        let climbed = [at(0, 0, true), at(0, 1, true), at(0, 2, true), at(0, 3, true), at(0, 4, true)];
-        assert_eq!(climbed, [GOAL_HOUSE, GOAL_SECOND_PLACE, GOAL_ALL_PLACES, GOAL_ALL_PLACES, GOAL_PERSON_OPEN]);
-        let climbed = [at(0, 0, false), at(1, 0, false), at(9, 0, false), at(10, 0, false), at(30, 0, false)];
-        assert_eq!(climbed, [GOAL_ROAD, GOAL_TEN_ROADS, GOAL_TEN_ROADS, GOAL_THIRTY_ROADS, GOAL_AGENT_OPEN]);
-        assert!(GOALS.contains(&at(u32::MAX, u32::MAX, true)) && GOALS.contains(&at(u32::MAX, 0, false)));
+        let climbed =
+            [at(0, 0, true), at(0, 1, true), at(0, 2, true), at(0, 3, true), at(0, 4, true)];
+        assert_eq!(
+            climbed,
+            [GOAL_HOUSE, GOAL_SECOND_PLACE, GOAL_ALL_PLACES, GOAL_ALL_PLACES, GOAL_PERSON_OPEN]
+        );
+        let climbed =
+            [at(0, 0, false), at(1, 0, false), at(9, 0, false), at(10, 0, false), at(30, 0, false)];
+        assert_eq!(
+            climbed,
+            [GOAL_ROAD, GOAL_TEN_ROADS, GOAL_TEN_ROADS, GOAL_THIRTY_ROADS, GOAL_AGENT_OPEN]
+        );
+        assert!(
+            GOALS.contains(&at(u32::MAX, u32::MAX, true))
+                && GOALS.contains(&at(u32::MAX, 0, false))
+        );
     }
 
     // W47
@@ -4317,7 +4020,9 @@ mod tests {
         let near_only = |x: i64, y: i64| {
             let near: Tiles = tiles
                 .iter()
-                .filter(|(&(tx, ty), _)| (i64::from(tx) - x).abs() <= 1 && (i64::from(ty) - y).abs() <= 1)
+                .filter(|(&(tx, ty), _)| {
+                    (i64::from(tx) - x).abs() <= 1 && (i64::from(ty) - y).abs() <= 1
+                })
                 .map(|(pos, t)| (*pos, *t))
                 .collect();
             plan_bulldoze_tile(&land, &near, 7, x, y, &nobody_gone)
@@ -4344,5 +4049,4 @@ mod tests {
             }
         }
     }
-
 }

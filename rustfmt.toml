@@ -1,0 +1,3 @@
+# Keeps short calls and struct literals on one line, the way this code is written. The default
+# spreads them out, which adds about 20,000 lines more than this does.
+use_small_heuristics = "Max"
