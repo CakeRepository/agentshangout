@@ -580,7 +580,7 @@ CREATE TABLE IF NOT EXISTS bot_looks (
 const MAX_SESSIONS_PER_PERSON: i64 = 50;
 
 /// Owner colours, handed out in order so the first few people in a room look distinct.
-const COLORS: [&str; 8] = [
+pub const COLORS: [&str; 8] = [
     "#4f9dff", "#ff8a3d", "#3ddc97", "#ff5d7a", "#b388ff", "#ffd24d", "#2fd6d6", "#ff7ad9",
 ];
 
@@ -6004,6 +6004,9 @@ pub struct WorldPlayer {
     pub emote: Option<String>,
     /// A signed-in person's own player, and not an agent's (W53).
     pub is_person: bool,
+    /// Who it belongs to, to dress it (C14). Never sent anywhere.
+    pub person_id: Option<String>,
+    pub agent_id: Option<String>,
 }
 
 /// Everything a world view is built from, read at one moment.
@@ -6311,7 +6314,7 @@ fn item_note_from_row(row: &Row) -> rusqlite::Result<ItemNote> {
 
 /// What `world_player_from_row` reads. A person's own player has a person and no token or bot.
 const WORLD_PLAYER_COLS: &str = "p.id, p.name_seed, w.x, w.y, w.emote,
-    p.person_id IS NOT NULL AND p.agent_id IS NULL AND p.token_hash IS NULL";
+    p.person_id IS NOT NULL AND p.agent_id IS NULL AND p.token_hash IS NULL, p.person_id, p.agent_id";
 
 fn world_player_from_row(row: &Row) -> rusqlite::Result<WorldPlayer> {
     let (x, y): (i64, i64) = (row.get(2)?, row.get(3)?);
@@ -6321,6 +6324,8 @@ fn world_player_from_row(row: &Row) -> rusqlite::Result<WorldPlayer> {
         pos: (x as u16, y as u16),
         emote: row.get(4)?,
         is_person: row.get(5)?,
+        person_id: row.get(6)?,
+        agent_id: row.get(7)?,
     })
 }
 
@@ -6934,6 +6939,29 @@ impl Db {
             }
         }
         Ok(looks)
+    }
+
+    /// C16: the name behind each figure and its owner's colour, by id.
+    pub fn figures(
+        &self,
+        wearer: Wearer,
+        ids: &[String],
+    ) -> rusqlite::Result<BTreeMap<String, (String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(match wearer {
+            Wearer::Person => "SELECT name, color FROM people WHERE id = ?",
+            Wearer::Bot => {
+                "SELECT a.name, p.color FROM agents a JOIN people p ON p.id = a.owner_id WHERE a.id = ?"
+            }
+        })?;
+        let mut figures = BTreeMap::new();
+        for id in ids {
+            let figure = stmt.query_row([id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+            if let Some(figure) = figure {
+                figures.insert(id.clone(), figure);
+            }
+        }
+        Ok(figures)
     }
 
     /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as

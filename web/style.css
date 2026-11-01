@@ -1175,6 +1175,9 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 /* Just wide enough for every button, the lamp stands in for the word so the place's name stays whole. */
 @media (min-width: 1100px) and (max-width: 1199px) {
   .wd-game .wd-title .wd-live { font-size: 0; gap: 0; padding: 0 2px; }
+  /* The Commons has a button more than fits here, so it keeps the narrower bar a little longer. */
+  .wd-game:not(.wd-room) .wd-title-actions .sec { display: none; }
+  .wd-game:not(.wd-room) .wd-title-actions .more { display: inline-flex; }
 }
 @media (max-width: 759px) {
   .wd-game .wd-title { gap: 5px; padding-left: 6px; }

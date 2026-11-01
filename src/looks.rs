@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::Caller,
-    db::{Agent, Wearer},
+    db::{Agent, Wearer, WorldPlayer},
     error::{ApiError, ApiResult},
     now, ops, worlds, AppState,
 };
@@ -47,7 +47,7 @@ const fn word(choice: &'static str, label: &'static str) -> Choice {
     Choice { choice, label }
 }
 
-/// Shirts and shells come in the same colours.
+/// Shirts and shells come in the same colours. The last eight are the colours people are handed.
 const FABRICS: &[Choice] = &[
     word("red", "Red"),
     word("orange", "Orange"),
@@ -61,6 +61,14 @@ const FABRICS: &[Choice] = &[
     word("white", "White"),
     word("grey", "Grey"),
     word("black", "Black"),
+    word("sky", "Sky"),
+    word("tangerine", "Tangerine"),
+    word("mint", "Mint"),
+    word("coral", "Coral"),
+    word("lilac", "Lilac"),
+    word("sun", "Sun"),
+    word("aqua", "Aqua"),
+    word("orchid", "Orchid"),
 ];
 
 /// A person and a bot wear the same hats.
@@ -185,7 +193,78 @@ fn in_wardrobe(wearer: Wearer, part: &str, choice: &str) -> bool {
     part_of(wearer, part).is_some_and(|part| part.choices.iter().any(|each| each.choice == choice))
 }
 
-/// C4, C6: what's chosen for each of these, by id, with anyone who has nothing to wear left out.
+/// What the name gives a figure. This is the sum pages did before the server took it over (C16), so
+/// it counts UTF-16 units as they did, and nobody changed when it moved.
+fn name_hash(name: &str) -> u32 {
+    name.chars().fold(0, |value: u32, ch| {
+        let unit = ch.encode_utf16(&mut [0; 2])[0];
+        value.wrapping_mul(31).wrapping_add(u32::from(unit))
+    })
+}
+
+/// C4: a person's colour, or a bot owner's, as a word. An older account's colour may not be one.
+fn fabric_of(color: &str) -> Option<&'static str> {
+    let at = crate::db::COLORS.iter().position(|each| *each == color)?;
+    Some(FABRICS[FABRICS.len() - crate::db::COLORS.len() + at].choice)
+}
+
+/// C4, C16: everything a person has on: what they chose, and the rest from their name and colour.
+pub fn person_wears(name: &str, color: &str, chosen: &Look) -> Look {
+    const SKIN: [&str; 5] = ["peach", "tan", "caramel", "umber", "cream"];
+    const HAIR: [&str; 6] = ["black", "brown", "honey", "blond", "chestnut", "grey"];
+    const TROUSERS: [&str; 4] = ["navy", "charcoal", "khaki", "pine"];
+    let h = name_hash(name) as usize;
+    let parts = [
+        ("skin", SKIN[(h >> 3) % SKIN.len()]),
+        ("hair", HAIR[(h >> 6) % HAIR.len()]),
+        ("style", "short"),
+        ("face", "none"),
+        ("hat", if (h >> 9).is_multiple_of(3) { "cap" } else { "none" }),
+        ("trousers", TROUSERS[(h >> 11) % TROUSERS.len()]),
+    ];
+    dressed(&parts, fabric_of(color).map(|fabric| ("shirt", fabric)), chosen)
+}
+
+/// C4, C16: everything a bot has on. Its eyes follow its shell unless someone chose others.
+pub fn bot_wears(name: &str, owner_color: &str, chosen: &Look) -> Look {
+    const HEADS: [&str; 3] = ["antenna", "twin", "wide"];
+    let parts = [("head", HEADS[name_hash(name) as usize % HEADS.len()]), ("chest", "plain"), ("hat", "none")];
+    dressed(&parts, fabric_of(owner_color).map(|fabric| ("shell", fabric)), chosen)
+}
+
+fn dressed(parts: &[(&str, &str)], colour: Option<(&str, &str)>, chosen: &Look) -> Look {
+    let mut worn: Look = parts.iter().chain(&colour).map(|(part, word)| (part.to_string(), word.to_string())).collect();
+    worn.extend(chosen.clone());
+    worn
+}
+
+/// C16: what each of these has on, by id.
+pub fn worn(state: &AppState, wearer: Wearer, ids: &[String]) -> ApiResult<BTreeMap<String, Look>> {
+    let mut chosen = looks_of(state, wearer, ids)?;
+    let figures = state.db.figures(wearer, ids)?;
+    Ok(figures
+        .into_iter()
+        .map(|(id, (name, color))| {
+            let chosen = chosen.remove(&id).unwrap_or_default();
+            let look = match wearer {
+                Wearer::Person => person_wears(&name, &color, &chosen),
+                Wearer::Bot => bot_wears(&name, &color, &chosen),
+            };
+            (id, look)
+        })
+        .collect())
+}
+
+fn worn_by(state: &AppState, wearer: Wearer, id: &str) -> ApiResult<Look> {
+    Ok(worn(state, wearer, &[id.to_string()])?.remove(id).unwrap_or_default())
+}
+
+/// C14: what someone signed in has on, for the street, and nothing else about them.
+pub fn worn_by_person(state: &AppState, person_id: &str) -> ApiResult<Look> {
+    worn_by(state, Wearer::Person, person_id)
+}
+
+/// C4, C6: what's chosen for each of these, by id, with anyone who chose nothing left out.
 pub fn looks_of(state: &AppState, wearer: Wearer, ids: &[String]) -> ApiResult<BTreeMap<String, Look>> {
     let mut looks = state.db.looks(wearer, ids)?;
     for look in looks.values_mut() {
@@ -202,21 +281,42 @@ pub struct Looks {
     pub bots: BTreeMap<String, Look>,
 }
 
-/// C11: for the people with this floor open and the room's bots. A bot has nothing to draw.
+/// C11, C16: for the people with this floor open and the room's bots. A bot has nothing to draw.
 pub fn in_room(state: &AppState, caller: &Caller, present: &[String], agents: &[Agent]) -> ApiResult<Looks> {
     if caller.is_agent() {
         return Ok(Looks::default());
     }
     let bots: Vec<String> = agents.iter().map(|agent| agent.id.clone()).collect();
-    Ok(Looks { people: looks_of(state, Wearer::Person, present)?, bots: looks_of(state, Wearer::Bot, &bots)? })
+    Ok(Looks { people: worn(state, Wearer::Person, present)?, bots: worn(state, Wearer::Bot, &bots)? })
 }
 
-/// C13: for the bots on a city's map. A bot has nothing to draw.
+/// C13, C16: for the bots on a city's map. A bot has nothing to draw.
 pub fn on_map(state: &AppState, caller: &Caller, bots: &[String]) -> ApiResult<BTreeMap<String, Look>> {
     if caller.is_agent() {
         return Ok(BTreeMap::new());
     }
-    looks_of(state, Wearer::Bot, bots)
+    worn(state, Wearer::Bot, bots)
+}
+
+/// C14: what a world's listed players have on. A guest, and a player someone only claimed, have
+/// nothing to wear. Nothing here says whose a look is: it goes in a row with a generated name.
+pub fn on_players(state: &AppState, players: &[WorldPlayer]) -> ApiResult<BTreeMap<i64, Look>> {
+    let person_of = |player: &WorldPlayer| player.person_id.clone().filter(|_| player.is_person);
+    let people: Vec<String> = players.iter().filter_map(person_of).collect();
+    let bots: Vec<String> = players.iter().filter_map(|player| player.agent_id.clone()).collect();
+    let mut people = worn(state, Wearer::Person, &people)?;
+    let mut bots = worn(state, Wearer::Bot, &bots)?;
+    Ok(players
+        .iter()
+        .filter_map(|player| {
+            let look = match (person_of(player), &player.agent_id) {
+                (Some(person), _) => people.remove(&person),
+                (None, Some(bot)) => bots.remove(bot),
+                (None, None) => None,
+            };
+            look.map(|look| (player.id, look))
+        })
+        .collect())
 }
 
 /// C1, C2, C5: all of a change is checked before any of it is kept.
@@ -225,7 +325,7 @@ fn change_look(
     wearer: Wearer,
     id: &str,
     change: &Change,
-) -> ApiResult<Look> {
+) -> ApiResult<Value> {
     for (part, choice) in change {
         let known = match choice {
             Some(choice) => in_wardrobe(wearer, part, choice),
@@ -239,7 +339,7 @@ fn change_look(
         change.iter().map(|(part, choice)| (part.as_str(), choice.as_deref())).collect();
     state.db.change_look(wearer, id, &change)?;
     let mut looks = looks_of(state, wearer, &[id.to_string()])?;
-    Ok(looks.remove(id).unwrap_or_default())
+    Ok(json!({ "look": looks.remove(id).unwrap_or_default(), "worn": worn_by(state, wearer, id)? }))
 }
 
 /// C10: a person is drawn on the floors they belong to and any they walked onto.
@@ -250,6 +350,7 @@ fn refresh_person(state: &AppState, person_id: &str) -> ApiResult<()> {
     for floor in state.db.walked_onto(person_id, now())? {
         ops::refresh(state, &floor);
     }
+    state.worlds.mark_stale(worlds::COMMONS_ID);
     Ok(())
 }
 
@@ -296,6 +397,7 @@ async fn wardrobe(State(state): State<AppState>, caller: Caller) -> ApiResult<Js
     let ids: Vec<String> = agents.iter().map(|agent| agent.id.clone()).collect();
     let mut yours = looks_of(&state, Wearer::Person, std::slice::from_ref(&person.id))?;
     let mut looks = looks_of(&state, Wearer::Bot, &ids)?;
+    let mut bots_worn = worn(&state, Wearer::Bot, &ids)?;
     Ok(Json(json!({
         "parts": { "person": PERSON_PARTS, "bot": BOT_PARTS },
         "you": {
@@ -303,11 +405,13 @@ async fn wardrobe(State(state): State<AppState>, caller: Caller) -> ApiResult<Js
             "name": person.name,
             "color": person.color,
             "look": yours.remove(&person.id).unwrap_or_default(),
+            "worn": worn_by(&state, Wearer::Person, &person.id)?,
         },
         "bots": agents.iter().map(|agent| json!({
             "id": agent.id,
             "name": agent.name,
             "look": looks.remove(&agent.id).unwrap_or_default(),
+            "worn": bots_worn.remove(&agent.id).unwrap_or_default(),
         })).collect::<Vec<_>>(),
     })))
 }
@@ -320,9 +424,9 @@ async fn change_own(
 ) -> ApiResult<Json<Value>> {
     ops::require_human(&caller, "change a look")?;
     slow_down(&state, &caller)?;
-    let look = change_look(&state, Wearer::Person, &caller.person_id, &body_of(body)?)?;
+    let reply = change_look(&state, Wearer::Person, &caller.person_id, &body_of(body)?)?;
     refresh_person(&state, &caller.person_id)?;
-    Ok(Json(json!({ "look": look })))
+    Ok(Json(reply))
 }
 
 /// C7, C8: only its owner, as a person. `own_agent` refuses every bot before it looks at the id.
@@ -334,7 +438,7 @@ async fn change_bot(
 ) -> ApiResult<Json<Value>> {
     let agent = ops::own_agent(&state, &caller, &id, "change a look")?;
     slow_down(&state, &caller)?;
-    let look = change_look(&state, Wearer::Bot, &agent.id, &body_of(body)?)?;
+    let reply = change_look(&state, Wearer::Bot, &agent.id, &body_of(body)?)?;
     refresh_bot(&state, &agent)?;
-    Ok(Json(json!({ "look": look })))
+    Ok(Json(reply))
 }

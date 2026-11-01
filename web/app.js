@@ -1,4 +1,4 @@
-import { LOOK_COLOURS, Room, figurePicture, isWearing, itemPicture } from './room.js';
+import { LOOK_COLOURS, Room, figurePicture, itemPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
@@ -1814,9 +1814,10 @@ const zoomed = (canvas, zoom) => {
   return canvas;
 };
 
-//   view()     the room's latest snapshot
-//   reload()   fetches it again
-function wardrobe({ panels, view, reload }) {
+//   mayDress()   whether this page belongs to a person, because only people have a wardrobe (C8)
+//   reload()     shows what changed on the page behind the panel
+//   className    which widths have the button in the title bar
+function wardrobe({ panels, mayDress, reload, className }) {
   // Everything worn, as of the last time the panel opened, with each change the server took since.
   let closet = null;
   // The bot being dressed, or null for this person.
@@ -1847,17 +1848,17 @@ function wardrobe({ panels, view, reload }) {
     h('div', { class: 'wardrobe-top' }, standEl, h('div', { class: 'wardrobe-buttons' }, turnButton, startOver, sayHere)),
     error,
     partsEl);
-  const toggle = panels.toggle('look', 'Character', { short: 'Look', className: 'mid' });
+  const toggle = panels.toggle('look', 'Character', { short: 'Look', className });
   toggle.hidden = true;
-  const more = h('button', { type: 'button', class: 'wd-btn wide mid', hidden: true, onclick: () => panels.open('look') }, 'Character');
+  const more = h('button', { type: 'button', class: 'wd-btn wide', hidden: true, onclick: () => panels.open('look') }, 'Character');
 
   const dressing = () => closet.bots.find((bot) => bot.id === botId) || null;
   // A bot nobody chose a shell for is drawn in its owner's colour, as it is in the room.
   const figure = () => {
     const bot = dressing();
     return bot
-      ? { kind: 'bot', name: bot.name, color: closet.you.color, chosen: bot.look }
-      : { kind: 'person', name: closet.you.name, color: closet.you.color, chosen: closet.you.look };
+      ? { kind: 'bot', name: bot.name, color: closet.you.color, worn: bot.worn }
+      : { kind: 'person', name: closet.you.name, color: closet.you.color, worn: closet.you.worn };
   };
 
   // C5: only the server's word counts, so nothing changes here until it has said yes.
@@ -1867,8 +1868,8 @@ function wardrobe({ panels, view, reload }) {
     error.hidden = true;
     try {
       const path = botId ? `/api/agents/${encodeURIComponent(botId)}/look` : '/api/me/look';
-      const { look } = await api(path, { method: 'PUT', body });
-      (dressing() || closet.you).look = look;
+      const { worn } = await api(path, { method: 'PUT', body });
+      (dressing() || closet.you).worn = worn;
       render();
       sayHere.textContent = done;
       await reload();
@@ -1917,8 +1918,8 @@ function wardrobe({ panels, view, reload }) {
     }, zoomed(figurePicture(who), LOOK_ZOOM_SMALL), h('span', {}, name));
     const { color } = closet.you;
     whoEl.replaceChildren(
-      whom(null, 'You', { kind: 'person', name: closet.you.name, color, chosen: closet.you.look }),
-      ...closet.bots.map((bot) => whom(bot.id, bot.name, { kind: 'bot', name: bot.name, color, chosen: bot.look })));
+      whom(null, 'You', { kind: 'person', color, worn: closet.you.worn }),
+      ...closet.bots.map((bot) => whom(bot.id, bot.name, { kind: 'bot', color, worn: bot.worn })));
     whoEl.hidden = !closet.bots.length;
   }
 
@@ -1930,12 +1931,12 @@ function wardrobe({ panels, view, reload }) {
 
   // A colour is a swatch, and anything else is a tile with the figure wearing it.
   function chooser(part, choice, who) {
-    const pressed = String(isWearing(who, part.part, choice.choice));
+    const pressed = String(who.worn[part.part] === choice.choice);
     const swatch = Object.hasOwn(LOOK_COLOURS, part.part);
     const button = swatch
       ? h('button', { type: 'button', class: 'wardrobe-swatch', title: choice.label, 'aria-label': `${part.label}: ${choice.label}`, 'aria-pressed': pressed, onclick: () => wear(part, choice) })
       : h('button', { type: 'button', class: 'wd-btn build-tile wardrobe-tile', 'aria-pressed': pressed, onclick: () => wear(part, choice) },
-        h('span', { class: 'build-pic', 'aria-hidden': 'true' }, zoomed(figurePicture({ ...who, chosen: { ...who.chosen, [part.part]: choice.choice } }), LOOK_ZOOM)),
+        h('span', { class: 'build-pic', 'aria-hidden': 'true' }, zoomed(figurePicture({ ...who, worn: { ...who.worn, [part.part]: choice.choice } }), LOOK_ZOOM)),
         h('span', { class: 'build-name' }, choice.label));
     if (swatch) button.style.background = LOOK_COLOURS[part.part][choice.choice] || '';
     tiles.set(`${part.part}:${choice.choice}`, button);
@@ -1975,9 +1976,8 @@ function wardrobe({ panels, view, reload }) {
   return {
     toggle,
     more,
-    // On every refresh: only people have a wardrobe (C8).
     render: () => {
-      toggle.hidden = more.hidden = Boolean(view().you.agent_id);
+      toggle.hidden = more.hidden = !mayDress();
     },
     // From the Crew panel, with that bot on the stand.
     dress: (id) => {
@@ -2032,7 +2032,8 @@ async function roomView(id) {
     emptyBring);
   stage.append(boardEl, emptyEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
-  const dresser = wardrobe({ panels, view: () => snapshot, reload: () => reload() });
+  // Beside Build at every width, because it's as much what a room is for.
+  const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload(), className: '' });
 
   // The running notes along the bottom, around the status bar's own message and clock.
   const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
@@ -2990,7 +2991,6 @@ async function roomView(id) {
   panels.add('more', 'More', {},
     aboutMore,
     h('div', { class: 'game-more' }, ...[
-      dresser.more,
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
@@ -5266,11 +5266,15 @@ async function worldView(id, { home = false } = {}) {
   document.addEventListener('fullscreenchange', syncFull);
 
   const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
+  // You look the same out here (C14), so this is the same panel as in a room.
+  const dresser = wardrobe({ panels, mayDress: () => Boolean(me), reload: async () => watch.soon(), className: 'sec' });
+  dresser.render();
 
   frame.actions.append(...[
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
+    me ? dresser.toggle : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
     panels.toggle('about', 'About', { className: 'sec' }),
@@ -5283,6 +5287,7 @@ async function worldView(id, { home = false } = {}) {
 
   // The same things for a narrow screen, where the title bar has no room for them.
   panels.add('more', 'More', {}, h('div', { class: 'game-more' }, ...[
+    me ? dresser.more : null,
     ...[['agent', 'Send your agent in'], ['rooms', roomsLabel], ['about', 'About']].map(([name, label]) =>
       h('button', { type: 'button', class: 'wd-btn wide', onclick: () => panels.open(name) }, label)),
     repoLink('wd-btn wide'),
