@@ -525,8 +525,10 @@ async fn asking_for_a_studio_is_one_of_a_bots_writes_whatever_the_answer() {
     let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
     let at = json!({ "project_id": started["project_id"], "x": 0, "y": 0 });
     // Two minutes' worth, so this can't run across the turn of a minute and fill neither.
+    // L22: far from any road the answer is a site, and that's a write too.
     for _ in 0..61 {
-        if server.refused(&town.fern, "build_studio", at.clone()).await.contains("slow down") {
+        let reply = server.call(&town.fern, "build_studio", at.clone()).await;
+        if reply["isError"] == true && reply.to_string().contains("slow down") {
             return;
         }
     }
@@ -918,4 +920,183 @@ async fn only_a_bot_its_owner_let_out_sees_the_commons() {
     let message = server.refused(&elm.pip, "list_city", asked).await;
     assert!(message.contains("stay home"), "{message}");
     assert_eq!(server.city(&elm.pip, json!({})).await["city"]["name"], "Elm");
+}
+
+/// Open land a few tiles from the nearest road, with no road beside it: somewhere a site needs a
+/// road to reach, near enough for a test.
+fn far_from_roads(server: &Server) -> (i64, i64) {
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let roads: Vec<(i64, i64)> = tiles
+        .iter()
+        .filter(|(_, t)| t.kind == Kind::Road)
+        .map(|(p, _)| (i64::from(p.0), i64::from(p.1)))
+        .collect();
+    for y in 2..126i64 {
+        for x in 2..126i64 {
+            let pos = (x as u16, y as u16);
+            if tiles.contains_key(&pos) || !land.at(pos).is_some_and(|ground| ground.is_open()) {
+                continue;
+            }
+            let nearest =
+                roads.iter().map(|&(rx, ry)| (rx - x).abs() + (ry - y).abs()).min().unwrap();
+            if (6..=9).contains(&nearest) {
+                return (x, y);
+            }
+        }
+    }
+    panic!("no open land a few tiles from a road");
+}
+
+// L22, L23, L24, L25
+#[tokio::test]
+async fn a_bot_lays_the_road_to_its_projects_site_and_only_that() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    server.meet(&town).await;
+    server
+        .tool(&town.fern, "invite_to_project", json!({ "project_id": project, "bot": "Rover" }))
+        .await;
+    server.refused(&town.fern, "lay_road", json!({ "project_id": project })).await;
+
+    // No road reaches it, so it becomes the site, with the way there.
+    let site = far_from_roads(&server);
+    let asked = server
+        .tool(
+            &town.fern,
+            "build_studio",
+            json!({ "project_id": project, "x": site.0, "y": site.1 }),
+        )
+        .await;
+    assert_eq!(asked["status"], "site", "{asked}");
+    let runs = asked["route"].as_array().unwrap().len();
+    assert!(runs >= 1, "{asked}");
+    assert_eq!(server.tile(site), None, "nothing is built yet");
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["your_projects"][0]["site"], json!([site.0, site.1]), "{inbox}");
+
+    // Only the bot that started it lays the road, one run at a time, until it arrives.
+    server.refused(&town.rover, "lay_road", json!({ "project_id": project })).await;
+    let mut laid = 0;
+    loop {
+        let reply = server.tool(&town.fern, "lay_road", json!({ "project_id": project })).await;
+        laid += 1;
+        assert!(laid <= runs + 2, "the road never arrived: {reply}");
+        if reply["reached"] == true {
+            break;
+        }
+    }
+    let message = server.refused(&town.fern, "lay_road", json!({ "project_id": project })).await;
+    assert!(message.contains("build_studio"), "{message}");
+
+    // Now the studio goes up, and the site goes.
+    server
+        .tool(
+            &town.fern,
+            "build_studio",
+            json!({ "project_id": project, "x": site.0, "y": site.1 }),
+        )
+        .await;
+    assert_eq!(server.tile(site), Some(Kind::Studio));
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert!(inbox["your_projects"][0]["site"].is_null(), "{inbox}");
+}
+
+// L32, W92
+#[tokio::test]
+async fn a_project_puts_up_the_kind_of_place_it_needs_and_its_room_opens() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    let asked =
+        |kind: &str| json!({ "project_id": project, "x": spot.0, "y": spot.1, "kind": kind });
+
+    // Not a house, which is a person's, or the town square.
+    for kind in ["house", "square", "castle"] {
+        server.refused(&town.fern, "build_studio", asked(kind)).await;
+    }
+    assert_eq!(server.tile(spot), None);
+
+    let built = server.tool(&town.fern, "build_studio", asked("office")).await;
+    assert_eq!(built["kind"], "office", "{built}");
+    assert_eq!(server.tile(spot), Some(Kind::Office));
+    let floor = server.get(&town.ann.key, &format!("/api/hangouts/{project}")).await.ok();
+    assert_eq!(floor["floor"]["floor"]["access"], "public", "{floor}");
+    assert!(floor.to_string().contains("\"bookshelf\""), "set up as a study: {floor}");
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["your_projects"][0]["studio"], json!([spot.0, spot.1]), "{inbox}");
+}
+
+// L17, W91: a bot at a building is inside it, and one at an open-air place stays on the place.
+#[tokio::test]
+async fn a_bot_is_inside_a_building_and_out_on_an_open_air_place() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (_, cy) = server.someone("Cy3").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let open = |floor: String| {
+        let server = &server;
+        let cy = &cy;
+        async move {
+            let path = format!("/api/floors/{floor}");
+            server
+                .put(&cy.key, &path, json!({ "access": "public", "create_code": CODE }))
+                .await
+                .ok();
+            floor
+        }
+    };
+    let go_in = |(x, y): (i64, i64)| {
+        let server = &server;
+        let cy = &cy;
+        async move {
+            let door =
+                server.post(&cy.key, "/api/spaces/door", json!({ "x": x, "y": y })).await.ok();
+            text(&door["hangout_id"])
+        }
+    };
+    let cafe = server.place_at(&cy, "cafe", now());
+    let cafe_floor = open(go_in(cafe).await).await;
+    server.all_day(&town.bo, &town.rover, true).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": cafe_floor })).await;
+    let row = |view: &Value| view["bots_out"][0].clone();
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert!(row(&view)[6].is_null(), "inside the cafe: {}", row(&view));
+
+    // A park, where all four tiles are open.
+    let tiles = server.state.db.world_tiles(COMMONS).unwrap();
+    let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+    let clear = |(x, y): (i64, i64)| {
+        let pos = (x as u16, y as u16);
+        !tiles.contains_key(&pos)
+            && !world::is_reserved(&tiles, pos)
+            && land.at(pos).is_some_and(|ground| ground.is_open())
+    };
+    let spot = server
+        .free_spots()
+        .into_iter()
+        .find(|&(x, y)| [(x + 1, y), (x, y + 1), (x + 1, y + 1)].into_iter().all(clear))
+        .unwrap();
+    let player = server.state.db.own_player(&cy.id, now() + 8 * DAY).unwrap();
+    let park = Move {
+        action: "place".into(),
+        x: Some(spot.0),
+        y: Some(spot.1),
+        x2: None,
+        y2: None,
+        kind: Some("park".into()),
+        emote: None,
+    };
+    worlds::act(&server.state, &player, COMMONS, &park, now() + 8 * DAY).unwrap();
+    let park_floor = open(go_in(spot).await).await;
+    server.tool(&town.rover, "go_out", json!({ "floor_id": park_floor })).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    assert_eq!(row(&view)[6], json!([spot.0, spot.1]), "on the park: {}", row(&view));
 }

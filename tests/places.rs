@@ -565,9 +565,9 @@ async fn a_person_is_told_when_each_place_comes_and_a_bot_is_told_nothing() {
     assert!(server.me(&guest).await["places"].is_null());
 }
 
-// W63, S47
+// W63, S47, W92: every place but a house is shared unless its owner closes it.
 #[tokio::test]
-async fn a_cafe_is_shared_and_everything_else_is_private_unless_you_are_invited() {
+async fn every_place_but_a_house_is_shared_and_a_house_is_private_unless_you_are_invited() {
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     let stranger = server.person("Stranger").await;
@@ -576,23 +576,25 @@ async fn a_cafe_is_shared_and_everything_else_is_private_unless_you_are_invited(
     let club = server.build_later(&ann, "club", 8);
     let cafe = server.build_later(&ann, "cafe", 8);
 
-    for spot in [house, studio, club] {
-        server.go_in(&ann.key, spot).await.ok();
-        server.go_in(&stranger.key, spot).await.refused(StatusCode::NOT_FOUND);
-    }
+    server.go_in(&ann.key, house).await.ok();
+    server.go_in(&stranger.key, house).await.refused(StatusCode::NOT_FOUND);
 
-    let room = text(&server.go_in(&ann.key, cafe).await.ok()["hangout_id"]);
-    assert_eq!(text(&server.go_in(&stranger.key, cafe).await.ok()["hangout_id"]), room);
-    server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.ok();
-    let listed = server.get(&stranger.key, "/api/spaces/public").await.ok();
-    assert_eq!(text(&listed["floors"][0]["id"]), room);
+    for spot in [studio, club, cafe] {
+        let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+        assert_eq!(text(&server.go_in(&stranger.key, spot).await.ok()["hangout_id"]), room);
+        server.post(&stranger.key, &format!("/api/floors/{room}/walk-in"), json!({})).await.ok();
+        let listed = server.get(&stranger.key, "/api/spaces/public").await.ok();
+        let ids: Vec<String> =
+            listed["floors"].as_array().unwrap().iter().map(|f| text(&f["id"])).collect();
+        assert!(ids.contains(&room), "{listed}");
+    }
 
     // The map doesn't say which is which (W59).
     let view = server.view().await.to_string();
     assert!(!view.contains("access") && !view.contains("private"), "{view}");
 }
 
-// W63, S47: a café that goes up with no one through its door yet is shut, like any building.
+// W63, S47: a room that comes back through a new place's door stays as its owner left it.
 #[tokio::test]
 async fn a_cafe_is_shut_until_its_owner_has_been_through_its_door() {
     let server = Server::start().await;
@@ -618,6 +620,8 @@ async fn placing_a_cafe_never_opens_a_room_someone_already_has() {
         .post(&ann.key, &format!("/api/hangouts/{room}/messages"), json!({ "text": "ours" }))
         .await
         .ok();
+    // W92: it started open, and Ann closed it.
+    server.put(&ann.key, &format!("/api/floors/{room}"), json!({ "access": "private" })).await.ok();
     server.act(&ann.key, json!({ "action": "bulldoze", "x": studio.0, "y": studio.1 })).await.ok();
 
     let cafe = server.build_later(&ann, "cafe", 8);
@@ -637,7 +641,7 @@ async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_g
     let server = Server::start().await;
     let ann = server.person("Ann").await;
     let stranger = server.person("Stranger").await;
-    server.build(&ann, "house").await;
+    let house = server.build(&ann, "house").await;
     let cafe = server.build_later(&ann, "cafe", 8);
     let room = text(&server.go_in(&ann.key, cafe).await.ok()["hangout_id"]);
     let path = format!("/api/floors/{room}");
@@ -647,11 +651,17 @@ async fn a_cafe_owner_opens_and_closes_its_floors_with_no_code_and_nobody_else_g
     server.put(&ann.key, &path, json!({ "access": "public" })).await.ok();
     server.go_in(&stranger.key, cafe).await.ok();
 
-    // Only a café: a studio's floor still needs the code (S16).
+    // W92: any place but a house: a studio's owner needs no code either, and a house's does (S16).
     let studio = server.build_later(&ann, "studio", 8);
     let other = text(&server.go_in(&ann.key, studio).await.ok()["hangout_id"]);
+    server
+        .put(&ann.key, &format!("/api/floors/{other}"), json!({ "access": "private" }))
+        .await
+        .ok();
+    server.put(&ann.key, &format!("/api/floors/{other}"), json!({ "access": "public" })).await.ok();
+    let home = text(&server.go_in(&ann.key, house).await.ok()["hangout_id"]);
     let refused =
-        server.put(&ann.key, &format!("/api/floors/{other}"), json!({ "access": "public" })).await;
+        server.put(&ann.key, &format!("/api/floors/{home}"), json!({ "access": "public" })).await;
     assert_ne!(refused.status, StatusCode::OK, "{}", refused.body);
 
     // And a café that's gone from the map is any other third space.
@@ -1131,4 +1141,99 @@ async fn a_disaster_leaves_the_rooms_tables_alone() {
     server.run_a_disaster();
     let plot = server.state.db.plot_of(&room, COMMONS).unwrap();
     assert_eq!(plot, Some(house));
+}
+
+impl Server {
+    /// W91: spots with room for a park or a square: the three tiles across and down are open too.
+    fn big_spots(&self) -> Vec<(i64, i64)> {
+        let tiles = self.state.db.world_tiles(COMMONS).unwrap();
+        let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+        let open = |(x, y): (i64, i64)| {
+            let pos = (x as u16, y as u16);
+            !tiles.contains_key(&pos)
+                && !world::is_reserved(&tiles, pos)
+                && land.at(pos).is_some_and(|ground| ground.is_open())
+        };
+        self.free_spots()
+            .into_iter()
+            .filter(|&(x, y)| [(x + 1, y), (x, y + 1), (x + 1, y + 1)].into_iter().all(open))
+            .collect()
+    }
+}
+
+// W90, W92
+#[tokio::test]
+async fn the_newer_places_go_up_open_named_and_set_up_for_what_they_are() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    let stranger = server.person("Stranger").await;
+    server.build(&ann, "house").await;
+    let early = server.free_spots()[0];
+    server.place(&ann, "bar", early).await.refused(StatusCode::CONFLICT);
+
+    for (kind, title, item) in [
+        ("office", "Office", "bookshelf"),
+        ("workshop", "Workshop", "workbench"),
+        ("bar", "Bar", "coffee_table"),
+    ] {
+        let spot = server.build_later(&ann, kind, 8);
+        assert_eq!(server.tile(spot).map(|k| k.as_str()), Some(kind));
+        let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+        let floor = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
+        assert_eq!(floor["floor"]["space"]["name"], format!("Ann's {title}"), "{floor}");
+        assert_eq!(floor["floor"]["floor"]["access"], "public", "{floor}");
+        assert!(
+            floor.to_string().contains(&format!("\"{item}\"")),
+            "{kind} has no {item}: {floor}"
+        );
+        server.go_in(&stranger.key, spot).await.ok();
+    }
+    // That's Ann's 3, whatever their kind (W56).
+    let spot = server.free_spots()[0];
+    assert!(server.place_at(&ann, "library", spot, now() + 8 * DAY).is_err());
+}
+
+// W91
+#[tokio::test]
+async fn a_park_takes_two_by_two_tiles_and_any_of_them_is_the_park() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    server.build(&ann, "house").await;
+    let (x, y) = server.big_spots()[0];
+    server.place_at(&ann, "park", (x, y), now() + 8 * DAY).unwrap();
+
+    let view = server.view().await;
+    let tiles = view["tiles"].as_array().unwrap();
+    assert!(tiles.contains(&json!([x, y, "green", 0])), "{}", view["tiles"]);
+    for part in [(x + 1, y), (x, y + 1), (x + 1, y + 1)] {
+        assert!(tiles.contains(&json!([part.0, part.1, "green", 1])), "{part:?}");
+    }
+    assert_eq!(view["places"], 2, "a house and one park");
+
+    // Nothing else goes on it, and its door is on all four.
+    assert!(server.place_at(&ann, "cafe", (x + 1, y + 1), now() + 9 * DAY).is_err());
+    let room = text(&server.go_in(&ann.key, (x, y)).await.ok()["hangout_id"]);
+    let floor = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
+    assert_eq!(floor["floor"]["space"]["name"], "Ann's Park", "{floor}");
+    assert_eq!(text(&server.go_in(&ann.key, (x + 1, y + 1)).await.ok()["hangout_id"]), room);
+
+    // Taking down any of its tiles takes the park.
+    server.act(&ann.key, json!({ "action": "bulldoze", "x": x + 1, "y": y })).await.ok();
+    assert_eq!(server.tile((x, y)), None);
+    assert_eq!(server.tile((x + 1, y + 1)), None);
+}
+
+// W91: the map keeps a big place's level, so it draws each tile as its own piece of one place and
+// a hover on any of them finds the place. With every level read as 0, a square's second tile drew
+// as a second square, and hovering it named no owner.
+#[test]
+fn the_map_keeps_the_level_of_a_big_places_tiles() {
+    let map = include_str!("../web/world.js").replace("\r\n", "\n");
+    let start = map.find("  applyTiles(list, animate) {").unwrap();
+    let body = &map[start..start + map[start..].find("\n  }\n").unwrap()];
+    let kept = body
+        .lines()
+        .find(|line| line.contains("nl[i] ="))
+        .expect("applyTiles sets each tile's level");
+    assert!(kept.contains("isBig(k)"), "a big place's level is read as 0: {kept}");
 }

@@ -55,9 +55,18 @@ const K_CAFE = 8;
 const K_CLUB = 9;
 const K_STUDIO = 10;
 const K_SQUARE = 11;
-const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio', 'square'];
+// W90: the newer places. A green is a park; the old city's park above was a zone.
+const K_GREEN = 12;
+const K_LOUNGE = 13;
+const K_BAR = 14;
+const K_OFFICE = 15;
+const K_WORKSHOP = 16;
+const K_LIBRARY = 17;
+const KIND_NAME = ['', 'road', 'homes', 'shops', 'workshops', 'park', 'cleared', 'house', 'cafe', 'club', 'studio', 'square', 'green', 'lounge', 'bar', 'office', 'workshop', 'library'];
 const KIND_ID = Object.fromEntries(KIND_NAME.map((name, id) => [name, id]).slice(1));
-const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio', 'Town square'];
+const KIND_LABEL = ['', 'Road', 'Homes', 'Shops', 'Workshops', 'Park', 'Cleared land', 'House', 'Cafe', 'Club', 'Studio', 'Town square', 'Park', 'Lounge', 'Bar', 'Office', 'Workshop', 'Library'];
+// W91: places that take 2 by 2 tiles, drawn a piece a tile.
+const isBig = (k) => k === K_SQUARE || k === K_GREEN;
 const isZone = (k) => k >= K_HOMES && k <= K_WORKS;
 
 const EMOTES = new Set(['wave', 'cheer', 'think', 'sleep', 'dance']);
@@ -2557,17 +2566,123 @@ function placedStudio(S, c) {
   }
 }
 
-// The town square (W81): a paved plaza round a fountain with benches, open to the sky, so it can't be
-// taken for anyone's building.
-function placedSquare(S) {
-  paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
-  if (!S.day) return;
-  paving(S, [7, 7, 25, 25], '#c7bc9f', '#a79c7e');
-  fountain(S.g);
-  bench(S.g, 16, 4);
-  bench(S.g, 16, 28);
-  bench(S.g, 4, 16, 'v');
-  bench(S.g, 28, 16, 'v');
+// W91: a quarter of the town square. Each piece is paved right up to the sides it shares with the
+// others, so the four read as one plaza, with the fountain on the first and benches round the rest.
+function squarePiece(corner) {
+  return (S) => {
+    const right = corner === 1 || corner === 3;
+    const down = corner === 2 || corner === 3;
+    const R = [right ? 0 : 1, down ? 0 : 1, right ? 31 : 32, down ? 31 : 32];
+    paving(S, R, '#d6ccb1', '#b3a887');
+    if (!S.day) return;
+    const inner = [right ? 0 : 12, down ? 0 : 12, right ? 20 : 32, down ? 20 : 32];
+    paving(S, inner, '#c7bc9f', '#a79c7e');
+    if (corner === 0) fountain(S.g);
+    else if (corner === 1) bench(S.g, 16, 4);
+    else if (corner === 2) bench(S.g, 4, 16, 'v');
+    else {
+      bench(S.g, 16, 28);
+      bench(S.g, 28, 16, 'v');
+    }
+  };
+}
+
+// W90: a lounge: low and wide, warm walls, long curtained windows and plants on the roof.
+function placedLounge(S, c) {
+  const R = [5, 8, 27, 24];
+  const H = 11;
+  const mat = { k: 'siding', c: '#e6bcae' };
+  shadow(S, R, H + 2);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) {
+      door(S, len / 2 - 2.2, 4.4, 8, c.door, {});
+      win(S, 2.5, 3.5, len / 2 - 6, 5.5, { curtain: '#b45a6a', lit: 90 });
+      win(S, len / 2 + 3, 3.5, len / 2 - 6, 5.5, { curtain: '#b45a6a', lit: 90 });
+    } else win(S, 3, 3.5, len - 6, 5.5, { curtain: '#b45a6a', lit: 90 });
+  });
+  flatRoof(S, R, H, mat);
+  if (S.day) {
+    for (const [u, v] of [[9, 12], [22, 12], [15, 20]]) {
+      const [x, y] = P(u, v, H);
+      drawTree(S.g, x, y, 'bush', u + v);
+    }
+  }
+}
+
+// W90: a bar: dark brick, a bright sign over the door, and every window lit at night.
+function placedBar(S, c) {
+  const R = [6, 8, 26, 24];
+  const H = 13;
+  const mat = { k: 'brick', c: '#4a3a3a' };
+  shadow(S, R, H + 2);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) {
+      door(S, len / 2 - 2.2, 4.4, 8.5, '#1e1a22', {});
+      sign(S, 3, 10, len - 6, 2.4, c.awn[0]);
+    }
+    win(S, 2.5, 4, 3.6, 4.4, { lit: 100 });
+    win(S, len - 6.1, 4, 3.6, 4.4, { lit: 100 });
+  });
+  flatRoof(S, R, H, mat);
+}
+
+// W90: an office: tall, with rows of windows and a flat roof.
+function placedOffice(S, c) {
+  const R = [7, 8, 25, 24];
+  const H = 30;
+  const mat = { k: 'concrete', c: '#c9ccd2' };
+  paving(S, [5, 6, 27, 26], '#d1d4d9', '#aeb2b9');
+  shadow(S, R, H + 4);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) door(S, len / 2 - 2.6, 4.4, 9, '#3a5a7a', {});
+    for (let row = 0; row < 3; row++) {
+      if (row === 0 && side === S.door) continue;
+      const lay = layout(len, 3.6, 2.2, 1.8);
+      for (let k = 0; k < lay.count; k++) win(S, lay.start + k * lay.step, 3.5 + row * 8.5, 3.6, 5.5, { frame: '#5a6a80', lit: 55 });
+    }
+    ledge(S, 0, 11.5, len, '#a9adb5');
+    ledge(S, 0, 20, len, '#a9adb5');
+  });
+  flatRoof(S, R, H, mat, { coping: '#9aa0aa', parapet: 1.5 });
+}
+
+// W90: a workshop: a wide brick shed with a big door and a chimney.
+function placedWorkshop(S, c) {
+  const R = [5, 8, 27, 25];
+  const H = 14;
+  const mat = { k: 'brick', c: BRICKS[(S.pal + 1) % 4] };
+  paving(S, [3, 6, 29, 29], '#c9c2b0', '#a59d88');
+  shadow(S, R, H + 8);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) {
+      rr(S.g, '#5b4a3a', 3, -10, len / 2, 10);
+      for (let y = -9; y < 0; y += 2) line(S.g, 'rgba(30,20,10,.35)', 0.6, 3, y, 3 + len / 2, y);
+      door(S, len - 7, 4.4, 8, c.door, {});
+    } else {
+      for (let k = 0; k < 3; k++) win(S, 3 + k * 6, 6, 4, 5, { frame: '#4a4a4a', lit: 70 });
+    }
+  });
+  gable(S, R, H, 6, '#6a6f78', 1.2, 'u', mat);
+  brickChimney(S, 22, 11, H + 2, H + 16, 3, true);
+}
+
+// W90: a library: pale stone, tall windows, a pitched roof and steps up to the door.
+function placedLibrary(S, c) {
+  const R = [6, 8, 26, 24];
+  const H = 16;
+  const mat = { k: 'siding', c: '#ece4cf' };
+  paving(S, [4, 6, 28, 28], '#dcd5c2', '#b9b19c');
+  shadow(S, R, H + 8);
+  box(S, R, 0, H, mat, (side, len) => {
+    if (side === S.door) door(S, len / 2 - 2.4, 4.4, 10, '#5a3a24', {});
+    const lay = layout(len, 2.8, 2.6, 2);
+    for (let k = 0; k < lay.count; k++) {
+      const u = lay.start + k * lay.step;
+      if (side === S.door && Math.abs(u - len / 2) < 4) continue;
+      win(S, u, 4, 2.8, 9, { frame: '#7a6a50', lit: 75 });
+    }
+  });
+  gable(S, R, H, 7, '#5f6f7f', 1.4, 'u', mat);
 }
 
 const BUILDERS = {
@@ -2578,7 +2693,12 @@ const BUILDERS = {
   [K_CAFE]: [placedCafe],
   [K_CLUB]: [placedClub],
   [K_STUDIO]: [placedStudio],
-  [K_SQUARE]: [placedSquare],
+  [K_SQUARE]: [squarePiece(0), squarePiece(1), squarePiece(2), squarePiece(3)],
+  [K_LOUNGE]: [placedLounge],
+  [K_BAR]: [placedBar],
+  [K_OFFICE]: [placedOffice],
+  [K_WORKSHOP]: [placedWorkshop],
+  [K_LIBRARY]: [placedLibrary],
 };
 
 // A building as a sprite, with its lit-windows twin, its shadow, and the places smoke rises.
@@ -3920,6 +4040,14 @@ function drawSky(g, w, h, dpr, sky, t) {
 // ---------------------------------------------------------------------------------------------
 // Icons for the toolbar, painted the same way. Returns a canvas of the given size.
 
+const PLACE_ICONS = {
+  lounge: placedLounge,
+  bar: placedBar,
+  office: placedOffice,
+  workshop: placedWorkshop,
+  library: placedLibrary,
+};
+
 export function toolIcon(tool, size = 32) {
   const c = makeCanvas(size * 2, size * 2);
   const g = c.getContext('2d');
@@ -4003,6 +4131,25 @@ export function toolIcon(tool, size = 32) {
     paving(S, [1, 1, 31, 31], '#d6ccb1', '#b3a887');
     fountain(g);
     g.restore();
+  } else if (tool === 'green') {
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    fp3(g, '#7fb25a', [1, 1], [31, 1], [31, 31], [1, 31]);
+    fountain(g);
+    for (const [u, v, type] of [[5, 5, 'oak'], [27, 6, 'blossom'], [6, 27, 'bush']]) {
+      const [x, y] = P(u, v);
+      drawTree(g, x, y, type, u);
+    }
+    g.restore();
+  } else if (PLACE_ICONS[tool]) {
+    // W90: the newer places, as the map draws them.
+    g.save();
+    g.scale(0.72, 0.72);
+    g.translate(-16, -14);
+    Object.assign(S, { door: 'L', pal: 0, v: 0 });
+    PLACE_ICONS[tool](S, { wall: SIDING[0], roof: ROOFS[1], door: DOORC[0], awn: AWN[4], hue: 0 });
+    g.restore();
   } else {
     // A bulldozer blade and a cross.
     g.save();
@@ -4045,8 +4192,8 @@ const MAX_PLAYERS = 400;
 // A figure going this many tiles or more takes a car instead of walking. A ride is only how the move
 // looks: the server has already put them where they're going.
 const DRIVE_TILES = 8;
-// How much faster a ride is than the figure's own walk.
-const DRIVE_FACTOR = 3;
+// How much faster a ride is than the figure's own walk. Slow enough to watch where it goes.
+const DRIVE_FACTOR = 1.75;
 
 const screenOf = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
@@ -4710,7 +4857,8 @@ export class World {
         if (!k) continue;
         const i = y * n + x;
         nk[i] = k;
-        nl[i] = isZone(k) ? clamp(t[3] | 0, 0, 3) : 0;
+        // W91: a big place keeps its level, which says which of its tiles is the one it stands on.
+        nl[i] = isZone(k) || isBig(k) ? clamp(t[3] | 0, 0, 3) : 0;
       }
     }
     const changed = [];
@@ -4974,6 +5122,9 @@ export class World {
         seen.add(id);
         // A fourth field is what someone signed in, or a bot out at a place, is wearing (C14).
         const worn = wornIn(row[3]);
+        // L17: a bot at a place says whether it's inside a building (null) or on an open-air place.
+        const atPlace = row.length >= 7;
+        const area = Array.isArray(row[6]) ? [clamp(Number(row[6][0]) || 0, 0, n - 1), clamp(Number(row[6][1]) || 0, 0, n - 1)] : null;
         let p = map.get(id);
         if (!p) {
           // L18: a bot that just reached a place sets out from where it was, and goes there.
@@ -4983,12 +5134,23 @@ export class World {
           p = make(id, name, fx, fy, worn);
           p.born = animate ? this.time : -10;
           map.set(id, p);
+          this.settle(p, atPlace, area);
           if (animate && !travels) this.sparkle(p.px, p.py, 5);
-          if (fx !== x || fy !== y) this.walkTo(p, x, y);
+          const [tx, ty] = this.standAt(p, x, y);
+          if (!animate) {
+            // On a page that has just opened, it's already where it is.
+            p.x = tx;
+            p.y = ty;
+            p.px = tx + 0.5 + p.ox;
+            p.py = ty + 0.5 + p.oy;
+          } else if (fx !== tx || fy !== ty) this.walkTo(p, tx, ty);
         } else {
           p.leaving = 0;
           if (JSON.stringify(worn) !== p.worn) dress(p, name, p.kind, worn);
-          if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
+          this.settle(p, atPlace, area);
+          const [tx, ty] = this.standAt(p, x, y);
+          if (!p.area && (p.x !== tx || p.y !== ty)) this.walkTo(p, tx, ty);
+          else if (p.area && !this.inArea(p, p.x, p.y)) this.walkTo(p, tx, ty);
         }
       });
     }
@@ -4997,6 +5159,31 @@ export class World {
       if (animate && !p.leaving) p.leaving = this.time;
       else if (!animate) map.delete(id);
     }
+  }
+
+  // L17: a bot at a building is inside it, and one at an open-air place keeps to the place's tiles.
+  settle(p, atPlace, area) {
+    p.inside = atPlace && !area;
+    p.area = area;
+    if (atPlace) p.wander = area ? p.wander || 3 : 0;
+  }
+
+  // Where a figure stands: on an open-air place, a tile of it of its own, and anywhere else, there.
+  standAt(p, x, y) {
+    if (!p.area) return [x, y];
+    const k = this.kind[p.area[1] * this.n + p.area[0]];
+    const big = k === K_SQUARE || k === K_GREEN;
+    const spot = big ? ih(p.h, 7, 3) % 4 : 0;
+    return [p.area[0] + (spot & 1), p.area[1] + (spot >> 1)];
+  }
+
+  inArea(p, x, y) {
+    return Boolean(p.area) && x >= p.area[0] && x <= p.area[0] + 1 && y >= p.area[1] && y <= p.area[1] + 1;
+  }
+
+  // L17: inside a building, once it has got there, a bot isn't drawn on the map.
+  indoors(p) {
+    return Boolean(p.inside) && !p.path.length;
   }
 
   sparkle(tx, ty, count) {
@@ -5229,6 +5416,28 @@ export class World {
     return mask;
   }
 
+  // W91: which piece of a big place a tile is: 0 where it's stored, then across, down, and both.
+  cornerOf(x, y, k) {
+    const at = (tx, ty) => tx >= 0 && ty >= 0 && this.kind[ty * this.n + tx] === k && this.level[ty * this.n + tx] === 0;
+    if (this.level[y * this.n + x] === 0) return 0;
+    if (at(x - 1, y)) return 1;
+    if (at(x, y - 1)) return 2;
+    return 3;
+  }
+
+  // W91: a park's sides that run on into more of it, or onto a road, so no hedge goes there.
+  greenMask(x, y) {
+    let mask = 0;
+    for (let b = 0; b < 4; b++) {
+      const nx = x + DIRS4[b][0];
+      const ny = y + DIRS4[b][1];
+      if (nx < 0 || ny < 0 || nx >= this.n || ny >= this.n) continue;
+      const k = this.kind[ny * this.n + nx];
+      if (k === K_GREEN || k === K_ROAD) mask |= 1 << b;
+    }
+    return mask;
+  }
+
   parkMask(x, y) {
     let mask = 0;
     for (let b = 0; b < 4; b++) {
@@ -5293,6 +5502,9 @@ export class World {
     }
     if (k === K_PARK) return parkObject(roll % 4, this.parkMask(x, y));
     if (k === K_CLEARED) return stumpObject(roll % 4);
+    // W91: a big place is four pieces, each for its corner of it.
+    if (k === K_GREEN) return parkObject(this.cornerOf(x, y, k), this.greenMask(x, y));
+    if (k === K_SQUARE) return this.buildingAt(x, y, k, this.cornerOf(x, y, k));
     if (k >= K_HOUSE) return this.buildingAt(x, y, k, 0);
     if (isZone(k)) {
       if (lv === 0) return lotObject(k);
@@ -5776,6 +5988,13 @@ export class World {
   }
 
   stroll(p) {
+    if (p.area) {
+      // L17: round the open-air place, and never off it onto the street.
+      const tx = p.area[0] + (Math.random() < 0.5 ? 0 : 1);
+      const ty = p.area[1] + (Math.random() < 0.5 ? 0 : 1);
+      p.path = [[tx + 0.2 + Math.random() * 0.6, ty + 0.2 + Math.random() * 0.6, false]];
+      return;
+    }
     const cx = clamp(Math.round(p.px - 0.5), 0, this.n - 1);
     const cy = clamp(Math.round(p.py - 0.5), 0, this.n - 1);
     if (cx !== p.x || cy !== p.y) {
@@ -6264,6 +6483,7 @@ export class World {
     }
     for (const map of [this.people, this.visitors]) {
       for (const p of map.values()) {
+        if (this.indoors(p)) continue;
         place(p, ...screenOf(p.px, p.py));
         if (inView(p.sx, p.sy) && ready(p.sx, p.sy)) ents.push(p);
       }
@@ -6483,6 +6703,12 @@ export class World {
         ex = sx;
         ey = sy + clamp(dy, -max, max);
       }
+    } else if (this.tool === 'square' || this.tool === 'green') {
+      // W91: a park or a square takes the tile and the three across and down from it.
+      sx = ex;
+      sy = ey;
+      const tiles2 = [[sx, sy], [sx + 1, sy], [sx, sy + 1], [sx + 1, sy + 1]];
+      return { tiles: tiles2, x: sx, y: sy, x2: sx, y2: sy };
     } else {
       sx = ex;
       sy = ey;
@@ -6580,7 +6806,7 @@ export class World {
       }
     };
     for (const map of [this.players, this.people, this.visitors]) {
-      for (const p of map.values()) test(p, p.kind === 'person' ? 13 : 16, reach);
+      for (const p of map.values()) if (!this.indoors(p)) test(p, p.kind === 'person' ? 13 : 16, reach);
     }
     for (const f of this.frogs.values()) test(f, 9, reach * 1.1);
     return best;

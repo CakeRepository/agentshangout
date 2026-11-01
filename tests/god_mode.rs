@@ -191,6 +191,22 @@ impl Server {
             .collect()
     }
 
+    /// W91: spots a square or a park can go on, with the three tiles across and down open too.
+    fn big_spots(&self) -> Vec<(i64, i64)> {
+        let tiles = self.state.db.world_tiles(COMMONS).unwrap();
+        let land = world::terrain(world::COMMONS_SEED, world::COMMONS_SIZE);
+        let open = |(x, y): (i64, i64)| {
+            let pos = (x as u16, y as u16);
+            !tiles.contains_key(&pos)
+                && !world::is_reserved(&tiles, pos)
+                && land.at(pos).is_some_and(|ground| ground.is_open())
+        };
+        self.free_spots()
+            .into_iter()
+            .filter(|&(x, y)| [(x + 1, y), (x, y + 1), (x + 1, y + 1)].into_iter().all(open))
+            .collect()
+    }
+
     fn highway_tile(&self) -> (i64, i64) {
         let tiles = self.state.db.world_tiles(COMMONS).unwrap();
         let (&(x, y), _) = tiles
@@ -252,7 +268,7 @@ impl Server {
 
     /// Puts up a place wherever the rules allow it.
     async fn build(&self, who: &Who, kind: &str) -> (i64, i64) {
-        let spot = self.free_spots()[0];
+        let spot = if kind == "square" { self.big_spots()[0] } else { self.free_spots()[0] };
         self.place(who, kind, spot).await.ok();
         spot
     }
@@ -447,7 +463,12 @@ async fn the_other_places_are_turned_off_at_three_and_a_guest_is_told_nothing() 
         assert_eq!(server.me(&ann.key).await["full"], json!(["house"]));
         server.build_later(&ann, kind, 8);
     }
-    assert_eq!(server.me(&ann.key).await["full"], json!(["house", "studio", "club", "cafe"]));
+    // W90: and so are the newer kinds, which count toward the same 3.
+    let all = [
+        "house", "studio", "office", "workshop", "library", "club", "lounge", "cafe", "bar",
+        "green",
+    ];
+    assert_eq!(server.me(&ann.key).await["full"], json!(all));
 
     let guest = server.guest().await;
     assert!(server.me(&guest).await.get("full").is_none());
@@ -463,7 +484,11 @@ async fn god_mode_has_every_place_now_past_the_limits_and_for_nothing() {
     server.switch(&justin, true).await;
     let me = server.me(&justin.key).await;
     assert_eq!(me["god_mode"], true);
-    assert_eq!(me["places"], json!({ "house": 0, "studio": 0, "club": 0, "cafe": 0 }));
+    // W90: the newer kinds too.
+    assert_eq!(
+        me["places"],
+        json!({ "house": 0, "studio": 0, "office": 0, "workshop": 0, "library": 0, "club": 0, "lounge": 0, "cafe": 0, "bar": 0, "green": 0 })
+    );
     assert_eq!(me["moves_left"], me["moves_per_day"]);
 
     // The longest wait, with no house at all, and as many places as they like.
@@ -686,7 +711,12 @@ async fn turning_it_off_takes_nothing_down_and_the_limits_come_back() {
     }
     let me = server.me(&justin.key).await;
     assert!(me.get("god_mode").is_none());
-    assert_eq!(me["full"], json!(["house", "studio", "club", "cafe"]));
+    // W90: the newer kinds count toward the same 3.
+    let all = [
+        "house", "studio", "office", "workshop", "library", "club", "lounge", "cafe", "bar",
+        "green",
+    ];
+    assert_eq!(me["full"], json!(all));
     assert!(me["places"]["cafe"].as_i64().unwrap() > 0, "their wait is what it would have been");
     let spot = server.free_spots()[0];
     server.place(&justin, "studio", spot).await.refused(StatusCode::CONFLICT);
@@ -698,7 +728,7 @@ async fn turning_it_off_takes_nothing_down_and_the_limits_come_back() {
 #[tokio::test]
 async fn only_god_mode_puts_up_the_town_square_and_a_world_has_one() {
     let (server, justin, morg) = Server::start().await;
-    let spot = server.free_spots()[0];
+    let spot = server.big_spots()[0];
     let ann = server.person("Ann").await;
     let guest = server.guest().await;
     server.place(&ann, "square", spot).await.refused(StatusCode::FORBIDDEN);
@@ -715,7 +745,7 @@ async fn only_god_mode_puts_up_the_town_square_and_a_world_has_one() {
 
     // One to a world, for anyone with the switch.
     server.switch(&morg, true).await;
-    let elsewhere = server.free_spots()[0];
+    let elsewhere = server.big_spots()[0];
     server.place(&justin, "square", elsewhere).await.refused(StatusCode::CONFLICT);
     server.place(&morg, "square", elsewhere).await.refused(StatusCode::CONFLICT);
 
@@ -794,7 +824,8 @@ async fn the_town_square_opens_onto_one_big_public_room_that_comes_back() {
     let cafe = elsewhere(&[spot]);
     server.place(&justin, "cafe", cafe).await.ok();
     assert_ne!(server.go_in(&justin.key, cafe).await.ok()["hangout_id"], room.as_str());
-    let moved = elsewhere(&[spot, cafe]);
+    // W91: somewhere with room for all four of its tiles.
+    let moved = server.big_spots().into_iter().find(|at| ![spot, cafe].contains(at)).unwrap();
     server.place(&justin, "square", moved).await.ok();
     assert_eq!(server.go_in(&justin.key, moved).await.ok()["hangout_id"], room.as_str());
 }

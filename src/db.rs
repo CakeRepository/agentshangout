@@ -1,7 +1,7 @@
 //! SQLite storage. Queries are short and run on one connection, so a plain mutex is enough here.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex, MutexGuard,
@@ -739,6 +739,68 @@ CREATE TABLE IF NOT EXISTS wake_rings (
     PRIMARY KEY (message_id, agent_id)
 );
 CREATE INDEX IF NOT EXISTS wake_rings_by_bot ON wake_rings (agent_id, rung_at);
+-- E26: explicit sender-specific wake permission. It confers no authority on message content.
+CREATE TABLE IF NOT EXISTS trusted_bot_wakes (
+    agent_id   TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    sender_id  TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    PRIMARY KEY (agent_id, sender_id),
+    CHECK (agent_id != sender_id)
+);
+-- E27: durable reservations, separate from human rings and never pruned by the daily social cap.
+-- Message ids are tombstones, not foreign keys: deleting a floor's history must not refund rings.
+CREATE TABLE IF NOT EXISTS bot_wake_rings (
+    message_id  INTEGER NOT NULL,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    space_id    TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS bot_wake_rings_by_bot ON bot_wake_rings (agent_id, rung_at);
+-- A deleted bot's messages lose agent_id, so only chat authenticated as human can reset E27.
+-- Keep the marker even if that owner's chat/floor is later deleted.
+CREATE TABLE IF NOT EXISTS bot_wake_owner_chat (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    message_id  INTEGER NOT NULL
+);
+-- I58: a bot working on a reply in a room. waiting is derived from unread mentions.
+CREATE TABLE IF NOT EXISTS bot_thinking (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    started_at  INTEGER NOT NULL,
+    until_at    INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, hangout_id)
+);
+CREATE INDEX IF NOT EXISTS bot_thinking_by_room ON bot_thinking (hangout_id);
+CREATE TABLE IF NOT EXISTS project_sites (
+    space_id    TEXT PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+-- L29: a bot rung to meet the bots out with it, once a half hour. Counted in E24's daily cap.
+CREATE TABLE IF NOT EXISTS meet_calls (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    slot        INTEGER NOT NULL,
+    hangout_id  TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    rung_at     INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, slot)
+);
+-- W90: the places that came after the first four. world_buildings lists the kinds it takes and
+-- existing tables don't change, so these have their own table, and a view puts them all together.
+-- A deploy that goes back reads world_places and doesn't see them until it comes forward again.
+CREATE TABLE IF NOT EXISTS world_more_places (
+    world_id   TEXT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+    x          INTEGER NOT NULL,
+    y          INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    player_id  INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    built_at   INTEGER NOT NULL,
+    PRIMARY KEY (world_id, x, y)
+);
+CREATE INDEX IF NOT EXISTS world_more_places_by_player ON world_more_places (world_id, player_id);
+CREATE VIEW IF NOT EXISTS world_every_place AS
+    SELECT world_id, x, y, kind, player_id, built_at FROM world_places
+    UNION ALL SELECT world_id, x, y, kind, player_id, built_at FROM world_more_places;
 "#;
 
 /// E30: how many outsides one player keeps waiting for each kind of place, after their places come
@@ -834,6 +896,13 @@ pub struct Activity {
     pub until: i64,
 }
 
+/// A bot in a room waiting on an @mention, or working on a reply (I58).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Thinking {
+    pub phase: &'static str,
+    pub until: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DoorbellStatus {
     /// Its doorbell checked in the last minute, so something will start the bot if it's needed.
@@ -868,6 +937,9 @@ pub struct Agent {
     /// Set only where a person is shown a room's own bots (A21, A22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordLink>,
+    /// Set only in a room's snapshot and `read_room` (I58, I63).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<Thinking>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1644,6 +1716,7 @@ fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
         visitor_until: None,
         away: false,
         discord: None,
+        thinking: None,
     })
 }
 
@@ -3924,7 +3997,7 @@ impl Db {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
         const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
-             JOIN world_places b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
+             JOIN world_every_place b ON b.world_id = d.world_id AND b.x = d.x AND b.y = d.y
              JOIN players pl ON pl.id = b.player_id AND pl.person_id = s.owner_id
                             AND pl.agent_id IS NULL AND pl.token_hash IS NULL
              JOIN bot_routines r ON r.agent_id = a.id AND r.public_places = 1";
@@ -5158,14 +5231,62 @@ impl Db {
         let today = now - now.rem_euclid(DAY_SECS);
         let conn = self.conn();
         conn.execute("DELETE FROM wake_rings WHERE rung_at < ?", [today - DAY_SECS])?;
+        // L29: a call to meet comes out of the same cap.
         let rung = conn.execute(
             "INSERT OR IGNORE INTO wake_rings (message_id, agent_id, capped, rung_at)
              SELECT ?1, ?2, ?3, ?4
              WHERE ?5 IS NULL OR (SELECT COUNT(*) FROM wake_rings
-                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6) < ?5",
+                                  WHERE agent_id = ?2 AND capped = 1 AND rung_at >= ?6)
+                               + (SELECT COUNT(*) FROM meet_calls
+                                  WHERE agent_id = ?2 AND rung_at >= ?6) < ?5",
             params![message_id, agent_id, cap.is_some(), now, cap, today],
         )?;
         Ok(rung > 0)
+    }
+
+    /// L29: records a call to meet for this half hour and returns whether it's new and fits in the
+    /// day's cap, which E24's capped rings share.
+    pub fn note_meet_call(
+        &self,
+        agent_id: &str,
+        slot: i64,
+        hangout_id: &str,
+        now: i64,
+        cap: i64,
+    ) -> rusqlite::Result<bool> {
+        const DAY_SECS: i64 = 24 * 60 * 60;
+        let today = now - now.rem_euclid(DAY_SECS);
+        let conn = self.conn();
+        conn.execute("DELETE FROM meet_calls WHERE rung_at < ?", [today - DAY_SECS])?;
+        let rung = conn.execute(
+            "INSERT OR IGNORE INTO meet_calls (agent_id, slot, hangout_id, rung_at)
+             SELECT ?1, ?2, ?3, ?4
+             WHERE (SELECT COUNT(*) FROM wake_rings
+                    WHERE agent_id = ?1 AND capped = 1 AND rung_at >= ?5)
+                 + (SELECT COUNT(*) FROM meet_calls WHERE agent_id = ?1 AND rung_at >= ?5) < ?6",
+            params![agent_id, slot, hangout_id, now, today, cap],
+        )?;
+        Ok(rung > 0)
+    }
+
+    /// L31: whether a bot is working on a reply in any room right now (I58).
+    pub fn bot_is_thinking(&self, agent_id: &str, now: i64) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM bot_thinking WHERE agent_id = ? AND until_at > ? LIMIT 1",
+            params![agent_id, now],
+        )
+    }
+
+    /// L27: every bot whose owner turned public places on, with its owner.
+    pub fn bots_going_out(&self) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT a.id, a.owner_id FROM bot_routines r JOIN agents a ON a.id = r.agent_id
+             WHERE r.public_places = 1 ORDER BY a.id",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     /// E25: whether only this bot's owner can wake it with an @mention.
@@ -5184,6 +5305,111 @@ impl Db {
             params![agent_id, only_me],
         )?;
         Ok(())
+    }
+
+    pub fn trusted_bots(&self, agent_id: &str) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut query = conn.prepare(
+            "SELECT sender_id FROM trusted_bot_wakes WHERE agent_id = ? ORDER BY sender_id",
+        )?;
+        let rows = query.query_map([agent_id], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Everything has been validated by the owner operation; save all wake settings together.
+    pub fn save_agent_notify(
+        &self,
+        agent_id: &str,
+        url: Option<&str>,
+        auth: Option<&str>,
+        only_me: Option<bool>,
+        trusted_bots: Option<&[String]>,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (table, column, value) in
+            [("notify_targets", "url", url), ("notify_auth", "secret", auth)]
+        {
+            match value {
+                Some(value) => tx.execute(
+                    &format!(
+                        "INSERT INTO {table} (owner_id, {column}) VALUES (?1, ?2)
+                              ON CONFLICT (owner_id) DO UPDATE SET {column} = excluded.{column}"
+                    ),
+                    params![agent_id, value],
+                )?,
+                None => {
+                    tx.execute(&format!("DELETE FROM {table} WHERE owner_id = ?"), [agent_id])?
+                }
+            };
+        }
+        if let Some(only_me) = only_me {
+            tx.execute(
+                "INSERT INTO wake_settings (agent_id, only_me) VALUES (?, ?)
+                 ON CONFLICT (agent_id) DO UPDATE SET only_me = excluded.only_me",
+                params![agent_id, only_me],
+            )?;
+        }
+        if let Some(bots) = trusted_bots {
+            tx.execute("DELETE FROM trusted_bot_wakes WHERE agent_id = ?", [agent_id])?;
+            for sender in bots {
+                tx.execute(
+                    "INSERT INTO trusted_bot_wakes (agent_id, sender_id) VALUES (?, ?)",
+                    params![agent_id, sender],
+                )?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Called only for fresh chat authenticated as a human in post_message, never for bot chat.
+    pub fn note_bot_wake_owner_chat(&self, message_id: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_wake_owner_chat (space_id, message_id)
+             SELECT s.id, m.id FROM messages m
+             JOIN floors f ON f.hangout_id = m.hangout_id
+             JOIN spaces s ON s.id = f.space_id
+             WHERE m.id = ? AND m.kind = 'chat' AND m.agent_id IS NULL
+               AND s.kind = 'house' AND s.owner_id = m.person_id
+             ON CONFLICT (space_id) DO UPDATE SET message_id = MAX(message_id, excluded.message_id)",
+            [message_id],
+        )?;
+        Ok(())
+    }
+
+    /// E26-E27: atomically check live permission and reserve one bot ring. No human ring is used.
+    pub fn note_bot_wake_ring(
+        &self,
+        agent_id: &str,
+        message_id: i64,
+        now: i64,
+    ) -> rusqlite::Result<bool> {
+        let rung = self.conn().execute(
+            "INSERT OR IGNORE INTO bot_wake_rings (message_id, agent_id, space_id, rung_at)
+             SELECT m.id, target.id, s.id, ?3 FROM messages m
+             JOIN agents sender ON sender.id = m.agent_id
+             JOIN agents target ON target.id = ?1 AND target.owner_id = sender.owner_id
+             JOIN trusted_bot_wakes grant_ ON grant_.agent_id = target.id AND grant_.sender_id = sender.id
+             JOIN room_agents sr ON sr.agent_id = sender.id AND sr.hangout_id = m.hangout_id
+             JOIN room_agents tr ON tr.agent_id = target.id AND tr.hangout_id = m.hangout_id
+             JOIN floors f ON f.hangout_id = m.hangout_id
+             JOIN spaces s ON s.id = f.space_id AND s.kind = 'house' AND s.owner_id = target.owner_id
+             LEFT JOIN bot_wake_owner_chat owner_chat ON owner_chat.space_id = s.id
+             WHERE m.id = ?2 AND m.kind = 'chat' AND m.person_id = sender.owner_id
+               AND sender.id != target.id
+               AND NOT EXISTS (SELECT 1 FROM bot_homes WHERE agent_id IN (sender.id, target.id) AND is_house = 1)
+               AND EXISTS (SELECT 1 FROM notify_targets WHERE owner_id = target.id)
+               AND NOT EXISTS (SELECT 1 FROM agent_doorbell WHERE agent_id = target.id AND paused = 1)
+               AND NOT EXISTS (SELECT 1 FROM wake_settings WHERE agent_id = target.id AND only_me = 1)
+               AND m.id > COALESCE(owner_chat.message_id, 0)
+               AND NOT EXISTS (SELECT 1 FROM bot_wake_rings WHERE agent_id = target.id
+                               AND (rung_at > ?3 - 180 OR message_id >= m.id))
+               AND (SELECT COUNT(*) FROM bot_wake_rings
+                    WHERE agent_id = target.id AND space_id = s.id
+                      AND message_id > COALESCE(owner_chat.message_id, 0)) < 5",
+            params![agent_id, message_id, now],
+        )?;
+        Ok(rung > 0)
     }
 
     pub fn unread_mentions(&self, agent_id: &str) -> rusqlite::Result<Vec<Mention>> {
@@ -5211,6 +5437,152 @@ impl Db {
             params![now, agent_id, hangout_id],
         )?;
         Ok(())
+    }
+
+    /// I58: stored thinking in a room, whether or not it has run out.
+    pub fn thinking_row(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+    ) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT started_at, until_at FROM bot_thinking WHERE agent_id = ? AND hangout_id = ?",
+                params![agent_id, hangout_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    pub fn put_thinking(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        started_at: i64,
+        until_at: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_thinking (agent_id, hangout_id, started_at, until_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (agent_id, hangout_id) DO UPDATE SET
+                started_at = excluded.started_at, until_at = excluded.until_at",
+            params![agent_id, hangout_id, started_at, until_at],
+        )?;
+        Ok(())
+    }
+
+    /// I61: stretch live thinking in every room, and say which rooms changed.
+    pub fn extend_live_thinking(
+        &self,
+        agent_id: &str,
+        until_at: i64,
+        now: i64,
+    ) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT hangout_id FROM bot_thinking WHERE agent_id = ? AND until_at > ?")?;
+        let rooms = stmt
+            .query_map(params![agent_id, now], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+        if !rooms.is_empty() {
+            conn.execute(
+                "UPDATE bot_thinking SET until_at = ?1 WHERE agent_id = ?2 AND until_at > ?3",
+                params![until_at, agent_id, now],
+            )?;
+        }
+        Ok(rooms)
+    }
+
+    /// Newest unread @mention of this bot in this room, in the last `since` window.
+    pub fn latest_unread_mention_at(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        self.conn().query_row(
+            "SELECT MAX(created_at) FROM mentions
+                 WHERE agent_id = ? AND hangout_id = ? AND read_at IS NULL AND created_at > ?",
+            params![agent_id, hangout_id, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// Rooms this bot has an unread @mention in, from the last `since` window.
+    pub fn unread_mention_rooms(
+        &self,
+        agent_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT hangout_id FROM mentions
+             WHERE agent_id = ? AND read_at IS NULL AND created_at > ?",
+        )?;
+        let rows = stmt.query_map(params![agent_id, since], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// I58: waiting or thinking for each bot drawn in this room.
+    pub fn thinking_in(
+        &self,
+        hangout_id: &str,
+        now: i64,
+        window: i64,
+    ) -> rusqlite::Result<HashMap<String, Thinking>> {
+        let conn = self.conn();
+        let mut rows: HashMap<String, (i64, i64)> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT agent_id, started_at, until_at FROM bot_thinking WHERE hangout_id = ?",
+            )?;
+            let mapped = stmt.query_map([hangout_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get(1)?, row.get(2)?))
+            })?;
+            for row in mapped {
+                let (agent_id, started_at, until_at) = row?;
+                rows.insert(agent_id, (started_at, until_at));
+            }
+        }
+        let mut mentions: HashMap<String, i64> = HashMap::new();
+        {
+            let mut stmt = conn.prepare(
+                "SELECT agent_id, MAX(created_at) FROM mentions
+                 WHERE hangout_id = ? AND read_at IS NULL AND created_at > ?
+                 GROUP BY agent_id",
+            )?;
+            let mapped = stmt.query_map(params![hangout_id, now - window], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?;
+            for row in mapped {
+                let (agent_id, at) = row?;
+                mentions.insert(agent_id, at);
+            }
+        }
+        let mut out = HashMap::new();
+        let mut seen = HashSet::new();
+        for (agent_id, (started_at, until_at)) in &rows {
+            seen.insert(agent_id.clone());
+            if *until_at > now {
+                out.insert(agent_id.clone(), Thinking { phase: "thinking", until: *until_at });
+                continue;
+            }
+            if let Some(at) = mentions.get(agent_id) {
+                if *at > *started_at {
+                    out.insert(
+                        agent_id.clone(),
+                        Thinking { phase: "waiting", until: *at + window },
+                    );
+                }
+            }
+        }
+        for (agent_id, at) in mentions {
+            if seen.contains(&agent_id) {
+                continue;
+            }
+            out.insert(agent_id, Thinking { phase: "waiting", until: at + window });
+        }
+        Ok(out)
     }
 
     /// Moves a walk-in's times, which is how a test makes one run out. False if there's none.
@@ -7744,7 +8116,7 @@ fn q_building_counts(
         "SELECT COALESCE(SUM(player_id = ?2 AND kind = 'house'), 0),
                 COALESCE(SUM(player_id = ?2 AND kind NOT IN ('house', 'square')), 0),
                 COUNT(*)
-         FROM world_places WHERE world_id = ?1",
+         FROM world_every_place WHERE world_id = ?1",
         params![world_id, player_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -7763,7 +8135,7 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
         None => {
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places WHERE world_id = ?1",
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place WHERE world_id = ?1",
             )?;
             let mut rows = stmt.query([world_id])?;
             while let Some(row) = rows.next()? {
@@ -7771,13 +8143,15 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
                     tiles.insert(pos, tile);
                 }
             }
+            crate::world::spread_places(&mut tiles);
         }
         Some([x0, y0, x1, y1]) => {
+            // W91: a big place stored just up or left of the box can reach into it.
             let mut stmt = conn.prepare_cached(
                 "SELECT x, y, kind, level, player_id FROM world_tiles
                  WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5
-                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
-                 WHERE world_id = ?1 AND x BETWEEN ?2 AND ?3 AND y BETWEEN ?4 AND ?5",
+                 UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place
+                 WHERE world_id = ?1 AND x BETWEEN ?2 - 1 AND ?3 AND y BETWEEN ?4 - 1 AND ?5",
             )?;
             let mut rows = stmt.query(params![world_id, x0, x1, y0, y1])?;
             while let Some(row) = rows.next()? {
@@ -7785,6 +8159,10 @@ fn q_tiles(conn: &Connection, world_id: &str, region: Option<[i64; 4]>) -> rusql
                     tiles.insert(pos, tile);
                 }
             }
+            crate::world::spread_places(&mut tiles);
+            tiles.retain(|&(x, y), _| {
+                (x0..=x1).contains(&i64::from(x)) && (y0..=y1).contains(&i64::from(y))
+            });
         }
     }
     Ok(tiles)
@@ -7821,8 +8199,43 @@ fn q_write_changes(
     )?;
     let mut remove_square =
         conn.prepare_cached("DELETE FROM world_squares WHERE world_id = ?1 AND x = ?2 AND y = ?3")?;
+    // W90: the newer places, in their own table.
+    let mut set_more = conn.prepare_cached(
+        "INSERT INTO world_more_places (world_id, x, y, kind, player_id, built_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    let mut remove_more = conn.prepare_cached(
+        "DELETE FROM world_more_places WHERE world_id = ?1 AND x = ?2 AND y = ?3",
+    )?;
+    // W91: taking any tile of a big place takes the place, which is stored on its first tile.
+    let remove_big = |x: u16, y: u16| -> rusqlite::Result<()> {
+        for (dx, dy) in [(1u16, 0u16), (0, 1), (1, 1)] {
+            let (Some(ax), Some(ay)) = (x.checked_sub(dx), y.checked_sub(dy)) else { continue };
+            conn.execute(
+                "DELETE FROM world_squares WHERE world_id = ?1 AND x = ?2 AND y = ?3",
+                params![world_id, ax, ay],
+            )?;
+            conn.execute(
+                "DELETE FROM world_more_places WHERE world_id = ?1 AND x = ?2 AND y = ?3
+                   AND kind = 'green'",
+                params![world_id, ax, ay],
+            )?;
+        }
+        Ok(())
+    };
     for change in changes {
         match change {
+            Change::Set((x, y), tile) if crate::world::NEWER_PLACES.contains(&tile.kind) => {
+                remove.execute(params![world_id, x, y])?;
+                set_more.execute(params![
+                    world_id,
+                    x,
+                    y,
+                    tile.kind.as_str(),
+                    tile.player.map(|player| player as i64),
+                    now
+                ])?;
+            }
             Change::Set((x, y), tile) if tile.kind == Kind::Square => {
                 remove.execute(params![world_id, x, y])?;
                 set_square.execute(params![
@@ -7850,6 +8263,8 @@ fn q_write_changes(
                 if tile.kind == Kind::Cleared {
                     remove_building.execute(params![world_id, x, y])?;
                     remove_square.execute(params![world_id, x, y])?;
+                    remove_more.execute(params![world_id, x, y])?;
+                    remove_big(*x, *y)?;
                 }
                 set.execute(params![
                     world_id,
@@ -7865,6 +8280,8 @@ fn q_write_changes(
                 remove.execute(params![world_id, x, y])?;
                 remove_building.execute(params![world_id, x, y])?;
                 remove_square.execute(params![world_id, x, y])?;
+                remove_more.execute(params![world_id, x, y])?;
+                remove_big(*x, *y)?;
             }
         }
     }
@@ -9079,7 +9496,7 @@ impl Db {
                     (SELECT s.name FROM space_plots d JOIN spaces s ON s.id = d.space_id
                      WHERE d.world_id = b.world_id AND d.x = b.x AND d.y = b.y
                        AND s.owner_id = pl.person_id AND (b.kind = 'house') = (s.kind = 'house'))
-             FROM world_places b
+             FROM world_every_place b
              JOIN players pl ON pl.id = b.player_id
              JOIN people pe ON pe.id = pl.person_id
              WHERE b.world_id = ?1
@@ -9093,6 +9510,35 @@ impl Db {
 
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: only W71 says whose a place is, by name.
+    /// L22: a project's site, where its studio will go once a road reaches it. One a project.
+    pub fn set_project_site(
+        &self,
+        space_id: &str,
+        x: i64,
+        y: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO project_sites (space_id, x, y, created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (space_id) DO UPDATE SET x = excluded.x, y = excluded.y, created_at = excluded.created_at",
+            params![space_id, x, y, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn project_site(&self, space_id: &str) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row("SELECT x, y FROM project_sites WHERE space_id = ?", [space_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .optional()
+    }
+
+    pub fn clear_project_site(&self, space_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM project_sites WHERE space_id = ?", [space_id])?;
+        Ok(())
+    }
+
     /// L18: the player a bot plays The Commons with, if it has one.
     pub fn player_of_agent(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
         self.conn()
@@ -9121,6 +9567,22 @@ impl Db {
             .optional()
     }
 
+    /// W91: the tile a place is stored on, for any tile of a big one. Any other tile is itself.
+    pub fn place_anchor_at(&self, world_id: &str, x: i64, y: i64) -> rusqlite::Result<(i64, i64)> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT x, y FROM world_every_place
+                 WHERE world_id = ?1 AND kind IN ('square', 'green')
+                   AND x BETWEEN ?2 - 1 AND ?2 AND y BETWEEN ?3 - 1 AND ?3
+                 ORDER BY x DESC, y DESC LIMIT 1",
+                params![world_id, x, y],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((x, y)))
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,
@@ -9129,7 +9591,7 @@ impl Db {
     ) -> rusqlite::Result<Option<(String, Option<String>)>> {
         self.conn()
             .query_row(
-                "SELECT b.kind, p.person_id FROM world_places b
+                "SELECT b.kind, p.person_id FROM world_every_place b
                  JOIN players p ON p.id = b.player_id
                  WHERE b.world_id = ?1 AND b.x = ?2 AND b.y = ?3",
                 params![world_id, x, y],
@@ -9281,7 +9743,7 @@ impl Db {
         let conn = self.conn();
         let mut stmt = conn.prepare_cached(
             "SELECT x, y, kind, level, player_id FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT x, y, kind, 0, player_id FROM world_places
+             UNION ALL SELECT x, y, kind, 0, player_id FROM world_every_place
                        WHERE world_id = ?1 AND player_id = ?2",
         )?;
         let mut rows = stmt.query(params![world_id, player_id])?;
@@ -9512,6 +9974,9 @@ impl Db {
         )? + tx.execute(
             "DELETE FROM world_squares WHERE world_id = ? AND player_id = ?",
             params![world_id, player_id],
+        )? + tx.execute(
+            "DELETE FROM world_more_places WHERE world_id = ? AND player_id = ?",
+            params![world_id, player_id],
         )?;
         tx.execute(
             "DELETE FROM world_players WHERE world_id = ? AND player_id = ?",
@@ -9555,7 +10020,7 @@ impl Db {
             "SELECT 1 FROM world_players WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_members WHERE world_id = ?1 AND player_id = ?2
              UNION ALL SELECT 1 FROM world_tiles WHERE world_id = ?1 AND player_id = ?2
-             UNION ALL SELECT 1 FROM world_places WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
+             UNION ALL SELECT 1 FROM world_every_place WHERE world_id = ?1 AND player_id = ?2 LIMIT 1",
             params![world_id, player_id],
         )
     }

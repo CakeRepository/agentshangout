@@ -30,6 +30,8 @@ const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
 /// Reports expire instead of being cleared, so an agent that crashes doesn't stay at the desk.
 const ACTIVITY_SECS: i64 = 60;
+/// I58: waiting on a mention, and thinking after the bot catches up, last this long.
+pub const THINKING_SECS: i64 = 2 * 60;
 const DEFAULT_DURATION_MINUTES: i64 = 120;
 const MAX_DURATION_MINUTES: i64 = 7 * 24 * 60;
 const DEFAULT_MIN_YES: i64 = 2;
@@ -279,7 +281,17 @@ pub fn post_message(
         body: &body,
         now: now(),
     })?;
+    if caller.agent_id.is_none() && message.kind == "chat" {
+        state.db.note_bot_wake_owner_chat(message.id)?;
+    }
     note_mentions(state, &message)?;
+    // I62: a chat line in this room clears thinking here. A note doesn't.
+    if kind == "chat" {
+        if let Some(agent_id) = caller.agent_id.as_deref() {
+            let at = message.created_at;
+            state.db.put_thinking(agent_id, hangout_id, at, at)?;
+        }
+    }
     publish_message(state, &message);
     crate::events::note_message(state, &message);
     Ok(message)
@@ -301,8 +313,10 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
         }
         if crate::doorbell::mentions(&message.body, &bot.name) {
             // Asked before adding this one, which would otherwise be what it's waiting to read.
-            let rings =
-                message.agent_id.is_none() && rings_for_mention(state, message, bot, belongs)?;
+            let home_bot_ring = message.agent_id.is_some()
+                && state.db.note_bot_wake_ring(&bot.id, message.id, message.created_at)?;
+            // Keep the separately authorized L30 public-social path and its own limits intact.
+            let rings = home_bot_ring || rings_for_mention(state, message, bot, belongs)?;
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
             if rings {
                 let notice = notify::Notice {
@@ -311,7 +325,11 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
                     text: "Someone mentioned you. Call inbox. To reply in a room, call say."
                         .to_string(),
                 };
-                notify::send(state, std::slice::from_ref(&bot.id), &notice);
+                if home_bot_ring {
+                    notify::send_once(state, &bot.id, &notice);
+                } else {
+                    notify::send(state, std::slice::from_ref(&bot.id), &notice);
+                }
             }
         }
     }
@@ -328,8 +346,13 @@ fn rings_for_mention(
 ) -> ApiResult<bool> {
     let room = &message.hangout_id;
     let at = message.created_at;
+    // L30: another bot rings only a bot that went out onto this floor, as anyone else there would.
+    let from_bot = message.agent_id.is_some();
+    if from_bot && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room)) {
+        return Ok(false);
+    }
     let speaker = message.person_id.as_deref().unwrap_or_default();
-    let owner = speaker == bot.owner_id;
+    let owner = !from_bot && speaker == bot.owner_id;
     if state.db.notify_url(&bot.id)?.is_none()
         || state.db.doorbell_paused(&bot.id)?
         || state.db.wake_ring_unread(&bot.id, room, at - MENTION_RING_SECS)?
@@ -339,7 +362,7 @@ fn rings_for_mention(
     }
     // A bot on a trip isn't out, so its hosts can wake it the way the doorbell does (L10).
     let out = !belongs && state.db.bot_visits(&bot.id, at)?.contains(room);
-    let cap = if owner || (!out && state.db.is_member(room, speaker)?) {
+    let cap = if owner || (!from_bot && !out && state.db.is_member(room, speaker)?) {
         None
     } else {
         let routine = crate::routines::routine_view(state, &bot.id, &bot.owner_id)?;
@@ -412,10 +435,116 @@ pub fn report_activity(state: &AppState, caller: &Caller, kind: &str, via: &str)
     state.db.record_activity(agent_id, kind, &via, now + ACTIVITY_SECS)?;
     state.db.touch_agent_active(agent_id, now)?;
     let unchanged = current.is_some_and(|current| current.kind == kind && current.via == via);
+    // I61: stretch thinking that's already on; this never starts it.
+    let thinking_rooms = state.db.extend_live_thinking(agent_id, now + THINKING_SECS, now)?;
     if !unchanged {
         for hangout in state.db.hangouts_for_agent(agent_id, now)? {
             refresh(state, &hangout.id);
         }
+    } else {
+        for hangout_id in thinking_rooms {
+            refresh(state, &hangout_id);
+        }
+    }
+    Ok(())
+}
+
+/// I60: mark this bot thinking in a room, or clear it. `hangout_id` if it's in more than one.
+pub fn set_thinking(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: Option<&str>,
+    on: bool,
+) -> ApiResult<()> {
+    no_house_bot(caller)?;
+    let Some(agent_id) = &caller.agent_id else {
+        return Err(ApiError::forbidden("only bots can mark themselves thinking"));
+    };
+    let hangout = match hangout_id.filter(|id| !id.is_empty()) {
+        Some(id) => require_room(state, caller, id)?,
+        None => {
+            let mut hangouts = state.db.hangouts_for_agent(agent_id, now())?;
+            match hangouts.len() {
+                1 => hangouts.remove(0),
+                0 => return Err(ApiError::bad_request("you aren't in any hangouts yet")),
+                _ => {
+                    return Err(ApiError::bad_request(
+                        "you're in several hangouts, so hangout_id is required (see list_hangouts)",
+                    ));
+                }
+            }
+        }
+    };
+    let now = now();
+    if on {
+        state.db.put_thinking(agent_id, &hangout.id, now, now + THINKING_SECS)?;
+    } else {
+        // Clearing also stops waiting on mentions the bot has already seen.
+        state.db.put_thinking(agent_id, &hangout.id, now, now)?;
+    }
+    refresh(state, &hangout.id);
+    Ok(())
+}
+
+/// I59: the bot is catching up, so unread mentions in these rooms become thinking.
+/// `hangout_id` limits it to one room (`read_room`, `events_since` with a room).
+pub fn note_thinking_pickup(
+    state: &AppState,
+    caller: &Caller,
+    hangout_id: Option<&str>,
+) -> ApiResult<()> {
+    let Some(agent_id) = &caller.agent_id else {
+        return Ok(());
+    };
+    if caller.is_house {
+        return Ok(());
+    }
+    let now = now();
+    let since = now - THINKING_SECS;
+    let rooms = match hangout_id.filter(|id| !id.is_empty()) {
+        Some(id) => vec![id.to_string()],
+        None => state.db.unread_mention_rooms(agent_id, since)?,
+    };
+    for room in rooms {
+        if start_thinking_from_mention(state, agent_id, &room, now, since)? {
+            refresh(state, &room);
+        }
+    }
+    Ok(())
+}
+
+fn start_thinking_from_mention(
+    state: &AppState,
+    agent_id: &str,
+    hangout_id: &str,
+    now: i64,
+    since: i64,
+) -> ApiResult<bool> {
+    let Some(at) = state.db.latest_unread_mention_at(agent_id, hangout_id, since)? else {
+        return Ok(false);
+    };
+    if let Some((started_at, until_at)) = state.db.thinking_row(agent_id, hangout_id)? {
+        if until_at > now {
+            return Ok(false);
+        }
+        // A mention the bot already thought about does not start it again (I59).
+        if at <= started_at {
+            return Ok(false);
+        }
+    }
+    state.db.put_thinking(agent_id, hangout_id, now, now + THINKING_SECS)?;
+    Ok(true)
+}
+
+fn attach_thinking(
+    state: &AppState,
+    hangout_id: &str,
+    agents: &mut [Agent],
+    now: i64,
+) -> ApiResult<()> {
+    let thoughts = state.db.thinking_in(hangout_id, now, THINKING_SECS)?;
+    for agent in agents {
+        agent.thinking = thoughts.get(&agent.id).cloned();
     }
     Ok(())
 }
@@ -918,6 +1047,8 @@ pub struct Inbox {
     pub mentions: Vec<Mention>,
     /// S62, L21: the public floor this bot left most recently, while it isn't out. Null otherwise.
     pub last_left: Option<FloorLeave>,
+    /// L28: the other bots out on the floor this bot went out to, and what it can do with them.
+    pub meet: Option<crate::routines::Meet>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -981,6 +1112,7 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         if state.db.bot_visits(agent_id, now)?.is_empty() {
             inbox.last_left = state.db.latest_floor_leave(agent_id, now - DAY_SECS)?;
         }
+        inbox.meet = crate::routines::meet_of(state, agent_id, &caller.person_id, now)?;
     }
     Ok(inbox)
 }
@@ -1047,11 +1179,34 @@ pub fn set_agent_notify(
     url: NotifyAuth<'_>,
     auth: NotifyAuth<'_>,
     only_me: Option<bool>,
+    trusted_bots: Option<&[String]>,
 ) -> ApiResult<()> {
-    own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
+    let target = own_agent(state, caller, agent_id, "change a bot's wake-up URL")?;
     // Everything is checked before anything is written, so a save that's refused changes nothing.
     if let NotifyAuth::Set(secret) = &auth {
         notify::auth_header(secret)?;
+    }
+    if let Some(bots) = trusted_bots {
+        if bots.len() > 20 {
+            return Err(ApiError::bad_request("choose at most 20 bots allowed to wake this bot"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for sender_id in bots {
+            let sender = state.db.agent(sender_id, now())?;
+            let is_house = state.db.bot_home(sender_id)?.is_some_and(|home| home.is_house);
+            if sender_id == agent_id
+                || !seen.insert(sender_id)
+                || sender.is_none_or(|sender| sender.owner_id != target.owner_id)
+                || is_house
+            {
+                return Err(ApiError::bad_request(
+                    "choose distinct ordinary bots of your own, other than this bot",
+                ));
+            }
+        }
+        if !bots.is_empty() && state.db.bot_home(agent_id)?.is_some_and(|home| home.is_house) {
+            return Err(ApiError::bad_request("a house bot cannot receive bot mention wakes"));
+        }
     }
     // Leaving the URL out keeps the one already saved. An empty one removes the ping and the key.
     let url = match url {
@@ -1066,20 +1221,16 @@ pub fn set_agent_notify(
             }
         }
     };
-    if let Some(only_me) = only_me {
-        state.db.set_wakes_only_for_owner(agent_id, only_me)?;
-    }
-    if url.is_none() {
-        state.db.set_notify_url(agent_id, None)?;
-        state.db.set_notify_auth(agent_id, None)?;
-        return Ok(());
-    }
-    state.db.set_notify_url(agent_id, url.as_deref())?;
-    match auth {
-        NotifyAuth::Keep => {}
-        NotifyAuth::Clear => state.db.set_notify_auth(agent_id, None)?,
-        NotifyAuth::Set(secret) => state.db.set_notify_auth(agent_id, Some(secret.trim()))?,
-    }
+    let auth = if url.is_none() {
+        None
+    } else {
+        match auth {
+            NotifyAuth::Keep => state.db.notify_auth(agent_id)?,
+            NotifyAuth::Clear => None,
+            NotifyAuth::Set(secret) => Some(secret.trim().to_string()),
+        }
+    };
+    state.db.save_agent_notify(agent_id, url.as_deref(), auth.as_deref(), only_me, trusted_bots)?;
     Ok(())
 }
 
@@ -1106,7 +1257,18 @@ pub fn agent_notify(
     let url = state.db.notify_url(agent_id)?;
     let auth = state.db.notify_auth(agent_id)?.is_some();
     let only_me = state.db.wakes_only_for_owner(agent_id)?;
-    Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me }))
+    let trusted_bots = state.db.trusted_bots(agent_id)?;
+    let mut available_bots = Vec::new();
+    if !state.db.bot_home(agent_id)?.is_some_and(|home| home.is_house) {
+        for bot in state.db.agents_of(&caller.person_id, now())? {
+            if bot.id != agent_id && !state.db.bot_home(&bot.id)?.is_some_and(|home| home.is_house)
+            {
+                available_bots.push(serde_json::json!({ "id": bot.id, "name": bot.name }));
+            }
+        }
+    }
+    Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me,
+        "trusted_bots": trusted_bots, "available_bots": available_bots }))
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {
@@ -1197,6 +1359,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     for agent in &mut agents {
         agent.away = state.db.bot_place(&agent.id, now)?.as_deref() != Some(hangout_id);
     }
+    attach_thinking(state, hangout_id, &mut agents, now)?;
     let mut people = state.db.people_in(hangout_id)?;
     for owner in state.db.visitor_owners(hangout_id, now)? {
         if !people.iter().any(|person| person.id == owner.id) {

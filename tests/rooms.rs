@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use agenthangout::{app, db::Db, items, now, spaces, worlds, AppState, Config};
+use agenthangout::{app, db::Db, items, now, ops, spaces, worlds, AppState, Config};
 use futures_util::future::join_all;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
@@ -2977,7 +2977,8 @@ async fn hidden_on(server: &Server, who: &Who, room: &str) -> Value {
 #[test]
 fn a_template_is_fixed_in_the_code_and_the_room_page_can_draw_all_of_it() {
     let names: Vec<&str> = items::TEMPLATES.iter().map(|each| each.template).collect();
-    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden"]);
+    // W92: a bar and a workshop came with the places that start with them.
+    assert_eq!(names, ["hangout", "cafe", "study", "lounge", "garden", "bar", "workshop"]);
     assert!(items::template_of("<script>").is_none());
 
     let page = include_str!("../web/room.js");
@@ -3446,6 +3447,16 @@ async fn using(server: &Server, token: &str, room: &str, item: &str) -> Value {
     let snapshot = server.snapshot(token, room).await;
     let items = snapshot["items"].as_array().unwrap();
     items.iter().find(|each| each["id"] == item).unwrap()["used_by"].clone()
+}
+
+fn thought(snapshot: &Value, id: &str) -> Value {
+    snapshot["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["id"] == id)
+        .unwrap_or_else(|| panic!("no bot {id} in {snapshot}"))["thinking"]
+        .clone()
 }
 
 /// A floor with a piano, which takes 3 friends (I19), and a bot of its owner's in the room.
@@ -4321,5 +4332,313 @@ async fn bots_are_told_what_the_whiteboard_is_for_and_whose_words_it_holds() {
         "It isn't the `whiteboard` in `items`",
     ] {
         assert!(guide.contains(words), "the guide doesn't say {words}");
+    }
+}
+
+// Thinking
+
+fn phase(thought: &Value) -> &str {
+    thought["phase"].as_str().unwrap_or_else(|| panic!("no phase: {thought}"))
+}
+
+// I58, I59
+
+#[tokio::test]
+async fn a_mention_is_waiting_until_the_bot_catches_up() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let pip = server.bot(&ann, &room, "Pip").await;
+    let messages = format!("/api/hangouts/{room}/messages");
+    server.post(&ann.key, &messages, json!({ "text": "@Scout hello" })).await.ok();
+
+    let snapshot = server.snapshot(&ann.key, &room).await;
+    assert_eq!(phase(&thought(&snapshot, &scout.id)), "waiting");
+    assert_eq!(thought(&snapshot, &pip.id), Value::Null);
+    let until = thought(&snapshot, &scout.id)["until"].as_i64().unwrap();
+    assert!(until > now() && until <= now() + ops::THINKING_SECS, "{until}");
+
+    // GET /api/inbox, a snapshot and the doorbell looking do not start thinking (I59).
+    server.get(&scout.token, "/api/inbox").await.ok();
+    server.snapshot(&scout.token, &room).await;
+    server.tool(&scout.token, "list_calendar", json!({ "hangout_id": room })).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "waiting");
+
+    server.tool(&scout.token, "inbox", json!({})).await;
+    let thinking = thought(&server.snapshot(&ann.key, &room).await, &scout.id);
+    assert_eq!(phase(&thinking), "thinking");
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &pip.id), Value::Null);
+    let pip_read = server.read_room(&pip.token, &room).await;
+    let seen =
+        pip_read["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Scout").unwrap();
+    assert_eq!(seen["thinking"]["phase"], "thinking", "{pip_read}");
+}
+
+// I59
+
+#[tokio::test]
+async fn read_room_and_events_since_start_thinking() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let pip = server.bot(&ann, &room, "Pip").await;
+    let messages = format!("/api/hangouts/{room}/messages");
+
+    server.post(&ann.key, &messages, json!({ "text": "@Scout one" })).await.ok();
+    let read = server.read_room(&scout.token, &room).await;
+    let seen = read["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Scout").unwrap();
+    assert_eq!(seen["thinking"]["phase"], "thinking");
+    assert!(text(&seen["thinking"]["until"]).ends_with('Z'), "{seen}");
+    let pip_seen =
+        read["bots"].as_array().unwrap().iter().find(|bot| bot["name"] == "Pip").unwrap();
+    assert_eq!(pip_seen["thinking"], Value::Null);
+
+    server.post(&ann.key, &messages, json!({ "text": "@Pip two" })).await.ok();
+    server.tool(&pip.token, "events_since", json!({})).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &pip.id)), "thinking");
+
+    let other = server.bot(&ann, &room, "Dot").await;
+    server.post(&ann.key, &messages, json!({ "text": "@Dot three" })).await.ok();
+    server.get(&other.token, "/api/events").await.ok();
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &other.id)), "thinking");
+}
+
+// I59, I62
+
+#[tokio::test]
+async fn a_mention_already_thought_about_does_not_start_thinking_again() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server
+        .post(
+            &ann.key,
+            &format!("/api/hangouts/{room}/messages"),
+            json!({ "text": "@Scout hello" }),
+        )
+        .await
+        .ok();
+    server.tool(&scout.token, "inbox", json!({})).await;
+    let (started, _) = server.state.db.thinking_row(&scout.id, &room).unwrap().unwrap();
+    server.state.db.put_thinking(&scout.id, &room, started, now() - 1).unwrap();
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+
+    server.tool(&scout.token, "inbox", json!({})).await;
+    server.get(&scout.token, "/api/events").await.ok();
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+
+    // Mentions are timestamped to the second, so a new one has to land later (I59).
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    server
+        .post(
+            &ann.key,
+            &format!("/api/hangouts/{room}/messages"),
+            json!({ "text": "@Scout again" }),
+        )
+        .await
+        .ok();
+    server.tool(&scout.token, "inbox", json!({})).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+}
+
+// I60
+
+#[tokio::test]
+async fn set_thinking_marks_a_bot_without_a_mention() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let mut stream = server.stream(&ann.key, &room).await;
+
+    let done = server.tool(&scout.token, "set_thinking", json!({})).await;
+    assert!(done["isError"].is_null(), "{done}");
+    heard_refresh(&mut stream).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+
+    server.tool(&scout.token, "set_thinking", json!({ "on": false })).await;
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+
+    server.post(&scout.token, "/api/thinking", json!({})).await.ok();
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+    server.post(&scout.token, "/api/thinking", json!({ "on": false })).await.ok();
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+}
+
+// I60
+
+#[tokio::test]
+async fn only_a_bot_sets_thinking_and_it_is_not_a_write() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.post(&ann.key, "/api/thinking", json!({})).await.refused(StatusCode::FORBIDDEN);
+    for _ in 0..ops::MAX_AGENT_WRITES_PER_MINUTE {
+        server.tool(&scout.token, "set_thinking", json!({})).await;
+    }
+    server.tool(&scout.token, "set_thinking", json!({})).await;
+    server
+        .post(&scout.token, &format!("/api/hangouts/{room}/messages"), json!({ "text": "still" }))
+        .await
+        .ok();
+}
+
+// I60, I17
+
+#[tokio::test]
+async fn a_quiet_sign_does_not_stop_thinking() {
+    let quiet = QuietRoom::new().await;
+    let QuietRoom { server, room, ann, scout, .. } = &quiet;
+    server.tool(&scout.token, "set_thinking", json!({ "hangout_id": room })).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, room).await, &scout.id)), "thinking");
+}
+
+// I60, I5, T2
+
+#[tokio::test]
+async fn thinking_costs_no_moves_and_reaches_no_world() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    worlds::ensure_commons(&server.state).unwrap();
+    let before = server.get(&ann.key, "/api/worlds/commons/me").await.ok();
+    let world_before = server.get("", "/api/worlds/commons").await.ok()["tiles"].clone();
+    server.tool(&scout.token, "set_thinking", json!({})).await;
+    let after = server.get(&ann.key, "/api/worlds/commons/me").await.ok();
+    assert_eq!(after["moves_left"], before["moves_left"]);
+    assert_eq!(after["your_town"], before["your_town"]);
+    assert_eq!(server.get("", "/api/worlds/commons").await.ok()["tiles"], world_before);
+}
+
+// I61
+
+#[tokio::test]
+async fn report_activity_extends_thinking_and_does_not_start_it() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server
+        .post(&scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
+        .await
+        .ok();
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+
+    server.tool(&scout.token, "set_thinking", json!({})).await;
+    let (started, _) = server.state.db.thinking_row(&scout.id, &room).unwrap().unwrap();
+    server.state.db.put_thinking(&scout.id, &room, started, now() + 5).unwrap();
+    server
+        .post(&scout.token, "/api/activity", json!({ "kind": "computer", "via": "FlowRMM" }))
+        .await
+        .ok();
+    let until =
+        thought(&server.snapshot(&ann.key, &room).await, &scout.id)["until"].as_i64().unwrap();
+    assert!(until > now() + 5, "{until}");
+}
+
+// I62
+
+#[tokio::test]
+async fn saying_in_the_room_clears_thinking_and_a_note_does_not() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    server.tool(&scout.token, "set_thinking", json!({})).await;
+    server
+        .post(&scout.token, &format!("/api/hangouts/{room}/notes"), json!({ "text": "a fact" }))
+        .await
+        .ok();
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+    server
+        .post(&scout.token, &format!("/api/hangouts/{room}/messages"), json!({ "text": "hello" }))
+        .await
+        .ok();
+    assert_eq!(thought(&server.snapshot(&ann.key, &room).await, &scout.id), Value::Null);
+}
+
+// I62, I63
+
+#[tokio::test]
+async fn thinking_stays_in_its_room() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let upstairs = two_floors(&server, &ann, &room, &scout).await;
+    server
+        .post(
+            &ann.key,
+            &format!("/api/hangouts/{room}/messages"),
+            json!({ "text": "@Scout hello" }),
+        )
+        .await
+        .ok();
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "waiting");
+    assert_eq!(thought(&server.snapshot(&ann.key, &upstairs).await, &scout.id), Value::Null);
+
+    server.tool(&scout.token, "inbox", json!({})).await;
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+    assert_eq!(thought(&server.snapshot(&ann.key, &upstairs).await, &scout.id), Value::Null);
+
+    server
+        .post(
+            &scout.token,
+            &format!("/api/hangouts/{upstairs}/messages"),
+            json!({ "text": "up here" }),
+        )
+        .await
+        .ok();
+    assert_eq!(phase(&thought(&server.snapshot(&ann.key, &room).await, &scout.id)), "thinking");
+
+    let inbox = server.tool(&scout.token, "inbox", json!({})).await;
+    let http_inbox = server.get(&scout.token, "/api/inbox").await.ok();
+    let me = server.get(&ann.key, "/api/me").await.ok();
+    worlds::ensure_commons(&server.state).unwrap();
+    let map = server.get("", "/api/worlds/commons").await.ok();
+    for (what, seen) in
+        [("mcp inbox", inbox), ("http inbox", http_inbox), ("their page", me), ("the map", map)]
+    {
+        assert!(!seen.to_string().contains("\"thinking\""), "{what}: {seen}");
+    }
+}
+
+// I60: the house bot still has its three tools and nothing else.
+
+#[tokio::test]
+async fn a_house_bot_cannot_set_thinking() {
+    let server = Server::start().await;
+    let made = server
+        .post("", "/api/cities", json!({ "name": "Elm", "your_name": "Ann", "create_code": CODE }))
+        .await
+        .ok();
+    let ann = who(&made);
+    let city = text(&made["city"]["id"]);
+    let house = server
+        .post(&ann.key, &format!("/api/cities/{city}/houses"), json!({ "name": "Ann's" }))
+        .await
+        .ok();
+    let house_id = text(&house["house"]["id"]);
+    let casa = text(
+        &server
+            .post(&ann.key, &format!("/api/houses/{house_id}/house-bot"), json!({ "name": "Casa" }))
+            .await
+            .ok()["token"],
+    );
+    assert_eq!(server.tool(&casa, "set_thinking", json!({})).await["isError"], true);
+    server.post(&casa, "/api/thinking", json!({})).await.refused(StatusCode::FORBIDDEN);
+}
+
+// I64
+
+#[test]
+fn the_room_page_draws_a_thinking_bubble() {
+    let css = include_str!("../web/style.css");
+    let room = include_str!("../web/room.js");
+    let app = include_str!("../web/app.js");
+    for here in [".think-bubble", "@keyframes think-dot"] {
+        assert!(css.contains(here), "style.css has lost {here}");
+    }
+    for here in ["think-bubble", "syncThink", "liveThinking"] {
+        assert!(room.contains(here), "web/room.js has lost {here}");
+    }
+    for here in ["Heard a mention", "Thinking", "liveThinking"] {
+        assert!(app.contains(here), "web/app.js has lost {here}");
     }
 }

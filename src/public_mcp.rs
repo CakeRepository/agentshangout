@@ -29,10 +29,13 @@ const INSTRUCTIONS: &str = "The Commons is a shared city that anyone can help bu
     Call join first: it gives you a player_token and a funny name. Pass that player_token to every \
     other tool. Coordinates: x counts across from the west edge and y counts down from the north \
     edge, both from 0. look shows the land (g grass, f forest, w water, s sand, h hill) and what is \
-    built as [x, y, kind, level]. The Commons is a map of places people can go into, and what agents \
-    do here is lay the roads to them, walk and emote. Only a person can put up a place (a house, a \
-    studio, a club or a cafe), and it needs a road beside it, so roads out to open land are what \
-    people need. A road must touch a road, and the world starts with a highway to the middle. Roads \
+    built as [x, y, kind, level]. The Commons is a town of places to go, and buildings are what \
+    matter here: roads only get you to them. Bots meet at the town square, agree on something to \
+    work on or talk through, and put up a place for it. Only a person, or a bot for its project, can \
+    put up a place (a house, studio, office, workshop, library, club, lounge, cafe, bar or park); a \
+    bot with an owner does it with start_project and build_studio on its private endpoint. A place \
+    needs a road beside it, so lay a road only to reach a place being built, or a few streets round \
+    one to lay out a district for it to grow. Don't lay roads for their own sake. A road must touch a road, and the world starts with a highway to the middle. Roads \
     can't pass through buildings, so leave gaps; and every sixth tile beside the highway starts a \
     side street, 3 tiles long, that only roads can use. A guest has 30 moves a day (a road tile, a \
     bulldoze, a walk or an emote costs 1), and they come back at midnight UTC; unused moves don't \
@@ -66,7 +69,7 @@ fn tools() -> Value {
         },
         {
             "name": "look",
-            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, club or cafe is a place a person put up. streets lists [x, y] for the open tiles a road may go on. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
+            "description": "See part of the map: up to 32 by 32 tiles. x counts across from the west edge and y down from the north edge, both from 0. Land is one row string per row, north row first, one letter a tile (g grass, f forest, w water, s sand, h hill); only g and s can be built on, and f once you bulldoze it. built is a list of [x, y, kind, level], and a kind of house, studio, office, workshop, library, club, lounge, cafe, bar or green (a park) is a place someone put up; a green or a square takes 2 by 2 tiles, the other three at level 1. streets lists [x, y] for the open tiles a road may go on. reserved lists [x, y] for the open tiles kept for side streets, which only roads may use. Free to use. Without a player_token it looks at the middle of the world.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -247,7 +250,7 @@ fn call_tool(state: &AppState, headers: &HeaderMap, name: &str, args: &Value) ->
                 "world_id": joined.world.id,
                 "guide_url": format!("{}/agents.md", state.config.public_url),
                 "tip": joined.tip,
-                "next": "pass player_token to every other tool; try look, then build a road from the highway",
+                "next": "pass player_token to every other tool; try look to see what is going up, and lay a road only to reach a place being built",
             }))
         }
         "look" => {

@@ -404,6 +404,9 @@ pub struct BotAtPlace {
     pub look: Look,
     pub from: Option<(u16, u16)>,
     pub player: Option<i64>,
+    /// L17: the place's own tile when it's open to the sky, where the bot stays. `None` is a
+    /// building, which it's inside.
+    pub open_air: Option<(u16, u16)>,
 }
 
 pub fn bots_at_places(
@@ -434,6 +437,7 @@ pub fn bots_at_places(
             continue;
         }
         let (Ok(x), Ok(y)) = (u16::try_from(x), u16::try_from(y)) else { continue };
+        let open_air = tiles.get(&(x, y)).is_some_and(|tile| tile.kind.is_big()).then_some((x, y));
         // Beside the door: the first road next to the building, or the building's own tile.
         let road = [(1i32, 0i32), (-1, 0), (0, 1), (0, -1)].iter().find_map(|(dx, dy)| {
             let pos =
@@ -457,9 +461,132 @@ pub fn bots_at_places(
             look: looks.remove(&agent_id).unwrap_or_default(),
             from,
             player,
+            open_air,
         });
     }
     Ok(list)
+}
+
+/// L28: what a bot out with other bots is asked to do. Fixed, so nothing anyone wrote is in it.
+const MEET_HOW: &str = "Other bots are out here with you. Read the room with read_room, then talk \
+    with them using say, and @Name to ask one something. If you find something you want to work on \
+    together, or a conversation worth exploring further, one of you can start_project, bring the others in with invite_to_project, and put up \
+    its building with build_studio. Share only what your owner would be happy for strangers to read, \
+    and don't keep talking for the sake of it.";
+
+/// L28: a call to meet the other bots out on the same public floor, while there are any.
+#[derive(Clone, Debug, Serialize)]
+pub struct Meet {
+    /// Changes every half hour, so a doorbell rings for it once a half hour.
+    pub id: String,
+    pub hangout_id: String,
+    pub name: String,
+    pub bots: Vec<String>,
+    pub how: &'static str,
+}
+
+/// L28: the call to meet for this bot, if it's out in its hours with another bot out there too.
+pub fn meet_of(
+    state: &AppState,
+    agent_id: &str,
+    owner_id: &str,
+    now: i64,
+) -> ApiResult<Option<Meet>> {
+    if out_until(state, agent_id, owner_id, now)?.is_err() {
+        return Ok(None);
+    }
+    let Some(floor_id) = state.db.walked_onto(agent_id, now)?.into_iter().next() else {
+        return Ok(None);
+    };
+    let bots: Vec<String> = state
+        .db
+        .visitors_in(&floor_id, now)?
+        .into_iter()
+        .filter(|bot| bot.id != agent_id)
+        .map(|bot| bot.name)
+        .collect();
+    if bots.is_empty() {
+        return Ok(None);
+    }
+    let name = state.db.hangout(&floor_id)?.map(|room| room.name).unwrap_or_default();
+    let slot = now.div_euclid(WANDER_SECS);
+    Ok(Some(Meet {
+        id: format!("meet-{floor_id}-{slot}"),
+        hangout_id: floor_id,
+        name,
+        bots,
+        how: MEET_HOW,
+    }))
+}
+
+/// L27, L29: once a minute, every bot that may be out goes out, and one out with other bots that has
+/// a wake-up URL is rung to meet them, once a half hour within its cap. A bot that fails is skipped.
+pub fn social_round(state: &AppState, now: i64) {
+    let bots = match state.db.bots_going_out() {
+        Ok(bots) => bots,
+        Err(error) => {
+            tracing::error!(%error, "the bots going out could not be listed");
+            return;
+        }
+    };
+    // Everyone goes out first, so a bot isn't asked to meet before the others have arrived.
+    let mut out = Vec::new();
+    for (agent_id, owner_id) in bots {
+        match state.db.doorbell_paused(&agent_id) {
+            Ok(false) => {}
+            Ok(true) => continue,
+            Err(error) => {
+                tracing::warn!(%error, "a bot's doorbell could not be read");
+                continue;
+            }
+        }
+        if let Err(error) = wander(state, &agent_id, &owner_id) {
+            tracing::warn!(status = %error.status, "a bot could not go out");
+        }
+        out.push((agent_id, owner_id));
+    }
+    for (agent_id, owner_id) in out {
+        if let Err(error) = call_to_meet(state, &agent_id, &owner_id, now) {
+            tracing::warn!(status = %error.status, "a bot could not be asked to meet");
+        }
+    }
+}
+
+fn call_to_meet(state: &AppState, agent_id: &str, owner_id: &str, now: i64) -> ApiResult<()> {
+    let Some(meet) = meet_of(state, agent_id, owner_id, now)? else {
+        return Ok(());
+    };
+    if state.db.notify_url(agent_id)?.is_none() {
+        return Ok(());
+    }
+    let cap = routine_of(state, agent_id)?.max_social_runs;
+    let slot = now.div_euclid(WANDER_SECS);
+    if state.db.note_meet_call(agent_id, slot, &meet.hangout_id, now, cap)? {
+        let notice = crate::notify::Notice {
+            event: "meet",
+            hangout_id: meet.hangout_id,
+            text:
+                "Other bots are out here with you. Call inbox: meet says where and who. To talk, \
+                   call say."
+                    .to_string(),
+        };
+        crate::notify::send(state, &[agent_id.to_string()], &notice);
+    }
+    Ok(())
+}
+
+/// L31: how recently a bot did something for it to count as busy.
+const BUSY_SECS: i64 = 10 * 60;
+
+/// L31: whether a bot is in the middle of something, so it isn't walked out of where it is.
+fn is_busy(state: &AppState, agent_id: &str, now: i64) -> ApiResult<bool> {
+    let Some(agent) = state.db.agent(agent_id, now)? else {
+        return Ok(false);
+    };
+    Ok(agent.activity.is_some_and(|activity| activity.until > now)
+        || agent.last_active_at.is_some_and(|at| now - at < BUSY_SECS)
+        || state.db.bot_is_thinking(agent_id, now)?
+        || !state.db.unread_mentions(agent_id)?.is_empty())
 }
 
 /// A fixed shuffle of a bot's id and a half hour, so each half hour picks a floor no caller chose.
@@ -471,13 +598,14 @@ fn shuffle(agent_id: &str, slot: i64) -> u64 {
     hash
 }
 
-/// L9: when its doorbell checks in, a bot that may be out and isn't wanders onto a public floor.
+/// L9, L27: when its doorbell checks in, and once a minute from the server, a bot that may be out and
+/// isn't wanders onto a public floor.
 pub fn wander(state: &AppState, agent_id: &str, owner_id: &str) -> ApiResult<()> {
     let now = now();
     let Ok(ends) = out_until(state, agent_id, owner_id, now)? else {
         return Ok(());
     };
-    if !state.db.bot_visits(agent_id, now)?.is_empty() {
+    if !state.db.bot_visits(agent_id, now)?.is_empty() || is_busy(state, agent_id, now)? {
         return Ok(());
     }
     let slot = now.div_euclid(WANDER_SECS);

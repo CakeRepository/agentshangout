@@ -606,6 +606,7 @@ async fn a_guest_token_is_an_unknown_token_on_every_route_but_a_worlds() {
         (Method::GET, "/api/houses/abc"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/status"),
+        (Method::POST, "/api/thinking"),
         (Method::PUT, "/api/notify"),
         (Method::GET, "/api/passkeys"),
         (Method::POST, "/api/key/rotate"),
@@ -2813,12 +2814,13 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13),
-    // use_item (I32), go_to_room (S57), set_whiteboard (I49) and events_since (E16).
+    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13) and lay_road (L23),
+    // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60).
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
-            && private_names.len() == 40,
+            && private_names.contains(&"set_thinking")
+            && private_names.len() == 42,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.
@@ -3558,7 +3560,8 @@ async fn an_agent_plays_through_the_public_endpoint_from_join_to_a_road() {
     let built = look["built"].as_array().unwrap();
     let kinds: HashSet<&str> = built.iter().map(|tile| tile[2].as_str().unwrap()).collect();
     assert_eq!(kinds, HashSet::from(["road"]), "the highway is all there is, and no founding town");
-    assert!(joined["tip"].as_str().unwrap().contains("No road yet"), "{joined}");
+    // W47: a road only to reach a place.
+    assert!(joined["tip"].as_str().unwrap().contains("Roads only lead to places"), "{joined}");
     assert!(look["players"].as_array().unwrap().iter().any(|player| player[1] == name.as_str()));
 
     // It finds a place beside the highway from what it was told, and builds.
@@ -4793,7 +4796,7 @@ async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about
     for reply in [&joined, &over_http] {
         let tip = reply["tip"].as_str().unwrap();
         assert!(world::TIPS.contains(&tip), "{tip}");
-        assert!(tip.starts_with("No road yet"), "{tip}");
+        assert!(tip.starts_with("Roads only lead to places"), "{tip}");
     }
     let token = joined["player_token"].as_str().unwrap().to_string();
     let how = server.tool("how_am_i_doing", json!({ "player_token": token })).await;
@@ -4808,7 +4811,8 @@ async fn join_and_how_am_i_doing_end_with_a_tip_that_is_one_fixed_sentence_about
             .unwrap()
             .to_string()
     };
-    assert!(tip_now().await.starts_with("Roads give people somewhere to build"));
+    // W47: and after one, never a nudge for more road for its own sake.
+    assert!(tip_now().await.starts_with("Don't lay roads for their own sake"));
     // A person is told about their house, and then that more places come with time.
     let ann = server.person("Ann").await;
     assert!(server.me(&ann.key, COMMONS).await["tip"]
@@ -4847,7 +4851,8 @@ async fn the_tool_descriptions_tell_a_fresh_agent_what_it_can_build_and_how_coor
         words.push_str(tool["description"].as_str().unwrap());
     }
     for needle in [
-        "Only a person can put up a place",
+        // W90, L32: a bot puts up its project's place too.
+        "Only a person, or a bot for its project, can put up",
         "30 moves a day",
         "midnight UTC",
         "leave gaps",
@@ -4882,7 +4887,8 @@ async fn the_guides_tell_a_fresh_agent_what_it_can_build_and_what_comes_with_tim
     assert!(commons.lines().count() <= 120, "{} lines", commons.lines().count());
     for needle in [
         "a studio after a day",
-        "cafe is shared",
+        // W92: every place but a house is open unless its owner closes it.
+        "open unless its owner closes",
         "30 moves",
         "midnight UTC",
         "Leave gaps",

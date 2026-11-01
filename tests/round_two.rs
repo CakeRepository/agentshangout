@@ -2347,6 +2347,7 @@ async fn a_broken_request_to_any_route_gets_no_server_error_and_no_path_no_sql_a
         (Method::PUT, "/api/notify"),
         (Method::POST, "/api/status"),
         (Method::POST, "/api/activity"),
+        (Method::POST, "/api/thinking"),
         (Method::POST, "/api/trips"),
         (Method::POST, "/api/worlds"),
         (Method::POST, "/api/worlds/commons/act"),
@@ -4290,7 +4291,8 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     );
     assert_eq!(fresh["your_town"], json!({ "roads": 0, "places": 0 }));
     assert_eq!(fresh["goal"], world::GOALS[4]);
-    assert!(fresh["tip"].as_str().unwrap().starts_with("No road yet"), "{fresh}");
+    // W47: a road only to reach a place.
+    assert!(fresh["tip"].as_str().unwrap().starts_with("Roads only lead to places"), "{fresh}");
 
     // Ann has a road, and tiles of the old city that count for nothing. Bob has twelve places.
     lay(
@@ -4327,7 +4329,8 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let mine = server.me(&ann.token, COMMONS).await;
     let wanted = json!({ "roads": 1, "places": 0 });
     assert_eq!(mine["your_town"], wanted, "{mine}");
-    assert_eq!(mine["goal"], world::GOALS[5], "one road and the next rung is 10 tiles");
+    // W49: one road and the rest is the open goal: road length is never a goal.
+    assert_eq!(mine["goal"], world::GOALS[5], "one road and then the open goal");
     assert_eq!(mine["tip"], world::TIPS[4], "{mine}");
     let his = server.me(&bob.token, COMMONS).await;
     assert_eq!(his["your_town"], json!({ "roads": 0, "places": 12 }));
@@ -4371,7 +4374,14 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     );
     assert_eq!(start["goal"], world::GOALS[0]);
     assert_eq!(start["tip"], world::TIPS[1], "{start}");
-    assert_eq!(sorted_keys(&start["places"]), ["cafe", "club", "house", "studio"]);
+    // W90: the newer kinds of place are listed with the first four.
+    assert_eq!(
+        sorted_keys(&start["places"]),
+        [
+            "bar", "cafe", "club", "green", "house", "library", "lounge", "office", "studio",
+            "workshop"
+        ]
+    );
     lay(&server, dee_id, 114, &[(Kind::House, 0)]);
     let one = server.me(&dee.key, COMMONS).await;
     assert_eq!(

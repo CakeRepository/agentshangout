@@ -347,6 +347,36 @@ input::placeholder { color: #8b7a5e; }
   transform: translateX(-50%) rotate(45deg);
 }
 
+.think-bubble {
+  position: absolute;
+  bottom: 5.4cqw;
+  display: flex;
+  align-items: center;
+  gap: .22em;
+  padding: .32em .5em;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .3);
+  z-index: 2;
+}
+.think-bubble[hidden] { display: none; }
+.think-bubble span {
+  width: .34em;
+  height: .34em;
+  border-radius: 50%;
+  background: #5a657a;
+  animation: think-dot 1.2s infinite ease-in-out both;
+}
+.think-bubble span:nth-child(2) { animation-delay: .15s; }
+.think-bubble span:nth-child(3) { animation-delay: .3s; }
+.think-bubble.waiting { opacity: .72; padding: .26em .4em; }
+.think-bubble.waiting span:nth-child(n+2) { display: none; }
+.think-bubble.waiting span { animation: none; opacity: .65; }
+@keyframes think-dot {
+  0%, 80%, 100% { transform: scale(.55); opacity: .35; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
 .legend {
   display: flex;
   flex-wrap: wrap;

@@ -422,9 +422,9 @@ comes from the person, the first time they go through their own door, on a route
   and a world's view shows a building as a tile and nothing else (W59).
 - **S37.** A person can try 30 doors a minute, so nobody walks the map trying them all. It wouldn't
   tell them whose a building is, but it would tell them which ones open.
-- **S47.** A café is a shared place. When a café's door makes a new space (S34), that space's first
-  floor starts public, so anyone signed in can walk in from the moment its owner first goes through.
-  A club, a studio and a house start private. A room that comes back through S34 stays as its owner
+- **S47.** Every place but a house is a shared place (W92). When its door makes a new space (S34),
+  that space's first floor starts public, so anyone signed in can walk in from the moment its owner
+  first goes through. A house starts private. A room that comes back through S34 stays as its owner
   left it: placing a café never opens a room someone already has.
 - **S49.** On a server with a code, a room starts from the map: someone's house, or a place they put
   up (S34). Starting one anywhere else takes the code (S3), and so does a city (R49), and the page

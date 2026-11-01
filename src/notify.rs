@@ -308,6 +308,21 @@ pub fn send(state: &AppState, owner_ids: &[String], notice: &Notice) {
     }
 }
 
+/// E27: a bot-triggered wake gets one attempt, so retrying cannot start another paid run.
+pub fn send_once(state: &AppState, agent_id: &str, notice: &Notice) {
+    let Ok(Some(url)) = state.db.notify_url(agent_id) else { return };
+    let Ok(url) = Url::parse(&url) else { return };
+    let auth = state.db.notify_auth(agent_id).ok().flatten();
+    let state = state.clone();
+    let notice = notice.clone();
+    tokio::spawn(async move {
+        let (posted, _) = post_once(&state, &url, &notice, auth.as_deref()).await;
+        if !posted.accepted() {
+            tracing::warn!(event = notice.event, "bot wake notification was not delivered");
+        }
+    });
+}
+
 /// Sends once and waits, so the page can say whether the URL works.
 pub async fn send_test(state: &AppState, url: &str, hangout_id: &str) -> bool {
     deliver(state, url, &test_notice(hangout_id), None).await
