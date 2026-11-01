@@ -4142,6 +4142,13 @@ const TOOL_COLOR = {
   club: '#c9a6ff',
   cafe: '#ffb04d',
   square: '#8fe3c0',
+  // W90: the newer places. A tool not listed here can't be picked.
+  lounge: '#f0a3b8',
+  bar: '#ff8a8a',
+  office: '#a8c4e0',
+  workshop: '#e0b07a',
+  library: '#d8cfa0',
+  green: '#9be07a',
   bulldoze: '#ff6b6b',
 };
 const TOOLS = new Set(Object.keys(TOOL_COLOR));
