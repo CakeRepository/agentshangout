@@ -10,6 +10,7 @@ pub mod friends;
 pub mod households;
 pub mod ical;
 pub mod items;
+pub mod looks;
 pub mod mcp;
 pub mod notify;
 pub mod ops;

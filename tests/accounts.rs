@@ -1754,7 +1754,7 @@ async fn every_way_a_sign_in_can_fail_looks_the_same_down_to_the_header() {
     assert_eq!(server.sign_in(&mut ann.key).await.1.status, StatusCode::OK);
 
     let mut replay_source = Vec::new();
-    let mut failures: Vec<(&str, (u16, Vec<(String, String)>, String))> = Vec::new();
+    let mut failures = Vec::new();
     // Not a ceremony at all, and a body with nothing in it.
     failures.push(("no such ceremony", raw_post(&server, "/api/passkeys/login/finish", &Visitor::default(), &json!({ "ceremony_id": "nope", "credential": {} })).await));
     failures.push(("empty", raw_post(&server, "/api/passkeys/login/finish", &Visitor::default(), &json!({})).await));

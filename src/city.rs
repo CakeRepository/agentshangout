@@ -13,6 +13,7 @@ use crate::{
         NewSceneRequest, NewTrip, Pass, Person, QueueItem, Road, Scene, SceneRequest, Trip,
     },
     error::{ApiError, ApiResult},
+    looks::{self, Look},
     notify, now,
     ops::{self, DAY_SECS, MAX_ABOUT_CHARS, MAX_NAME_CHARS},
     trust, AppState,
@@ -86,6 +87,8 @@ pub struct CityView {
     pub people: Vec<Person>,
     pub houses: Vec<CityHouse>,
     pub bots: Vec<BotPlace>,
+    /// What's chosen for the bots on the map (C13). Empty for a bot.
+    pub bot_looks: BTreeMap<String, Look>,
     pub growth: Growth,
     /// What the city asks of anyone who comes by its link.
     pub rules: trust::CityRules,
@@ -396,6 +399,8 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
     let gatherings = state.db.gatherings(&city.id, now)?;
     let invite_url =
         holds_city_link(state, caller, &city)?.then(|| city_invite_url(state, &city.invite_code));
+    let bots = state.db.bots_in_city(&city.id, now)?;
+    let bot_ids: Vec<String> = bots.iter().map(|bot| bot.id.clone()).collect();
     Ok(CityView {
         you: CityYou {
             person_id: caller.person_id.clone(),
@@ -405,7 +410,8 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
                 .map(|house| house.id),
         },
         people: state.db.city_members(&city.id)?,
-        bots: state.db.bots_in_city(&city.id, now)?,
+        bot_looks: looks::on_map(state, caller, &bot_ids)?,
+        bots,
         growth: Growth {
             stage: stage(houses.len() as i64, gatherings),
             gatherings,

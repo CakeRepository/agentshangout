@@ -1487,6 +1487,11 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 
 // Views
 
+/// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
+type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str);
+/// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
+type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
+
 #[derive(Serialize)]
 struct ViewOut<'a> {
     id: &'a str,
@@ -1498,15 +1503,13 @@ struct ViewOut<'a> {
     step: u64,
     land: &'a [String],
     tiles: Vec<(u16, u16, &'static str, u8)>,
-    /// `[id, name, x, y, emote, kind]`, where `kind` is `person` or `agent` (W53).
-    players: Vec<(i64, String, u16, u16, Option<&'static str>, &'static str)>,
+    players: Vec<PlayerOut>,
     places: u32,
     roads: u32,
     stage: &'static str,
     updated_at: i64,
-    /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
     #[serde(skip_serializing_if = "Option::is_none")]
-    crawlers: Option<Vec<(&'static str, &'static str, u16, u16, i64)>>,
+    crawlers: Option<Vec<CrawlerOut>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     visitors: Option<Vec<(String, u16, u16)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1514,9 +1517,9 @@ struct ViewOut<'a> {
     /// W71: `[x, y, name]`, whose each place is.
     #[serde(skip_serializing_if = "Option::is_none")]
     owners: Option<Vec<(u16, u16, String)>>,
-    /// L17: `[name, x, y]` of the bots out at The Commons' places, by their own names.
+    /// L17: `[name, x, y, look]` of the bots out at The Commons' places, by their own names (C14).
     #[serde(skip_serializing_if = "Option::is_none")]
-    bots_out: Option<Vec<(String, u16, u16)>>,
+    bots_out: Option<Vec<(String, u16, u16, crate::looks::Look)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     disaster: Option<DisasterOut>,
 }

@@ -447,7 +447,7 @@ WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, l
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
             people: [[name, x, y]],            // The Commons only
-            bots_out: [[name, x, y]],          // The Commons only: bots at places, by name (L17)
+            bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
             owners: [[x, y, name]],            // The Commons only: whose each place is (W71)
             disaster? }                        // The Commons only, and only near the end
 Disaster { stage, kind, done?, of?, hits?: [[x, y, r]] }    // the last three only while it strikes

@@ -1,6 +1,9 @@
 //! SQLite storage. Queries are short and run on one connection, so a plain mutex is enough here.
 
-use std::sync::{Mutex, MutexGuard};
+use std::{
+    collections::BTreeMap,
+    sync::{Mutex, MutexGuard},
+};
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
@@ -558,6 +561,18 @@ CREATE TABLE IF NOT EXISTS projects (
     agent_id    TEXT REFERENCES agents(id) ON DELETE SET NULL,
     created_at  INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS person_looks (
+    person_id   TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    part        TEXT NOT NULL,
+    choice      TEXT NOT NULL,
+    PRIMARY KEY (person_id, part)
+);
+CREATE TABLE IF NOT EXISTS bot_looks (
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    part        TEXT NOT NULL,
+    choice      TEXT NOT NULL,
+    PRIMARY KEY (agent_id, part)
+);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -574,6 +589,23 @@ pub struct Person {
     pub id: String,
     pub name: String,
     pub color: String,
+}
+
+/// Whose look it is. People and bots have a table each, with one shape (C4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wearer {
+    Person,
+    Bot,
+}
+
+impl Wearer {
+    /// The table a look is in, and the column that says whose it is.
+    const fn table(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Person => ("person_looks", "person_id"),
+            Self::Bot => ("bot_looks", "agent_id"),
+        }
+    }
 }
 
 /// A passkey as the person's own list shows it. The library's data stays in `StoredPasskey`.
@@ -1195,6 +1227,10 @@ pub struct Visit {
     pub since: i64,
     pub until: i64,
 }
+
+/// L17: a bot at the door of a place, as `[agent, name, owner, x, y, out]`, where `out` says it
+/// walked onto a public floor there rather than being in a project.
+pub type BotAtPlace = (String, String, String, i64, i64, bool);
 
 /// A road between two houses, `a` sorting before `b`, and how many trips really arrived.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2968,10 +3004,8 @@ impl Db {
     }
 
     /// L17: bots with public places on, each at the door of a place whose building stands as its
-    /// space's (S33): `[agent, name, owner, x, y, out]`, where `out` says it walked onto a public floor
-    /// there rather than being in a project. Whether a project's bot is in its hours is the caller's
-    /// to work out.
-    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String, String, i64, i64, bool)>> {
+    /// space's (S33). Whether a project's bot is in its hours is the caller's to work out.
+    pub fn bots_at_places(&self, world_id: &str, now: i64) -> rusqlite::Result<Vec<BotAtPlace>> {
         // The building on a space's plot, standing as that space's door: its owner's own player put it
         // up, and a house is a house's door and anything else a third space's.
         const DOOR: &str = "JOIN space_plots d ON d.space_id = s.id AND d.world_id = ?1
@@ -6868,6 +6902,55 @@ impl Db {
         rows.collect()
     }
 
+    /// C5: one change to a look, all of it or none. `None` clears a part.
+    pub fn change_look(
+        &self,
+        wearer: Wearer,
+        id: &str,
+        change: &[(&str, Option<&str>)],
+    ) -> rusqlite::Result<()> {
+        let (table, column) = wearer.table();
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        for (part, choice) in change {
+            match choice {
+                Some(choice) => tx.execute(
+                    &format!(
+                        "INSERT INTO {table} ({column}, part, choice) VALUES (?, ?, ?)
+                         ON CONFLICT ({column}, part) DO UPDATE SET choice = excluded.choice"
+                    ),
+                    params![id, part, choice],
+                )?,
+                None => tx.execute(
+                    &format!("DELETE FROM {table} WHERE {column} = ? AND part = ?"),
+                    params![id, part],
+                )?,
+            };
+        }
+        tx.commit()
+    }
+
+    /// C4: what's stored for each of these, by id. Anyone with nothing stored isn't in it.
+    pub fn looks(
+        &self,
+        wearer: Wearer,
+        ids: &[String],
+    ) -> rusqlite::Result<BTreeMap<String, BTreeMap<String, String>>> {
+        let (table, column) = wearer.table();
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!("SELECT part, choice FROM {table} WHERE {column} = ?"))?;
+        let mut looks = BTreeMap::new();
+        for id in ids {
+            let look = stmt
+                .query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<BTreeMap<String, String>>>()?;
+            if !look.is_empty() {
+                looks.insert(id.clone(), look);
+            }
+        }
+        Ok(looks)
+    }
+
     /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as
     /// when one is already waiting or they said no.
     #[allow(clippy::too_many_arguments)]
@@ -8487,6 +8570,27 @@ mod tests {
         let back = bot_player(&db, "a1", "p1", "second", 4);
         assert_eq!(back.id, player.id);
         assert!(db.player_by_token("second").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_look_goes_with_whoever_wore_it() {
+        let db = Db::open(":memory:").unwrap();
+        for person in ["p1", "p2"] {
+            db.create_person(person, person, &format!("key-{person}"), &format!("feed-{person}"), 0).unwrap();
+        }
+        db.create_agent("a1", "p1", "Scout", "token", 0).unwrap();
+        db.change_look(Wearer::Person, "p2", &[("hat", Some("cap"))]).unwrap();
+        db.change_look(Wearer::Bot, "a1", &[("hat", Some("crown")), ("shell", Some("teal"))]).unwrap();
+        // Set twice is still one row, and clearing one leaves the other.
+        db.change_look(Wearer::Bot, "a1", &[("hat", Some("cap"))]).unwrap();
+        db.change_look(Wearer::Bot, "a1", &[("shell", None)]).unwrap();
+        let ids = ["a1".to_string()];
+        assert_eq!(db.looks(Wearer::Bot, &ids).unwrap()["a1"], BTreeMap::from([("hat".to_string(), "cap".to_string())]));
+
+        db.conn().execute("DELETE FROM agents WHERE id = 'a1'", []).unwrap();
+        db.conn().execute("DELETE FROM people WHERE id = 'p2'", []).unwrap();
+        assert!(db.looks(Wearer::Bot, &ids).unwrap().is_empty());
+        assert!(db.looks(Wearer::Person, &["p2".to_string()]).unwrap().is_empty());
     }
 
     #[test]

@@ -149,7 +149,7 @@ impl Land {
     /// so this is the one place they become a position.
     pub fn locate(&self, x: i64, y: i64) -> Option<Pos> {
         let size = self.size as i64;
-        ((0..size).contains(&x) && (0..size).contains(&y)).then(|| (x as u16, y as u16))
+        ((0..size).contains(&x) && (0..size).contains(&y)).then_some((x as u16, y as u16))
     }
 
     pub fn centre(&self) -> Pos {

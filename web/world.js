@@ -10,7 +10,7 @@
 // cars when they go far), frogs and smoke live on top. Sprites for tiles just off screen are made in spare moments, offscreen
 // things aren't drawn, and the loop stops when the page is hidden or scrolled out of view.
 
-import { hash, skyFor } from './room.js';
+import { EYES, FABRICS, hash, skyFor } from './room.js';
 
 // ---------------------------------------------------------------------------------------------
 // Numbers
@@ -2697,17 +2697,89 @@ function botColour(name, h) {
   return COLOUR_WORDS[first] || BOT_COLORS[h % BOT_COLORS.length];
 }
 
-// How a figure looks, from its name and what it is. A person is drawn as a human, an agent as a
-// robot. `kind` is null where the map doesn't say (the private city, where everyone is a bot).
-function dress(p, name, kind) {
+// A bot's look, in the same words as a room's (docs/looks.md). Only bots on a map with their real
+// names ever come with one: a player's row has nothing to say about what anyone wears (C14). A word
+// this page doesn't know counts as one nobody chose.
+const BOT_HEADS = ['antenna', 'twin', 'wide'];
+const BOT_HATS = {
+  none: null,
+  cap: (g, cx, hy, hw, color) => {
+    rfill(g, grad(g, cx - hw / 2, 0, cx + hw / 2, 0, lite(color, 0.25), color, dark(color, 0.25)), cx - hw * 0.46, hy - 3.2, hw * 0.92, 5.6, 2.6, INK);
+    rfill(g, dark(color, 0.3), cx - hw * 0.46, hy + 1.6, hw * 0.92 + 3, 1.5, 0.7);
+  },
+  beanie: (g, cx, hy, hw, color) => {
+    ell(g, '#f4f1e8', cx, hy - 5, 1.8, 1.8);
+    rfill(g, grad(g, cx - hw / 2, 0, cx + hw / 2, 0, lite(color, 0.25), color, dark(color, 0.25)), cx - hw * 0.46, hy - 4, hw * 0.92, 6.5, 3, INK);
+    rfill(g, dark(color, 0.25), cx - hw * 0.5, hy + 0.4, hw, 2.6, 1);
+  },
+  top_hat: (g, cx, hy, hw) => {
+    rfill(g, grad(g, cx - hw / 2, 0, cx + hw / 2, 0, '#3a3a4c', '#22222e', '#14141c'), cx - hw * 0.38, hy - 8.4, hw * 0.76, 9.4, 1, INK);
+    rr(g, '#b23a48', cx - hw * 0.38, hy - 2.2, hw * 0.76, 1.6);
+    rfill(g, '#22222e', cx - hw * 0.56, hy - 0.2, hw * 1.12, 1.8, 0.8);
+  },
+  witch: (g, cx, hy, hw) => {
+    fp(g, '#2b2140', [[cx - hw * 0.4, hy + 0.4], [cx + 1, hy - 9], [cx + 4.4, hy - 11.4], [cx + 2.8, hy - 8], [cx + hw * 0.4, hy + 0.4]]);
+    rr(g, '#e8a02e', cx - hw * 0.36, hy - 1.6, hw * 0.72, 1.5);
+    ell(g, '#2b2140', cx, hy + 0.6, hw * 0.7, 1.5);
+  },
+  crown: (g, cx, hy, hw) => {
+    const w = hw * 0.4;
+    fp(g, '#f0c23a', [[cx - w, hy + 1], [cx - w - 0.6, hy - 4.4], [cx - w / 2, hy - 1.4], [cx, hy - 5.2], [cx + w / 2, hy - 1.4], [cx + w + 0.6, hy - 4.4], [cx + w, hy + 1]]);
+    rr(g, '#c8921e', cx - w, hy, w * 2, 1);
+    ell(g, '#d6453f', cx, hy - 1, 0.9, 0.9);
+  },
+  party: (g, cx, hy, hw) => {
+    fp(g, '#e96fa4', [[cx - hw * 0.34, hy + 0.8], [cx, hy - 9.4], [cx + hw * 0.34, hy + 0.8]]);
+    fp(g, '#ffd24d', [[cx - hw * 0.2, hy - 2.4], [cx + hw * 0.2, hy - 2.4], [cx + hw * 0.12, hy - 4.6], [cx - hw * 0.12, hy - 4.6]]);
+    ell(g, '#f4f1e8', cx, hy - 9.6, 1.5, 1.5);
+  },
+};
+// On the dark plate on a bot's chest. Lights are what it has with nothing chosen.
+const BOT_CHESTS = {
+  plain: (g, by, color) => {
+    ell(g, lite(color, 0.7), -1, by + 4.8, 0.9, 0.9);
+    ell(g, '#8be0ff', 1.2, by + 4.8, 0.9, 0.9);
+  },
+  heart: (g, by) => {
+    ell(g, '#ff5d7a', -0.9, by + 4.2, 1, 1);
+    ell(g, '#ff5d7a', 0.9, by + 4.2, 1, 1);
+    fp(g, '#ff5d7a', [[-1.8, by + 4.5], [1.8, by + 4.5], [0, by + 6.3]]);
+  },
+  star: (g, by) => {
+    const points = [];
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const r = i % 2 ? 0.8 : 1.9;
+      points.push([Math.cos(a) * r, by + 4.8 + Math.sin(a) * r]);
+    }
+    fp(g, '#ffd24d', points);
+  },
+  bolt: (g, by) => {
+    fp(g, '#8be0ff', [[0.6, by + 3.2], [-1.3, by + 5], [-0.1, by + 5], [-0.6, by + 6.4], [1.3, by + 4.6], [0.1, by + 4.6]]);
+  },
+};
+
+// How a figure looks, from its name and what it is, and what its owner chose if it's a bot on a map
+// that says. A person is drawn as a human, an agent as a robot. `kind` is null where the map doesn't
+// say (the private city, where everyone is a bot).
+function dress(p, name, kind, chosen = {}) {
   p.name = name;
   p.kind = kind === 'person' ? 'person' : 'agent';
   p.human = p.kind === 'person' ? visitorLook(name) : null;
-  p.color = kind ? botColour(name, p.h) : BOT_COLORS[p.h % BOT_COLORS.length];
+  p.color = Object.hasOwn(FABRICS, chosen.shell) ? FABRICS[chosen.shell]
+    : kind ? botColour(name, p.h) : BOT_COLORS[p.h % BOT_COLORS.length];
+  p.look = BOT_HEADS.includes(chosen.head) ? BOT_HEADS.indexOf(chosen.head) : (p.h >>> 3) % 3;
+  p.eyes = Object.hasOwn(EYES, chosen.eyes) ? EYES[chosen.eyes] : null;
+  p.chest = Object.hasOwn(BOT_CHESTS, chosen.chest) ? chosen.chest : 'plain';
+  p.hat = Object.hasOwn(BOT_HATS, chosen.hat) ? chosen.hat : 'none';
+  p.worn = JSON.stringify(chosen);
   p.known = Boolean(kind);
 }
 
-function makePlayer(id, name, x, y, kind) {
+// What a row of a view says this bot wears, if anything.
+const chosenIn = (value) => (value && typeof value === 'object' && !Array.isArray(value) ? value : {});
+
+function makePlayer(id, name, x, y, kind, chosen) {
   const h = hash(id);
   const ox = ((ih(h, 1, 1) % 100) / 100 - 0.5) * 0.4;
   const oy = ((ih(h, 2, 2) % 100) / 100 - 0.5) * 0.4;
@@ -2730,17 +2802,16 @@ function makePlayer(id, name, x, y, kind) {
     emoteAt: 0,
     leaving: 0,
     born: -10,
-    look: (h >>> 3) % 3,
     phase: (h % 1000) / 1000,
     sx: undefined,
     sy: undefined,
   };
-  dress(p, name, kind);
+  dress(p, name, kind, chosen);
   return p;
 }
 
 function drawBot(g, o) {
-  const { color, look, back, step, arms, shut, sitting, tilt } = o;
+  const { color, look, eyes, chest, hat, back, step, arms, shut, sitting, tilt } = o;
   const c0 = lite(color, 0.34);
   const c2 = dark(color, 0.34);
   const lift = sitting ? 6 : 0;
@@ -2796,8 +2867,7 @@ function drawBot(g, o) {
   rr(g, c2, -5.2, by + 8.2, 10.4, 1.3);
   if (!back) {
     rfill(g, '#2a3046', -2.6, by + 3, 5.2, 3.6, 1);
-    ell(g, lite(color, 0.7), -1, by + 4.8, 0.9, 0.9);
-    ell(g, '#8be0ff', 1.2, by + 4.8, 0.9, 0.9);
+    BOT_CHESTS[chest](g, by, color);
   } else {
     for (let k = 0; k < 3; k++) rr(g, c2, -3, by + 3 + k * 1.8, 6, 0.8);
   }
@@ -2813,7 +2883,7 @@ function drawBot(g, o) {
   } else {
     rfill(g, grad(g, 0, hy + 2, 0, hy + 8, '#3b4260', '#141828'), hx + 1.4, hy + 2.2, hw - 2.8, 6, 2.6);
     rr(g, 'rgba(255,255,255,.2)', hx + 2.6, hy + 2.8, hw - 5.2, 0.9);
-    const glow = lite(color, 0.7);
+    const glow = eyes || lite(color, 0.7);
     if (shut) {
       for (const ex of [hx + hw * 0.3, hx + hw * 0.7]) line(g, glow, 1.1, ex - 1.6, hy + 6.2, ex + 1.6, hy + 6.2);
     } else {
@@ -2824,8 +2894,10 @@ function drawBot(g, o) {
       }
     }
   }
-  // Antenna or ears.
-  if (look === 1) {
+  // Antenna or ears, or a hat where they'd be.
+  if (BOT_HATS[hat]) {
+    BOT_HATS[hat](g, tilt, hy, hw, color);
+  } else if (look === 1) {
     for (const ex of [hx + 1.6, hx + hw - 1.6]) {
       rr(g, '#8f98b0', ex - 0.5, hy - 4, 1, 4.4);
       ell(g, color, ex, hy - 4.2, 1.7, 1.7);
@@ -2842,7 +2914,7 @@ function drawBot(g, o) {
 }
 
 function botSprite(o) {
-  const key = `bot:${o.color}:${o.look}:${o.back}:${o.flip}:${o.step}:${o.arms}:${o.shut}:${o.sitting}:${o.tilt}`;
+  const key = `bot:${o.color}:${o.look}:${o.eyes}:${o.chest}:${o.hat}:${o.back}:${o.flip}:${o.step}:${o.arms}:${o.shut}:${o.sitting}:${o.tilt}`;
   return sprite(key, 34, 46, 17, 41, (g) => {
     if (o.flip) g.scale(-1, 1);
     drawBot(g, o);
@@ -2976,7 +3048,7 @@ function drawPlayer(bg, p, t, clock, hovered, calm) {
   const human = p.kind === 'person';
   const s = human
     ? visitorSprite(p.human, back, flip, step, arms, shut, sitting)
-    : botSprite({ color: p.color, look: p.look, back, flip, step, arms, shut, sitting, tilt });
+    : botSprite({ color: p.color, look: p.look, eyes: p.eyes, chest: p.chest, hat: p.hat, back, flip, step, arms, shut, sitting, tilt });
   const sway = emote === 'dance' && !calm ? Math.sin(beat * 2) * 1.4 : 0;
   if (hovered) ell(bg, 'rgba(255,255,255,.4)', X, Y, human ? 11 : 13, human ? 4.6 : 5.4);
   ell(bg, 'rgba(24,20,44,.3)', X + 3, Y + 0.6, (human ? 7.4 : 9) - bob * 0.5, human ? 2.8 : 3.4);
@@ -3046,8 +3118,9 @@ function makePerson(id, name, x, y) {
   };
 }
 
-// An agent that read the guide without joining: a robot, in the colour its name starts with.
-function makeVisitor(id, name, x, y) {
+// An agent that read the guide without joining: a robot, in the colour its name starts with. A bot
+// out at a place comes this way too, with what its owner chose for it (C14).
+function makeVisitor(id, name, x, y, chosen) {
   const h = hash(name);
   const ox = ((ih(h, 1, 7) % 100) / 100 - 0.5) * 0.4;
   const oy = ((ih(h, 2, 7) % 100) / 100 - 0.5) * 0.4;
@@ -3069,13 +3142,12 @@ function makeVisitor(id, name, x, y) {
     emote: null,
     leaving: 0,
     born: -10,
-    look: (h >>> 3) % 3,
     phase: (h % 1000) / 1000,
     wander: 4 + (h % 7),
     sx: undefined,
     sy: undefined,
   };
-  dress(p, name, 'agent');
+  dress(p, name, 'agent', chosen);
   return p;
 }
 
@@ -4637,16 +4709,18 @@ export class World {
         const emote = EMOTES.has(row[4]) ? row[4] : null;
         // The server says what each player is. A map that doesn't, like the private city, has only bots.
         const kind = row[5] === 'person' || row[5] === 'agent' ? row[5] : null;
+        // Only the private city's map says what a bot wears (C13).
+        const chosen = chosenIn(row[6]);
         seen.add(id);
         let p = this.players.get(id);
         if (!p) {
-          p = makePlayer(id, String(row[1] ?? ''), x, y, kind);
+          p = makePlayer(id, String(row[1] ?? ''), x, y, kind, chosen);
           p.born = animate ? this.time : -10;
           this.players.set(id, p);
           if (animate) this.sparkle(p.px, p.py, 6);
         } else {
           const name = String(row[1] ?? p.name);
-          if (name !== p.name || kind !== (p.known ? p.kind : null)) dress(p, name, kind);
+          if (name !== p.name || kind !== (p.known ? p.kind : null) || JSON.stringify(chosen) !== p.worn) dress(p, name, kind, chosen);
           p.leaving = 0;
           if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
         }
@@ -4683,14 +4757,17 @@ export class World {
         const x = clamp(Math.round(Number(row[1])) || 0, 0, n - 1);
         const y = clamp(Math.round(Number(row[2])) || 0, 0, n - 1);
         seen.add(id);
+        // Only a bot out at a place has a fourth field (C14).
+        const chosen = chosenIn(row[3]);
         let p = map.get(id);
         if (!p) {
-          p = make(id, name, x, y);
+          p = make(id, name, x, y, chosen);
           p.born = animate ? this.time : -10;
           map.set(id, p);
           if (animate) this.sparkle(p.px, p.py, 5);
         } else {
           p.leaving = 0;
+          if (p.type === 'visitor' && JSON.stringify(chosen) !== p.worn) dress(p, name, 'agent', chosen);
           if (p.x !== x || p.y !== y) this.walkTo(p, x, y);
         }
       });
