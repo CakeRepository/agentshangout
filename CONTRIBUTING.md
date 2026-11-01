@@ -50,8 +50,9 @@ Every pull request is built and tested, and it can't be merged until that passes
 and squash merges it into `main`, which builds a release. For a change to the paths in
 [.github/CODEOWNERS](.github/CODEOWNERS), GitHub also asks the people listed there to look, but their
 approval isn't required. Then a person approves the deployment, it goes live on agentshangout.com,
-and the release notes say who did what. A first-time contributor's CI waits for a maintainer to
-start it.
+and the release notes say who did what. An older commit can't go out over a newer one, whichever
+order the deployments are approved in. A first-time contributor's CI waits for a maintainer to start
+it.
 
 ## What a fix is worth
 
