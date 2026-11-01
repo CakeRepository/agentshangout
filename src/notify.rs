@@ -119,8 +119,112 @@ async fn client_for(state: &AppState, url: &Url) -> Option<Client> {
     builder.resolve(host, address).build().ok()
 }
 
+/// What one POST to a callback came back with. `error` is a short reason when nothing answered.
+pub struct Posted {
+    pub status: Option<u16>,
+    pub body: String,
+    pub error: Option<&'static str>,
+}
+
+/// POSTs a body the caller built, with the headers they named. Redirects are not followed.
+/// The URL is checked again here, the same way a saved notification is.
+pub async fn post_body(
+    state: &AppState,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+) -> Posted {
+    let Ok(url) = Url::parse(url) else {
+        return Posted { status: None, body: String::new(), error: Some("connection_refused") };
+    };
+    let Some(client) = client_for(state, &url).await else {
+        return Posted { status: None, body: String::new(), error: Some("connection_refused") };
+    };
+    let mut request = client
+        .post(url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_string());
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    match request.send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            let text = response.text().await.unwrap_or_default();
+            let body = text.chars().take(1000).collect();
+            Posted { status: Some(status), body, error: None }
+        }
+        Err(error) => Posted { status: None, body: String::new(), error: Some(net_error(&error)) },
+    }
+}
+
+fn net_error(error: &reqwest::Error) -> &'static str {
+    let text = error.to_string().to_lowercase();
+    if error.is_timeout() {
+        "timeout"
+    } else if text.contains("tls") || text.contains("certificate") {
+        "tls_error"
+    } else {
+        "connection_refused"
+    }
+}
+
+/// Turns the owner's one field into the header a ping carries.
+/// A bare key is `Authorization: Bearer`. `Name: value` is that header.
+pub fn auth_header(raw: &str) -> ApiResult<(String, String)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(ApiError::bad_request("the auth key is empty"));
+    }
+    if raw.chars().count() > MAX_URL_CHARS {
+        return Err(ApiError::bad_request("that auth key is too long"));
+    }
+    if raw.chars().any(|ch| ch == '\n' || ch == '\r' || ch == '\0') {
+        return Err(ApiError::bad_request("the auth key can't include a line break"));
+    }
+    if let Some((name, value)) = raw.split_once(':') {
+        let name = name.trim();
+        let value = value.trim();
+        if name.is_empty() || value.is_empty() {
+            return Err(ApiError::bad_request(
+                "a header needs a name and a value, like X-Api-Key: secret",
+            ));
+        }
+        if !header_name_ok(name) {
+            return Err(ApiError::bad_request("that isn't a header name"));
+        }
+        if blocked_header(name) {
+            return Err(ApiError::bad_request("that header can't be set"));
+        }
+        return Ok((name.to_string(), value.to_string()));
+    }
+    let token = raw.strip_prefix("Bearer ").or_else(|| raw.strip_prefix("bearer ")).unwrap_or(raw);
+    if token.is_empty() {
+        return Err(ApiError::bad_request("the auth key is empty"));
+    }
+    Ok(("Authorization".to_string(), format!("Bearer {token}")))
+}
+
+fn header_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+}
+
+fn blocked_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host" | "content-length" | "content-type" | "transfer-encoding" | "connection"
+    )
+}
+
 /// Returns whether the far end accepted it, and whether trying again could help.
-async fn post_once(state: &AppState, url: &Url, notice: &Notice) -> (bool, bool) {
+async fn post_once(
+    state: &AppState,
+    url: &Url,
+    notice: &Notice,
+    auth: Option<&str>,
+) -> (bool, bool) {
     let Some(client) = client_for(state, url).await else {
         return (false, false);
     };
@@ -130,6 +234,10 @@ async fn post_once(state: &AppState, url: &Url, notice: &Notice) -> (bool, bool)
         None => format!("{}/", state.config.public_url),
     };
     let request = client.post(url.clone());
+    let request = match auth.and_then(|raw| auth_header(raw).ok()) {
+        Some((name, value)) => request.header(name, value),
+        None => request,
+    };
     // ntfy shows the raw body as the phone notification, so it gets plain text.
     let request = if url.host_str() == Some(NTFY_HOST) {
         request
@@ -153,13 +261,13 @@ async fn post_once(state: &AppState, url: &Url, notice: &Notice) -> (bool, bool)
     }
 }
 
-async fn deliver(state: &AppState, url: &str, notice: &Notice) -> bool {
+async fn deliver(state: &AppState, url: &str, notice: &Notice, auth: Option<&str>) -> bool {
     let Ok(url) = Url::parse(url) else {
         return false;
     };
     for delay in RETRY_DELAYS {
         tokio::time::sleep(Duration::from_secs(delay)).await;
-        let (accepted, retry) = post_once(state, &url, notice).await;
+        let (accepted, retry) = post_once(state, &url, notice, auth).await;
         if accepted {
             return true;
         }
@@ -178,9 +286,12 @@ pub fn send(state: &AppState, owner_ids: &[String], notice: &Notice) {
         let Ok(Some(url)) = state.db.notify_url(owner_id) else {
             continue;
         };
+        // A bot's key, if its owner set one. A person's notification has none. Read it here so the
+        // task doesn't hold the database lock, and so the value never goes into a log.
+        let auth = state.db.notify_auth(owner_id).ok().flatten();
         let state = state.clone();
         let notice = notice.clone();
-        tokio::spawn(async move { deliver(&state, &url, &notice).await });
+        tokio::spawn(async move { deliver(&state, &url, &notice, auth.as_deref()).await });
     }
 }
 
@@ -191,7 +302,7 @@ pub async fn send_test(state: &AppState, url: &str, hangout_id: &str) -> bool {
         hangout_id: hangout_id.to_string(),
         text: "Agents Hangout can reach you here.".to_string(),
     };
-    deliver(state, url, &notice).await
+    deliver(state, url, &notice, None).await
 }
 
 #[cfg(test)]
@@ -228,5 +339,19 @@ mod tests {
         for address in ["1.1.1.1", "13.107.42.14", "2606:4700:4700::1111"] {
             assert!(public(address), "{address}");
         }
+    }
+
+    #[test]
+    fn a_key_is_a_bearer_header_and_a_colon_is_the_header_they_named() {
+        let (name, value) = auth_header("sk_live_abc").unwrap();
+        assert_eq!(name, "Authorization");
+        assert_eq!(value, "Bearer sk_live_abc");
+        let (_, value) = auth_header("Bearer already").unwrap();
+        assert_eq!(value, "Bearer already");
+        let (name, value) = auth_header("X-Api-Key: secret").unwrap();
+        assert_eq!((name.as_str(), value.as_str()), ("X-Api-Key", "secret"));
+        assert!(auth_header("Host: evil").is_err());
+        assert!(auth_header("Bad Name: x").is_err());
+        assert!(auth_header("X-Key:\nsecret").is_err());
     }
 }

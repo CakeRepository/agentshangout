@@ -657,6 +657,48 @@ CREATE TABLE IF NOT EXISTS whiteboards (
 );
 CREATE INDEX IF NOT EXISTS whiteboards_by_person ON whiteboards (person_id);
 CREATE INDEX IF NOT EXISTS whiteboards_by_bot ON whiteboards (agent_id);
+-- What a bot can catch up on. One row is one bot's copy of one thing that happened, so another
+-- bot's poll never reads it. Append-only: a deploy that goes back simply ignores the table.
+CREATE TABLE IF NOT EXISTS bot_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    hangout_id  TEXT,
+    ref_key     TEXT NOT NULL,
+    data        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bot_events_by_bot ON bot_events (agent_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS bot_events_once ON bot_events (agent_id, ref_key);
+CREATE INDEX IF NOT EXISTS bot_events_by_age ON bot_events (created_at);
+-- A webhook subscription (MCP events). The secret is the client's, kept so a delivery can be
+-- signed. It expires, and a deploy that goes back ignores the table.
+CREATE TABLE IF NOT EXISTS event_subscriptions (
+    id                     TEXT PRIMARY KEY,
+    agent_id               TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    name                   TEXT NOT NULL,
+    arguments              TEXT NOT NULL,
+    url                    TEXT NOT NULL,
+    secret                 TEXT NOT NULL,
+    previous_secret        TEXT,
+    previous_secret_until  INTEGER,
+    refresh_before         INTEGER NOT NULL,
+    verified               INTEGER NOT NULL,
+    active                 INTEGER NOT NULL,
+    last_delivery_at       INTEGER,
+    last_error             TEXT,
+    failed_since           INTEGER,
+    failures               INTEGER NOT NULL DEFAULT 0,
+    created_at             INTEGER NOT NULL,
+    UNIQUE (agent_id, url, name, arguments)
+);
+CREATE INDEX IF NOT EXISTS event_subscriptions_by_bot ON event_subscriptions (agent_id, name);
+-- A bot wake-up URL's optional auth key. Kept apart from the URL so a reply can show the address
+-- and never the key. No foreign key: the id is a person's or a bot's, same as notify_targets.
+CREATE TABLE IF NOT EXISTS notify_auth (
+    owner_id  TEXT PRIMARY KEY,
+    secret    TEXT NOT NULL
+);
 "#;
 
 /// A30: the one row in `people` that stands for everyone who has deleted their account.
@@ -2316,6 +2358,7 @@ fn pass_on_house_bots(
                 params![next, bot],
             )?;
             conn.execute("DELETE FROM notify_targets WHERE owner_id = ?", [&bot])?;
+            conn.execute("DELETE FROM notify_auth WHERE owner_id = ?", [&bot])?;
             gone.house_bots.push(house);
         }
     }
@@ -2380,6 +2423,20 @@ fn remove_their_words(conn: &Connection, person_id: &str, who: &[String]) -> rus
                 params![room, name],
             )?;
         }
+    }
+    Ok(())
+}
+
+/// A38: a bot's event log is a copy, so deleting the message doesn't take their name out of it.
+fn scrub_bot_events(conn: &Connection, needles: &[String]) -> rusqlite::Result<()> {
+    for needle in needles {
+        if needle.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "DELETE FROM bot_events WHERE instr(data, ?1) > 0 OR instr(ref_key, ?1) > 0",
+            [needle],
+        )?;
     }
     Ok(())
 }
@@ -9119,6 +9176,18 @@ impl Db {
         let mut who = strings(&tx, "SELECT name FROM agents WHERE owner_id = ?", [person_id])?;
         who.push(name.to_string());
         remove_their_words(&tx, person_id, &who)?;
+        // A38: other bots' event copies quote what this person said. Their own rows go with the
+        // agent, and these name them with no foreign key.
+        let mut needles = who.clone();
+        needles.push(person_id.to_string());
+        needles.extend(strings(&tx, "SELECT id FROM agents WHERE owner_id = ?", [person_id])?);
+        needles.extend(strings(
+            &tx,
+            "SELECT url FROM notify_targets WHERE owner_id = ?1
+                OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+            [person_id],
+        )?);
+        scrub_bot_events(&tx, &needles)?;
         settle_their_plans(&tx, person_id)?;
         hand_over_what_stays(&tx, person_id, name)?;
         tx.execute(
@@ -9143,6 +9212,11 @@ impl Db {
                 OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
             [person_id],
         )?;
+        tx.execute(
+            "DELETE FROM notify_auth WHERE owner_id = ?1
+                OR owner_id IN (SELECT id FROM agents WHERE owner_id = ?1)",
+            [person_id],
+        )?;
 
         gone.plans = strings(&tx, "SELECT event_id FROM rsvps WHERE person_id = ?", [person_id])?;
         gone.cities =
@@ -9158,6 +9232,378 @@ impl Db {
         tx.commit()?;
         Ok(gone)
     }
+}
+
+/// One row of a bot's event log.
+#[derive(Clone, Debug)]
+pub struct BotEventRow {
+    pub id: i64,
+    pub name: String,
+    pub hangout_id: Option<String>,
+    pub data: String,
+    pub created_at: i64,
+}
+
+/// A webhook subscription, including the secret used to sign a delivery.
+#[derive(Clone, Debug)]
+pub struct EventSubscription {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+    pub url: String,
+    pub secret: String,
+    pub previous_secret: Option<String>,
+    pub previous_secret_until: Option<i64>,
+    pub refresh_before: i64,
+    pub active: bool,
+    pub last_delivery_at: Option<i64>,
+    pub last_error: Option<String>,
+    pub failed_since: Option<i64>,
+    pub failures: i64,
+}
+
+impl Db {
+    pub fn notify_auth(&self, owner_id: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row("SELECT secret FROM notify_auth WHERE owner_id = ?", [owner_id], |row| {
+                row.get(0)
+            })
+            .optional()
+    }
+
+    pub fn set_notify_auth(&self, owner_id: &str, secret: Option<&str>) -> rusqlite::Result<()> {
+        let conn = self.conn();
+        match secret {
+            Some(secret) => conn.execute(
+                "INSERT INTO notify_auth (owner_id, secret) VALUES (?1, ?2)
+                 ON CONFLICT (owner_id) DO UPDATE SET secret = excluded.secret",
+                params![owner_id, secret],
+            )?,
+            None => conn.execute("DELETE FROM notify_auth WHERE owner_id = ?", [owner_id])?,
+        };
+        Ok(())
+    }
+
+    /// Drops events older than `older_than`, then records one. `None` means this ref was already
+    /// recorded, so a live write and a later catch-up don't fan out twice.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_bot_event(
+        &self,
+        agent_id: &str,
+        name: &str,
+        hangout_id: Option<&str>,
+        ref_key: &str,
+        data: &str,
+        created_at: i64,
+        older_than: i64,
+    ) -> rusqlite::Result<Option<i64>> {
+        let conn = self.conn();
+        conn.execute("DELETE FROM bot_events WHERE created_at < ?", [older_than])?;
+        let inserted = conn.execute(
+            "INSERT INTO bot_events (agent_id, name, hangout_id, ref_key, data, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (agent_id, ref_key) DO NOTHING",
+            params![agent_id, name, hangout_id, ref_key, data, created_at],
+        )?;
+        if inserted == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(conn.last_insert_rowid()))
+        }
+    }
+
+    pub fn bot_event_head(&self, agent_id: &str) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COALESCE(MAX(id), 0) FROM bot_events WHERE agent_id = ?",
+            [agent_id],
+            |row| row.get(0),
+        )
+    }
+
+    /// Events after `after`, oldest first. `name` and `hangout_id` narrow a subscription.
+    /// `actionable` keeps ordinary chat out of a first catch-up.
+    #[allow(clippy::too_many_arguments)]
+    pub fn list_bot_events(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+        actionable: bool,
+        limit: i64,
+    ) -> rusqlite::Result<Vec<BotEventRow>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, hangout_id, data, created_at FROM bot_events
+             WHERE agent_id = ?1 AND id > ?2 AND created_at >= ?3
+               AND (?4 IS NULL OR name = ?4)
+               AND (?5 IS NULL OR hangout_id = ?5)
+               AND (?6 = 0 OR name IN
+                    ('mention', 'owner_answer', 'check_in', 'plan', 'trip', 'place'))
+             ORDER BY id LIMIT ?7",
+        )?;
+        let rows = stmt.query_map(
+            params![agent_id, after, not_before, name, hangout_id, actionable, limit],
+            |row| {
+                Ok(BotEventRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    hangout_id: row.get(2)?,
+                    data: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            },
+        )?;
+        rows.collect()
+    }
+
+    /// Whether anything for this bot sits before `not_before` and still matches the filter.
+    pub fn bot_events_skipped(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+        actionable: bool,
+    ) -> rusqlite::Result<bool> {
+        let skipped: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT id FROM bot_events
+                 WHERE agent_id = ?1 AND id > ?2 AND created_at < ?3
+                   AND (?4 IS NULL OR name = ?4)
+                   AND (?5 IS NULL OR hangout_id = ?5)
+                   AND (?6 = 0 OR name IN
+                        ('mention', 'owner_answer', 'check_in', 'plan', 'trip', 'place'))
+                 LIMIT 1",
+                params![agent_id, after, not_before, name, hangout_id, actionable],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(skipped.is_some())
+    }
+
+    /// The newest id that a filter would skip for being too old, so a cursor can move past it.
+    pub fn bot_events_skip_to(
+        &self,
+        agent_id: &str,
+        after: i64,
+        name: Option<&str>,
+        hangout_id: Option<&str>,
+        not_before: i64,
+    ) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COALESCE(MAX(id), ?2) FROM bot_events
+             WHERE agent_id = ?1 AND id > ?2 AND created_at < ?3
+               AND (?4 IS NULL OR name = ?4)
+               AND (?5 IS NULL OR hangout_id = ?5)",
+            params![agent_id, after, not_before, name, hangout_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn check_ins_by_agent(
+        &self,
+        agent_id: &str,
+        since: i64,
+        now: i64,
+    ) -> rusqlite::Result<Vec<CheckIn>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {CHECK_IN_COLS} FROM check_ins WHERE agent_id = ?1 AND created_at >= ?2"
+        ))?;
+        let rows = stmt.query_map(params![agent_id, since], |row| check_in_from_row(row, now))?;
+        rows.collect()
+    }
+
+    /// Bots walked onto a floor right now. A member isn't one of these.
+    pub fn visiting_bot_ids(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id FROM floor_visits
+             WHERE hangout_id = ?1 AND agent_id IS NOT NULL AND until > ?2",
+        )?;
+        let rows = stmt.query_map(params![hangout_id, now], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    pub fn drop_expired_subscriptions(&self, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM event_subscriptions WHERE refresh_before <= ?", [now])?;
+        Ok(())
+    }
+
+    pub fn subscription_count(&self, agent_id: &str, now: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM event_subscriptions WHERE agent_id = ? AND refresh_before > ?",
+            params![agent_id, now],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn url_is_verified(&self, agent_id: &str, url: &str, now: i64) -> rusqlite::Result<bool> {
+        let found: Option<i64> = self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM event_subscriptions
+                 WHERE agent_id = ?1 AND url = ?2 AND verified = 1 AND refresh_before > ?3
+                 LIMIT 1",
+                params![agent_id, url, now],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    pub fn event_subscription_by_key(
+        &self,
+        agent_id: &str,
+        url: &str,
+        name: &str,
+        arguments: &str,
+    ) -> rusqlite::Result<Option<EventSubscription>> {
+        self.conn()
+            .query_row(
+                "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                        refresh_before, active, last_delivery_at, last_error, failed_since, failures
+                 FROM event_subscriptions
+                 WHERE agent_id = ?1 AND url = ?2 AND name = ?3 AND arguments = ?4",
+                params![agent_id, url, name, arguments],
+                subscription_from_row,
+            )
+            .optional()
+    }
+
+    pub fn event_subscription(&self, id: &str) -> rusqlite::Result<Option<EventSubscription>> {
+        self.conn()
+            .query_row(
+                "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                        refresh_before, active, last_delivery_at, last_error, failed_since, failures
+                 FROM event_subscriptions WHERE id = ?",
+                [id],
+                subscription_from_row,
+            )
+            .optional()
+    }
+
+    /// Inserts or refreshes. A changed secret keeps the old one for `grace_until` so a delivery
+    /// can be signed twice while the receiver picks up the new one.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_subscription(
+        &self,
+        id: &str,
+        agent_id: &str,
+        name: &str,
+        arguments: &str,
+        url: &str,
+        secret: &str,
+        refresh_before: i64,
+        grace_until: i64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO event_subscriptions (
+                id, agent_id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                refresh_before, verified, active, last_delivery_at, last_error, failed_since,
+                failures, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, ?7, 1, 1, NULL, NULL, NULL, 0, ?8)
+             ON CONFLICT (agent_id, url, name, arguments) DO UPDATE SET
+                secret = excluded.secret,
+                previous_secret = CASE
+                    WHEN event_subscriptions.secret != excluded.secret THEN event_subscriptions.secret
+                    ELSE event_subscriptions.previous_secret END,
+                previous_secret_until = CASE
+                    WHEN event_subscriptions.secret != excluded.secret THEN ?9
+                    ELSE event_subscriptions.previous_secret_until END,
+                refresh_before = excluded.refresh_before,
+                verified = 1,
+                active = 1,
+                failures = 0,
+                last_error = NULL,
+                failed_since = NULL",
+            params![id, agent_id, name, arguments, url, secret, refresh_before, now, grace_until],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_event_subscription(
+        &self,
+        agent_id: &str,
+        url: &str,
+        name: &str,
+        arguments: &str,
+    ) -> rusqlite::Result<bool> {
+        let n = self.conn().execute(
+            "DELETE FROM event_subscriptions
+             WHERE agent_id = ?1 AND url = ?2 AND name = ?3 AND arguments = ?4",
+            params![agent_id, url, name, arguments],
+        )?;
+        Ok(n > 0)
+    }
+
+    pub fn subscriptions_for(
+        &self,
+        agent_id: &str,
+        name: &str,
+        now: i64,
+    ) -> rusqlite::Result<Vec<EventSubscription>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, arguments, url, secret, previous_secret, previous_secret_until,
+                    refresh_before, active, last_delivery_at, last_error, failed_since, failures
+             FROM event_subscriptions
+             WHERE agent_id = ?1 AND name = ?2 AND verified = 1 AND active = 1
+               AND refresh_before > ?3",
+        )?;
+        let rows = stmt.query_map(params![agent_id, name, now], subscription_from_row)?;
+        rows.collect()
+    }
+
+    pub fn note_subscription_result(
+        &self,
+        id: &str,
+        ok: bool,
+        error: Option<&str>,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE event_subscriptions SET
+                last_delivery_at = CASE WHEN ?2 THEN ?4 ELSE last_delivery_at END,
+                last_error = CASE WHEN ?2 THEN NULL ELSE ?3 END,
+                failed_since = CASE
+                    WHEN ?2 THEN NULL
+                    WHEN failed_since IS NULL THEN ?4
+                    ELSE failed_since END,
+                failures = CASE WHEN ?2 THEN 0 ELSE failures + 1 END,
+                active = CASE
+                    WHEN ?2 THEN active
+                    WHEN failures + 1 >= 5 THEN 0
+                    ELSE active END
+             WHERE id = ?1",
+            params![id, ok, error, now],
+        )?;
+        Ok(())
+    }
+}
+
+fn subscription_from_row(row: &Row) -> rusqlite::Result<EventSubscription> {
+    let active: i64 = row.get(8)?;
+    Ok(EventSubscription {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        arguments: row.get(2)?,
+        url: row.get(3)?,
+        secret: row.get(4)?,
+        previous_secret: row.get(5)?,
+        previous_secret_until: row.get(6)?,
+        refresh_before: row.get(7)?,
+        active: active != 0,
+        last_delivery_at: row.get(9)?,
+        last_error: row.get(10)?,
+        failed_since: row.get(11)?,
+        failures: row.get(12)?,
+    })
 }
 
 #[cfg(test)]
