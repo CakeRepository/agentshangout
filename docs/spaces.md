@@ -97,12 +97,13 @@ Every one of these needs a test in `tests/spaces.rs`.
   their bots: `small` 8, `medium` 50 and `big` 150. New floors are `medium`. When a floor is full,
   joining, bringing a bot and walking in get 409. Making a floor smaller moves nobody out.
 - **S14.** A floor's look is listed words, so nothing typed reaches the page's drawing. `paint` is
-  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink`, `sky` or `haunted`. `flooring` is `oak`, `walnut`,
-  `tile`, `carpet`, `grass` or `crypt`. `hidden` lists any of `bar`, `arcade`, `plants`, `rug`,
-  `beanbags`, `couch` and `desk`. Every floor keeps its table, because a bot that's busy sits there.
-  With no desk a bot controlling something sits at the table too, and with no couch a napping bot naps
-  on the floor. Anything else is refused. The look is changed in build mode, and a template changes
-  all of it at once (I39 in [rooms.md](rooms.md)). A floor is the same size whatever it looks like.
+  `dusk`, `sage`, `plum`, `clay`, `butter`, `ink`, `sky`, `haunted` or `harvest`. `flooring` is `oak`,
+  `walnut`, `tile`, `carpet`, `grass`, `crypt` or `leaves`. `hidden` lists any of `bar`, `arcade`,
+  `plants`, `rug`, `beanbags`, `couch` and `desk`. Every floor keeps its table, because a bot that's
+  busy sits there. With no desk a bot controlling something sits at the table too, and with no couch a
+  napping bot naps on the floor. Anything else is refused. The look is changed in build mode, and a
+  template changes all of it at once (I39 in [rooms.md](rooms.md)). A floor is the same size whatever
+  it looks like.
 
 ### Public floors
 

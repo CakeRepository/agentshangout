@@ -1710,7 +1710,8 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     });
   }
 
-  // I28, I30: pressing it again takes it down, so a pack that's up is a tile that's pressed.
+  // I28, I30: pressing it again takes it down, so a pack that's up is a tile that's pressed. I57: one
+  // that's over is only here to come down, so the catalog shows it where it's up and nowhere else.
   function packTile(pack, up) {
     return catalogTile({
       name: `pack-${pack.pack}`,
@@ -1783,7 +1784,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     catalogEl.replaceChildren(...[
       ...(floor.runs_it && !guest ? [
         ['Templates', look.templates.map(templateTile), true],
-        ['Packs', look.packs.map((pack) => packTile(pack, up.includes(pack.pack))), true],
+        ['Packs', look.packs.filter((pack) => !pack.over || up.includes(pack.pack)).map((pack) => packTile(pack, up.includes(pack.pack))), true],
       ] : []),
       ['Walls', styling.paints.map((word) => surfaceTile('paint', word, wallPicture(word), paint))],
       ['Floors', styling.floorings.map((word) => surfaceTile('flooring', word, floorPicture(word), flooring))],

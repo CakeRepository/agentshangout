@@ -921,11 +921,11 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
         listed.clone().find(|each| each["furniture"] == word).unwrap()["stays"].clone()
     };
     assert_eq!((stays("couch"), stays("table")), (json!(false), json!(true)));
-    assert_eq!(look["packs"][0]["pack"], "halloween");
+    assert_eq!(look["packs"][0]["pack"], "fall");
 
     // Every word in the rule can be chosen, and the page has a look for every one of them.
     let page = include_str!("../web/room.js");
-    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted"] {
+    for paint in ["dusk", "sage", "plum", "clay", "butter", "ink", "sky", "haunted", "harvest"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "paint": paint })).await.ok()["paint"],
             paint
@@ -935,7 +935,7 @@ async fn a_floors_look_is_listed_words_and_nothing_else() {
             "the room page can't paint {paint}"
         );
     }
-    for flooring in ["oak", "walnut", "tile", "carpet", "grass", "crypt"] {
+    for flooring in ["oak", "walnut", "tile", "carpet", "grass", "crypt", "leaves"] {
         assert_eq!(
             server.put(&ann.key, &path, json!({ "flooring": flooring })).await.ok()["flooring"],
             flooring
