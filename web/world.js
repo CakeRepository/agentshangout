@@ -4005,8 +4005,8 @@ const MAX_PLAYERS = 400;
 // A figure going this many tiles or more takes a car instead of walking. A ride is only how the move
 // looks: the server has already put them where they're going.
 const DRIVE_TILES = 8;
-// How much faster a ride is than the figure's own walk.
-const DRIVE_FACTOR = 3;
+// How much faster a ride is than the figure's own walk. Slow enough to watch where it goes.
+const DRIVE_FACTOR = 1.75;
 
 const screenOf = (tx, ty) => [(tx - ty) * HW, (tx + ty) * HH];
 
