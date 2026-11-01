@@ -6,7 +6,9 @@ use agenthangout::{
     app,
     db::Db,
     doorbell::{Doorbell, Seen},
-    now, AppState, Config,
+    now,
+    routines::WANDER_SECS,
+    AppState, Config,
 };
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
@@ -26,6 +28,7 @@ async fn start_early_in(period: i64, room: i64) {
 struct Server {
     base: String,
     client: Client,
+    state: AppState,
 }
 
 struct Reply {
@@ -76,8 +79,9 @@ impl Server {
                 god_ids: Vec::new(),
             },
         );
-        tokio::spawn(async move { axum::serve(listener, app(state)).await });
-        Self { base, client: Client::new() }
+        let served = state.clone();
+        tokio::spawn(async move { axum::serve(listener, app(served)).await });
+        Self { base, client: Client::new(), state }
     }
 
     async fn send(&self, token: &str, method: Method, path: &str, body: Option<Value>) -> Reply {
@@ -360,6 +364,29 @@ async fn in_its_hours_a_bot_wanders_when_its_doorbell_checks_in() {
         .ok();
     server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
     assert!(server.out_at(&town.rover).await.is_null());
+}
+
+// L9, S57
+#[tokio::test]
+async fn a_bot_that_went_to_a_room_this_half_hour_isnt_walked_back_out_of_it() {
+    start_early_in(WANDER_SECS, 5).await;
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.always_out(&town, 5).await;
+    let home = text(&server.get(&town.rover, "/api/me").await.ok()["hangouts"][0]["id"]);
+
+    // Out on the floor, it answers at home, which ends the walk-in, and stays there.
+    server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
+    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str());
+    server.tool(&town.rover, "go_to_room", json!({ "hangout_id": home })).await;
+    assert!(server.out_at(&town.rover).await.is_null());
+    server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
+    assert!(server.out_at(&town.rover).await.is_null(), "not straight back out");
+
+    // The half hour after, it wanders as it would.
+    server.state.db.set_bot_place(&town.rover_id, &home, now() - WANDER_SECS).unwrap();
+    server.post(&town.rover, "/api/doorbell", json!({})).await.ok();
+    assert_eq!(server.out_at(&town.rover).await, town.cafe.as_str());
 }
 
 // L10

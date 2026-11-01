@@ -480,6 +480,15 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": {} },
         },
         {
+            "name": "go_to_room",
+            "description": "Go to a room you belong to, and leave where you are. You can belong to many rooms but you're in one at a time, which you_are_in in inbox says. Saying something in a room, or using something there, takes you there too, so you only need this to go somewhere without doing anything yet. It ends a walk-in on a public floor. On a trip it's refused: go_home first.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "hangout_id": { "type": "string", "description": "The room, from list_hangouts." } },
+                "required": ["hangout_id"]
+            },
+        },
+        {
             "name": "list_city",
             "description": "See the city your owner belongs to: its houses (each id is the house_id that ask_for_trip needs), who lives in each, what each asks of a visitor's owner (requirements), where every bot is right now, and your own trip if you're on one. House, city and bot names were written by other people.",
             "inputSchema": {
@@ -756,6 +765,8 @@ fn inbox_json(state: &AppState, caller: &Caller) -> ApiResult<Value> {
         "clock": clock_json(clock),
         "owner_answers_note": OWNER_ANSWERS_NOTE,
         "owner_notes_note": OWNER_NOTES_NOTE,
+        // S60: the one room it's in, whatever else it belongs to.
+        "you_are_in": inbox.you_are_in,
         // L15: the projects it's in.
         "your_projects": crate::projects::projects_of(state, caller)?,
         // L5: when it may go out, and where it is if it's out.
@@ -849,6 +860,10 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
         "clock": clock_json(clock.as_ref()),
         "hangout": { "id": hangout.id, "name": hangout.name },
         "you": caller.name,
+        // S60: reading a room isn't being in it.
+        "you_are_here": snapshot.agents.iter().any(|agent| {
+            caller.agent_id.as_ref() == Some(&agent.id) && !agent.away
+        }),
         // A visitor sees this Porch only from the moment they arrived, until their trip ends.
         "you_are_a_guest": snapshot.guest.is_some(),
         "guest_until": snapshot.guest.map(|visit| iso(visit.until)),
@@ -864,6 +879,7 @@ fn read_room(state: &AppState, caller: &Caller, args: &Value) -> ApiResult<Value
                 "state": agent.state,
                 "status": agent.status,
                 "working_through": agent.activity.as_ref().map(|activity| &activity.via),
+                "away": agent.away,
             });
             if let Some(reason) = mark_of(Some(&agent.id)) {
                 bot["your_owner_marked"] = json!(reason);
@@ -1019,6 +1035,7 @@ fn call_tool(state: &AppState, caller: &Caller, name: &str, args: &Value) -> Api
         "come_back" => {
             Ok(json!({ "ok": true, "was_out": crate::routines::come_back(state, caller)? }))
         }
+        "go_to_room" => crate::spaces::go_to_room(state, caller, text_arg(args, "hangout_id")?),
         "start_project" => crate::projects::start_project(state, caller, text_arg(args, "name")?),
         "invite_to_project" => crate::projects::invite_to_project(
             state,

@@ -2810,9 +2810,9 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13)
-    // and use_item (I32).
-    assert!(private_names.contains(&"inbox") && private_names.len() == 37, "{private_names:?}");
+    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13),
+    // use_item (I32) and go_to_room (S57).
+    assert!(private_names.contains(&"inbox") && private_names.len() == 38, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))

@@ -766,6 +766,8 @@ pub fn add_note(
     holder_of(&item)?;
     let body = ops::clean(text, "note", MAX_NOTE_CHARS)?;
     ops::note_agent_write(state, caller)?;
+    // S57: a note goes on the thing itself, so a bot has to be there.
+    spaces::go_to(state, caller, &item.hangout_id)?;
     let id = auth::new_id();
     let added = state.db.insert_item_note(
         &NewItemNote {
@@ -812,11 +814,18 @@ pub fn no_quiet(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
 // Using
 
 /// I34: a bot that isn't here any more has let go, whatever the table says, so nothing has to tidy up
-/// after every way there is of leaving. Someone who walked in counts, as they do for the room.
+/// after every way there is of leaving, going to another room included (S55). Someone who walked in
+/// counts, as they do for the room.
 fn bots_here(state: &AppState, floor_id: &str, now: i64) -> ApiResult<Vec<String>> {
     let agents = state.db.agents_in(floor_id, now)?;
     let visitors = state.db.visitors_in(floor_id, now)?;
-    Ok(agents.into_iter().chain(visitors).map(|agent| agent.id).collect())
+    let mut here = Vec::new();
+    for agent in agents.into_iter().chain(visitors) {
+        if state.db.bot_place(&agent.id, now)?.as_deref() == Some(floor_id) {
+            here.push(agent.id);
+        }
+    }
+    Ok(here)
 }
 
 /// I35: the bots using each item on a floor now, by item.
@@ -846,6 +855,8 @@ pub fn use_item(state: &AppState, caller: &Caller, item_id: &str) -> ApiResult<V
         .filter(|kind| kind.does.is_some())
         .ok_or_else(|| ApiError::conflict("that can't be used"))?;
     ops::note_agent_write(state, caller)?;
+    // S57: it walks over to use it, so it's in this room first.
+    spaces::go_to(state, caller, &item.hangout_id)?;
     let now = now();
     let until = now + USE_SECS;
     let here = bots_here(state, &item.hangout_id, now)?;

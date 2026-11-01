@@ -319,6 +319,40 @@ async fn a_bot_in_a_project_brings_in_a_bot_it_is_with_and_its_owner_can_take_it
     server.refused(&town.rover, "read_room", json!({ "hangout_id": floor })).await;
 }
 
+// L12, S55, S59
+#[tokio::test]
+async fn belonging_to_the_same_room_isnt_being_there_together() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let room = text(&server.get(&town.fern, "/api/me").await.ok()["hangouts"][0]["id"]);
+    let home = text(&server.get(&town.rover, "/api/me").await.ok()["hangouts"][0]["id"]);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let bring_in = json!({ "project_id": project, "bot": "Rover" });
+
+    // S59: it starts out in the room it made.
+    let inbox = server.tool(&town.fern, "inbox", json!({})).await;
+    assert_eq!(inbox["you_are_in"]["id"], project.as_str(), "{inbox}");
+
+    // Bo joins Ann's room and brings Rover, so both bots belong to it.
+    let snapshot = server.get(&town.ann.key, &format!("/api/hangouts/{room}")).await.ok();
+    let code = text(&snapshot["hangout"]["invite_code"]);
+    server.post(&town.bo.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let bring = format!("/api/hangouts/{room}/agents/{}", town.rover_id);
+    server.put(&town.bo.key, &bring, json!({})).await.ok();
+    server.tool(&town.fern, "go_to_room", json!({ "hangout_id": room })).await;
+
+    // Rover goes home, so it's only away from the room they share.
+    server.tool(&town.rover, "go_to_room", json!({ "hangout_id": home })).await;
+    server.refused(&town.fern, "invite_to_project", bring_in.clone()).await;
+
+    // Back together it works, and being brought in doesn't take Rover anywhere.
+    server.tool(&town.rover, "go_to_room", json!({ "hangout_id": room })).await;
+    server.tool(&town.fern, "invite_to_project", bring_in).await;
+    let inbox = server.tool(&town.rover, "inbox", json!({})).await;
+    assert_eq!(inbox["you_are_in"]["id"], room.as_str(), "{inbox}");
+}
+
 // L12, S27
 #[tokio::test]
 async fn a_bot_cant_bring_back_the_bot_of_someone_turned_out() {
@@ -500,6 +534,64 @@ async fn in_its_hours_a_bot_is_shown_by_name_at_its_projects_studio() {
     // Public places off keeps its name and where it is off the map.
     server.all_day(&town.ann, &town.fern, false).await;
     assert!(server.bots_out().await.iter().all(|(name, _, _)| name != "Fern"));
+}
+
+// L17, S56
+#[tokio::test]
+async fn a_bot_is_shown_at_the_door_of_the_room_its_in_and_no_other() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let home = text(&server.get(&town.fern, "/api/me").await.ok()["hangouts"][0]["id"]);
+    server.house_two_days_ago(&town.ann);
+    let started = server.tool(&town.fern, "start_project", json!({ "name": "Garden robot" })).await;
+    let project = text(&started["project_id"]);
+    let spot = server.free_spots()[0];
+    server
+        .tool(
+            &town.fern,
+            "build_studio",
+            json!({ "project_id": project, "x": spot.0, "y": spot.1 }),
+        )
+        .await;
+    server.all_day(&town.ann, &town.fern, true).await;
+    assert!(shown_at(&server.bots_out().await, "Fern", spot));
+
+    // Gone home to a private room, it isn't at the studio just for being in the project.
+    server.tool(&town.fern, "go_to_room", json!({ "hangout_id": home })).await;
+    assert!(server.bots_out().await.is_empty(), "{:?}", server.bots_out().await);
+
+    // Back again, it is.
+    server.tool(&town.fern, "go_to_room", json!({ "hangout_id": project })).await;
+    assert!(shown_at(&server.bots_out().await, "Fern", spot));
+
+    // A public floor it belongs to has a door too, and it's only ever at the one.
+    let (_, cy) = server.someone("Cy2").await;
+    server.place_at(&cy, "house", now() - 8 * DAY);
+    let cafe_spot = server.place_at(&cy, "cafe", now());
+    let door = server
+        .post(&cy.key, "/api/spaces/door", json!({ "x": cafe_spot.0, "y": cafe_spot.1 }))
+        .await
+        .ok();
+    let floor = text(&door["hangout_id"]);
+    server
+        .put(
+            &cy.key,
+            &format!("/api/floors/{floor}"),
+            json!({ "access": "public", "create_code": CODE }),
+        )
+        .await
+        .ok();
+    let invite = server.get(&cy.key, &format!("/api/hangouts/{floor}")).await.ok();
+    let code = text(&invite["hangout"]["invite_code"]);
+    server.post(&town.ann.key, &format!("/api/invites/{code}/join"), json!({})).await.ok();
+    let fern_id = text(&server.get(&town.fern, "/api/me").await.ok()["agent_id"]);
+    server
+        .put(&town.ann.key, &format!("/api/hangouts/{floor}/agents/{fern_id}"), json!({}))
+        .await
+        .ok();
+    let out = server.bots_out().await;
+    assert!(shown_at(&out, "Fern", cafe_spot), "{out:?}");
+    assert_eq!(out.len(), 1, "{out:?}");
 }
 
 // L17

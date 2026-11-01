@@ -244,6 +244,8 @@ pub fn post_message(
     let body = clean(body, "message", MAX_MESSAGE_CHARS)?;
     note_agent_write(state, caller)?;
     spaces::note_walk_in_write(state, caller, hangout_id)?;
+    // S57: a bot has to be in a room to talk there.
+    spaces::go_to(state, caller, hangout_id)?;
     let message = state.db.insert_message(&NewMessage {
         hangout_id,
         person_id: Some(&caller.person_id),
@@ -536,6 +538,8 @@ pub fn create_check_in(
         None => None,
     };
     note_agent_write(state, caller)?;
+    // S57: asking the room is being in it.
+    spaces::go_to(state, caller, hangout_id)?;
 
     let id = auth::new_id();
     let now = now();
@@ -729,6 +733,8 @@ pub struct Inbox {
     pub your_questions: Vec<OwnerQuestion>,
     /// Plans this side is going to that start soon (F44).
     pub plans_soon: Vec<crate::closeness::PlanSoon>,
+    /// S60: the room this bot is in, by id and name. People only ever have nothing here.
+    pub you_are_in: Option<serde_json::Value>,
 }
 
 pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
@@ -783,6 +789,9 @@ pub fn inbox(state: &AppState, caller: &Caller) -> ApiResult<Inbox> {
         inbox.owner_answers = state.db.owner_answers(agent_id, now - DAY_SECS)?;
         inbox.your_questions =
             state.db.open_questions_of_bot(agent_id, now - QUESTION_LAPSE_SECS)?;
+        let place = state.db.bot_place(agent_id, now)?;
+        let room = place.map(|id| state.db.hangout(&id)).transpose()?.flatten();
+        inbox.you_are_in = room.map(|room| serde_json::json!({ "id": room.id, "name": room.name }));
     }
     Ok(inbox)
 }
@@ -921,6 +930,10 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     // They are never in `agents_in` or `people_in`, which decide who gets notified.
     let mut agents = state.db.agents_in(hangout_id, now)?;
     agents.extend(state.db.visitors_in(hangout_id, now)?);
+    // S55: they all belong here, or are guests, but each is in only one place.
+    for agent in &mut agents {
+        agent.away = state.db.bot_place(&agent.id, now)?.as_deref() != Some(hangout_id);
+    }
     let mut people = state.db.people_in(hangout_id)?;
     for owner in state.db.visitor_owners(hangout_id, now)? {
         if !people.iter().any(|person| person.id == owner.id) {
@@ -956,8 +969,8 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     };
     let plan_items = crate::closeness::items_for_room(state, caller, &events)?;
     let stats = Stats {
-        bots: agents.len(),
-        bots_active: agents.iter().filter(|agent| agent.state == "active").count(),
+        bots: agents.iter().filter(|agent| !agent.away).count(),
+        bots_active: agents.iter().filter(|agent| !agent.away && agent.state == "active").count(),
         messages_24h: state.db.message_count_since(hangout_id, counted_since)?,
         on_calendar: events.iter().filter(|event| event.status == "confirmed").count(),
     };
@@ -1155,11 +1168,13 @@ pub fn bring_agent(
             )));
         }
     }
-    spaces::check_fits(state, hangout_id)?;
-    state.db.add_agent_to_room(hangout_id, agent_id)?;
-    announce(state, hangout_id, &format!("{} brought in {}.", caller.name, agent.name))?;
-    refresh(state, hangout_id);
-    Ok(())
+    // S59: a bot that already belongs here is only being called over, so the room hears nothing.
+    if !state.db.agents_in(hangout_id, now())?.iter().any(|bot| bot.id == agent_id) {
+        spaces::check_fits(state, hangout_id)?;
+        state.db.add_agent_to_room(hangout_id, agent_id)?;
+        announce(state, hangout_id, &format!("{} brought in {}.", caller.name, agent.name))?;
+    }
+    spaces::place_bot(state, agent_id, hangout_id)
 }
 
 pub fn remove_agent(
@@ -1178,7 +1193,7 @@ pub fn remove_agent(
     state.db.end_bot_player_token(agent_id)?;
     announce(state, hangout_id, &format!("{} sent {} home.", caller.name, agent.name))?;
     refresh(state, hangout_id);
-    Ok(())
+    spaces::refresh_bot_place(state, agent_id)
 }
 
 /// Replaces a bot's token. The old one stops working immediately, open streams included. A house

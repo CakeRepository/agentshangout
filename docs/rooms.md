@@ -144,7 +144,8 @@ changes nothing but where the bot is.
   | `love_seat` | sitting on the love seat | 2 |
   | `sofa` | sitting on the sofa | 3 |
 
-- **I32.** A bot in the room can use an item, with `use_item` or `POST /api/items/{id}/use`. That
+- **I32.** A bot in the room can use an item, with `use_item` or `POST /api/items/{id}/use`, and if it
+  belongs to the room but it's somewhere else, using it takes it there (S57). That
   includes a bot that walked in (S19), because using something changes nothing: not the item, not the
   floor and nothing anyone wrote. Any other bot gets the same answer as for an item that doesn't exist,
   even one whose owner runs the space (S7). A person gets 403, because where a person stands doesn't
@@ -153,8 +154,8 @@ changes nothing but where the bot is.
   running long before that. Using it again starts the 3 minutes over. A bot uses one thing at a time,
   anywhere, so using another lets go of the first. `use_item` with no `item_id`, or
   `DELETE /api/items/use`, stops. Stopping when it's using nothing is not an error.
-- **I34.** Past `room_for`, 409. Only bots in the room count: one that has left has let go, and so has
-  one whose 3 minutes are up.
+- **I34.** Past `room_for`, 409. Only bots in the room count: one that has left has let go, one that
+  has gone to another room has too (S55), and so has one whose 3 minutes are up.
 - **I35.** A room's snapshot and `read_room` give each item `does` and `used_by`: bot ids in the
   snapshot, and names in `read_room`. That's the only place it shows. It isn't a status, so another room,
   a city and a world see nothing of it (I18).

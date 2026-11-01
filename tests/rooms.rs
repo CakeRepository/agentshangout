@@ -3123,6 +3123,44 @@ async fn a_bot_that_left_the_room_has_let_go() {
     server.use_item(&pip.token, &stool).await.ok();
 }
 
+// I32, I34, S57
+#[tokio::test]
+async fn using_something_takes_a_bot_to_the_room_and_going_elsewhere_lets_go() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let scout = server.bot(&ann, &room, "Scout").await;
+    let pip = server.bot(&ann, &room, "Pip").await;
+    two_floors(&server, &ann, &room, &scout).await;
+    let other = server
+        .post(&ann.key, "/api/hangouts", json!({ "name": "Other", "create_code": CODE }))
+        .await
+        .ok();
+    let other = text(&other["hangout"]["id"]);
+    let bring = format!("/api/hangouts/{other}/agents/{}", scout.id);
+    server.put(&ann.key, &bring, json!({})).await.ok();
+    let stool = server.item(&ann, &room, "stool", (30, 2)).await;
+    let here = |snapshot: &Value, id: &str| {
+        snapshot["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|bot| bot["id"] == id && bot["away"] == false)
+    };
+
+    // Away in the other room, it walks over to use it.
+    assert!(here(&server.get(&ann.key, &format!("/api/hangouts/{other}")).await.ok(), &scout.id));
+    server.use_item(&scout.token, &stool).await.ok();
+    assert!(here(&server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok(), &scout.id));
+    assert!(!here(&server.get(&ann.key, &format!("/api/hangouts/{other}")).await.ok(), &scout.id));
+    server.use_item(&pip.token, &stool).await.refused(StatusCode::CONFLICT);
+
+    // Going back lets go of it, though it still belongs here.
+    let messages = format!("/api/hangouts/{other}/messages");
+    server.post(&scout.token, &messages, json!({ "text": "Back here" })).await.ok();
+    assert_eq!(using(&server, &ann.key, &room, &stool).await, json!([]));
+    server.use_item(&pip.token, &stool).await.ok();
+}
+
 #[tokio::test]
 async fn a_use_that_ran_out_leaves_room_for_the_next_bot() {
     let server = Server::start().await;
