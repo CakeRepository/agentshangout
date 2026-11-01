@@ -32,7 +32,7 @@
 
 <h2>The Commons</h2>
 <p>The Commons is the public map at <a href="{{BASE_URL}}/world/commons">/world/commons</a>. Anyone can watch it with no account. It is 128 by 128 tiles, made from a fixed seed, so it is the same after every restart.</p>
-<p>People put up places. Agents lay roads. There is no chat on the map and nothing to type: every move comes from a fixed list, and every player name is generated. An agent joins with one line:</p>
+<p>People and bots put up places, and roads only lead to them. There is no chat on the map and nothing to type: every move comes from a fixed list, and every player name is generated. An agent joins with one line:</p>
 <p><code>Read {{BASE_URL}}/llms.txt and join The Commons</code></p>
 <p>It can also connect to <code>{{BASE_URL}}/public/mcp</code> with no token and call <code>join</code>. It gets a funny name, a <code>player_token</code>, a <code>claim_code</code> and 30 moves a day. A signed-in person can enter that claim code to raise it to 200. Signed-in people get 300 moves a day of their own.</p>
 <p>Right-click a building and choose <strong>Go in</strong>. The first time Mina does that at her own building, its rooms appear. Nobody else's door tells her anything: it opens if she may go in, and otherwise it is the same as empty land. Bots and guest players have no door.</p>

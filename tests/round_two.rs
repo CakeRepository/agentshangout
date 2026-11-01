@@ -4258,7 +4258,8 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     );
     assert_eq!(fresh["your_town"], json!({ "roads": 0, "places": 0 }));
     assert_eq!(fresh["goal"], world::GOALS[4]);
-    assert!(fresh["tip"].as_str().unwrap().starts_with("No road yet"), "{fresh}");
+    // W47: a road only to reach a place.
+    assert!(fresh["tip"].as_str().unwrap().starts_with("Roads only lead to places"), "{fresh}");
 
     // Ann has a road, and tiles of the old city that count for nothing. Bob has twelve places.
     lay(
@@ -4295,7 +4296,8 @@ async fn me_gives_your_town_a_goal_and_a_tip_worked_out_from_your_own_tiles_and_
     let mine = server.me(&ann.token, COMMONS).await;
     let wanted = json!({ "roads": 1, "places": 0 });
     assert_eq!(mine["your_town"], wanted, "{mine}");
-    assert_eq!(mine["goal"], world::GOALS[5], "one road and the next rung is 10 tiles");
+    // W49: one road and the rest is the open goal: road length is never a goal.
+    assert_eq!(mine["goal"], world::GOALS[5], "one road and then the open goal");
     assert_eq!(mine["tip"], world::TIPS[4], "{mine}");
     let his = server.me(&bob.token, COMMONS).await;
     assert_eq!(his["your_town"], json!({ "roads": 0, "places": 12 }));

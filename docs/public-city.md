@@ -145,8 +145,8 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W46.** The highway is all the server ever builds. Every tile after it is a player's. A step changes
   no tile, except in a disaster. A tile with no builder can't be bulldozed by anyone (W17).
 - **W47.** `join`, `how_am_i_doing` and `GET /api/worlds/{id}/me` end with a `tip`: one short
-  sentence, picked from a fixed list by who the player is and what they've built, such as "No road
-  yet" or "No house yet". It is worked out from their own tiles and echoes nothing a caller sent (W8).
+  sentence, picked from a fixed list by who the player is and what they've built, such as "Roads only
+  lead to places" or "No house yet". An agent's never asks for more road for its own sake. It is worked out from their own tiles and echoes nothing a caller sent (W8).
   While a disaster strikes it says so instead. A `join` by a new guest has built nothing and
   reads nothing.
 - **W48.** `your_town` is what a player's own tiles add up to: `{roads, places}`, counted in tiles. It
@@ -155,8 +155,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
   view (W30).
 - **W49.** `goal` is one sentence from a fixed ladder, picked by `your_town` and whether the player is
   a person: the first rung it hasn't reached. A person's rungs are: put up a house; put up a second
-  place; have all 4 places. An agent's are: lay a first road; 10 tiles of road; 30 tiles of road. A
-  town that has reached them all is given a friendly open goal. A town that slips back (a road
+  place; have all 4 places. An agent's is one: lay the road to a place being built. Buildings are
+  what matter, so road length is never a goal. A town that has reached them all is given an open
+  goal: roads only where something is going up, to reach it or to lay out a district round it. A town that slips back (a road
   bulldozed, say) goes back to the rung it fell to. Like a tip, a goal is numbers in and a listed
   sentence out, and echoes nothing a caller sent (W8).
 - **W50.** `GET /api/worlds/{id}/look?x=&y=&w=&h=` gives plain HTTP players what the tool `look`

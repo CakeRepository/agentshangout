@@ -1567,32 +1567,25 @@ const GOAL_SECOND_PLACE: &str =
 const GOAL_ALL_PLACES: &str = "Fill out your places: a person can have a house and 3 others.";
 const GOAL_PERSON_OPEN: &str =
     "You have all the places a person can. Run them, and invite people in.";
-const GOAL_ROAD: &str = "Lay your first road, starting beside the highway.";
-const GOAL_TEN_ROADS: &str = "Lay 10 tiles of road: a place needs a road beside it.";
-const GOAL_THIRTY_ROADS: &str = "Lay 30 tiles of road, out to where there is room to build.";
+// W49: buildings are what matter. A road is only the way to one, or a few streets round one.
+const GOAL_ROAD: &str = "Find a place going up that no road reaches yet, and lay the road to it.";
 const GOAL_AGENT_OPEN: &str =
-    "Your streets are open. Keep them that way, and go where people are building.";
+    "Lay roads only where something is going up: the way to a new place, \
+     or a few streets round it for a district to grow.";
 
 /// A person's rungs in order, then an agent's. A goal is always one of these.
-pub const GOALS: [&str; 8] = [
-    GOAL_HOUSE,
-    GOAL_SECOND_PLACE,
-    GOAL_ALL_PLACES,
-    GOAL_PERSON_OPEN,
-    GOAL_ROAD,
-    GOAL_TEN_ROADS,
-    GOAL_THIRTY_ROADS,
-    GOAL_AGENT_OPEN,
-];
+pub const GOALS: [&str; 6] =
+    [GOAL_HOUSE, GOAL_SECOND_PLACE, GOAL_ALL_PLACES, GOAL_PERSON_OPEN, GOAL_ROAD, GOAL_AGENT_OPEN];
 
 /// W49: the first rung of the ladder that a town hasn't reached, a person's or an agent's. The last
 /// of each is an open goal. A town that slips back (a road bulldozed, say) is sent back to the rung
 /// it fell to.
 pub fn goal(town: &Town, person: bool) -> &'static str {
-    let (ladder, reached) = if person {
-        (&GOALS[..4], [town.places >= 1, town.places >= 2, town.places >= 4])
+    let (ladder, reached): (&[&str], Vec<bool>) = if person {
+        (&GOALS[..4], vec![town.places >= 1, town.places >= 2, town.places >= 4])
     } else {
-        (&GOALS[4..], [town.roads >= 1, town.roads >= 10, town.roads >= 30])
+        // W49: an agent isn't asked for more road, only for the road a place needs.
+        (&GOALS[4..], vec![town.roads >= 1])
     };
     ladder[reached.iter().position(|done| !done).unwrap_or(reached.len())]
 }
@@ -1604,9 +1597,11 @@ const TIP_OUT_OF_MOVES: &str = "Out of moves for today: they come back at midnig
 const TIP_NO_HOUSE: &str = "No house yet: put one on a tile beside a road.";
 const TIP_PLACES_COME: &str =
     "More places come with time: a studio after a day, a club after 3 and a cafe after 7.";
-const TIP_NO_ROAD: &str = "No road yet: lay one that starts beside the highway.";
+const TIP_NO_ROAD: &str =
+    "Roads only lead to places: lay one to a place going up that no road reaches.";
 const TIP_MORE_ROADS: &str =
-    "Roads give people somewhere to build: lay them out towards open land.";
+    "Don't lay roads for their own sake: only to reach a new place, or a few \
+     streets round one for a district.";
 /// W47: said instead of any other while a disaster strikes.
 pub const TIP_STRIKING: &str =
     "A disaster is striking The Commons: nothing can be built until it is over.";
@@ -4192,7 +4187,8 @@ mod tests {
             [at(0, 0, false), at(1, 0, false), at(9, 0, false), at(10, 0, false), at(30, 0, false)];
         assert_eq!(
             climbed,
-            [GOAL_ROAD, GOAL_TEN_ROADS, GOAL_TEN_ROADS, GOAL_THIRTY_ROADS, GOAL_AGENT_OPEN]
+            // W49: road length is never a goal: one road to a place, and then the open goal.
+            [GOAL_ROAD, GOAL_AGENT_OPEN, GOAL_AGENT_OPEN, GOAL_AGENT_OPEN, GOAL_AGENT_OPEN]
         );
         assert!(
             GOALS.contains(&at(u32::MAX, u32::MAX, true))
