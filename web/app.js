@@ -2030,11 +2030,16 @@ const BESIDE = '(min-width: 1000px)';
 
 // A link in a game window's title bar, which a narrow window shows as one short word. It's a link
 // like any other, so leaving goes through route(), which calls leaveRoom.
-function titleLink(path, text, short, arrow = '') {
+function titleLink(path, text, short) {
   return link(path, [
-    h('span', { class: 'long' }, `${arrow}${text}`),
-    h('span', { class: 'short', 'aria-hidden': 'true' }, `${arrow}${short}`),
+    h('span', { class: 'long' }, text),
+    h('span', { class: 'short', 'aria-hidden': 'true' }, short),
   ], { class: 'wd-tbtn', 'aria-label': text });
+}
+
+// S63: the way back, at the far left of the title bar, in the same few words at every width.
+function backLink(path, text, short) {
+  return link(path, `← ${short}`, { class: 'wd-tbtn', 'aria-label': text, title: text });
 }
 
 // The clock at the end of a window's status bar. Returns what stops it.
@@ -2245,6 +2250,7 @@ async function roomView(id) {
     await api(`/api/floors/${encodeURIComponent(id)}/walk-in`, { method: 'POST' });
     return load();
   });
+  const me = await api('/api/me').catch(() => null);
   const shownMessages = new Set();
 
   const frame = windowFrame({ label: snapshot.hangout.name, stats: ROOM_STATS, heading: 'h1', live: true });
@@ -2262,6 +2268,8 @@ async function roomView(id) {
   const root = h('main', { class: 'game' }, frame.root);
   const lampEl = frame.root.querySelector('.wd-live');
   const panels = createPanels(frame.root);
+  const parts = homePartsOnDemand(me);
+  const account = accountPanel(panels, me, parts);
   const beside = matchMedia(BESIDE);
   const say = (text) => {
     if (frame.message.textContent !== text) frame.message.textContent = text;
@@ -2310,7 +2318,6 @@ async function roomView(id) {
   let waitingBefore = 0;
 
   const person = (personId) => snapshot.people.find((p) => p.id === personId);
-  const me = () => person(snapshot.you.person_id);
   const colorOf = (personId) => person(personId)?.color || '#98a0b5';
 
   function messageRow(message) {
@@ -3241,7 +3248,7 @@ async function roomView(id) {
   const aboutMore = h('p', { class: 'muted', hidden: true });
 
   // The same panels again for a narrower window, where the title bar has no room for their buttons.
-  // `mid` is in the bar from a tablet up, and `sec` only on a wide screen.
+  // `mid` is in the bar once a panel can stand beside the room, and `sec` only on a wide screen.
   const moreButton = (name, label, className) =>
     h('button', { type: 'button', class: `wd-btn wide ${className}`, onclick: () => panels.open(name) }, label);
   const calendarMore = moreButton('calendar', 'Calendar', 'mid');
@@ -3259,18 +3266,19 @@ async function roomView(id) {
   const [backText, backShort] = houseBack ? ['Back to the house', 'House']
     : snapshot.city_id ? ['Back to the city', 'City']
       : ['Back to the map', 'Map'];
-  // The way out is in the room's own top-left corner, where a game puts its exit.
-  stage.append(link(backPath, `← ${backShort}`, { class: 'stage-exit', 'aria-label': backText, title: backText }));
+  frame.back.append(backLink(backPath, backText, backShort));
+  // S64: what only a room has goes first, and the bar ends in the same five as the map's.
   frame.actions.append(
     questionsToggle.button,
-    chatToggle.button,
-    builder.toggle,
-    dresser.toggle,
-    checkInsToggle.button,
-    calendarToggle,
-    panels.toggle('crew', 'Crew', { short: 'Crew' }),
     panels.toggle('notes', 'Shared notes', { className: 'sec' }),
     panels.toggle('yours', 'Your notes', { className: 'sec', aria: 'Notes for your bots' }),
+    checkInsToggle.button,
+    calendarToggle,
+    builder.toggle,
+    chatToggle.button,
+    panels.toggle('crew', 'Crew', { short: 'Crew' }),
+    account.toggle,
+    dresser.toggle,
     panels.toggle('more', 'More', { className: 'more' }));
 
   panels.add('room', 'The room', {
@@ -3408,6 +3416,7 @@ async function roomView(id) {
     builder.leave();
     document.removeEventListener('keydown', onKey, true);
     document.documentElement.classList.remove('in-game');
+    parts.stop();
   };
   return root;
 }
@@ -3618,9 +3627,8 @@ async function spaceView(id) {
     frame.outputs.here.textContent = String(floors.reduce((total, { here }) => total + here, 0));
     // Asked again each time, because the floor this came from can be removed from this page.
     const back = (floors.find(({ floor }) => floor.id === from) || floors[0]).floor;
-    frame.actions.replaceChildren(
-      titleLink(`/h/${back.id}`, 'Back to the room', 'Room', '← '),
-      titleLink('/', 'The Commons', 'Map'));
+    frame.back.replaceChildren(backLink(`/h/${back.id}`, 'Back to the room', 'Room'));
+    frame.actions.replaceChildren(titleLink('/', 'The Commons', 'Map'));
     body.replaceChildren(
       spacePanel(),
       floorsPanel(),
@@ -5255,6 +5263,46 @@ function createPanels(root) {
   return set;
 }
 
+// What goes in the panels with a person's account and rooms, asked for the first time one opens.
+// `stop` ends whatever that left running.
+function homePartsOnDemand(me) {
+  let asked = null;
+  const parts = () => {
+    asked ||= homeParts(me);
+    return asked;
+  };
+  parts.stop = () => asked?.then((ready) => ready.stop()).catch(() => {});
+  return parts;
+}
+
+// Your account, the same button and the same panel on the map and in a room (S64). Someone who
+// tried to build, or whose sign-in ran out, is told why at the top.
+function accountPanel(panels, me, parts) {
+  const body = panels.add('account', me ? 'Your account' : 'Sign in', {
+    onOpen: () => {
+      if (!body.firstChild) fill('', false);
+    },
+  });
+  async function fill(why, again) {
+    body.replaceChildren(h('p', { class: 'muted' }, 'Looking…'));
+    try {
+      const ready = await parts();
+      body.replaceChildren(
+        ...(why ? [h('p', { class: 'note', role: 'status' }, why)] : []),
+        ...(again ? [ready.signIn()] : ready.account));
+    } catch (error) {
+      body.replaceChildren(h('p', { class: 'error' }, error.message));
+    }
+  }
+  return {
+    toggle: panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
+    open(why, again = false) {
+      panels.open('account');
+      fill(why, again);
+    },
+  };
+}
+
 // A small bevelled menu that opens where something was clicked. Its items are buttons:
 // { label, run, cost, danger, icon, checked } and null for a gap. It closes on Escape, on a click
 // anywhere else, and when the map is dragged or zoomed. Everything it shows is text.
@@ -5478,33 +5526,10 @@ async function worldView(id, { home = false } = {}) {
 
   const panels = createPanels(frame.root);
   const compact = matchMedia(COMPACT);
-  let homeParts_ = null;
-  const parts = () => {
-    homeParts_ ||= homeParts(me);
-    return homeParts_;
-  };
+  const parts = homePartsOnDemand(me);
 
-  // The way in. A person who tried to build, or whose sign-in ran out, is told why at the top.
-  const accountBody = panels.add('account', me ? 'Your account' : 'Sign in', {
-    onOpen: () => {
-      if (!accountBody.firstChild) fillAccount('', false);
-    },
-  });
-  async function fillAccount(why, again) {
-    accountBody.replaceChildren(h('p', { class: 'muted' }, 'Looking…'));
-    try {
-      const ready = await parts();
-      accountBody.replaceChildren(
-        ...(why ? [h('p', { class: 'note', role: 'status' }, why)] : []),
-        ...(again ? [ready.signIn()] : ready.account));
-    } catch (error) {
-      accountBody.replaceChildren(h('p', { class: 'error' }, error.message));
-    }
-  }
-  function openAccount(why, again = false) {
-    panels.open('account');
-    fillAccount(why, again);
-  }
+  // The way in.
+  const account = accountPanel(panels, me, parts);
 
   const agentBody = panels.add('agent', 'Send your agent in', {}, agentCard());
   const roomsBody = panels.add('rooms', 'Rooms and cities', {
@@ -5560,7 +5585,7 @@ async function worldView(id, { home = false } = {}) {
   panels.add('info', 'What\'s going on', {},
     summaryCopy,
     me ? townFull : h('p', { class: 'muted' }, 'You\'re looking around. ',
-      h('button', { type: 'button', class: 'link', onclick: () => openAccount('Sign in to build. Looking around is free.') }, 'Sign in'),
+      h('button', { type: 'button', class: 'link', onclick: () => account.open('Sign in to build. Looking around is free.') }, 'Sign in'),
       ' to build.'),
     h('p', { class: 'muted fine' }, 'A person on the street is someone with the page open. A robot is an agent, and a frog is a web crawler.'),
     me?.keeper && !frozen ? h('button', { type: 'button', class: 'wd-btn wide', onclick: askForDisaster }, 'Start a disaster') : null,
@@ -5606,11 +5631,8 @@ async function worldView(id, { home = false } = {}) {
   const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon() });
   dresser.render();
 
+  // S64: what only the map has goes first, and the bar ends in the same five as a room's.
   frame.actions.append(...[
-    panels.toggle('info', 'What\'s going on', { short: 'Info' }),
-    panels.toggle('around', 'Who\'s around', { short: 'Who' }),
-    panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
-    me?.kind === 'person' ? dresser.toggle : null,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),
@@ -5619,6 +5641,10 @@ async function worldView(id, { home = false } = {}) {
     link('/worlds', 'Worlds', { class: 'wd-tbtn sec' }),
     home ? null : link('/', 'Home', { class: 'wd-tbtn sec' }),
     fullButton('sec'),
+    panels.toggle('info', 'What\'s going on', { short: 'Info' }),
+    panels.toggle('around', 'Who\'s around', { short: 'Who' }),
+    account.toggle,
+    me?.kind === 'person' ? dresser.toggle : null,
     panels.toggle('more', 'More', { className: 'more' }),
   ].filter(Boolean));
 
@@ -5643,7 +5669,7 @@ async function worldView(id, { home = false } = {}) {
   function pick(name) {
     if (name && !me) {
       say('Sign in to build here. Looking around is free.');
-      openAccount('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
+      account.open('You need an account to build. Make one in a few seconds, and you\'ll be right back on this map.');
       return;
     }
     // W61: a place that hasn't come yet stays in the toolbar, so people can see what's ahead.
@@ -5753,7 +5779,7 @@ async function worldView(id, { home = false } = {}) {
     } catch (error) {
       say(plain(error.message));
       if (error.status === 401) {
-        openAccount('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
+        account.open('Your sign-in has run out. Sign in again and you\'ll be right back on this map.', true);
       }
       // A refused move can mean the toolbar is out of date: a second square, or the switch going off.
       refreshTown();
@@ -5803,7 +5829,7 @@ async function worldView(id, { home = false } = {}) {
     } else if (me) {
       items.push({ label: 'Wave', cost: '1 move', run: () => send({ action: 'emote', emote: 'wave' }) });
     } else {
-      items.push({ label: 'Sign in to wave', run: () => openAccount('Sign in to wave at people. Looking around is free.') });
+      items.push({ label: 'Sign in to wave', run: () => account.open('Sign in to wave at people. Looking around is free.') });
     }
     if (canRemove && f.type === 'player') {
       items.push(null, { label: 'Remove…', danger: true, run: () => removeOne(f.id, f.name) });
@@ -5826,7 +5852,7 @@ async function worldView(id, { home = false } = {}) {
     const what = t.kind ? `${KIND_NAME[t.kind]}${t.level ? `, level ${t.level}` : ''}` : LAND_NAME[t.land];
     const items = [];
     if (!me) {
-      items.push({ label: 'Sign in to build', run: () => openAccount('Sign in to build here. Looking around is free.') });
+      items.push({ label: 'Sign in to build', run: () => account.open('Sign in to build here. Looking around is free.') });
     } else if (frozen) {
       items.push({ label: 'Nothing happens here', run: () => say(idle) });
     } else {
@@ -6151,7 +6177,7 @@ async function worldView(id, { home = false } = {}) {
     document.removeEventListener('fullscreenchange', syncFull);
     document.documentElement.classList.remove('in-game');
     if (document.fullscreenElement === root) document.exitFullscreen().catch(() => {});
-    homeParts_?.then((ready) => ready.stop()).catch(() => {});
+    parts.stop();
   };
   return root;
 }
