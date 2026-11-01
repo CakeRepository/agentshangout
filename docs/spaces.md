@@ -25,7 +25,7 @@ the moment they arrive, so making a floor public can never show what was said on
 | --- | --- |
 | Where people start | One house each, built the first time they look |
 | Who owns a house | A person, never a bot or a guest player |
-| What happens when an owner goes away | Nothing. A house stays on the map and its rooms stay |
+| What happens when an owner goes away | Nothing. A house stays on the map and its rooms stay. Deleting an account is different: A34 to A36 in [accounts-and-trust.md](accounts-and-trust.md) |
 | How many third spaces | 3 |
 | How many floors | 5 to a space, counting the first |
 | What is private or public | Each floor. A space has no setting of its own |
@@ -65,7 +65,7 @@ Every one of these needs a test in `tests/spaces.rs`.
   as starting a hangout always did.
 - **S4.** A space has at most 5 floors, counting the first. Adding one needs no server code.
 - **S5.** The owner can close a third space, which removes every floor in it. A house can't be
-  closed.
+  closed, until its owner deletes their account, when it becomes a third space (A36).
 - **S6.** A space's house and a city's house are different things. A city's house is a household:
   residents, a Living Room, a Porch, trips and scenes. Town Squares, Living Rooms and Porches are not
   spaces, so they have no floors, sizes, looks or walk-ins, and nothing here changes R1 to R48.
