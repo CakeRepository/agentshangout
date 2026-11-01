@@ -1,4 +1,4 @@
-import { LOOK_COLOURS, Room, figurePicture, floorPicture, furniturePicture, isWearing, itemPicture, roomPicture, wallPicture } from './room.js';
+import { LOOK_COLOURS, Room, figurePicture, floorPicture, furniturePicture, itemPicture, roomPicture, wallPicture } from './room.js';
 import { City, PLOTS, homeOf, houseAccess, windowFrame } from './city.js';
 import { World, toolIcon, seenText } from './world.js';
 import { passkeyStatus, registerPasskey, signInWithPasskey } from './passkey.js';
@@ -1483,7 +1483,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
   }
 
   // What came with the room has no id or owner, so it's a word, and only whoever runs the space can
-  // change it. It isn't placed, so it can be taken out and put back but not moved (I32).
+  // change it. It isn't placed, so it can be taken out and put back but not moved (I40).
   function chooseFurniture(word, event) {
     choose(null);
     room.setChosen(word);
@@ -1581,7 +1581,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     return picture;
   }
 
-  // Everything in the catalog is one of these, whatever pressing it does (I37). `whole` is a picture
+  // Everything in the catalog is one of these, whatever pressing it does (I45). `whole` is a picture
   // of a whole room, which takes the width of the tile.
   function catalogTile({ name, picture, whole, label, lines = [], why, stays, pressed = false, onclick }) {
     return h('button', {
@@ -1605,7 +1605,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
       name: `item-${kind.kind}`,
       picture: itemPicture(kind.kind, kind.w, kind.h),
       label: kind.label,
-      lines: [`Beauty ${kind.beauty}`, kind.mood ? wordName(kind.mood) : 'No mood', ...(kind.holds_notes ? ['Holds notes'] : [])],
+      lines: [`Beauty ${kind.beauty}`, kind.mood ? wordName(kind.mood) : 'No mood', ...(kind.holds_notes ? ['Holds notes'] : []), ...(kind.does ? ['Bots can use it'] : [])],
       why: !kind.unlocked ? friendsText(kind.friends_needed)
         : kind.mood === 'flirty' && isPublic ? 'private floors only'
           : full ? 'this floor is full'
@@ -1688,7 +1688,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
     h('div', { class: `build-tiles${whole ? ' build-templates' : ''}` }, members));
 
   // I16: a sign is for whoever runs the space, and someone who walked in to see to one has nothing
-  // else to put here. I11: flirty items wait for a private floor. S7, I27, I33: someone who runs the
+  // else to put here. I11: flirty items wait for a private floor. S7, I27, I41: someone who runs the
   // space from another floor can change how it looks, but a template or a pack places items, which
   // takes someone on the floor. All of it is drawn again after a change, so someone on a keyboard is
   // put back where they were.
@@ -1747,7 +1747,7 @@ function buildMode({ id, room, stage, frame, panels, beside, view, reload, say }
       : [h('li', { class: 'muted' }, 'Nothing here yet. Pick something from the catalog.')]));
   }
 
-  // Changes to a floor's look, which happen in the catalog and nowhere else (I37).
+  // Changes to a floor's look, which happen in the catalog and nowhere else (I45).
 
   // Only the server's word counts, so a refusal puts the tiles back to what the floor has. `run` gives
   // back what to say once it's done.
@@ -1989,9 +1989,9 @@ const zoomed = (canvas, zoom) => {
   return canvas;
 };
 
-//   view()     the room's latest snapshot
-//   reload()   fetches it again
-function wardrobe({ panels, view, reload }) {
+//   mayDress()   whether this page belongs to a person, because only people have a wardrobe (C8)
+//   reload()     shows what changed on the page behind the panel
+function wardrobe({ panels, mayDress, reload }) {
   // Everything worn, as of the last time the panel opened, with each change the server took since.
   let closet = null;
   // The bot being dressed, or null for this person.
@@ -2022,17 +2022,17 @@ function wardrobe({ panels, view, reload }) {
     h('div', { class: 'wardrobe-top' }, standEl, h('div', { class: 'wardrobe-buttons' }, turnButton, startOver, sayHere)),
     error,
     partsEl);
-  const toggle = panels.toggle('look', 'Character', { short: 'Look', className: 'mid' });
+  // In the title bar at every width, because it's as much what a place is for as building is.
+  const toggle = panels.toggle('look', 'Character', { short: 'Look' });
   toggle.hidden = true;
-  const more = h('button', { type: 'button', class: 'wd-btn wide mid', hidden: true, onclick: () => panels.open('look') }, 'Character');
 
   const dressing = () => closet.bots.find((bot) => bot.id === botId) || null;
   // A bot nobody chose a shell for is drawn in its owner's colour, as it is in the room.
   const figure = () => {
     const bot = dressing();
     return bot
-      ? { kind: 'bot', name: bot.name, color: closet.you.color, chosen: bot.look }
-      : { kind: 'person', name: closet.you.name, color: closet.you.color, chosen: closet.you.look };
+      ? { kind: 'bot', name: bot.name, color: closet.you.color, worn: bot.worn }
+      : { kind: 'person', name: closet.you.name, color: closet.you.color, worn: closet.you.worn };
   };
 
   // C5: only the server's word counts, so nothing changes here until it has said yes.
@@ -2042,8 +2042,8 @@ function wardrobe({ panels, view, reload }) {
     error.hidden = true;
     try {
       const path = botId ? `/api/agents/${encodeURIComponent(botId)}/look` : '/api/me/look';
-      const { look } = await api(path, { method: 'PUT', body });
-      (dressing() || closet.you).look = look;
+      const { worn } = await api(path, { method: 'PUT', body });
+      (dressing() || closet.you).worn = worn;
       render();
       sayHere.textContent = done;
       await reload();
@@ -2092,8 +2092,8 @@ function wardrobe({ panels, view, reload }) {
     }, zoomed(figurePicture(who), LOOK_ZOOM_SMALL), h('span', {}, name));
     const { color } = closet.you;
     whoEl.replaceChildren(
-      whom(null, 'You', { kind: 'person', name: closet.you.name, color, chosen: closet.you.look }),
-      ...closet.bots.map((bot) => whom(bot.id, bot.name, { kind: 'bot', name: bot.name, color, chosen: bot.look })));
+      whom(null, 'You', { kind: 'person', color, worn: closet.you.worn }),
+      ...closet.bots.map((bot) => whom(bot.id, bot.name, { kind: 'bot', color, worn: bot.worn })));
     whoEl.hidden = !closet.bots.length;
   }
 
@@ -2105,12 +2105,12 @@ function wardrobe({ panels, view, reload }) {
 
   // A colour is a swatch, and anything else is a tile with the figure wearing it.
   function chooser(part, choice, who) {
-    const pressed = String(isWearing(who, part.part, choice.choice));
+    const pressed = String(who.worn[part.part] === choice.choice);
     const swatch = Object.hasOwn(LOOK_COLOURS, part.part);
     const button = swatch
       ? h('button', { type: 'button', class: 'wardrobe-swatch', title: choice.label, 'aria-label': `${part.label}: ${choice.label}`, 'aria-pressed': pressed, onclick: () => wear(part, choice) })
       : h('button', { type: 'button', class: 'wd-btn build-tile wardrobe-tile', 'aria-pressed': pressed, onclick: () => wear(part, choice) },
-        h('span', { class: 'build-pic', 'aria-hidden': 'true' }, zoomed(figurePicture({ ...who, chosen: { ...who.chosen, [part.part]: choice.choice } }), LOOK_ZOOM)),
+        h('span', { class: 'build-pic', 'aria-hidden': 'true' }, zoomed(figurePicture({ ...who, worn: { ...who.worn, [part.part]: choice.choice } }), LOOK_ZOOM)),
         h('span', { class: 'build-name' }, choice.label));
     if (swatch) button.style.background = LOOK_COLOURS[part.part][choice.choice] || '';
     tiles.set(`${part.part}:${choice.choice}`, button);
@@ -2149,10 +2149,8 @@ function wardrobe({ panels, view, reload }) {
 
   return {
     toggle,
-    more,
-    // On every refresh: only people have a wardrobe (C8).
     render: () => {
-      toggle.hidden = more.hidden = Boolean(view().you.agent_id);
+      toggle.hidden = !mayDress();
     },
     // From the Crew panel, with that bot on the stand.
     dress: (id) => {
@@ -2207,7 +2205,7 @@ async function roomView(id) {
     emptyBring);
   stage.append(boardEl, emptyEl);
   const builder = buildMode({ id, room, stage, frame, panels, beside, say, view: () => snapshot, reload: () => reload() });
-  const dresser = wardrobe({ panels, view: () => snapshot, reload: () => reload() });
+  const dresser = wardrobe({ panels, mayDress: () => !snapshot.you.agent_id, reload: () => reload() });
 
   // The running notes along the bottom, around the status bar's own message and clock.
   const guestEl = h('span', { class: 'wd-seg wd-teal room-guest', role: 'status', hidden: true });
@@ -2322,7 +2320,9 @@ async function roomView(id) {
       frame.outputs[key].parentElement.title = note;
     };
     show('bots', String(stats.bots), 'Bots in the room');
-    show('table', String(stats.bots_active), 'Wrote in the last 10 min');
+    // A bot using something wrote a moment ago, but it isn't at the table.
+    const atTable = snapshot.agents.filter((agent) => agent.state === 'active' && !usedBy(agent));
+    show('table', String(atTable.length), 'Wrote in the last 10 min');
     show('messages', String(stats.messages_24h), guest ? 'Since you arrived' : 'In the last 24 hours');
     // I24, I8: a floor's own. Worked out by the server each time, so these change as the room does.
     frame.root.classList.toggle('on-floor', Boolean(snapshot.floor));
@@ -2609,12 +2609,16 @@ async function roomView(id) {
     return h('span', { class: `doorbell ${state}` }, text);
   }
 
+  // I35: what a bot is using in this room, if it's using anything.
+  const usedBy = (agent) => snapshot.items.find((item) => item.used_by?.includes(agent.id));
+
   function renderCrew() {
     const rows = snapshot.agents.map((agent) => {
       const dot = h('i', { class: `state ${agent.activity ? 'working' : agent.state}` });
+      const using = usedBy(agent);
       const doing = agent.activity
         ? `Controlling a computer via ${agent.activity.via}`
-        : agent.status || STATE_TEXT[agent.state];
+        : using ? sentence(using.does) : agent.status || STATE_TEXT[agent.state];
       const owner = person(agent.owner_id);
       const mine = agent.owner_id === snapshot.you.person_id;
       const swatch = h('span', { class: 'swatch' });
@@ -2787,15 +2791,18 @@ async function roomView(id) {
       space && space !== name ? h('span', { class: 'wd-title-sub' }, ` · ${space}`) : null,
     ].filter(Boolean));
     const asking = new Set(snapshot.check_ins.filter((c) => c.status === 'waiting').map((c) => c.agent_id));
+    // The items go first, because a bot using one is sent to it.
+    room.setLook(snapshot.floor?.floor);
+    room.setItems(snapshot.items);
     room.setBots(snapshot.agents.map((agent) => ({
       ...agent,
       color: colorOf(agent.owner_id),
       asking: asking.has(agent.id),
       look: snapshot.looks.bots[agent.id],
+      using: usedBy(agent)?.id ?? null,
+      does: usedBy(agent)?.does,
     })));
     emptyEl.hidden = snapshot.agents.length > 0;
-    room.setLook(snapshot.floor?.floor);
-    room.setItems(snapshot.items);
     quietEl.hidden = !snapshot.items.some((item) => item.sign);
     const present = new Set(snapshot.present);
     room.setPeople(snapshot.people.filter((p) => present.has(p.id)).map((p) => ({ id: p.id, name: p.name, color: p.color, look: snapshot.looks.people[p.id] })));
@@ -3165,7 +3172,6 @@ async function roomView(id) {
   panels.add('more', 'More', {},
     aboutMore,
     h('div', { class: 'game-more' }, ...[
-      dresser.more,
       moreButton('checkins', 'Check-ins', 'mid'),
       calendarMore,
       moreButton('notes', 'Shared notes', 'sec'),
@@ -3256,7 +3262,18 @@ async function roomView(id) {
   document.addEventListener('keydown', onKey, true);
 
   document.documentElement.classList.add('in-game');
+  // S54: leaving the room, or closing the page, takes this person out of it at once.
+  const goAway = () => {
+    try {
+      navigator.sendBeacon(`/api/hangouts/${encodeURIComponent(id)}/away`);
+    } catch {
+      // Without it, the look runs out in 45 seconds anyway.
+    }
+  };
+  addEventListener('pagehide', goAway);
   leaveRoom = () => {
+    removeEventListener('pagehide', goAway);
+    goAway();
     stream.close();
     stopClock();
     clearInterval(pollTimer);
@@ -5459,11 +5476,15 @@ async function worldView(id, { home = false } = {}) {
   document.addEventListener('fullscreenchange', syncFull);
 
   const repoLink = (className) => h('a', { href: REPO_URL, target: '_blank', rel: 'noopener', class: className }, 'Help build it');
+  // You look the same out here (C14), so this is the same panel as in a room.
+  const dresser = wardrobe({ panels, mayDress: () => me?.kind === 'person', reload: async () => watch.soon() });
+  dresser.render();
 
   frame.actions.append(...[
     panels.toggle('info', 'What\'s going on', { short: 'Info' }),
     panels.toggle('around', 'Who\'s around', { short: 'Who' }),
     panels.toggle('account', me ? me.name : 'Sign in', { short: me ? 'Me' : 'Sign in', className: 'account', aria: me ? `Your account, ${me.name}` : 'Sign in' }),
+    me?.kind === 'person' ? dresser.toggle : null,
     me && me.kind === 'person' ? (requestsToggle = panels.toggle('requests', 'Requests', { className: 'sec' })) : null,
     panels.toggle('agent', 'Send your agent in', { className: 'sec' }),
     panels.toggle('rooms', roomsLabel, { className: 'sec' }),

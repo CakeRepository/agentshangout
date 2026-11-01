@@ -598,6 +598,12 @@ CREATE TABLE IF NOT EXISTS town_square_rooms (space_id TEXT PRIMARY KEY REFERENC
 CREATE VIEW IF NOT EXISTS world_places AS
     SELECT world_id, x, y, kind, player_id, built_at FROM world_buildings
     UNION ALL SELECT world_id, x, y, 'square', player_id, built_at FROM world_squares;
+CREATE TABLE IF NOT EXISTS item_uses (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    item_id     TEXT NOT NULL REFERENCES floor_items(id) ON DELETE CASCADE,
+    until_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS item_uses_by_item ON item_uses (item_id);
 "#;
 
 /// Most sessions one person keeps at once. Signing in again on a new device past this ends the
@@ -605,7 +611,7 @@ CREATE VIEW IF NOT EXISTS world_places AS
 const MAX_SESSIONS_PER_PERSON: i64 = 50;
 
 /// Owner colours, handed out in order so the first few people in a room look distinct.
-const COLORS: [&str; 8] =
+pub const COLORS: [&str; 8] =
     ["#4f9dff", "#ff8a3d", "#3ddc97", "#ff5d7a", "#b388ff", "#ffd24d", "#2fd6d6", "#ff7ad9"];
 
 #[derive(Clone, Debug, Serialize)]
@@ -6304,6 +6310,9 @@ pub struct WorldPlayer {
     pub emote: Option<String>,
     /// A signed-in person's own player, and not an agent's (W53).
     pub is_person: bool,
+    /// Who it belongs to, to dress it (C14). Never sent anywhere.
+    pub person_id: Option<String>,
+    pub agent_id: Option<String>,
 }
 
 /// Everything a world view is built from, read at one moment.
@@ -6653,7 +6662,7 @@ fn item_note_from_row(row: &Row) -> rusqlite::Result<ItemNote> {
 
 /// What `world_player_from_row` reads. A person's own player has a person and no token or bot.
 const WORLD_PLAYER_COLS: &str = "p.id, p.name_seed, w.x, w.y, w.emote,
-    p.person_id IS NOT NULL AND p.agent_id IS NULL AND p.token_hash IS NULL";
+    p.person_id IS NOT NULL AND p.agent_id IS NULL AND p.token_hash IS NULL, p.person_id, p.agent_id";
 
 fn world_player_from_row(row: &Row) -> rusqlite::Result<WorldPlayer> {
     let (x, y): (i64, i64) = (row.get(2)?, row.get(3)?);
@@ -6663,6 +6672,8 @@ fn world_player_from_row(row: &Row) -> rusqlite::Result<WorldPlayer> {
         pos: (x as u16, y as u16),
         emote: row.get(4)?,
         is_person: row.get(5)?,
+        person_id: row.get(6)?,
+        agent_id: row.get(7)?,
     })
 }
 
@@ -7176,6 +7187,70 @@ impl Db {
         )
     }
 
+    /// Which bots are using what on a floor now, as item and bot, with whoever came first first.
+    /// This says nothing about whether a bot is still in the room (I34).
+    pub fn item_uses(&self, hangout_id: &str, now: i64) -> rusqlite::Result<Vec<(String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT u.item_id, u.agent_id FROM item_uses u JOIN floor_items i ON i.id = u.item_id
+             WHERE i.hangout_id = ? AND u.until_at > ? ORDER BY u.rowid",
+        )?;
+        let rows =
+            stmt.query_map(params![hangout_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Puts a bot at an item if `check` allows it, given which other bots are using it now. In one
+    /// step, so two bots can't both take the last place (I34). A bot has one row here, so this lets
+    /// go of whatever it was using before (I33).
+    pub fn use_item<E>(
+        &self,
+        agent_id: &str,
+        item_id: &str,
+        until_at: i64,
+        now: i64,
+        check: impl FnOnce(&[String]) -> Result<(), E>,
+    ) -> rusqlite::Result<Result<(), E>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let others = {
+            let mut stmt = tx.prepare(
+                "SELECT agent_id FROM item_uses
+                 WHERE item_id = ? AND agent_id <> ? AND until_at > ?",
+            )?;
+            let rows = stmt.query_map(params![item_id, agent_id, now], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<String>>>()?
+        };
+        if let Err(refused) = check(&others) {
+            return Ok(Err(refused));
+        }
+        tx.execute(
+            "INSERT INTO item_uses (agent_id, item_id, until_at) VALUES (?, ?, ?)
+             ON CONFLICT (agent_id)
+             DO UPDATE SET item_id = excluded.item_id, until_at = excluded.until_at",
+            params![agent_id, item_id, until_at],
+        )?;
+        tx.commit()?;
+        Ok(Ok(()))
+    }
+
+    /// The floor of whatever a bot last used, so that room can be told it has gone.
+    pub fn floor_in_use(&self, agent_id: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT i.hangout_id FROM item_uses u JOIN floor_items i ON i.id = u.item_id
+                 WHERE u.agent_id = ?",
+                [agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    pub fn stop_using_item(&self, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM item_uses WHERE agent_id = ?", [agent_id])?;
+        Ok(())
+    }
+
     /// Adds a note. False, and nothing changes, if the item already holds `max` (I12).
     pub fn insert_item_note(&self, note: &NewItemNote, max: i64) -> rusqlite::Result<bool> {
         let changed = self.conn().execute(
@@ -7315,6 +7390,29 @@ impl Db {
             }
         }
         Ok(looks)
+    }
+
+    /// C16: the name behind each figure and its owner's colour, by id.
+    pub fn figures(
+        &self,
+        wearer: Wearer,
+        ids: &[String],
+    ) -> rusqlite::Result<BTreeMap<String, (String, String)>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(match wearer {
+            Wearer::Person => "SELECT name, color FROM people WHERE id = ?",
+            Wearer::Bot => {
+                "SELECT a.name, p.color FROM agents a JOIN people p ON p.id = a.owner_id WHERE a.id = ?"
+            }
+        })?;
+        let mut figures = BTreeMap::new();
+        for id in ids {
+            let figure = stmt.query_row([id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+            if let Some(figure) = figure {
+                figures.insert(id.clone(), figure);
+            }
+        }
+        Ok(figures)
     }
 
     /// FR6: adds an invite, or wakes one that lapsed before `lapsed`. False if nothing changed, as
@@ -7567,6 +7665,34 @@ impl Db {
 
     /// What building stands on a tile and the person it belongs to, for the door to its room. Not
     /// for anything public: only W71 says whose a place is, by name.
+    /// L18: the player a bot plays The Commons with, if it has one.
+    pub fn player_of_agent(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn()
+            .query_row(
+                "SELECT id FROM players WHERE agent_id = ? AND removed = 0",
+                [agent_id],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// L18: where a person's house stands in a world, if it does.
+    pub fn house_of_person(
+        &self,
+        world_id: &str,
+        person_id: &str,
+    ) -> rusqlite::Result<Option<(i64, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT b.x, b.y FROM world_buildings b JOIN players p ON p.id = b.player_id
+                 WHERE b.world_id = ?1 AND b.kind = 'house' AND p.person_id = ?2
+                   AND p.agent_id IS NULL AND p.token_hash IS NULL",
+                params![world_id, person_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
     pub fn building_at(
         &self,
         world_id: &str,

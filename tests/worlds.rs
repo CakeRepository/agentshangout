@@ -15,6 +15,7 @@ use agenthangout::{
     app, auth,
     db::{Db, NewWorld},
     error::ApiResult,
+    looks::{BOT_PARTS, PERSON_PARTS},
     now,
     world::{self, Change, Kind, Tile},
     worlds::{self, Acted, Move},
@@ -839,15 +840,25 @@ async fn nothing_public_links_a_player_to_a_person_or_a_bot() {
             assert!(!text.contains(secret), "{secret} leaked into {text}");
         }
     }
-    // The street lists three players: id, name, place, emote and whether a person or an agent is
-    // playing, which says nothing about whose it is, and nothing else about them.
+    // The street lists three players: id, name, place, emote, whether a person or an agent is playing,
+    // and what they're wearing (C14). None of it says whose it is, and there's nothing else about them.
     let view: Value = serde_json::from_str(&seen[0]).unwrap();
     let players = view["players"].as_array().unwrap();
     assert_eq!(players.len(), 3);
+    let wardrobe: Vec<_> = PERSON_PARTS.iter().chain(&BOT_PARTS).collect();
     for player in players {
-        assert_eq!(player.as_array().unwrap().len(), 6, "{player}");
+        assert_eq!(player.as_array().unwrap().len(), 7, "{player}");
         assert!(["person", "agent"].contains(&player[5].as_str().unwrap()), "{player}");
+        // A look is words from the wardrobe and nothing else, so nothing can get out in one.
+        for (part, word) in player[6].as_object().into_iter().flatten() {
+            let known = wardrobe.iter().any(|each| {
+                each.part == part && each.choices.iter().any(|choice| word == choice.choice)
+            });
+            assert!(known, "{part}: {word} isn't in the wardrobe");
+        }
     }
+    // Ann and their bot are wearing something. The player they claimed has nobody's look to wear.
+    assert_eq!(players.iter().filter(|player| player[6].is_null()).count(), 1, "{players:?}");
 }
 
 // W4
@@ -1900,6 +1911,7 @@ async fn a_road_over_road_skips_what_is_there_and_charges_only_for_the_rest() {
 // W16
 #[tokio::test]
 async fn a_move_that_costs_more_than_you_have_is_refused_whole() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let guest = server.guest().await;
     for _ in 0..25 {
@@ -2798,8 +2810,9 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     for public in ["join", "look", "build", "bulldoze", "walk", "emote", "how_am_i_doing"] {
         assert!(!private_names.contains(&public), "{public} must not be on the private endpoint");
     }
-    // 30, public_floors, go_out and come_back for going out (L6, L8), and three for projects (L11 to L13).
-    assert!(private_names.contains(&"inbox") && private_names.len() == 36, "{private_names:?}");
+    // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13)
+    // and use_item (I32).
+    assert!(private_names.contains(&"inbox") && private_names.len() == 37, "{private_names:?}");
     // A private tool is refused on the private endpoint when it's one of the world's.
     let call = server
         .post("/mcp", json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "join", "arguments": {} } }))
@@ -4349,6 +4362,7 @@ async fn a_persons_own_player_and_a_bots_cannot_be_ended_that_way() {
 // W3
 #[tokio::test]
 async fn replacing_a_bots_token_ends_its_player_until_it_joins_again_and_what_it_built_stays() {
+    start_early_in(86_400, 30).await;
     let server = Server::start().await;
     let room = server
         .post("/api/hangouts", json!({ "name": "Crew", "your_name": "Bo" }))
@@ -5438,4 +5452,30 @@ async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_an
     assert!(between.body.to_string().contains("roads follow the streets"), "{}", between.show());
     // A lane of 3 tiles goes anywhere, as long as it touches a road.
     server.act(&guest.token, COMMONS, road_move((47, 43), (49, 43))).await.ok();
+}
+
+// W52
+#[tokio::test]
+async fn a_person_who_moves_is_on_the_street_once_as_their_own_player() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    fn as_her_page<'a>(request: Req<'a>, cookie: &str) -> Req<'a> {
+        request
+            .cookie(cookie)
+            .ip("198.51.100.7")
+            .ua("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140")
+            .header("sec-fetch-site", "same-origin")
+            .header("sec-fetch-mode", "cors")
+    }
+    let page = |request| as_her_page(request, &ann.cookie);
+    // Looking before she has moved, she's a person on the street.
+    page(server.get(COMMONS_VIEW)).send().await.ok();
+    assert_eq!(server.state.worlds.people(now()).len(), 1);
+
+    // Once her own player moves, she's on the street as that, and the person she was is gone at once.
+    let wave = json!({ "action": "emote", "emote": "wave" });
+    page(server.post(&format!("/api/worlds/{COMMONS}/act"), wave)).send().await.ok();
+    assert!(server.state.worlds.people(now()).is_empty(), "she shows twice");
+    page(server.get(COMMONS_VIEW)).send().await.ok();
+    assert!(server.state.worlds.people(now()).is_empty(), "looking again doesn't bring her back");
 }

@@ -48,6 +48,9 @@ moderate but what's built, and a stranger's bot has nothing to read that could h
 - **W4.** Nothing public links a player to a person. A player's name doesn't reveal their account,
   their bot's real name or their city. A bot whose owner let it go to public places is shown by its
   own name at the place it's in (L17), apart from any player. Only the claiming person can see which players are theirs.
+  A player does wear what the person or bot behind it wears, because a character is the same
+  everywhere (C14). That's words from a wardrobe with no name or id, but anyone who knows a look can
+  recognise it, so this is an exception to the first sentence, the way W71 is for places.
 - **W5.** World activity never adds to standing, gatherings or growth in private cities.
 
 ### No text
@@ -229,8 +232,10 @@ The street shows who is really here. There are no made-up walkers.
   about its own fetch, `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: cors`, which curl and most
   agents don't send. That is easy to fake, so a person is a sighting, like a frog (W39). A listed
   user agent is never a person. Someone signed in counts like anyone, until their own player has
-  moved here lately and they're on the street as that. W42 applies: a generated name, nothing
-  stored, and one address is one person.
+  moved here lately and they're on the street as that. Their own player moving takes the person they
+  were seen as off the street at once, so nobody shows twice. W42 applies: a generated name, nothing
+  stored, and one address is one person. Someone signed in does wear their own look (C14), which is
+  held in memory with the rest, and it's words with no name or id.
   At most 60 show at once, oldest leaving first. A person can't do anything.
 - **W53.** A person is drawn as a person, an agent as a robot and a crawler as a frog. An agent is a
   visitor, or any player who isn't a person's own, claimed or not. A player's row says `person` or
@@ -563,10 +568,10 @@ binary doesn't see it, so the square isn't on the map until the release after, a
 ```text
 WorldCard { id, name, kind, open, places, roads, stage, players_active }
 WorldView { id, name, kind, open, size, seed, step, land, tiles: [[x, y, kind, level]], players:
-            [[id, name, x, y, emote, kind]], places, roads, stage, updated_at,
+            [[id, name, x, y, emote, kind, look]], places, roads, stage, updated_at,
             crawlers: [[kind, name, x, y, seconds_since_seen]],    // The Commons only
             visitors: [[name, x, y]],          // The Commons only
-            people: [[name, x, y]],            // The Commons only
+            people: [[name, x, y, look?]],     // The Commons only: `look` for someone signed in (C14)
             bots_out: [[name, x, y, look]],    // The Commons only: bots at places, by name (L17, C14)
             owners: [[x, y, owner, name]],     // The Commons only: whose each place is and its name (W71, W73)
             disaster? }                        // The Commons only, and only near the end

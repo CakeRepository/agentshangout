@@ -54,7 +54,8 @@ gh release view --json tagName,publishedAt,url
 ```
 
 The latest release is what's live. A prerelease is one that failed or is still going out. A run for
-a commit older than what's live fails without installing anything, even after it's approved.
+a commit older than what's live passes without installing anything, even after it's approved, so a
+green run doesn't mean it went out.
 
 To undo a release, revert the change in a new pull request, so it goes through the same steps. If
 that can't wait, a person can put an older release back with the Roll back workflow, which waits for

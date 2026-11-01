@@ -15,7 +15,7 @@ use crate::{
     auth::Caller,
     db::{NewVisit, PublicFloor, RoutineRow, WalkedIn, Wearer},
     error::{ApiError, ApiResult},
-    looks::{looks_of, Look},
+    looks::{worn, Look},
     now,
     ops::{self, DAY_SECS},
     spaces::{capacity, MAX_BOTS_WALKED_IN, WALK_IN_SECS},
@@ -303,17 +303,29 @@ pub fn come_back(state: &AppState, caller: &Caller) -> ApiResult<bool> {
 
 /// L17: who The Commons shows at its places, by name, beside each building's door. A bot that
 /// walked onto a public floor is there while its walk-in lasts. A project's bot is at the studio in
-/// its social hours, unless it's out somewhere. C14: a look goes with the name, and nowhere else.
+/// its social hours, unless it's out somewhere. C14: what it's wearing goes with the name.
+/// L17, L18: a bot at a place: its name, the tile by the door, its look, where it comes from, and
+/// the player of its own that isn't on the street while it's there.
+pub struct BotAtPlace {
+    pub name: String,
+    pub x: u16,
+    pub y: u16,
+    pub look: Look,
+    pub from: Option<(u16, u16)>,
+    pub player: Option<i64>,
+}
+
 pub fn bots_at_places(
     state: &AppState,
     tiles: &std::collections::BTreeMap<(u16, u16), crate::world::Tile>,
+    street: &std::collections::HashMap<i64, (u16, u16)>,
     now: i64,
-) -> ApiResult<Vec<(String, u16, u16, Look)>> {
+) -> ApiResult<Vec<BotAtPlace>> {
     let rows = state.db.bots_at_places(crate::worlds::COMMONS_ID, now)?;
     let out: std::collections::HashSet<String> =
         rows.iter().filter(|row| row.5).map(|row| row.0.clone()).collect();
     let ids: Vec<String> = rows.iter().map(|row| row.0.clone()).collect();
-    let mut looks = looks_of(state, Wearer::Bot, &ids)?;
+    let mut looks = worn(state, Wearer::Bot, &ids)?;
     let mut shown = std::collections::HashSet::new();
     let mut list = Vec::new();
     for (agent_id, name, owner_id, x, y, walked) in rows {
@@ -336,7 +348,23 @@ pub fn bots_at_places(
             tiles.get(&pos).is_some_and(|tile| tile.kind == crate::world::Kind::Road).then_some(pos)
         });
         let (x, y) = road.unwrap_or((x, y));
-        list.push((name, x, y, looks.remove(&agent_id).unwrap_or_default()));
+        // L18: from where its own player stands, or else its owner's house.
+        let player = state.db.player_of_agent(&agent_id)?;
+        let from = match player.and_then(|id| street.get(&id).copied()) {
+            Some(pos) => Some(pos),
+            None => state
+                .db
+                .house_of_person(crate::worlds::COMMONS_ID, &owner_id)?
+                .and_then(|(hx, hy)| Some((u16::try_from(hx).ok()?, u16::try_from(hy).ok()?))),
+        };
+        list.push(BotAtPlace {
+            name,
+            x,
+            y,
+            look: looks.remove(&agent_id).unwrap_or_default(),
+            from,
+            player,
+        });
     }
     Ok(list)
 }

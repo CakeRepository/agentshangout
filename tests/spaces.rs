@@ -1792,6 +1792,10 @@ async fn the_wipe_deletes_every_hangout_and_leaves_people_their_bots_and_a_worki
         .post(&ann.key, &format!("/api/items/{shelf}/notes"), json!({ "text": "gone too" }))
         .await
         .ok();
+    let stool = json!({ "kind": "stool", "x": 30, "y": 5 });
+    let stool =
+        text(&server.post(&ann.key, &format!("/api/floors/{room}/items"), stool).await.ok()["id"]);
+    server.post(&scout_token, &format!("/api/items/{stool}/use"), json!({})).await.ok();
     server
         .put(&ann.key, &format!("/api/agents/{scout}/moods"), json!({ "moods": false }))
         .await
@@ -2580,7 +2584,8 @@ async fn being_turned_out_ends_it_at_once_on_every_floor() {
     server.walk_in(&bo, &upstairs).await.ok();
     server.snapshot(&bo.key, &ground).await.ok();
     server.snapshot(&bo.key, &upstairs).await.ok();
-    assert_eq!(server.present(&ann.key, &ground).await, ids(&[&ann, &bo]));
+    // S53: one floor at a time, so opening upstairs took him off the ground floor.
+    assert_eq!(server.present(&ann.key, &ground).await, ids(&[&ann]));
     assert_eq!(server.present(&ann.key, &upstairs).await, ids(&[&ann, &bo]));
 
     let out = format!("/api/spaces/{ground}/people/{}/turn-out", bo.id);
@@ -2650,11 +2655,11 @@ async fn nothing_about_who_is_in_a_room_reaches_a_world_route() {
     assert_eq!(server.get("", "/api/worlds/commons").await.ok()["tiles"], before);
 }
 
-// S46, W52: being in a room and being on the street have nothing to do with each other. Each of
+// S46, S53, W52: opening the map puts someone on the street, and opening a room takes them off it. Each of
 // these is a real browser's fetch, which is the only kind the street counts.
 
 #[tokio::test]
-async fn only_opening_the_map_puts_someone_on_the_street() {
+async fn opening_the_map_puts_someone_on_the_street_and_opening_a_room_takes_them_off() {
     let server = Server::start().await;
     worlds::ensure_commons(&server.state).unwrap();
     let (room, ann) = server.someone("Ann").await;
@@ -2683,10 +2688,9 @@ async fn only_opening_the_map_puts_someone_on_the_street() {
     let on_the_street = server.state.worlds.people(now());
     assert_eq!(on_the_street.len(), 1);
 
-    // Going back into the room takes nobody off it either. That's W52's 90 seconds.
+    // S53: going back into the room takes them off it at once, rather than in W52's 90 seconds.
     page_looks_at(snapshot).await.unwrap();
-    assert_eq!(server.state.worlds.people(now()), on_the_street);
-    assert!(server.state.worlds.people(now() + worlds::PERSON_SECS).is_empty());
+    assert!(server.state.worlds.people(now()).is_empty(), "{on_the_street:?}");
 }
 
 // S27, FR5
@@ -2812,4 +2816,60 @@ async fn running_a_space_gives_no_link_to_a_floor_you_arent_on() {
     };
     assert_eq!(url(&attic), json!(""), "that's a way onto a private floor");
     assert_ne!(url(&room), json!(""), "they're on this one");
+}
+
+/// A browser page's own fetch, from one address, signed in with `key` (W52, S53).
+async fn from_a_page(server: &Server, key: &str, method: Method, path: &str) -> reqwest::Response {
+    server
+        .client
+        .request(method, format!("{}{path}", server.base))
+        .bearer_auth(key)
+        .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140")
+        .header("sec-fetch-site", "same-origin")
+        .header("sec-fetch-mode", "cors")
+        .header("x-forwarded-for", "198.51.100.40")
+        .send()
+        .await
+        .unwrap()
+}
+
+// S53
+#[tokio::test]
+async fn a_person_is_in_one_room_at_a_time_and_off_the_street_while_in_one() {
+    let server = Server::start().await;
+    let (first, ann) = server.someone("Ann").await;
+    let second = text(&server.third_space(&ann, "Ann's second").await.ok()["hangout"]["id"]);
+    let bo = server.join(&ann, &first, "Bo").await;
+    let cy = server.join(&ann, &second, "Cy").await;
+
+    // Opening the second room takes her out of the first.
+    assert_eq!(server.present(&ann.key, &first).await, ids(&[&ann]));
+    server.present(&ann.key, &second).await;
+    assert_eq!(server.present(&bo.key, &first).await, ids(&[&bo]), "she's still in the first room");
+
+    // Opening The Commons takes her out of every room.
+    server.present(&ann.key, &second).await;
+    from_a_page(&server, &ann.key, Method::GET, "/api/worlds/commons").await;
+    assert_eq!(server.present(&cy.key, &second).await, ids(&[&cy]), "she's still in a room");
+
+    // And opening a room takes the person she was seen as off the street.
+    assert_eq!(server.state.worlds.people(now()).len(), 1);
+    from_a_page(&server, &ann.key, Method::GET, &format!("/api/hangouts/{first}")).await;
+    assert!(server.state.worlds.people(now()).is_empty(), "she's on the street and in a room");
+}
+
+// S54
+#[tokio::test]
+async fn leaving_a_room_takes_you_out_of_it_at_once() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let (_, scout) = server.bot(&ann, &room, "Scout").await;
+    assert_eq!(server.present(&ann.key, &room).await, ids(&[&ann]));
+    let away = format!("/api/hangouts/{room}/away");
+    assert_eq!(server.post(&scout, &away, json!({})).await.status, StatusCode::FORBIDDEN);
+    let (_, stranger) = server.someone("Cy").await;
+    assert_eq!(server.post(&stranger.key, &away, json!({})).await.status, StatusCode::NOT_FOUND);
+    server.post(&ann.key, &away, json!({})).await.ok();
+    assert_eq!(server.present(&bo.key, &room).await, ids(&[&bo]), "she left and is still here");
 }

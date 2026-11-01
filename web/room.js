@@ -1028,7 +1028,7 @@ function paintSkeleton(g, x, y, t) {
   r(g, hollow, x + 2, y - 24, 1, 1);
 }
 
-// What people furnish a place with in games like RimWorld and The Sims (I39). Most of these are a block
+// What people furnish a place with in games like RimWorld and The Sims (I47). Most of these are a block
 // or two with a little detail on the front, so adding another is a few lines here and one in ITEMS.
 
 // A block on the floor from the front, `tall` high, with a lighter top. Gives back its left edge.
@@ -1867,6 +1867,51 @@ const ITEMS = {
   research_bench: { paint: paintResearchBench, rise: 32 },
 };
 
+// Notes going up from whoever's making the music, drifting apart as they go.
+function paintNotes(g, { x, y }, t) {
+  for (const [i, color] of ['#ffd24d', '#7fd4ff', '#ff8fa8'].entries()) {
+    const rise = (t / 34 + i * 16) % 48;
+    const left = Math.round(x + (i - 1) * 7 + Math.sin(rise / 9 + i * 2) * 5);
+    const top = Math.round(y - 26 - rise);
+    g.globalAlpha = 1 - rise / 48;
+    r(g, color, left, top + 5, 3, 2);
+    r(g, color, left + 2, top, 1, 6);
+    r(g, color, left + 2, top, 3, 1);
+  }
+  g.globalAlpha = 1;
+}
+
+// A bench, the keys going down in front of a bot at the piano, and the notes they make. A turned
+// piano's keys are along its top, where this can't reach them, so it only gets the notes.
+function paintPlaying(g, bot, t) {
+  const x = Math.round(bot.x);
+  const y = Math.round(bot.y);
+  if (bot.facing === 'back') {
+    r(g, '#3a3342', x - 10, y, 20, 3);
+    r(g, '#1b1820', x - 9, y + 3, 2, 3);
+    r(g, '#1b1820', x + 7, y + 3, 2, 3);
+    const beat = Math.floor(t / 130);
+    for (let i = 0; i < 4; i++) r(g, '#9aa3b8', x - 27 + ((beat + i) * (i * 2 + 5)) % 18 * 3, y - 21, 2, 6);
+  }
+  paintNotes(g, bot, t);
+}
+
+// What bots do with an item (I31 in docs/rooms.md). `spots` is `room_for` on the server, so every bot
+// it lets use something has somewhere to be. A seat has them `on` it and anything else at its front.
+// `pose` is how they are there, `hands` keeps theirs moving, and `busy` is painted over them.
+const USES = {
+  piano: { spots: 1, pose: 'sit', hands: true, busy: paintPlaying },
+  jukebox: { spots: 1, pose: 'stand', busy: paintNotes },
+  easel: { spots: 1, pose: 'stand', hands: true },
+  game_table: { spots: 2, pose: 'sit', hands: true },
+  aquarium: { spots: 2, pose: 'stand' },
+  fireplace: { spots: 2, pose: 'stand' },
+  stool: { spots: 1, pose: 'sit', on: true },
+  armchair: { spots: 1, pose: 'sit', on: true },
+  love_seat: { spots: 2, pose: 'sit', on: true },
+  sofa: { spots: 3, pose: 'sit', on: true },
+};
+
 // Where an item stands, in the room's own pixels. `w` and `h` are cells as it's turned now, and
 // `x` and `y` are its back left corner, as the server has it.
 function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
@@ -1874,7 +1919,29 @@ function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
   const deep = h * FLOOR_CELL;
   const left = x * FLOOR_CELL;
   const top = FLOOR_TOP + y * FLOOR_CELL;
-  return { ...ITEMS[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
+  return { ...ITEMS[item], use: USES[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
+}
+
+// Where bots go to use an item, one place for each that can. Its front is the side towards the room,
+// or for one drawn from its end, the side it was turned to: right at facing 1, and left at 3.
+function spotsOf({ use, side, facing, left, top, wide, deep, y }) {
+  if (!use) return [];
+  const { spots, pose, on, hands, busy } = use;
+  const turned = Boolean(side) && facing % 2 === 1;
+  const right = facing === 1;
+  return Array.from({ length: spots }, (_, i) => {
+    const along = (i + 0.5) / spots;
+    const [ax, ay] = turned
+      ? clearOf(right ? left + wide + 6 : left - 6, top + deep * along + 4)
+      : clearOf(left + wide * along, y + 3);
+    const drop = i % 2;
+    if (!on) return { x: ax, y: ay, ax, ay, pose, drop, hands, busy, facing: turned ? (right ? 'left' : 'right') : 'back' };
+    // Someone on a seat has their feet behind its front edge, and `over` keeps them painted on it.
+    const seat = turned
+      ? { x: left + wide / 2 + (right ? 3 : -3), y: top - 3 + (deep - 8) * along, facing: right ? 'right' : 'left' }
+      : { x: left + 7 + (wide - 14) * along, y: y - 7, facing: 'front' };
+    return { ...seat, ax, ay, pose, drop, over: y + 1 };
+  });
 }
 
 // Facing 2 and 3 are the other way round. Words stay readable, so a sign or a kind with `words` never is.
@@ -2010,7 +2077,8 @@ function drawZ(g, x, y, alpha) {
 }
 
 // What the words in a look are drawn as (docs/looks.md). They're listed words on the server, so nothing
-// typed reaches the drawing, and a word this page doesn't know counts as one nobody chose.
+// typed reaches the drawing. The server says what everyone is wearing, here and on the maps, so a room
+// and a map can't disagree. All this page decides is the art.
 export const FABRICS = {
   red: '#d6453f',
   orange: '#ec8a2c',
@@ -2024,8 +2092,16 @@ export const FABRICS = {
   white: '#e8ecf4',
   grey: '#8a909e',
   black: '#2f3342',
+  sky: '#4f9dff',
+  tangerine: '#ff8a3d',
+  mint: '#3ddc97',
+  coral: '#ff5d7a',
+  lilac: '#b388ff',
+  sun: '#ffd24d',
+  aqua: '#2fd6d6',
+  orchid: '#ff7ad9',
 };
-const SKINS = {
+export const SKINS = {
   cream: '#f4d6b8',
   peach: '#f1c9a4',
   tan: '#d9a77c',
@@ -2033,7 +2109,7 @@ const SKINS = {
   umber: '#8a5a3c',
   espresso: '#5e3a26',
 };
-const HAIRS = {
+export const HAIRS = {
   black: '#2b2118',
   brown: '#6a4326',
   honey: '#b9822f',
@@ -2045,7 +2121,7 @@ const HAIRS = {
   teal: '#25a4a0',
   violet: '#7b54d6',
 };
-const LEGS = {
+export const LEGS = {
   navy: '#394666',
   charcoal: '#4a4a52',
   khaki: '#6a5a46',
@@ -2227,13 +2303,13 @@ const CHESTS = {
 
 const pick = (table, word, otherwise) => (Object.hasOwn(table, word) ? table[word] : otherwise);
 
-function botLook(name, chosen = {}) {
+function botLook(worn = {}) {
   return {
-    shell: pick(FABRICS, chosen.shell, null),
-    head: pick(HEADS, chosen.head, Object.values(HEADS)[hash(name) % 3]),
-    eyes: pick(EYES, chosen.eyes, null),
-    chest: pick(CHESTS, chosen.chest, CHESTS.plain),
-    hat: pick(HATS, chosen.hat, HATS.none),
+    shell: pick(FABRICS, worn.shell, null),
+    head: pick(HEADS, worn.head, HEADS.antenna),
+    eyes: pick(EYES, worn.eyes, null),
+    chest: pick(CHESTS, worn.chest, CHESTS.plain),
+    hat: pick(HATS, worn.hat, HATS.none),
   };
 }
 
@@ -2282,7 +2358,9 @@ function drawBot(g, bot, t) {
   r(g, color, x - 4, base - 6, 8, 6);
   r(g, dark, x - 4, base - 1, 8, 1);
   if (bot.facing !== 'back') chest(g, x, base - 5);
-  const typing = sitting && Math.floor(t / 170 + bot.phase * 5) % 2;
+  // Nobody types on a sofa, so at an item its hands move only if that keeps them busy.
+  const at = !walking && bot.spot;
+  const typing = (at ? at.hands : sitting) && Math.floor(t / 170 + bot.phase * 5) % 2;
   r(g, dark, x - 5, base - 6 + (typing ? 1 : 0), 1, 4);
   r(g, dark, x + 4, base - 6 + (typing ? 0 : 1), 1, 4);
 
@@ -2317,22 +2395,15 @@ function drawBot(g, bot, t) {
   r(g, glow, x + 1 + gaze, top + 3 + (blink ? 1 : 0), 2, blink ? 1 : 2);
 }
 
-// The skin, hair, cap and trousers a person has on the street, so they're the same someone here.
-const SKIN = ['#f1c9a4', '#d9a77c', '#b27a54', '#8a5a3c', '#f4d6b8'];
-const HAIR = ['#2b2118', '#6a4326', '#b9822f', '#d8c08a', '#4a2a22', '#8a8f9c'];
-const TROUSERS = ['#394666', '#4a4a52', '#6a5a46', '#2f4a48'];
-
-// What they chose comes first (C4). A shirt nobody chose stays the person's own colour.
-function personLook(name, chosen = {}) {
-  const h = hash(name);
+function personLook(worn = {}) {
   return {
-    skin: pick(SKINS, chosen.skin, SKIN[(h >>> 3) % SKIN.length]),
-    hair: pick(HAIRS, chosen.hair, HAIR[(h >>> 6) % HAIR.length]),
-    style: pick(STYLES, chosen.style, STYLES.short),
-    face: pick(FACES, chosen.face, FACES.none),
-    hat: pick(HATS, chosen.hat, (h >>> 9) % 3 === 0 ? HATS.cap : HATS.none),
-    shirt: pick(FABRICS, chosen.shirt, null),
-    trousers: pick(LEGS, chosen.trousers, TROUSERS[(h >>> 11) % TROUSERS.length]),
+    skin: pick(SKINS, worn.skin, SKINS.peach),
+    hair: pick(HAIRS, worn.hair, HAIRS.brown),
+    style: pick(STYLES, worn.style, STYLES.short),
+    face: pick(FACES, worn.face, FACES.none),
+    hat: pick(HATS, worn.hat, HATS.none),
+    shirt: pick(FABRICS, worn.shirt, null),
+    trousers: pick(LEGS, worn.trousers, LEGS.navy),
   };
 }
 
@@ -2403,26 +2474,20 @@ function drawPerson(g, person, t) {
   face.front(g, x, top, 0, hair);
 }
 
-// A figure is { kind, name, color, chosen }, and big enough for its tallest hat.
+// Big enough for the tallest hat.
 const FIGURE_WIDE = 26;
 const FIGURE_TALL = 36;
-const lookOf = ({ kind, name, chosen }) => (kind === 'bot' ? botLook(name, chosen) : personLook(name, chosen));
 
-// A figure on a canvas of its own, drawn still, for the wardrobe.
+// A figure on a canvas of its own, drawn still, for the wardrobe. `figure` is { kind, color, worn }.
 export function figurePicture(figure, facing = 'front') {
   const canvas = document.createElement('canvas');
   canvas.width = FIGURE_WIDE;
   canvas.height = FIGURE_TALL;
   const still = { ...figure, x: FIGURE_WIDE / 2, y: FIGURE_TALL - 2, path: [], pose: 'stand', facing, phase: 0 };
   const g = canvas.getContext('2d');
-  if (figure.kind === 'bot') drawBot(g, { ...still, wears: botLook(figure.name, figure.chosen) }, 0);
-  else drawPerson(g, { ...still, look: personLook(figure.name, figure.chosen) }, 0);
+  if (figure.kind === 'bot') drawBot(g, { ...still, wears: botLook(figure.worn) }, 0);
+  else drawPerson(g, { ...still, look: personLook(figure.worn) }, 0);
   return canvas;
-}
-
-// Whether a figure has this word on now, whether it was chosen or worked out from the name.
-export function isWearing(figure, part, word) {
-  return lookOf(figure)[part] === lookOf({ ...figure, chosen: { ...figure.chosen, [part]: word } })[part];
 }
 
 // A bot's tag hangs under its feet. A person's sits over their head, and goes up a line at every
@@ -2509,7 +2574,10 @@ export class Room {
     this.items = known.map(standing);
     this.describe();
     fillGrid(this.look.hidden, this.items);
+    for (const item of this.items) item.spots = spotsOf(item);
     this.clearTheWay();
+    // A bot using something goes with it, wherever it went (I38).
+    for (const bot of this.bots.values()) if (bot.using) this.place(bot, bot.state, 'walk');
   }
 
   // The floor cell under a place on the page, at whatever size the room is drawn.
@@ -2577,7 +2645,7 @@ export class Room {
         person.label.textContent = data.name;
         person.chip.title = data.name;
       }
-      person.look = personLook(data.name, data.look);
+      person.look = personLook(data.look);
       if (person.color !== data.color) {
         person.color = data.color;
         person.dot.style.background = data.color;
@@ -2600,15 +2668,21 @@ export class Room {
       if (!bot) {
         bot = this.addBot(data);
         this.place(bot, data.state, first ? 'instant' : 'door');
-      } else if (bot.state !== data.state || bot.working !== Boolean(data.activity)) {
+      } else if (bot.state !== data.state || bot.working !== Boolean(data.activity) || bot.using !== data.using) {
         bot.working = Boolean(data.activity);
+        bot.using = data.using;
         this.place(bot, data.state, 'walk');
       }
       bot.state = data.state;
       bot.color = data.color;
-      bot.wears = botLook(data.name, data.look);
+      bot.name = data.name;
+      bot.does = data.does;
+      bot.wears = botLook(data.look);
       bot.chip.title = data.status ? `${data.name}: ${data.status}` : data.name;
-      bot.doing.textContent = data.activity ? `· ${data.activity.via}` : data.asking ? '· waiting' : '';
+      // A bot on a sofa says what it's doing by being there, and side by side the words would collide.
+      bot.doing.textContent = data.activity ? `· ${data.activity.via}`
+        : data.does && !bot.spot?.over ? `· ${data.does}`
+          : data.asking ? '· waiting' : '';
     }
     for (const [id, bot] of this.bots) {
       if (seen.has(id)) continue;
@@ -2621,13 +2695,14 @@ export class Room {
   // People aren't bots, so they get their own sentence.
   describe() {
     const counts = { active: 0, idle: 0, offline: 0 };
-    for (const bot of this.bots.values()) counts[bot.state] += 1;
+    for (const bot of this.bots.values()) if (!bot.spot) counts[bot.state] += 1;
     const people = this.people.size;
     const here = people ? ` ${people} ${people === 1 ? 'person' : 'people'} here.` : '';
     const quiet = this.items.some((item) => item.sign) ? ' A quiet sign is up, so bots can\'t post here.' : '';
+    const using = [...this.bots.values()].filter((bot) => bot.spot).map((bot) => ` ${bot.name} is ${bot.does}.`).join('');
     this.canvas.setAttribute(
       'aria-label',
-      `Hangout room: ${counts.active} bots at the table, ${counts.idle} wandering, ${counts.offline} napping.${here}${quiet}`,
+      `Hangout room: ${counts.active} bots at the table, ${counts.idle} wandering, ${counts.offline} napping.${here}${using}${quiet}`,
     );
   }
 
@@ -2695,10 +2770,12 @@ export class Room {
       seat: null,
       nap: null,
       desk: null,
+      spot: null,
       working: Boolean(data.activity),
+      using: data.using,
       wait: 0,
       phase: (hash(data.id) % 1000) / 1000,
-      wears: botLook(data.name, data.look),
+      wears: botLook(data.look),
       tag,
       chip,
       doing,
@@ -2721,16 +2798,22 @@ export class Room {
     bot.seat = null;
     bot.nap = null;
     bot.desk = null;
+    bot.spot = null;
     let goal = null;
-    // A floor with no desk has a bot that's controlling something sit at the table, and one with no
-    // couch has it nap by the door. Where the beanbags were is floor too.
+    // The desk comes first, because that says what a bot is really doing (I36). A floor with no desk
+    // has a bot that's controlling something sit at the table, and one with no couch has it nap by the
+    // door. Where the beanbags were is floor too.
     const { hidden } = this.look;
     if (bot.working) {
       goal = hidden.includes('desk') ? null : this.claim(DESKS, 'desk');
       bot.desk = goal || null;
     }
+    if (!goal && bot.using) {
+      goal = this.claim(this.items.find((item) => item.id === bot.using)?.spots ?? [], 'spot');
+      bot.spot = goal || null;
+    }
     if (goal) {
-      // Already placed at the desk.
+      // Already placed at the desk or an item.
     } else if (state === 'active' || (bot.working && hidden.includes('desk'))) {
       goal = this.claim(SEATS, 'seat');
       bot.seat = goal || null;
@@ -2860,7 +2943,7 @@ export class Room {
   update(bot, dt) {
     if (this.walk(bot, dt)) return;
     // A busy bot that didn't get a seat wanders too, and takes one when it frees up.
-    if (!bot.desk && !bot.seat && (bot.state === 'idle' || bot.state === 'active')) {
+    if (!bot.desk && !bot.spot && !bot.seat && (bot.state === 'idle' || bot.state === 'active')) {
       bot.wait -= dt;
       if (bot.wait <= 0) this.place(bot, bot.state, 'walk');
     }
@@ -2929,11 +3012,12 @@ export class Room {
     const scene = [
       ...furnitureScene(g, hidden, time, lit, deskLit),
       ...this.items.filter((item) => !item.sign).map((item) => ({ y: item.y, draw: () => this.drawItem(g, item, still) })),
-      ...bots.map((bot) => ({ y: bot.y, draw: () => drawBot(g, bot, time) })),
+      ...bots.map((bot) => ({ y: (!bot.path.length && bot.spot?.over) || bot.y, draw: () => drawBot(g, bot, time) })),
       ...people.map((person) => ({ y: person.y, draw: () => drawPerson(g, person, still) })),
     ];
     scene.sort((a, b) => a.y - b.y);
     for (const item of scene) item.draw();
+    for (const bot of bots) if (!bot.path.length) bot.spot?.busy?.(g, bot, still);
     // A sign changes what bots can do here, so nothing and nobody ever stands in front of it.
     for (const item of this.items) if (item.sign) this.drawItem(g, item, still);
     this.drawHand(g, still);
@@ -2950,7 +3034,7 @@ export class Room {
     for (const bot of bots) {
       bot.tag.style.left = `${(bot.x / W) * 100}%`;
       bot.tag.style.top = `${(bot.y / H) * 100}%`;
-      const drop = bot.seat && !bot.path.length && bot.seat.drop;
+      const drop = (bot.seat || bot.spot) && !bot.path.length && (bot.seat || bot.spot).drop;
       bot.tag.classList.toggle('drop', Boolean(drop));
     }
     for (const person of people) {
