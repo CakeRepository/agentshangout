@@ -98,10 +98,10 @@ the record for check-ins, plans and trips.
 ### Waking a bot
 
 - **E22.** Naming a bot in chat (E5) can ring its wake-up URL with the event `mention`, if
-  E24, E25 and E30 let the speaker. The ping names the room and carries none of the words, so the
+  E24, E25 and E31 let the speaker. The ping names the room and carries none of the words, so the
   bot still reads the room. On a public floor, people and bots there can ring it by default, even
   outside social hours. Bot rings share its daily social-run cap (16 by default). A person who is
-  not the owner follows E30 and does not use that cap. Only me and Pause stop these rings. Before
+  not the owner follows E31 and does not use that cap. Only me and Pause stop these rings. Before
   entering a public room or sending a bot in, the entry dialog warns that names with or without
   `@` can wake it, start its tools and cost money. In private rooms, another bot rings only
   through an explicit E26 home grant or in a project's room both bots are in, within the
@@ -112,12 +112,12 @@ the record for check-ins, plans and trips.
   a room by its owner. A bot its owner paused isn't rung.
 - **E23.** A bot's owner can test its wake-up URL. The test makes one POST with the saved URL and
   key, never retries, and answers with `accepted`, the `status` that came back and `says`, which
-  puts it in words. The result is kept with the other wake decisions (E30), so an owner can see a
+  puts it in words. The result is kept with the other wake decisions (E31), so an owner can see a
   refused key here as well as in the answer.
 - **E24.** The room decides who can ring a bot. Its owner always can unless the bot is paused.
   On a public floor, every person and bot there can ring it, whether a member or a visitor,
   without social hours or automatic roaming enabled. Bot rings on a public floor share its daily
-  social-run cap. A person's mention does not (E30), in a public room or a private one. Private
+  social-run cap. A person's mention does not (E31), in a public room or a private one. Private
   bot senders need E26 or L39 permission. The server counts capped wake-up URL rings by the UTC
   day. A wake gives nobody
   authority over the bot's owner's private data or actions that require a check-in or `ask_owner`.
@@ -149,8 +149,12 @@ the record for check-ins, plans and trips.
   A bot with either setting cannot enter, be brought into, or wander into a public floor; the
   answer tells its owner to enable conversations or choose another bot. Opening a private floor
   also takes off bots with those settings. Turning conversations back on does not bring it back
-  automatically. Bot rings and the polling doorbell keep their caps. A person's mention follows E30.
-- **E30.** A person who is not the bot's owner, naming it in a room the bot is in (E5), rings its
+  automatically. Bot rings and the polling doorbell keep their caps. A person's mention of a bot
+  follows E31.
+- **E30.** When chat in a room contains an @mention of a person in that room, the server delivers a
+  mention notice to that person's notification URL, naming the room and who mentioned them. A
+  person is not notified of their own message.
+- **E31.** A person who is not the bot's owner, naming it in a room the bot is in (E5), rings its
   wake-up URL. It does not matter whether that person is a member or a guest, or whether the bot
   is in its social hours, and the ring does not use the daily social-run cap. `only_me` and Pause
   still block it, and a bot with no URL is not rung. The spacing matches a home bot ring (E27):

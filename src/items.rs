@@ -77,13 +77,33 @@ pub const FLOOR: Cells = Cells::new(0, 0, 40, 14);
 /// stays clear: the table, the door, and the three spots where bots nap off the couch. Those three are
 /// on the beanbags, which an owner can hide (S14). These cells don't look at what's hidden, so showing
 /// the beanbags again can never find an item standing where it belongs.
-pub const FIXED: [Cells; 5] = [
-    Cells::new(12, 1, 16, 9),
+pub const FIXED: [Cells; 4] = [
     Cells::new(18, 12, 4, 2),
     Cells::new(11, 12, 1, 1),
     Cells::new(13, 12, 1, 1),
     Cells::new(16, 12, 1, 1),
 ];
+/// I67: the table and the seats round it, as cells, and where it stands until someone moves it.
+pub const TABLE_W: i64 = 16;
+pub const TABLE_H: i64 = 9;
+pub const TABLE_AT: (i64, i64) = (12, 1);
+/// I67: what a table can be. The first is how every table starts.
+pub const TABLE_STYLES: [&str; 6] = ["wood", "round", "glass", "stone", "picnic", "dark"];
+
+/// I67: a floor's table, where it stands and what it's like.
+#[derive(Clone, Debug, Serialize)]
+pub struct Table {
+    pub x: i64,
+    pub y: i64,
+    pub style: String,
+}
+
+impl Table {
+    pub fn cells(&self) -> Cells {
+        Cells::new(self.x, self.y, TABLE_W, TABLE_H)
+    }
+}
+
 /// I3: what else stays clear, for as long as a floor shows it. On a floor that leaves one out (S14)
 /// its cells are free, and it can't come back until they're clear again.
 pub const FIXED_FURNITURE: [(&str, Cells); 2] =
@@ -115,12 +135,15 @@ const SPOOKY: &str = "spooky";
 const SIGNS: &str = "signs";
 
 /// I46: in the order the catalog shows them, with what each is called there.
-pub const CATEGORIES: [(&str, &str); 16] = [
+const RUGS: &str = "rugs";
+
+pub const CATEGORIES: [(&str, &str); 17] = [
     (SEATING, "Seating"),
     (TABLES, "Tables and desks"),
     (BEDS, "Beds"),
     (STORAGE, "Storage"),
     (LIGHTS, "Lights"),
+    (RUGS, "Rugs"),
     (KITCHEN, "Kitchen"),
     (BATHROOM, "Bathroom"),
     (ELECTRONICS, "Electronics"),
@@ -163,9 +186,16 @@ pub struct Kind {
     /// I31: what the room sees a bot doing with this. A kind without it can't be used.
     pub does: Option<&'static str>,
     pub room_for: i64,
+    /// I67: it lies on the floor, so it goes under anything and anything goes on it.
+    pub flat: bool,
 }
 
 impl Kind {
+    /// I67: a rug, flat on the floor.
+    const fn flat(self) -> Self {
+        Self { flat: true, ..self }
+    }
+
     /// I31: a kind bots can use, and how many at once. The room page has a spot for each of them.
     const fn used(self, does: &'static str, room_for: i64) -> Self {
         Self { does: Some(does), room_for, ..self }
@@ -195,6 +225,7 @@ const fn piece(
         h,
         does: None,
         room_for: 0,
+        flat: false,
     }
 }
 
@@ -217,7 +248,7 @@ const fn feels(mood: &'static str) -> Option<&'static str> {
 /// Everything a floor can hold. Nothing else can be placed, and nothing typed is part of any of it.
 /// A size is in grid cells. The room page draws a kind only once it has art for that word. Anything
 /// `STARTER` is at most 2 cells deep, so it fits the strip along the front of any floor.
-pub const CATALOG: [Kind; 105] = [
+pub const CATALOG: [Kind; 113] = [
     piece("stool", "Stool", SEATING, STARTER, 1, None, (1, 1)).used("sitting on the stool", 1),
     piece("dining_chair", "Dining chair", SEATING, STARTER, 1, None, (1, 1)),
     piece("bench", "Bench", SEATING, STARTER, 2, None, (4, 1)),
@@ -254,6 +285,15 @@ pub const CATALOG: [Kind; 105] = [
     piece("candelabra", "Candelabra", LIGHTS, ONE_FRIEND, 4, feels("cozy"), (1, 1)),
     piece("fireplace", "Fireplace", LIGHTS, SIX_FRIENDS, 9, feels("cozy"), (6, 1))
         .used("warming up by the fire", 2),
+    // I67: rugs lie flat, so they go anywhere, under anything, as many as there's room for.
+    piece("rug_oval", "Oval rug", RUGS, STARTER, 3, feels("cozy"), (6, 3)).flat(),
+    piece("rug_round", "Round rug", RUGS, STARTER, 3, feels("calm"), (4, 4)).flat(),
+    piece("rug_runner", "Runner", RUGS, STARTER, 2, None, (8, 2)).flat(),
+    piece("rug_square", "Square rug", RUGS, STARTER, 2, None, (5, 4)).flat(),
+    piece("rug_checked", "Checked rug", RUGS, STARTER, 2, feels("playful"), (5, 4)).flat(),
+    piece("rug_woven", "Woven rug", RUGS, STARTER, 3, feels("inspired"), (6, 4)).flat(),
+    piece("rug_shag", "Shag rug", RUGS, STARTER, 3, feels("cozy"), (4, 3)).flat(),
+    piece("rug_persian", "Persian rug", RUGS, STARTER, 4, feels("calm"), (7, 4)).flat(),
     piece("counter", "Counter", KITCHEN, STARTER, 1, None, (4, 1)),
     piece("stove", "Stove", KITCHEN, STARTER, 2, None, (2, 1)),
     piece("fridge", "Fridge", KITCHEN, STARTER, 2, None, (2, 1)),
@@ -435,6 +475,8 @@ pub struct Template {
     pub label: &'static str,
     pub paint: &'static str,
     pub flooring: &'static str,
+    /// I67: what its table is like. Where it stands is left as it is.
+    pub table: &'static str,
     pub hidden: &'static [&'static str],
     pub items: &'static [PackItem],
 }
@@ -447,6 +489,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Hangout",
         paint: spaces::PLAIN_PAINT,
         flooring: spaces::PLAIN_FLOORING,
+        table: "wood",
         hidden: &[],
         items: &[],
     },
@@ -455,6 +498,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Café",
         paint: "clay",
         flooring: "tile",
+        table: "round",
         hidden: &["arcade", "rug", "beanbags", "couch", "desk"],
         items: &[
             // Tables for two down each side.
@@ -482,8 +526,13 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Study",
         paint: "sage",
         flooring: "carpet",
-        hidden: &["bar", "arcade", "beanbags", "couch"],
+        table: "wood",
+        hidden: &["bar", "arcade", "beanbags", "couch", "desk"],
         items: &[
+            // I66: a computer to work at where the desk would be, and a globe, so it still feels
+            // inspired.
+            at("computer", 3, 3),
+            at("globe", 7, 3),
             // Shelves along the back wall, and a corner for reading where the couch would be.
             at("bookshelf", 28, 0),
             at("bookshelf", 32, 0),
@@ -504,6 +553,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Lounge",
         paint: "plum",
         flooring: "walnut",
+        table: "dark",
         hidden: &["bar", "desk"],
         items: &[
             at("coffee_table", 4, 4),
@@ -524,6 +574,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Garden",
         paint: "sky",
         flooring: "grass",
+        table: "picnic",
         hidden: &["bar", "arcade", "plants", "rug", "beanbags", "couch", "desk"],
         items: &[
             // A hedge along the back, and a place to sit either side of the table.
@@ -557,6 +608,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Bar",
         paint: "ink",
         flooring: "walnut",
+        table: "dark",
         hidden: &["arcade", "rug", "beanbags", "couch", "desk"],
         items: &[
             // The counter stays, with tables for two down each side and low lights.
@@ -582,8 +634,13 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Workshop",
         paint: "clay",
         flooring: "oak",
-        hidden: &["bar", "arcade", "beanbags", "couch"],
+        table: "stone",
+        hidden: &["bar", "arcade", "beanbags", "couch", "desk"],
         items: &[
+            // I66: somewhere to work at the front, where the desk would be.
+            at("computer", 2, 3),
+            at("tool_chest", 6, 3),
+            at("workbench", 2, 5),
             // Benches along the back wall, and the board to plan on.
             at("workbench", 28, 0),
             at("workbench", 33, 0),
@@ -602,6 +659,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Bakery",
         paint: "butter",
         flooring: "tile",
+        table: "round",
         hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
             at("counter", 0, 0),
@@ -641,8 +699,14 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Office",
         paint: "sky",
         flooring: "carpet",
-        hidden: &["bar", "arcade", "plants", "beanbags", "couch"],
+        table: "glass",
+        hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
+            // I66: two more desks where the old one stood.
+            at("computer", 3, 2),
+            at("computer", 6, 2),
+            at("dining_chair", 4, 3),
+            at("dining_chair", 7, 3),
             at("computer", 28, 0),
             at("computer", 31, 0),
             at("computer", 34, 0),
@@ -672,6 +736,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Library",
         paint: "butter",
         flooring: "walnut",
+        table: "wood",
         hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
             at("bookshelf", 0, 0),
@@ -704,6 +769,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Den",
         paint: "clay",
         flooring: "carpet",
+        table: "dark",
         hidden: &["bar", "arcade", "desk"],
         items: &[
             at("television", 3, 5),
@@ -727,6 +793,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Pub",
         paint: "sage",
         flooring: "oak",
+        table: "picnic",
         hidden: &["plants", "beanbags", "couch", "desk"],
         items: &[
             at("dartboard", 1, 0),
@@ -756,6 +823,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Makerspace",
         paint: "ink",
         flooring: "tile",
+        table: "stone",
         hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
             at("workbench", 0, 0),
@@ -784,6 +852,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Greenhouse",
         paint: "sage",
         flooring: "grass",
+        table: "picnic",
         hidden: &["bar", "arcade", "plants", "rug", "beanbags", "couch", "desk"],
         items: &[
             at("flower_box", 0, 0),
@@ -820,6 +889,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Atelier",
         paint: "plum",
         flooring: "oak",
+        table: "glass",
         hidden: &["bar", "arcade", "plants", "beanbags", "couch", "desk"],
         items: &[
             at("framed_painting", 0, 0),
@@ -850,6 +920,7 @@ pub const TEMPLATES: [Template; 16] = [
         label: "Clubhouse",
         paint: "dusk",
         flooring: "carpet",
+        table: "round",
         hidden: &["bar", "plants", "beanbags", "couch", "desk"],
         items: &[
             at("television", 3, 0),
@@ -995,10 +1066,6 @@ fn footprint(kind: &Kind, x: i64, y: i64, facing: i64) -> Cells {
     }
 }
 
-fn footprint_of(item: &FloorItem) -> Option<Cells> {
-    kind_of(&item.kind).map(|kind| footprint(kind, item.x, item.y, item.facing))
-}
-
 /// I1: anything else is refused, before anything is looked at.
 fn check_facing(facing: i64) -> ApiResult<()> {
     if !(0..=3).contains(&facing) {
@@ -1007,7 +1074,7 @@ fn check_facing(facing: i64) -> ApiResult<()> {
     Ok(())
 }
 
-/// I3: what has to stay clear on a floor that leaves this out.
+/// I3: what has to stay clear on a floor that leaves this out, besides its table (I67).
 fn kept_clear(hidden: &[String]) -> impl Iterator<Item = &'static Cells> + '_ {
     let shown = FIXED_FURNITURE
         .iter()
@@ -1016,29 +1083,104 @@ fn kept_clear(hidden: &[String]) -> impl Iterator<Item = &'static Cells> + '_ {
     FIXED.iter().chain(shown)
 }
 
-/// I3: on the floor, clear of what stays and of everything else there.
-fn check_fits(spot: &Cells, hidden: &[String], others: &[FloorItem]) -> ApiResult<()> {
+/// I67: where an item stands, unless it's flat on the floor, which nothing bumps into.
+fn solid_footprint(item: &FloorItem) -> Option<Cells> {
+    kind_of(&item.kind)
+        .filter(|kind| !kind.flat)
+        .map(|kind| footprint(kind, item.x, item.y, item.facing))
+}
+
+/// I3, I67: on the floor, clear of the table, what stays and everything else there. A rug only has
+/// to be on the floor.
+fn check_fits(
+    spot: &Cells,
+    flat: bool,
+    hidden: &[String],
+    table: &Cells,
+    others: &[FloorItem],
+) -> ApiResult<()> {
     if !spot.inside(&FLOOR) {
         return Err(ApiError::conflict("that's off the floor"));
     }
-    if kept_clear(hidden).any(|kept| spot.overlaps(kept)) {
+    if flat {
+        return Ok(());
+    }
+    if spot.overlaps(table) || kept_clear(hidden).any(|kept| spot.overlaps(kept)) {
         return Err(ApiError::conflict(
             "the table, couch, desk, door and nap spots stay where they are",
         ));
     }
-    if others.iter().filter_map(footprint_of).any(|other| spot.overlaps(&other)) {
+    if others.iter().filter_map(solid_footprint).any(|other| spot.overlaps(&other)) {
         return Err(ApiError::conflict("something's already there"));
     }
     Ok(())
 }
 
+/// I67: a floor's table, where it stands until someone moves it.
+pub fn table_of(state: &AppState, floor_id: &str) -> ApiResult<Table> {
+    Ok(state.db.floor_table(floor_id)?.map_or_else(
+        || Table { x: TABLE_AT.0, y: TABLE_AT.1, style: TABLE_STYLES[0].to_string() },
+        |(x, y, style)| Table { x, y, style },
+    ))
+}
+
+/// I67: what moving a table or changing its style asks for. Whatever's left out stays as it is.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TableChange {
+    pub x: Option<i64>,
+    pub y: Option<i64>,
+    pub style: Option<String>,
+}
+
+/// I67: moves a floor's table or changes its style. It stands on the floor, clear of the door, the nap
+/// spots, the couch and desk if they're shown, and anything that isn't flat.
+pub fn change_table(state: &AppState, floor_id: &str, change: &TableChange) -> ApiResult<Table> {
+    let now = table_of(state, floor_id)?;
+    let style = change.style.clone().unwrap_or(now.style);
+    if !TABLE_STYLES.contains(&style.as_str()) {
+        return Err(ApiError::bad_request(format!(
+            "a table is one of {}",
+            TABLE_STYLES.join(", ")
+        )));
+    }
+    let table = Table { x: change.x.unwrap_or(now.x), y: change.y.unwrap_or(now.y), style };
+    let cells = table.cells();
+    if !cells.inside(&FLOOR) {
+        return Err(ApiError::conflict("the table has to be on the floor"));
+    }
+    let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
+    if kept_clear(&floor.hidden).any(|kept| cells.overlaps(kept)) {
+        return Err(ApiError::conflict(
+            "the table can't go on the door, the nap spots, the couch or the desk",
+        ));
+    }
+    let items = state.db.floor_items(floor_id)?;
+    if items.iter().filter_map(solid_footprint).any(|item| cells.overlaps(&item)) {
+        return Err(ApiError::conflict(
+            "something's standing where the table would go, so move it first",
+        ));
+    }
+    state.db.set_floor_table(floor_id, table.x, table.y, &table.style)?;
+    ops::refresh(state, floor_id);
+    Ok(table)
+}
+
 /// I3: the couch or desk that was left out, wouldn't be any more, and has an item on its cells.
-fn in_the_way(before: &[String], after: &[String], items: &[FloorItem]) -> Vec<&'static str> {
+fn in_the_way(
+    before: &[String],
+    after: &[String],
+    items: &[FloorItem],
+    table: &Cells,
+) -> Vec<&'static str> {
     FIXED_FURNITURE
         .iter()
         .filter(|(word, _)| before.iter().any(|left_out| left_out == word))
         .filter(|(word, _)| !after.iter().any(|left_out| left_out == word))
-        .filter(|(_, cells)| items.iter().filter_map(footprint_of).any(|item| item.overlaps(cells)))
+        .filter(|(_, cells)| {
+            cells.overlaps(table)
+                || items.iter().filter_map(solid_footprint).any(|item| item.overlaps(cells))
+        })
         .map(|(word, _)| *word)
         .collect()
 }
@@ -1052,8 +1194,9 @@ fn hidden_text(words: &[String]) -> String {
 /// S14, I3: what a floor leaves out, in words already checked. The couch or the desk can't come back
 /// over something standing where it goes.
 pub fn leave_out(state: &AppState, floor_id: &str, words: &[String]) -> ApiResult<()> {
+    let table = table_of(state, floor_id)?.cells();
     state.db.choose_hidden(floor_id, |before, items| {
-        match in_the_way(before, words, items).first() {
+        match in_the_way(before, words, items, &table).first() {
             Some(word) => Err(ApiError::conflict(format!(
                 "something's standing where the {word} goes, so move it first"
             ))),
@@ -1281,6 +1424,7 @@ fn store_item(
     (x, y, facing): (i64, i64, i64),
 ) -> ApiResult<ApiResult<String>> {
     let spot = footprint(kind, x, y, facing);
+    let table = table_of(state, floor_id)?.cells();
     let id = auth::new_id();
     let stored = state.db.place_item(
         &NewFloorItem {
@@ -1300,7 +1444,7 @@ fn store_item(
             if items.len() >= MAX_ITEMS {
                 return Err(ApiError::conflict(format!("a floor holds {MAX_ITEMS} items")));
             }
-            check_fits(&spot, hidden, items)
+            check_fits(&spot, kind.flat, hidden, &table, items)
         },
     )?;
     Ok(stored.map(|()| id))
@@ -1326,7 +1470,10 @@ fn change_item(
     check_facing(facing)?;
     let kind = kind_of(&item.kind).ok_or_else(ApiError::not_found)?;
     let spot = footprint(kind, x, y, facing);
-    let fits = |hidden: &[String], others: &[FloorItem]| check_fits(&spot, hidden, others);
+    let table = table_of(state, &item.hangout_id)?.cells();
+    let fits = |hidden: &[String], others: &[FloorItem]| {
+        check_fits(&spot, kind.flat, hidden, &table, others)
+    };
     if !state.db.change_item(item, (x, y, facing), fits)?? {
         return Err(ApiError::not_found());
     }
@@ -1458,14 +1605,18 @@ fn use_template(
         }
     }
     let mut skipped = 0;
+    let table = table_of(state, floor_id)?.cells();
     let wanted: Vec<String> = template.hidden.iter().map(ToString::to_string).collect();
     state.db.choose_hidden(floor_id, |before, items| {
-        let stays_out = in_the_way(before, &wanted, items);
+        let stays_out = in_the_way(before, &wanted, items, &table);
         skipped = stays_out.len();
         let chosen = wanted.iter().map(String::as_str).chain(stays_out);
         Ok::<_, ApiError>(hidden_text(&chosen.map(str::to_string).collect::<Vec<_>>()))
     })??;
     set_look(state, caller, floor_id, Some(template.paint), Some(template.flooring))?;
+    // I67: its kind of table, where the table already stands.
+    let table = table_of(state, floor_id)?;
+    state.db.set_floor_table(floor_id, table.x, table.y, template.table)?;
     let standing = state.db.floor_items(floor_id)?;
     let mut went_up = 0;
     for part in template.items {
@@ -1686,6 +1837,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/floors/{id}/items", post(place))
         .route("/api/floors/{id}/packs/{pack}", post(put_up_pack).delete(take_down_pack))
         .route("/api/floors/{id}/templates/{template}", post(use_a_template))
+        .route("/api/floors/{id}/table", put(move_table))
         .route("/api/agents/{id}/moods", put(set_moods))
 }
 
@@ -1723,6 +1875,7 @@ fn catalog_json(friends: i64, god: bool) -> Value {
                 "beauty": kind.beauty,
                 "mood": kind.mood,
                 "holds_notes": kind.holds_notes,
+                "flat": kind.flat,
                 "sign": kind.sign,
                 "does": kind.does,
                 "w": kind.w,
@@ -1734,6 +1887,8 @@ fn catalog_json(friends: i64, god: bool) -> Value {
         "max_items": MAX_ITEMS,
         "floor": FLOOR,
         "fixed": FIXED,
+        // I67: the table's size and what it can be. Where a floor's stands is in its snapshot.
+        "table": { "w": TABLE_W, "h": TABLE_H, "styles": TABLE_STYLES },
         "fixed_furniture": FIXED_FURNITURE.iter().map(|(word, cells)| {
             json!({ "furniture": word, "cells": cells })
         }).collect::<Vec<_>>(),
@@ -1772,14 +1927,20 @@ pub struct BotItem {
 /// L40: a bot in a project furnishes its project's room as its owner would: a template, then a pack,
 /// then items to take out and items to put in. Signs are its owner's to place or take down, and so is
 /// anything someone wrote a note on. Items go in as its owner's, unlocked as theirs are (I19).
+/// L40, I67: what a bot asks for when it furnishes its project's room.
+pub struct BotFurnishing<'a> {
+    pub template: Option<&'a str>,
+    pub pack: Option<&'a str>,
+    pub table: Option<&'a TableChange>,
+    pub remove: &'a [String],
+    pub add: &'a [BotItem],
+}
+
 pub fn furnish_for_project(
     state: &AppState,
     caller: &Caller,
     floor_id: &str,
-    template: Option<&str>,
-    pack: Option<&str>,
-    remove: &[String],
-    add: &[BotItem],
+    BotFurnishing { template, pack, table, remove, add }: BotFurnishing,
 ) -> ApiResult<Value> {
     // L40: the caller is already known to be in the project, and this is one of its floors (W96).
     let floor = state.db.floor(floor_id)?.ok_or_else(ApiError::not_found)?;
@@ -1795,6 +1956,10 @@ pub fn furnish_for_project(
             .filter(|pack| !pack.over)
             .ok_or_else(|| ApiError::bad_request("that isn't a pack: see room_catalog"))?;
         said.insert("pack".into(), put_up(state, caller, &place, pack)?);
+    }
+    // I67: the table, moved or restyled, before what goes round it.
+    if let Some(change) = table {
+        said.insert("table".into(), json!(change_table(state, floor_id, change)?));
     }
     let written_on = state.db.item_note_counts(floor_id, i64::MIN)?;
     let mut removed = 0;
@@ -1889,6 +2054,17 @@ async fn take_down_pack(
 ) -> ApiResult<Json<Value>> {
     let (place, pack) = pack_for(&state, &caller, &id, &word)?;
     Ok(Json(take_down(&state, &caller, &place, pack)?))
+}
+
+/// I67: whoever runs the space moves the table or changes its style, on a floor they're a member of.
+async fn move_table(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<String>,
+    Json(change): Json<TableChange>,
+) -> ApiResult<Json<Table>> {
+    may_restyle(&state, &caller, &id, "move the table")?;
+    Ok(Json(change_table(&state, &id, &change)?))
 }
 
 async fn use_a_template(

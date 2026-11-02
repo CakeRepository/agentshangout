@@ -1693,7 +1693,8 @@ pub fn my_world(state: &AppState, caller: &Caller) -> ApiResult<Value> {
 type PlayerOut = (i64, String, u16, u16, Option<&'static str>, &'static str, Option<Look>);
 /// L17, L18: `[name, x, y, look, fx, fy]` for a bot at a place.
 /// L17: and last, an open-air place's tile, where the bot stays, or null for a building it's inside.
-type BotOutRow = (String, u16, u16, Look, Option<u16>, Option<u16>, Option<[u16; 2]>);
+type BotOutRow =
+    (String, u16, u16, Look, Option<u16>, Option<u16>, Option<[u16; 2]>, String, [u16; 2]);
 /// `[kind, name, x, y, age_s]`, where `age_s` is the seconds since that crawler was last seen.
 type CrawlerOut = (&'static str, &'static str, u16, u16, i64);
 
@@ -1907,6 +1908,8 @@ fn build_view(state: &AppState, world_id: &str, now: i64) -> ApiResult<Cached> {
                     bot.from.map(|at| at.0),
                     bot.from.map(|at| at.1),
                     bot.open_air.map(|(x, y)| [x, y]),
+                    bot.owner,
+                    [bot.place.0, bot.place.1],
                 )
             })
             .collect();
@@ -2313,10 +2316,14 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
+        // Capture the phase before the final strike can mark the disaster finished.
+        let striking = tx
+            .world_end(&world.id)?
+            .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
         let mut changes = disaster_step(state, tx, &world)?;
         let mut reason = "disaster";
         // W94: on The Commons, roads laid side by side are thinned out, but not while a disaster strikes.
-        if changes.is_empty() && world.id == COMMONS_ID {
+        if !striking && changes.is_empty() && world.id == COMMONS_ID {
             let hoods = world::neighborhoods(world.seed, world.size);
             let slab = world::slab_tiles(&hoods, &tx.all_tiles(&world.id)?);
             changes.extend(slab.into_iter().map(Change::Remove));

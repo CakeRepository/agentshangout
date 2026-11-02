@@ -20,7 +20,6 @@ const SIT_CHANCE = 0.35;
 
 const BLOCKED = [
   [0, 0, W, WALL + 8],
-  [174, 124, 132, 46], // table
   [0, 0, 6, H],
   [W - 6, 0, 6, H],
   [0, H - 6, W, 6],
@@ -73,6 +72,13 @@ const FLOORINGS = {
 };
 const PLAIN_LOOK = { paint: 'dusk', flooring: 'oak', hidden: [] };
 
+// I67: the table and its seats are drawn where it stood until tables could move, and shifted by
+// however far a floor's has been moved, in whole floor cells.
+const TABLE_HOME = { x: 12, y: 1 };
+const TABLE_BLOCK = [174, 124, 132, 46];
+const tableShift = (table) => [((table?.x ?? TABLE_HOME.x) - TABLE_HOME.x) * FLOOR_CELL, ((table?.y ?? TABLE_HOME.y) - TABLE_HOME.y) * FLOOR_CELL];
+const shiftedSeats = ([dx, dy]) => SEATS.map((seat) => ({ ...seat, x: seat.x + dx, y: seat.y + dy, ax: seat.ax + dx, ay: seat.ay + dy }));
+
 const SEATS = [
   ...[192, 224, 256, 288].map((x, i) => ({ x, y: 127, ax: x, ay: 116, pose: 'sit', facing: 'front', drop: i % 2 })),
   ...[192, 224, 256, 288].map((x, i) => ({ x, y: 180, ax: x, ay: 188, pose: 'sit', facing: 'back', drop: i % 2 })),
@@ -82,6 +88,8 @@ const SEATS = [
 
 // Where a bot sits while it's controlling something through another tool.
 const DESKS = [44, 70, 96].map((x) => ({ x, y: 146, ax: x, ay: 158, pose: 'sit', facing: 'back', drop: 0 }));
+// I66: what a bot working through another tool sits at in a room with no desk.
+const DESK_KINDS = new Set(['computer', 'monitor', 'workbench', 'research_bench', 'standing_desk', 'sewing_table']);
 
 const NAPS = [
   { x: 40, y: 206, ax: 40, ay: 232, pose: 'sleep' },
@@ -104,12 +112,14 @@ const GRID = new Uint8Array(COLS * ROWS);
 
 // Bots and people walk where the furniture isn't, so this follows what a floor has left out and
 // what has been put on it.
-function fillGrid(hidden, items = []) {
+function fillGrid(hidden, items = [], [dx, dy] = [0, 0]) {
   const left = Object.entries(REMOVABLE).filter(([item]) => !hidden.includes(item));
   const blocks = [
     ...BLOCKED,
+    [TABLE_BLOCK[0] + dx, TABLE_BLOCK[1] + dy, TABLE_BLOCK[2], TABLE_BLOCK[3]],
     ...left.map(([, block]) => block),
-    ...items.map(({ left, top, wide, deep }) => [left, top, wide, deep]),
+    // I67: a rug is flat, so everyone walks over it.
+    ...items.filter((item) => !item.flat).map(({ left, top, wide, deep }) => [left, top, wide, deep]),
   ];
   for (let row = 0; row < ROWS; row++) {
     for (let col = 0; col < COLS; col++) {
@@ -429,39 +439,93 @@ function paintFloor(g, { a, b, line, style }) {
   if (style === 'leaves') paintFallenLeaves(g);
 }
 
+// I66: the rug under the table goes with the walls, so rooms painted differently don't share one:
+// its edge, its trim and its middle.
+const RUGS = {
+  dusk: ['#6a2a3c', '#c9a86a', '#7b3346'],
+  sage: ['#7a5a2e', '#e8d9a8', '#8f6b38'],
+  plum: ['#2e5a6b', '#d9c48a', '#38707f'],
+  clay: ['#2f4f6f', '#e2c27a', '#3b6185'],
+  butter: ['#5b2e4f', '#f0d78c', '#6e3a60'],
+  ink: ['#8a6a2a', '#1b2236', '#a07c34'],
+  sky: ['#b5543a', '#fbe3b4', '#c96a4c'],
+  haunted: ['#3b2a4a', '#9be36a', '#4a3560'],
+  harvest: ['#7a4a1e', '#f2c45a', '#8f5a26'],
+};
+
 // Under the table.
-function paintRug(g) {
-  r(g, '#6a2a3c', 128, 104, 224, 100);
-  r(g, '#c9a86a', 132, 108, 216, 1);
-  r(g, '#c9a86a', 132, 199, 216, 1);
-  r(g, '#c9a86a', 132, 108, 1, 92);
-  r(g, '#c9a86a', 347, 108, 1, 92);
-  r(g, '#7b3346', 138, 114, 204, 80);
+function paintRug(g, paint = 'dusk') {
+  const [edge, trim, middle] = RUGS[paint] || RUGS.dusk;
+  r(g, edge, 128, 104, 224, 100);
+  r(g, trim, 132, 108, 216, 1);
+  r(g, trim, 132, 199, 216, 1);
+  r(g, trim, 132, 108, 1, 92);
+  r(g, trim, 347, 108, 1, 92);
+  r(g, middle, 138, 114, 204, 80);
+}
+
+// W98: an open-air place has sky where a room has its wall, with trees along the back and the
+// whiteboard on two posts.
+function paintOutdoors(g, sky, turned) {
+  const gradient = g.createLinearGradient(0, 0, 0, WALL);
+  gradient.addColorStop(0, sky.top);
+  gradient.addColorStop(1, sky.low);
+  g.fillStyle = gradient;
+  g.fillRect(0, 0, W, WALL);
+  if (sky.stars) {
+    for (let i = 0; i < 40; i++) r(g, '#fff', (i * 53) % W, (i * 17) % 40, 1, 1);
+  }
+  const leaf = sky.stars ? '#16243a' : turned ? '#9a6a2a' : '#3f7a4c';
+  const dark = sky.stars ? '#0f1a2c' : turned ? '#7a4f1e' : '#2f5f3a';
+  // A line of trees, round tops overlapping, darker behind.
+  for (let x = -10; x < W + 20; x += 22) {
+    const tall = 18 + ((x * 7) % 11);
+    g.fillStyle = dark;
+    g.beginPath();
+    g.arc(x + 11, WALL - tall + 4, 14, 0, Math.PI * 2);
+    g.fill();
+  }
+  for (let x = 0; x < W + 20; x += 26) {
+    const tall = 14 + ((x * 5) % 9);
+    g.fillStyle = leaf;
+    g.beginPath();
+    g.arc(x, WALL - tall + 8, 12, 0, Math.PI * 2);
+    g.fill();
+  }
+  r(g, dark, 0, WALL - 4, W, 4);
 }
 
 function paintRoom(g, hour, look) {
   const sky = skyFor(hour);
   const paint = PAINTS[look.paint] || PAINTS.dusk;
-  // Wall
-  r(g, paint.upper, 0, 0, W, WALL);
-  for (let x = 0; x < W; x += 16) r(g, paint.stripe, x, 0, 8, 46);
-  r(g, paint.lower, 0, 46, W, 18);
-  for (let x = 6; x < W; x += 24) r(g, paint.panel, x, 48, 18, 14);
-  r(g, '#c9a86a', 0, 45, W, 1);
-  r(g, '#1b2236', 0, 64, W, 3);
+  if (look.outdoors) {
+    paintOutdoors(g, sky, paint.turned);
+  } else {
+    // Wall
+    r(g, paint.upper, 0, 0, W, WALL);
+    for (let x = 0; x < W; x += 16) r(g, paint.stripe, x, 0, 8, 46);
+    r(g, paint.lower, 0, 46, W, 18);
+    for (let x = 6; x < W; x += 24) r(g, paint.panel, x, 48, 18, 14);
+    r(g, '#c9a86a', 0, 45, W, 1);
+    r(g, '#1b2236', 0, 64, W, 3);
 
-  paintWindow(g, 36, 10, 72, 32, sky, paint.turned);
-  paintWindow(g, 372, 10, 72, 32, sky, paint.turned);
-  if (paint.webs) paintWebs(g);
-  if (paint.turned) paintGarland(g);
+    paintWindow(g, 36, 10, 72, 32, sky, paint.turned);
+    paintWindow(g, 372, 10, 72, 32, sky, paint.turned);
+    if (paint.webs) paintWebs(g);
+    if (paint.turned) paintGarland(g);
+  }
 
   // Floor
   paintFloor(g, FLOORINGS[look.flooring] || FLOORINGS.oak);
   r(g, 'rgba(30,20,50,.20)', 0, WALL + 1, W, 3);
 
-  if (!look.hidden.includes('rug')) paintRug(g);
+  if (!look.hidden.includes('rug')) paintRug(g, look.paint);
 
-  // Whiteboard frame; the words on it are an HTML overlay
+  // Whiteboard frame; the words on it are an HTML overlay. Out of doors it stands on two posts.
+  if (look.outdoors) {
+    r(g, '#5a3a24', 156, 50, 5, WALL - 46);
+    r(g, '#5a3a24', 319, 50, 5, WALL - 46);
+  }
   r(g, '#20283e', 148, 5, 184, 52);
   r(g, '#f4f1e8', 151, 8, 178, 46);
   r(g, '#c9a86a', 146, 56, 188, 2);
@@ -2904,7 +2968,62 @@ function paintWheelbarrowEnd(g, x, y) {
 // These are listed words on the server. A word this page doesn't know is left out, so a newer
 // server can't break an older page. `rise` is how far up from its front edge it's painted, and a
 // `sign` changes what bots can do, so it's painted over everything else.
+// I67: a rug, flat on the floor, filling its cells: `x` is its middle and `y` its front edge.
+function rugArt({ base, trim, accent, pattern }) {
+  return (g, x, y, t, wide, deep) => {
+    const left = Math.round(x - wide / 2) + 1;
+    const top = y - deep + 1;
+    const w = wide - 2;
+    const h = deep - 2;
+    if (pattern === 'round') {
+      g.fillStyle = trim;
+      g.beginPath();
+      g.ellipse(left + w / 2, top + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      g.fill();
+      for (const [shrink, color] of [[3, base], [9, accent], [14, base]]) {
+        if (w / 2 - shrink <= 0 || h / 2 - shrink <= 0) continue;
+        g.fillStyle = color;
+        g.beginPath();
+        g.ellipse(left + w / 2, top + h / 2, w / 2 - shrink, h / 2 - shrink, 0, 0, Math.PI * 2);
+        g.fill();
+      }
+      return;
+    }
+    r(g, trim, left, top, w, h);
+    r(g, base, left + 2, top + 2, w - 4, h - 4);
+    if (pattern === 'stripes') {
+      for (let i = left + 4; i < left + w - 4; i += 8) r(g, accent, i, top + 2, 3, h - 4);
+    } else if (pattern === 'checks') {
+      for (let cy = top + 2, row = 0; cy < top + h - 2; cy += 8, row++) {
+        for (let cx = left + 2 + (row % 2) * 8; cx < left + w - 2; cx += 16) r(g, accent, cx, cy, Math.min(8, left + w - 2 - cx), Math.min(8, top + h - 2 - cy));
+      }
+    } else if (pattern === 'woven') {
+      for (let cy = top + 3; cy < top + h - 3; cy += 4) r(g, cy % 8 < 4 ? accent : trim, left + 3, cy, w - 6, 1);
+    } else if (pattern === 'shag') {
+      for (let i = 0; i < w * h / 18; i++) r(g, accent, left + 3 + ((i * 37) % (w - 6)), top + 3 + ((i * 23) % (h - 6)), 1, 2);
+    } else if (pattern === 'persian') {
+      r(g, accent, left + 5, top + 5, w - 10, h - 10);
+      r(g, base, left + 8, top + 8, w - 16, h - 16);
+      g.fillStyle = trim;
+      g.beginPath();
+      g.ellipse(left + w / 2, top + h / 2, Math.max(2, w / 6), Math.max(2, h / 4), 0, 0, Math.PI * 2);
+      g.fill();
+    } else {
+      r(g, accent, left + 5, top + 5, w - 10, 1);
+      r(g, accent, left + 5, top + h - 6, w - 10, 1);
+    }
+  };
+}
+
 const ITEMS = {
+  rug_oval: { paint: rugArt({ base: '#6a2a3c', trim: '#c9a86a', accent: '#7b3346', pattern: 'round' }), rise: 0, flat: true },
+  rug_round: { paint: rugArt({ base: '#2e6b6b', trim: '#e2d6a8', accent: '#3f8a86', pattern: 'round' }), rise: 0, flat: true },
+  rug_runner: { paint: rugArt({ base: '#2f4f7f', trim: '#e8e1cc', accent: '#d9c48a', pattern: 'stripes' }), rise: 0, flat: true },
+  rug_square: { paint: rugArt({ base: '#5f7a52', trim: '#e8dcb0', accent: '#d8cc98', pattern: 'border' }), rise: 0, flat: true },
+  rug_checked: { paint: rugArt({ base: '#f2ede0', trim: '#1b2236', accent: '#2b3045', pattern: 'checks' }), rise: 0, flat: true },
+  rug_woven: { paint: rugArt({ base: '#d9a066', trim: '#b5543a', accent: '#3f7a8a', pattern: 'woven' }), rise: 0, flat: true },
+  rug_shag: { paint: rugArt({ base: '#ece4d0', trim: '#d8cdb2', accent: '#fffaf0', pattern: 'shag' }), rise: 0, flat: true },
+  rug_persian: { paint: rugArt({ base: '#8a2a2a', trim: '#1f2f5a', accent: '#d9b25a', pattern: 'persian' }), rise: 0, flat: true },
   plant: { paint: paintPlant, rise: 26 },
   lamp: { paint: paintLamp, rise: 39 },
   rubber_duck: { paint: paintRubberDuck, rise: 15 },
@@ -3146,7 +3265,7 @@ function standing({ id, item, x, y, w = 1, h = 1, facing = 0 }) {
   const deep = h * FLOOR_CELL;
   const left = x * FLOOR_CELL;
   const top = FLOOR_TOP + y * FLOOR_CELL;
-  return { ...ITEMS[item], use: USES[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
+  return { ...ITEMS[item], kind: item, use: USES[item], id, facing, left, top, wide, deep, x: left + wide / 2, y: top + deep };
 }
 
 // Where bots go to use an item, one place for each that can. Its front is the side towards the room,
@@ -3207,10 +3326,11 @@ function paintBehind(g, hidden, t) {
 }
 
 // What comes with a room and stands among the people in it, with where each is sorted by height.
-function furnitureScene(g, hidden, t, lit, deskLit) {
+function furnitureScene(g, hidden, t, lit, deskLit, table) {
+  const [, dy] = tableShift(table);
   return [
     hidden.includes('desk') ? null : { y: 136, draw: () => paintDesk(g, t, deskLit) },
-    { y: 150, draw: () => paintTable(g, lit) },
+    { y: 150 + dy, draw: () => paintTable(g, lit, table) },
     hidden.includes('arcade') ? null : { y: 172, draw: () => paintArcade(g, t) },
     hidden.includes('couch') ? null : { y: 200, draw: () => paintCouch(g) },
     hidden.includes('beanbags') ? null : { y: 232, draw: () => paintBeanbags(g) },
@@ -3227,9 +3347,10 @@ export function roomPicture(look, items = []) {
   paintRoom(g, 12, look);
   paintBehind(g, look.hidden, 0);
   const placed = items.filter(({ item }) => Object.hasOwn(ITEMS, item)).map(standing);
+  for (const item of placed) if (item.flat) paintItem(g, item, 0);
   const scene = [
-    ...furnitureScene(g, look.hidden, 0, [], []),
-    ...placed.map((item) => ({ y: item.y, draw: () => paintItem(g, item, 0) })),
+    ...furnitureScene(g, look.hidden, 0, [], [], look.table),
+    ...placed.filter((item) => !item.flat).map((item) => ({ y: item.y, draw: () => paintItem(g, item, 0) })),
   ];
   scene.sort((a, b) => a.y - b.y);
   for (const each of scene) each.draw();
@@ -3275,14 +3396,49 @@ function surfacePicture(look, x, y, wide, deep) {
 export const wallPicture = (paint) => surfacePicture({ paint, flooring: 'oak' }, 108, 0, 40, 64);
 export const floorPicture = (flooring) => surfacePicture({ paint: 'dusk', flooring }, 0, 72, 72, 48);
 
-function paintTable(g, lit) {
+// I67: what each kind of table is drawn as: its top, the edge round it, its rim, legs and grain.
+const TABLE_STYLES = {
+  wood: { top: '#8a5c37', light: '#a0703f', rim: '#6f4728', leg: '#6b4628', grain: '#7d5231' },
+  round: { top: '#c8925a', light: '#ddae78', rim: '#9a6a3c', leg: '#5a3a24', grain: null, round: true },
+  glass: { top: 'rgba(168,214,236,.75)', light: '#e8f6fc', rim: '#7aa6bd', leg: '#9aa3b8', grain: null },
+  stone: { top: '#9a978e', light: '#b8b5ab', rim: '#76736b', leg: '#5f5d57', grain: '#8a877e' },
+  picnic: { top: '#b98a4e', light: '#d0a266', rim: '#8f6537', leg: '#7a5430', grain: '#a07540', planks: true },
+  dark: { top: '#3f2a1e', light: '#5a3d2b', rim: '#2a1b12', leg: '#24170f', grain: '#4a3224' },
+};
+
+function paintTable(g, lit, table) {
+  const [dx, dy] = tableShift(table);
+  const look = TABLE_STYLES[table?.style] || TABLE_STYLES.wood;
+  g.save();
+  g.translate(dx, dy);
   r(g, '#00000030', 176, 168, 132, 4);
-  r(g, '#6b4628', 180, 160, 6, 10);
-  r(g, '#6b4628', 294, 160, 6, 10);
-  r(g, '#8a5c37', 176, 124, 128, 36);
-  r(g, '#a0703f', 176, 124, 128, 2);
-  r(g, '#6f4728', 176, 158, 128, 3);
-  for (let y = 134; y < 156; y += 10) r(g, '#7d5231', 178, y, 124, 1);
+  r(g, look.leg, 180, 160, 6, 10);
+  r(g, look.leg, 294, 160, 6, 10);
+  if (look.round) {
+    // An oval top on a pedestal.
+    r(g, look.leg, 236, 158, 8, 12);
+    g.fillStyle = look.rim;
+    g.beginPath();
+    g.ellipse(240, 143, 66, 21, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = look.top;
+    g.beginPath();
+    g.ellipse(240, 141, 64, 19, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = look.light;
+    g.fillRect(200, 124, 80, 2);
+  } else {
+    r(g, look.top, 176, 124, 128, 36);
+    r(g, look.light, 176, 124, 128, 2);
+    r(g, look.rim, 176, 158, 128, 3);
+    if (look.grain) for (let y = 134; y < 156; y += 10) r(g, look.grain, 178, y, 124, 1);
+    if (look.planks) {
+      for (let x = 208; x < 304; x += 32) r(g, look.rim, x, 124, 1, 34);
+      // Benches along both sides.
+      r(g, look.rim, 172, 118, 136, 4);
+      r(g, look.rim, 172, 164, 136, 4);
+    }
+  }
   // Laptops light up where someone's sitting
   SEATS.slice(0, 8).forEach((seat, i) => {
     const top = i < 4;
@@ -3293,6 +3449,7 @@ function paintTable(g, lit) {
   });
   r(g, '#f4f1e8', 236, 138, 8, 8);
   r(g, '#ffb454', 238, 140, 4, 4);
+  g.restore();
 }
 
 function drawZ(g, x, y, alpha) {
@@ -3750,6 +3907,9 @@ export class Room {
     this.people = new Map();
     this.peopleSeen = false;
     this.items = [];
+    this.deskSpots = [];
+    // I67: the seats round this floor's table, wherever it stands.
+    this.seats = SEATS;
     this.itemsKey = '';
     this.ghost = null;
     this.kept = [];
@@ -3764,15 +3924,25 @@ export class Room {
   destroy() {
     this.running = false;
     fillGrid([]);
+    this.seats = SEATS;
   }
 
   // A room that isn't a floor keeps the plain look.
-  setLook({ paint, flooring, hidden } = PLAIN_LOOK) {
-    if (paint === this.look.paint && flooring === this.look.flooring
-      && hidden.join() === this.look.hidden.join()) return;
-    const moved = hidden.join() !== this.look.hidden.join();
-    this.look = { paint, flooring, hidden };
-    fillGrid(hidden, this.items);
+  setLook({ paint, flooring, hidden, outdoors = false, table = null } = PLAIN_LOOK) {
+    const tableKey = JSON.stringify(table);
+    if (paint === this.look.paint && flooring === this.look.flooring && outdoors === Boolean(this.look.outdoors)
+      && hidden.join() === this.look.hidden.join() && tableKey === JSON.stringify(this.look.table ?? null)) return;
+    const tableMoved = JSON.stringify(tableShift(table)) !== JSON.stringify(tableShift(this.look.table));
+    const moved = hidden.join() !== this.look.hidden.join() || tableMoved;
+    this.look = { paint, flooring, hidden, outdoors, table };
+    if (tableMoved) {
+      // Whoever was sitting at the table gets up and sits at it where it is now.
+      this.seats = shiftedSeats(tableShift(table));
+      for (const who of [...this.bots.values(), ...this.people.values()]) who.seat = null;
+      for (const bot of this.bots.values()) this.place(bot, bot.state, 'walk');
+      for (const person of this.people.values()) this.placePerson(person, 'walk');
+    }
+    fillGrid(hidden, this.items, tableShift(table));
     this.paintedHour = -1;
     if (!moved) return;
     // A desk or a couch that came or went changes where bots belong.
@@ -3800,8 +3970,14 @@ export class Room {
     this.itemsKey = key;
     this.items = known.map(standing);
     this.describe();
-    fillGrid(this.look.hidden, this.items);
+    fillGrid(this.look.hidden, this.items, tableShift(this.look.table));
     for (const item of this.items) item.spots = spotsOf(item);
+    // I66: with no desk, whatever serves as one: a working bot sits in front of it.
+    this.deskSpots = this.items.filter((item) => DESK_KINDS.has(item.kind)).map((item) => {
+      const [ax, ay] = clearOf(item.left + item.wide / 2, item.y + 3);
+      return { x: ax, y: ay - 12, ax, ay, pose: 'sit', facing: 'back', drop: 0 };
+    });
+    for (const bot of this.bots.values()) if (bot.working) this.place(bot, bot.state, 'walk');
     this.clearTheWay();
     // A bot using something goes with it, wherever it went (I38).
     for (const bot of this.bots.values()) if (bot.using) this.place(bot, bot.state, 'walk');
@@ -3828,7 +4004,7 @@ export class Room {
       const reach = item.facing % 2 ? item.deep + item.rise - item.wide : Math.max(item.rise, item.deep);
       return x >= item.left - spare && x < item.left + item.wide + spare && y >= item.y - reach && y < item.y;
     });
-    return under.sort((a, b) => Number(Boolean(b.sign)) - Number(Boolean(a.sign)) || b.y - a.y)[0]?.id ?? null;
+    return under.sort((a, b) => Number(Boolean(b.sign)) - Number(Boolean(a.sign)) || Number(Boolean(a.flat)) - Number(Boolean(b.flat)) || b.y - a.y)[0]?.id ?? null;
   }
 
   // The word for what came with the room at a place on the page, if this floor shows it. An item
@@ -3838,15 +4014,26 @@ export class Room {
     if (!box.width || !box.height) return null;
     const x = ((clientX - box.left) / box.width) * W;
     const y = ((clientY - box.top) / box.height) * H;
-    return FURNITURE.find(([word, left, top, wide, deep]) => !this.look.hidden.includes(word)
+    return this.furniture().find(([word, left, top, wide, deep]) => !this.look.hidden.includes(word)
       && x >= left && x < left + wide && y >= top && y < top + deep)?.[0] ?? null;
+  }
+
+  // I67: what came with the room, with the table where this floor's stands.
+  furniture() {
+    const [dx, dy] = tableShift(this.look.table);
+    return FURNITURE.map((entry) => (entry[0] === 'table' ? ['table', entry[1] + dx, entry[2] + dy, entry[3], entry[4]] : entry));
   }
 
   // What someone is about to put down: { item, x, y, w, h, facing, ok, lifted }, in cells, or null.
   // `lifted` is the id of the placed item it is, if it's being moved. `kept` is the boxes of cells
   // that stay clear, to shade while something's in hand.
   setGhost(ghost, kept = []) {
-    this.ghost = ghost && Object.hasOwn(ITEMS, ghost.item) ? { ...standing(ghost), ok: ghost.ok, lifted: ghost.lifted } : null;
+    if (ghost?.item === 'table') {
+      // I67: the table in hand is its cells, seats and all.
+      this.ghost = { table: true, ok: ghost.ok, left: ghost.x * FLOOR_CELL, top: FLOOR_TOP + ghost.y * FLOOR_CELL, wide: ghost.w * FLOOR_CELL, deep: ghost.h * FLOOR_CELL };
+    } else {
+      this.ghost = ghost && Object.hasOwn(ITEMS, ghost.item) ? { ...standing(ghost), ok: ghost.ok, lifted: ghost.lifted } : null;
+    }
     this.kept = kept;
   }
 
@@ -4041,7 +4228,7 @@ export class Room {
     // door. Where the beanbags were is floor too.
     const { hidden } = this.look;
     if (bot.working) {
-      goal = hidden.includes('desk') ? null : this.claim(DESKS, 'desk');
+      goal = this.claim(hidden.includes('desk') ? this.deskSpots : DESKS, 'desk');
       bot.desk = goal || null;
     }
     if (!goal && bot.using) {
@@ -4050,8 +4237,8 @@ export class Room {
     }
     if (goal) {
       // Already placed at the desk or an item.
-    } else if (state === 'active' || (bot.working && hidden.includes('desk'))) {
-      goal = this.claim(SEATS, 'seat');
+    } else if (state === 'active' || (bot.working && !bot.desk)) {
+      goal = this.claim(this.seats, 'seat');
       bot.seat = goal || null;
       if (goal) this.vacate(goal);
     } else if (state === 'offline') {
@@ -4072,7 +4259,7 @@ export class Room {
   // A person sits only in a seat no bot has, and never at a desk: a lit desk says a bot is working.
   freeSeat() {
     const taken = new Set([...this.bots.values(), ...this.people.values()].map((who) => who.seat));
-    const open = SEATS.filter((seat) => !taken.has(seat));
+    const open = this.seats.filter((seat) => !taken.has(seat));
     return open[Math.floor(Math.random() * open.length)];
   }
 
@@ -4219,7 +4406,7 @@ export class Room {
   drawHand(g, t) {
     const chosen = this.items.find((item) => item.id === this.chosen);
     if (chosen) outline(g, chosen, '#ffde59');
-    for (const [word, left, top, wide, deep] of FURNITURE) {
+    for (const [word, left, top, wide, deep] of this.furniture()) {
       if (word === this.chosen && !this.look.hidden.includes(word)) outline(g, { left, top, wide, deep }, '#ffde59');
     }
     if (!this.ghost) return;
@@ -4228,6 +4415,10 @@ export class Room {
     }
     const { ok, left, top, wide, deep } = this.ghost;
     r(g, ok ? 'rgba(61,220,151,.4)' : 'rgba(255,60,90,.5)', left, top, wide, deep);
+    if (this.ghost.table) {
+      outline(g, this.ghost, ok ? '#3ddc97' : '#ff3c5a');
+      return;
+    }
     g.globalAlpha = 0.85;
     paintItem(g, this.ghost, t);
     g.globalAlpha = 1;
@@ -4249,7 +4440,7 @@ export class Room {
     g.drawImage(this.background, 0, 0);
     paintBehind(g, hidden, time);
 
-    const lit = SEATS.slice(0, 8).map((seat) =>
+    const lit = this.seats.slice(0, 8).map((seat) =>
       [...this.bots.values()].some((bot) => bot.seat === seat && !bot.path.length),
     );
     const deskLit = DESKS.map((desk) =>
@@ -4260,9 +4451,11 @@ export class Room {
     for (const bot of bots) this.update(bot, dt);
     for (const person of people) this.updatePerson(person, dt);
     const still = this.calm ? 0 : time;
+    // I67: rugs lie under everything.
+    for (const item of this.items) if (item.flat) this.drawItem(g, item, still);
     const scene = [
-      ...furnitureScene(g, hidden, time, lit, deskLit),
-      ...this.items.filter((item) => !item.sign).map((item) => ({ y: item.y, draw: () => this.drawItem(g, item, still) })),
+      ...furnitureScene(g, hidden, time, lit, deskLit, this.look.table),
+      ...this.items.filter((item) => !item.sign && !item.flat).map((item) => ({ y: item.y, draw: () => this.drawItem(g, item, still) })),
       ...bots.map((bot) => ({ y: (!bot.path.length && bot.spot?.over) || bot.y, draw: () => drawBot(g, bot, time) })),
       ...people.map((person) => ({ y: person.y, draw: () => drawPerson(g, person, still) })),
     ];

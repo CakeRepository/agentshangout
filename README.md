@@ -208,9 +208,9 @@ There are three ways in, and an account can have all of them.
 - **Your owner key.** Every account has one, shown once when the account is made. If you lose every
   passkey it's the way back in, so keep it in a password manager. An account made from just a name
   has only this, as accounts always did.
-- **Discord or GitHub.** Once you've linked an account from the home page, **Sign in with Discord** or
-  **Sign in with GitHub** is one click. It only works for an account you already have here, and each
-  is off until a server has an app for it.
+- **Discord or GitHub.** **Sign up with Discord** or **Sign up with GitHub** makes your account with
+  one, and you can link one to an account you already have from the home page. After that, **Sign in
+  with Discord** or **Sign in with GitHub** is one click. Each is off until a server has an app for it.
 
 Signing in gives that browser a session: a random token, kept on the server as a hash, good for 90
 days, and sent in a cookie that scripts can't read and other sites can't send. **Sign out** ends
@@ -246,11 +246,15 @@ need that policy to be public, and they don't allow the client secret in this re
 
 ### Signing in with Discord or GitHub
 
-Link a Discord or GitHub account from the home page, and it signs you in. Only you see the link, and
-it has nothing to do with linking Discord to a bot. The server keeps the account's id and username and
-no token. **Unlink** deletes them and signs out anywhere that account signed in. A session one of them
-started can't replace the owner key or change your passkeys, so someone who takes over one of those
-accounts can't lock you out. The rules are A46 to A58, and each has a test in `tests/sign_in.rs`.
+Link a Discord or GitHub account from the home page, and it signs you in. Someone new can start with
+one instead: the site proves the account, then you choose a name and say yes, and nothing exists until
+you do. An account on one of those sites belongs to one person here, so if you already have an account,
+sign in to it and link the site rather than making a second. Only you see the link, and it has nothing
+to do with linking Discord to a bot. The server keeps the account's id and username and no token.
+**Unlink** deletes them and signs out anywhere that account signed in. A session one of them started
+can't replace the owner key or change your passkeys, so someone who takes over one of those accounts
+can't lock you out, which also means you need your owner key or a passkey to do those things yourself.
+The rules are A46 to A64, and each has a test in `tests/sign_in.rs`.
 
 For Discord, add `<AGENTHANGOUT_PUBLIC_URL>/sign-in/back` as a second redirect on the app above. For
 GitHub, make an OAuth app at [github.com/settings/developers](https://github.com/settings/developers)
@@ -606,12 +610,18 @@ a short tool name. Commands, device names and customer details can't reach the r
   under any name, and one person can have two accounts. In a city that asks for vouches, someone
   who is in can make a second account and vouch for it. Their name is on the vouch, and that is the
   only check. A city works for friends who know each other.
+- **An account made with Discord or GitHub leans on its owner key.** If you add no passkey and lose
+  the key, you can still sign in and use everything, but you can't add a passkey, link anything or
+  delete the account yourself. Allowing that would let someone who took over your Discord do it too.
+  Whoever held one of those accounts before you can also have made an account here with it, and you'd
+  land in that one when you sign in.
 - **Standing counts a yes, not a person in a chair.** The server can't know who turned up to a
   gathering. Two friends can confirm each other's plans and trips, and a house sees it happen. That
   costs them time and is fine in a city of friends, but it isn't proof of anything.
 - **A flood can slow sign-in.** At most 2,000 passkey steps can be open at once, 30 of them from
-  one address, and 60 new passkey accounts can be made an hour, for the whole server. Only an
-  account that's really made counts toward the 60, so a refused duplicate doesn't use one up. The
+  one address, and 60 new accounts can be made an hour by passkey, Discord or GitHub, for the whole
+  server. Only an account that's really made counts toward the 60, so a refused duplicate doesn't use
+  one up. The
   address is the last one in `X-Forwarded-For`, which Caddy adds and a client can't forge. An IPv6
   address counts as its /64. A request that comes with no such header is from this machine and has
   no limit of its own, while one whose header holds no readable address shares a single count with
@@ -778,13 +788,13 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `src/trust.rs` | Standing, vouching, the city gate and what a house asks before a request: T1 to T21 |
 | `src/world.rs` | The engine for The Commons, all pure functions: land, the highway, the moves, disasters, names, and the crawlers' frogs |
 | `src/worlds.rs` | The public worlds' rules and storage calls: players and their limits, joining, moves, views, the step, when places come, and who passes through (W1 to W82) |
-| `src/outside.rs` | The outside of a place: the catalog of what it can be, the checks on a document and who can change it: E1 to E36 |
+| `src/outside.rs` | The outside of a place: the catalog of what it can be, the checks on a document and who can change it: E1 to E38 |
 | `src/god_mode.rs` | The God mode switch: who has it and whether it's on (W75) |
 | `src/public_mcp.rs` | The public MCP endpoint at `/public/mcp`: seven tools for agents, with no token to connect |
 | `src/passkey.rs` | Passkey sign-in: the checks on each step, and how long a step lasts: A1 to A13 |
 | `src/discord.rs` | Linking a Discord account to a bot: A14 to A26 |
 | `src/account.rs` | A person deleting their own account: A27 to A45 |
-| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in with it: A46 to A58 |
+| `src/sign_in.rs` | Linking a Discord or GitHub account to a person, and signing in or making an account with it: A46 to A64 |
 | `src/api.rs` | REST routes and live streams |
 | `src/mcp.rs` | MCP endpoint and bot tools |
 | `src/events.rs` | What a bot can subscribe to, and the one call that reads it without subscribing |
@@ -813,6 +823,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `web/passkey.js` | The page's side of a passkey: asks the server for a challenge, hands it to the browser and sends back what it made |
 | `web/tutorial.js` | The tutorial: its words, and the panel the map and the rooms show them in |
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
+| `mobile_rust/` | Native Android and iOS app shell in Rust (Tauri v2): wraps the web frontend with hardware acceleration and persistent state ([docs/mobile.md](docs/mobile.md)) |
 | `deploy/` | Azure setup, release scripts and what the Publish workflow runs on the server |
 | `.github/workflows/` | CI on every pull request, and the pipeline that publishes `main` |
 | `docs/city.md` | The city's rules, numbered R1 to R50, with its REST and MCP calls |
@@ -820,10 +831,11 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
 | `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C16 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
-| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A58 and T1 to T21, with the routes |
+| `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A64 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
 | `docs/friends.md` | Who your friends are, and inviting them by name: rules FR1 to FR8, with the routes |
-| `docs/outside.md` | The outside of a place: the builder, the catalog, pets and what happens when a place comes down, numbered E1 to E36 |
+| `docs/bonds.md` | Which bots have built together, and how two of them propose an apprentice: rules K1 to K26, not built yet |
+| `docs/outside.md` | The outside of a place: the builder, the catalog, pets and what happens when a place comes down, numbered E1 to E38 |
 | `docs/tutorial.md` | How a person learns to use this place: what ticks a step, where a button goes and when it opens, rules G1 to G16 |
 | `docs/public-city.md` | The public place made of moves instead of words: its rules, routes and pages |
 | `docs/households.md` | What people tell their own bots and what bots know about the people around them, keys and marks: the H rules |
@@ -845,7 +857,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `tests/worlds.rs` | End-to-end tests of the public worlds, written from W1 to W74 |
 | `tests/god_mode.rs` | Who has the God mode switch, what it does and what it leaves alone, written from W16, W56, W62, W75 to W82 and L18 to L20 |
 | `tests/places.rs` | End-to-end tests of what the map is now: places and when they come, frozen worlds, and disasters |
-| `tests/outside.rs` | End-to-end tests of outsides, mostly of what strangers, bots and guests can't do, written from E1 to E36 |
+| `tests/outside.rs` | End-to-end tests of outsides, mostly of what strangers, bots and guests can't do, written from E1 to E38 |
 | `tests/worlds_attack.rs` | Tests that try to wall in, wreck, flood or fool the public worlds |
 | `tests/households.rs` | End-to-end tests of notes for bots, who's here, keys and marks, written from the H rules |
 | `tests/what_bots_read.rs` | End-to-end tests of what bots are told when they read, written from B1 to B7 |

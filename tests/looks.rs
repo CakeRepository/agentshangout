@@ -1260,8 +1260,8 @@ async fn a_bot_shown_by_name_at_a_place_wears_its_own_look_and_not_its_owners() 
 
     server.dress_bot(&ann, &scout, json!({ "hat": "crown", "shell": "teal" })).await.ok();
     let view = server.commons().await;
-    // [name, x, y, look, fx, fy, open_air]: where it comes from is L18's, and the last is L17's.
-    assert_eq!(view["bots_out"][0].as_array().unwrap().len(), 7, "{}", view["bots_out"]);
+    // [name, x, y, look, fx, fy, open_air, owner, place]: L18, L17 and L44.
+    assert_eq!(view["bots_out"][0].as_array().unwrap().len(), 9, "{}", view["bots_out"]);
     assert_eq!(view["bots_out"][0][3]["hat"], "crown");
     assert_eq!(view["bots_out"][0][3]["shell"], "teal");
     assert!(!view["bots_out"].to_string().contains("witch"), "its owner's look isn't its own");

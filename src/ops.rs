@@ -24,7 +24,7 @@ const MAX_LOCATION_CHARS: usize = 200;
 const MAX_NOTE_CHARS: usize = 500;
 const MAX_STATUS_CHARS: usize = 120;
 const MAX_WHITEBOARD_CHARS: usize = 2000;
-/// E22, E30: three minutes. An unread accepted ring holds the owner's next one. A non-owner
+/// E22, E31: three minutes. An unread accepted ring holds the owner's next one. A non-owner
 /// person's accepted ring holds the next person in that room even after a read. 20 an hour at most.
 const MENTION_RING_SECS: i64 = 3 * 60;
 const ACTIVITY_KINDS: [&str; 1] = ["computer"];
@@ -304,7 +304,7 @@ enum MentionRing {
     Skip(&'static str),
 }
 
-/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22 and E30:
+/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22 and E31:
 /// a person's can also ring it, and the owner can see why one did not.
 fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     if message.kind != "chat" {
@@ -365,6 +365,31 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
             }
         }
     }
+    // E30: an @mention of a person in this room sends a notification to their notification URL
+    for person in state.db.people_in(&message.hangout_id)? {
+        if message.person_id.as_deref() == Some(person.id.as_str()) {
+            continue;
+        }
+        if crate::doorbell::mentions(&message.body, &person.name) {
+            let sender = if let Some(agent_id) = &message.agent_id {
+                state
+                    .db
+                    .agent(agent_id, message.created_at)?
+                    .map(|a| a.name)
+                    .unwrap_or_else(|| "A bot".to_string())
+            } else if let Some(person_id) = &message.person_id {
+                state.db.person(person_id)?.map(|p| p.name).unwrap_or_else(|| "Someone".to_string())
+            } else {
+                "Someone".to_string()
+            };
+            let notice = notify::Notice {
+                event: "mention",
+                hangout_id: message.hangout_id.clone(),
+                text: format!("{sender} mentioned you in chat."),
+            };
+            notify::send(state, std::slice::from_ref(&person.id), &notice);
+        }
+    }
     Ok(())
 }
 
@@ -399,7 +424,7 @@ fn record_mention_delivery(
     }
 }
 
-/// E22, E24, E25, E30: who this mention rings, and why it doesn't. `belongs` is whether the bot
+/// E22, E24, E25, E31: who this mention rings, and why it doesn't. `belongs` is whether the bot
 /// belongs in this room. A capped ring is recorded here, because the cap is decided as it's counted.
 /// A non-owner person's ring is not: it counts only once the receiver accepts it.
 fn rings_for_mention(
@@ -432,7 +457,7 @@ fn rings_for_mention(
     if !owner && state.db.wakes_only_for_owner(&bot.id)? {
         return Ok(MentionRing::Skip("only_me"));
     }
-    // E30: anyone who could post here. Not the daily cap, and not social hours. One try.
+    // E31: anyone who could post here. Not the daily cap, and not social hours. One try.
     if !from_bot && !owner {
         if state.db.person_wake_recent(&bot.id, room, at - MENTION_RING_SECS)? {
             return Ok(MentionRing::Skip("cooldown"));
@@ -1353,7 +1378,7 @@ pub fn leave_public_rooms(state: &AppState, agent_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// E23: one try with what's saved, so an owner can see a refused key. The result is kept (E30).
+/// E23: one try with what's saved, so an owner can see a refused key. The result is kept (E31).
 pub async fn test_agent_notify(
     state: &AppState,
     caller: &Caller,
@@ -1416,7 +1441,7 @@ pub fn agent_notify(
         "trusted_bots": trusted_bots, "available_bots": available_bots, "decisions": decisions }))
 }
 
-/// E30: what the owner reads. The message itself is never in here.
+/// E31: what the owner reads. The message itself is never in here.
 fn decision_says(decision: &str, reason: &str, room: Option<&str>) -> String {
     let room = room.filter(|name| !name.is_empty()).unwrap_or("a room");
     if let Some(detail) = reason.strip_prefix("test_") {

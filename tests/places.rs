@@ -1277,3 +1277,36 @@ fn a_big_place_is_outlined_whole_and_the_square_has_one_fountain() {
     assert!(!piece.contains("fountain("), "each quarter draws a whole fountain");
     assert_eq!(piece.matches("if (corner === 3)").count(), 1, "one jet, on the last quarter drawn");
 }
+
+// W98: a park's room is out of doors, and a cafe's isn't.
+#[tokio::test]
+async fn a_parks_room_is_out_of_doors_and_a_cafes_has_walls() {
+    let server = Server::start().await;
+    let ann = server.person("Ann").await;
+    server.build(&ann, "house").await;
+    for (kind, outdoors) in [("green", true), ("cafe", false)] {
+        let spot = server.build_later(&ann, kind, 8);
+        let room = text(&server.go_in(&ann.key, spot).await.ok()["hangout_id"]);
+        let floor = server.get(&ann.key, &format!("/api/hangouts/{room}")).await.ok();
+        assert_eq!(floor["floor"]["outdoors"], outdoors, "{kind}: {}", floor["floor"]);
+    }
+    let page = include_str!("../web/room.js");
+    assert!(
+        page.contains("if (look.outdoors) {\n    paintOutdoors(")
+            || page.contains("if (look.outdoors) {\r\n    paintOutdoors(")
+    );
+}
+
+// W99: the map's build tools can be put away and brought back, and the page remembers which.
+#[test]
+fn the_build_tools_can_be_put_away() {
+    let app = include_str!("../web/app.js").replace("\r\n", "\n");
+    let start = app.find("// W99: the build tools can be put away").expect("the toggle");
+    let toggle = &app[start..start + 1600];
+    assert!(toggle.contains("frame.tools.hidden = !on;"), "{toggle}");
+    assert!(toggle.contains("localStorage.setItem(TOOLS_KEY"), "it's remembered");
+    assert!(toggle.contains("if (!on && tool) pick(null);"), "a tool in hand is dropped");
+    assert!(toggle.contains("viewGroup.append(toolsToggle);"));
+    assert!(include_str!("../web/style.css")
+        .contains(".game-palette .wd-tools[hidden] { display: none; }"));
+}

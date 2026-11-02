@@ -21,7 +21,7 @@ requirement only lets you ask. A person still says yes.
 | Starting a city or hangout | Still needs the server code (R49 in [city.md](city.md)) |
 | Bots | Keep their tokens. A bot never has a passkey. A bot's token also lets it join the public worlds as a player, unless it stays home or runs a house (W3 in [public-city.md](public-city.md)) |
 | Discord on a bot | A person can link an account to a bot of theirs, proved through Discord. It says whose the bot is and signs nobody in |
-| Discord or GitHub on a person | A person can link one of each to theirs and sign in with it. It never makes an account |
+| Discord or GitHub on a person | A person can link one of each to theirs and sign in with it, or make their account with one |
 | Leaving for good | A person can delete their own account at once. What's theirs goes, and what's shared with people still there stays without their name |
 | Library | `webauthn-rs` 0.6 with `conditional-ui`, which needs no OpenSSL |
 
@@ -87,12 +87,12 @@ never sent to a page.
   the owner key still works, and the page warns first. Adding a passkey pings the person.
 - **A10.** Bots never reach these routes. A bot token gets 403 on every one, and an owner key used
   as a bearer token can't start a ceremony for someone else's account.
-- **A11.** A new account is created only when a passkey registration finishes, so abandoned
-  sign-ups leave nothing behind. Passkey sign-ups are capped at 60 an hour across the server, and
-  only an account that's really made counts. On a server with a create code, every other way to make
-  an account needs that code or an invite.
-- **A12.** A new account gets an owner key, shown once, as its way back in if every passkey is lost.
-  It's the same key every account already has.
+- **A11.** A new account is created only when a passkey registration finishes or someone says yes to
+  one with Discord or GitHub (A59), so abandoned sign-ups leave nothing behind. Together these are
+  capped at 60 an hour across the server, and only an account that's really made counts. On a server
+  with a create code, every other way to make an account needs that code or an invite.
+- **A12.** A new account gets an owner key, shown once, as its way back in if every other way in is
+  lost. It's the same key every account already has.
 - **A13.** A passkey proves nothing about who someone is, and gives no standing. Names stay
   unverified: one person can have two accounts.
 
@@ -281,9 +281,10 @@ cascade makes the delete fail in a test instead of quietly keeping someone's dat
 
 ## Signing in with Discord or GitHub
 
-A person can link a Discord or GitHub account to theirs, then sign in with it in one click. Bots have
-nothing to do with it, and linking Discord to a bot (A14 to A26) is separate and signs nobody in. A
-link here is a way in, so most of these rules are about who can't get one.
+A person can link a Discord or GitHub account to theirs, then sign in with it in one click. Someone
+new can make their account with one instead. Bots have nothing to do with it, and linking Discord to a
+bot (A14 to A26) is separate and signs nobody in. A link here is a way in, so most of these rules are
+about who can't get one.
 
 ### What's stored
 
@@ -326,19 +327,18 @@ username can be changed and then taken by someone else. `account_name` is only f
 - **A50.** A sign-in step is tied by a cookie to the browser that started it, and it's refused
   anywhere else. Without this, someone could send you their finished sign-in and have you working in
   their account.
-- **A51.** Signing in needs an account that's already linked here. It never makes an account, so A11
-  still decides that. An account that isn't linked gets a 401 that says so, which tells only someone
-  who just proved they hold it.
+- **A51.** An account nobody has linked signs nobody in. The reply offers to make an account with it
+  (A59), which tells only someone who just proved they hold it.
 - **A52.** Each sign-in updates `account_name`, so a new username gets here by itself and an old one
   doesn't stay.
 - **A53.** Linking pings the person, the same as adding a passkey (A9), in case it wasn't them.
 - **A54.** A session a site started is an ordinary session, but it can't replace the owner key, add
-  or remove a passkey, link an account or delete the account. Those answer 403 and ask for another way
-  in, so someone who takes over a Discord or GitHub account can't lock the real person out or destroy
-  what's theirs.
+  or remove a passkey, link an account, unlink another site or delete the account. Those answer 403
+  and ask for another way in, so someone who takes over a Discord or GitHub account can't lock the
+  real person out or destroy what's theirs. The page doesn't offer them, and says how to get to them.
 - **A55.** Unlinking deletes the row straight away and ends every session that site started, including
   the one doing it. It works with the site turned off. A link can be the last way in besides the owner
-  key, as in A9.
+  key, as in A9, and the page warns first.
 - **A56.** Only the person sees their links, in `GET /api/me`. Nobody else in a room or a city does, no
   bot does, and nothing public does.
 - **A57.** A link gives no standing (T2) and doesn't make any name here verified (A13).
@@ -347,6 +347,34 @@ username can be changed and then taken by someone else. `account_name` is only f
   off answers 409 to starting anything, and `GET /api/sign-in` lists only the sites that are on, so
   the page offers nothing else.
 
+### Making an account with one
+
+Someone new can start with Discord or GitHub instead of a passkey. The site proves the account, then
+the person says yes, so someone who already has an account here and clicked the wrong button isn't
+left with a second one holding their link.
+
+- **A59.** Proving an account makes nothing. The offer is a new step of the kind in A48, which holds
+  the account's id and username in memory and stays tied to the browser as in A50. Saying yes finishes
+  it, which makes the account and its link together or not at all, signs that browser in and clears
+  the cookie. Walking away leaves nothing behind (A11). A sign-up link has the site show its screen
+  even to someone who said yes before, where a sign-in skips it.
+- **A60.** The person chooses their name. The username is only filled in for them to change, because
+  people here see the name and only the person sees the link (A56). A name that can't be used is
+  refused without using up the step, so it can be fixed.
+- **A61.** Someone signed in gets no offer and can't finish one, as with a passkey's new account. They
+  get a 409 that says to link the account or sign out. An account someone else linked in the meantime
+  also answers 409, and nothing is made (A46).
+- **A62.** These accounts count towards the same hour's limit as passkey ones (A11). They need no create
+  code, for the same reason a passkey doesn't: an account sees nothing without an invite. When the hour
+  is used up there's no offer, and a yes already on its way answers 429.
+- **A63.** The account gets an owner key, shown once (A12). The session that comes with it isn't one
+  of those in A54, because the same reply holds the key, which could start an ordinary session anyway,
+  and there's nobody yet to lock out. So the person can add a passkey or link the other site straight
+  away. Every later sign-in through the site is limited by A54 as usual.
+- **A64.** Coming back from a site changes nothing for someone already signed in as that account's
+  person, so they keep the session they have. Someone signed in as anyone else gets a 409 and stays as
+  they are.
+
 ### Routes
 
 `{site}` is `discord` or `github`.
@@ -354,9 +382,10 @@ username can be changed and then taken by someone else. `account_name` is only f
 | Request | Body | Reply | Who |
 | --- | --- | --- | --- |
 | `GET /api/sign-in` | | `{sites: [{site, name}]}` | Anyone |
-| `GET /api/sign-in/{site}` | | A redirect to the site, with a cookie that lasts 5 minutes | Anyone but a bot |
+| `GET /api/sign-in/{site}` | `?new=true` for a sign-up | A redirect to the site, with a cookie that lasts 5 minutes | Anyone but a bot |
 | `GET /api/sign-in/{site}/link` | | A redirect to the site | A signed-in person |
-| `POST /api/sign-in/finish` | `{code, state}` | `{ok}`, setting the session cookie for a sign-in | Whoever started it |
+| `POST /api/sign-in/finish` | `{code, state}` | `{ok}`, setting the session cookie for a sign-in, or `{new_account: {step, site, name, account}}` for an account nobody has linked | Whoever started it |
+| `POST /api/sign-in/new-account` | `{step, your_name}` | `{person, owner_key}`, setting the session cookie | Whoever started it, signed out |
 | `DELETE /api/sign-in/{site}` | | `{ok}` | A signed-in person |
 
 `GET /api/me` gains `sign_in: [{site, name, linked}]`, where `linked` is the username or null, and
@@ -509,6 +538,14 @@ error. A house bot sees none of this.
 - **Whoever runs the server can edit the database,** so standing is only as honest as the host.
 - **An owner key is the person.** A bot's token can't delete an account, but anything holding its
   owner's key can start a browser session and delete it from there. The server can't tell them apart.
+- **An account made with a site leans on its owner key.** Someone who made their account with Discord
+  or GitHub, added no passkey and lost the key can still sign in and use everything, but A54 holds them
+  for good: they can't add a passkey, link anything or delete the account themselves, and have to write
+  in, as the privacy page says. Loosening that would let someone who took over their Discord do those
+  things too.
+- **Whoever held a site account first keeps what they made.** Someone who held a Discord or GitHub
+  account for a while can make an account here with it and keep its owner key. Whoever holds it next
+  lands in that account when they sign in.
 - **Deleting doesn't reach other people's words or copies.** Whatever they wrote about someone stays,
   and a bot that read a room may have kept what it read, wherever it runs.
 - **A keeper can delete their account too.** The server then has no keeper until
@@ -523,6 +560,5 @@ error. A house bot sees none of this.
 
 - Signing in on the old Azure address. Passkeys belong to one domain.
 - Email sign-in. It isn't needed yet, and it would mean storing more about people.
-- Making an account through Discord or GitHub. They link to an account that already exists (A51).
 - Vouching across cities, or standing that follows you between them.
 - Children, as in city.md.

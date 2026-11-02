@@ -1,4 +1,4 @@
-//! E1 to E30 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
+//! E1 to E31 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
 //! subscribe the way the events extension describes.
 
 use std::{
@@ -1104,7 +1104,7 @@ async fn a_wake_up_url_can_carry_a_key_and_the_key_is_never_shown() {
     assert!(header(&ping, "x-api-key").is_none());
 }
 
-// E30: a public floor has no invite. A person who walked in rings without social hours, then waits.
+// E31: a public floor has no invite. A person who walked in rings without social hours, then waits.
 #[tokio::test]
 async fn someone_who_walked_in_rings_without_social_hours_and_then_waits() {
     let server = Server::start().await;
@@ -1286,7 +1286,7 @@ async fn a_persons_mention_rings_the_bot_and_the_ping_keeps_the_words_out() {
     assert!(ping.body["text"].as_str().unwrap().contains("call say"), "{}", ping.body);
 }
 
-// E30
+// E31
 #[tokio::test]
 async fn a_person_who_is_not_the_owner_sends_exactly_one_wake() {
     let server = Server::start().await;
@@ -1320,7 +1320,7 @@ async fn a_person_who_is_not_the_owner_sends_exactly_one_wake() {
     assert_eq!(rings(&hook), 2, "its owner can ring once the earlier wake has been read");
 }
 
-// E30
+// E31
 #[tokio::test]
 async fn a_persons_wake_is_spaced_for_three_minutes_and_only_in_that_room() {
     let server = Server::start().await;
@@ -1368,7 +1368,7 @@ async fn a_persons_wake_is_spaced_for_three_minutes_and_only_in_that_room() {
     assert_eq!(rings(&hook), 2, "an accepted wake in one room doesn't hold another room");
 }
 
-// E30: a refused wake leaves a record and does not swallow the next person's mention.
+// E31: a refused wake leaves a record and does not swallow the next person's mention.
 #[tokio::test]
 async fn a_failed_person_wake_does_not_hold_the_next_mention() {
     let server = Server::start().await;
@@ -1394,7 +1394,7 @@ async fn a_failed_person_wake_does_not_hold_the_next_mention() {
     assert_eq!(rings(&hook), 2, "the refused one did not hold the bell");
 }
 
-// E30: a delivery that has not finished does not drop a mention that arrives during it.
+// E31: a delivery that has not finished does not drop a mention that arrives during it.
 #[tokio::test]
 async fn a_wake_still_in_flight_does_not_drop_the_next_person_mention() {
     let server = Server::start().await;
@@ -1896,4 +1896,30 @@ async fn deleting_a_floor_does_not_reset_trusted_bot_wake_limits() {
     server.say(&owner, ground, "Human owner resumes collaboration").await;
     let resumed = message(ground, at + 3000);
     assert!(server.state.db.note_bot_wake_ring(&target, resumed.id, at + 3000).unwrap());
+}
+
+// E30
+#[tokio::test]
+async fn a_bot_or_person_mentioning_a_person_notifies_their_notification_url() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (scout, _) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("echo").await;
+    let path = "/api/notify";
+    let saved = server.put(&kevin, path, json!({ "url": url })).await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+
+    // A bot mentioning Kevin in chat sends a mention notice to Kevin's notify URL
+    server
+        .tool(&scout, "say", json!({ "hangout_id": room, "text": "Hello @Kevin please review" }))
+        .await;
+    let ping = wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    assert_eq!(ping.body["hangout_id"], room);
+    assert!(ping.body["text"].as_str().unwrap().contains("Scout mentioned you in chat"));
+
+    // Kevin mentioning himself does not notify Kevin
+    hook.hits.lock().unwrap().clear();
+    server.say(&kevin, &room, "@Kevin talking to myself").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "no self notification");
 }

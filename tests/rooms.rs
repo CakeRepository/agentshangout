@@ -2324,7 +2324,9 @@ async fn starter_items_are_for_everyone_and_the_rest_unlock_with_friends() {
     let server = Server::start().await;
     let (room, ann) = server.someone("Ann").await;
     for kind in items::CATALOG.iter().filter(|kind| kind.tier == "starter" && !kind.sign) {
-        let id = server.item(&ann, &room, kind.kind, (28, 12)).await;
+        // I67: a rug is deeper than the front strip, and lies flat wherever it fits on the floor.
+        let at = if kind.flat { (28, 14 - kind.h) } else { (28, 12) };
+        let id = server.item(&ann, &room, kind.kind, at).await;
         server.remove(&ann.key, &id).await.ok();
     }
 
@@ -3341,6 +3343,7 @@ async fn every_kind_and_every_piece_of_furniture_is_listed_under_a_category() {
             "beds",
             "storage",
             "lights",
+            "rugs",
             "kitchen",
             "bathroom",
             "electronics",
@@ -3404,6 +3407,10 @@ fn every_kind_that_is_not_square_can_be_turned_and_every_starter_fits_the_front_
     ];
     let page = include_str!("../web/room.js").replace("\r\n", "\n");
     for kind in items::CATALOG {
+        // I67: a rug lies flat, so it goes on anything, needs no strip and is never seen end on.
+        if kind.flat {
+            continue;
+        }
         if kind.tier == "starter" {
             assert!(kind.h <= 2, "{} is too deep for a starter", kind.kind);
         }
@@ -4715,4 +4722,109 @@ async fn an_owners_bot_can_furnish_its_house() {
         )
         .await
         .refused(StatusCode::NOT_FOUND);
+}
+
+// I66: rooms needn't look alike. Every paint has a rug of its own, and a bot working through another
+// tool sits at whatever serves as a desk when the floor has none.
+#[test]
+fn every_paint_has_its_own_rug_and_a_desk_can_be_anything_that_serves() {
+    let page = include_str!("../web/room.js").replace("\r\n", "\n");
+    let rugs = page.split_once("const RUGS = {").unwrap().1.split_once("};").unwrap().0;
+    let mut seen = std::collections::HashSet::new();
+    for paint in spaces::PAINTS {
+        let line = rugs.lines().find(|line| line.trim_start().starts_with(&format!("{paint}:")));
+        let line = line.unwrap_or_else(|| panic!("no rug for {paint}"));
+        assert!(
+            seen.insert(line.split_once(':').unwrap().1.trim().to_string()),
+            "{paint} shares a rug"
+        );
+    }
+    assert!(page.contains("paintRug(g, look.paint)"));
+    assert!(page.contains("this.claim(hidden.includes('desk') ? this.deskSpots : DESKS, 'desk')"));
+    for kind in ["computer", "workbench"] {
+        assert!(page.contains(&format!("'{kind}'")), "{kind} isn't a desk");
+    }
+    // The templates that used to keep the desk have desks of their own instead.
+    for name in ["study", "workshop", "office"] {
+        let each = items::template_of(name).unwrap();
+        assert!(each.hidden.contains(&"desk"), "{name}");
+        assert!(
+            each.items.iter().any(|part| ["computer", "workbench"].contains(&part.kind)),
+            "{name}"
+        );
+    }
+}
+
+// I67: the table goes anywhere there's room for it and its seats, and can be any kind of table.
+#[tokio::test]
+async fn whoever_runs_the_space_moves_the_table_anywhere_and_chooses_what_it_is() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    let bo = server.join(&ann, &room, "Bo").await;
+    let table = format!("/api/floors/{room}/table");
+    let at = |snapshot: &Value| snapshot["floor"]["table"].clone();
+    assert_eq!(
+        at(&server.snapshot(&ann.key, &room).await),
+        json!({ "x": 12, "y": 1, "style": "wood" })
+    );
+
+    // Out of the middle, to the right of the room.
+    server.put(&ann.key, &table, json!({ "x": 24, "y": 1 })).await.ok();
+    assert_eq!(at(&server.snapshot(&ann.key, &room).await)["x"], 24);
+    // Where it was is free now, and where it is isn't.
+    server.item(&ann, &room, "lamp", (20, 5)).await;
+    server.place(&ann.key, &room, "lamp", (30, 5)).await.refused(StatusCode::CONFLICT);
+    // Not onto the desk while it's there, off the floor or onto something standing.
+    server.put(&ann.key, &table, json!({ "x": 0, "y": 1 })).await.refused(StatusCode::CONFLICT);
+    server.put(&ann.key, &table, json!({ "x": 30, "y": 1 })).await.refused(StatusCode::CONFLICT);
+    server.put(&ann.key, &table, json!({ "x": 12, "y": 1 })).await.refused(StatusCode::CONFLICT);
+
+    // Any kind of table, from the list.
+    server.put(&ann.key, &table, json!({ "style": "glass" })).await.ok();
+    assert_eq!(at(&server.snapshot(&ann.key, &room).await)["style"], "glass");
+    server.put(&ann.key, &table, json!({ "style": "gold" })).await.refused(StatusCode::BAD_REQUEST);
+    // Only whoever runs the space.
+    server.put(&bo.key, &table, json!({ "style": "stone" })).await.refused(StatusCode::FORBIDDEN);
+
+    // Leave the desk out and the table can go there, and then the desk can't come back over it.
+    let floor = format!("/api/floors/{room}");
+    server.put(&ann.key, &floor, json!({ "hidden": ["couch", "desk"] })).await.ok();
+    server.put(&ann.key, &table, json!({ "x": 0, "y": 1 })).await.ok();
+    server
+        .put(&ann.key, &floor, json!({ "hidden": ["couch"] }))
+        .await
+        .refused(StatusCode::CONFLICT);
+
+    // A template says what kind of table it is, and leaves it where it stands.
+    use_template(&server, &ann, &room, "cafe").await;
+    assert_eq!(
+        at(&server.snapshot(&ann.key, &room).await),
+        json!({ "x": 0, "y": 1, "style": "round" })
+    );
+}
+
+// I67: rugs lie flat, so they go anywhere, under anything, as many as fit.
+#[tokio::test]
+async fn rugs_go_under_anything_and_anything_goes_on_a_rug() {
+    let server = Server::start().await;
+    let (room, ann) = server.someone("Ann").await;
+    // Under the table, and one over another.
+    server.item(&ann, &room, "rug_persian", (16, 3)).await;
+    server.item(&ann, &room, "rug_round", (18, 4)).await;
+    // Something standing on a rug, and a rug under something standing.
+    server.item(&ann, &room, "rug_runner", (28, 10)).await;
+    server.item(&ann, &room, "lamp", (30, 11)).await;
+    server.item(&ann, &room, "stool", (35, 3)).await;
+    server.item(&ann, &room, "rug_shag", (34, 2)).await;
+    // Still on the floor.
+    server.place(&ann.key, &room, "rug_runner", (36, 0)).await.refused(StatusCode::CONFLICT);
+    let catalog = server.get(&ann.key, "/api/items").await.ok();
+    let rug = catalog["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|kind| kind["kind"] == "rug_oval")
+        .unwrap();
+    assert_eq!(rug["flat"], true);
+    assert_eq!(catalog["table"]["styles"].as_array().unwrap().len(), items::TABLE_STYLES.len());
 }

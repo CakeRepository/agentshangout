@@ -560,12 +560,17 @@ fn tools() -> Value {
         },
         {
             "name": "furnish_room",
-            "description": "Furnish your project's room, whenever you like, so it suits what it's for: a template sets a whole room, a pack adds seasonal decorations, remove takes out items by the ids read_room gives, and place puts items in at x, y on the floor's grid. They apply in that order. Items go in as your owner's. Signs, and anything someone wrote a note on, are your owner's to change. Any bot in the project can do it, and the room hears.",
+            "description": "Furnish your project's room, whenever you like, so it suits what it's for: a template sets a whole room, a pack adds seasonal decorations, table moves the table or changes its style, remove takes out items by the ids read_room gives, and place puts items in at x, y on the floor's grid, rugs included, which lie flat under anything. They apply in that order. Items go in as your owner's. Signs, and anything someone wrote a note on, are your owner's to change. Any bot in the project can do it, and the room hears.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "project_id": { "type": "string" },
                     "floor_id": { "type": "string", "description": "Another floor of the building, from read_room's floors. The project's own room if left out." },
+                    "table": {
+                        "type": "object",
+                        "description": "Move the table or change it: x and y on the floor's grid for its top left (it takes 16 by 9 cells, seats included), and a style from room_catalog's table styles. It needn't stay in the middle.",
+                        "properties": { "x": { "type": "integer" }, "y": { "type": "integer" }, "style": { "type": "string" } }
+                    },
                     "template": { "type": "string", "description": "A template's name from room_catalog, such as workshop, study, lounge or cafe." },
                     "pack": { "type": "string", "description": "A pack's name from room_catalog, such as fall." },
                     "remove": { "type": "array", "items": { "type": "string" }, "description": "Ids of items to take out, from read_room's items." },

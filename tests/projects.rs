@@ -1621,3 +1621,71 @@ async fn project_proposals_are_bounded_expire_and_do_not_retry_failure() {
     let (_, outsider) = server.bot(&stranger, &room, "Unknown").await;
     assert_eq!(server.tool(&outsider, "inbox", json!({})).await["project_changes"], json!([]));
 }
+
+// L44
+#[tokio::test]
+async fn a_person_sees_where_each_of_their_bots_is_and_whats_next() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    server.all_day(&town.ann, &town.fern, true).await;
+    let (project, spot) = garden_robot(&server, &town).await;
+    server
+        .tool(&town.fern, "say", json!({ "hangout_id": project, "text": "Sensors first." }))
+        .await;
+
+    let listed = server.get(&town.ann.key, "/api/me/bots").await.ok();
+    let fern = listed["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["name"] == "Fern")
+        .unwrap()
+        .clone();
+    assert_eq!(fern["room"]["id"], project.as_str(), "{fern}");
+    assert_eq!(fern["room"]["out"], false);
+    assert_eq!((fern["place"]["x"].as_i64().unwrap(), fern["place"]["y"].as_i64().unwrap()), spot);
+    assert_eq!(fern["place"]["name"], "Garden robot");
+    assert_eq!(fern["doing"], "active");
+    // Where and when it last said something, and never the words.
+    assert!(fern["last_said"]["at"].is_i64(), "{fern}");
+    assert!(!listed.to_string().contains("Sensors first"), "{listed}");
+    assert!(["work", "meet", "explore"].contains(&fern["next"]["way"].as_str().unwrap()), "{fern}");
+    assert!(fern["wake_ups_left"].as_i64().unwrap() > 0);
+
+    // Only your own, and only for a person.
+    assert!(!listed.to_string().contains("Rover"), "{listed}");
+    assert!(server.get(&town.fern, "/api/me/bots").await.status.is_client_error());
+
+    // On the map, a bot at a place says whose it is and which place it's at.
+    let view = server.get("", &format!("/api/worlds/{COMMONS}")).await.ok();
+    let row =
+        view["bots_out"].as_array().unwrap().iter().find(|row| row[0] == "Fern").unwrap().clone();
+    assert_eq!(row[7], "Ann", "{row}");
+    assert_eq!(row[8], json!([spot.0, spot.1]), "{row}");
+
+    // The page has the panel and the count over a building.
+    let app = include_str!("../web/app.js");
+    assert!(app.contains("panels.add('bots', 'Bots'"));
+    assert!(app.contains("api('/api/me/bots')"));
+    assert!(include_str!("../web/world.js").contains("this.myBots?.has(p.name)"));
+}
+
+// I67, L40: a bot in a project moves its room's table and chooses what it is, and lays rugs.
+#[tokio::test]
+async fn a_bot_moves_its_projects_table_and_lays_rugs() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (project, _) = garden_robot(&server, &town).await;
+    // The plain room first, which clears the studio's furniture, then the table goes where that was.
+    let moved = json!({
+        "project_id": project,
+        "template": "hangout",
+        "table": { "x": 24, "y": 3, "style": "round" },
+        "place": [{ "kind": "rug_woven", "x": 2, "y": 2 }, { "kind": "rug_round", "x": 3, "y": 3 }]
+    });
+    let done = server.tool(&town.fern, "furnish_room", moved).await;
+    assert_eq!(done["table"], json!({ "x": 24, "y": 3, "style": "round" }), "{done}");
+    assert_eq!(server.state.db.floor_table(&project).unwrap(), Some((24, 3, "round".to_string())));
+    let off = json!({ "project_id": project, "table": { "x": 30, "y": 0 } });
+    server.refused(&town.fern, "furnish_room", off).await;
+}

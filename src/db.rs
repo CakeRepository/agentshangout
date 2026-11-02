@@ -828,7 +828,7 @@ CREATE TABLE IF NOT EXISTS project_changes (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_changes_pending ON project_changes(project_id, status, created_at);
--- E30: a non-owner person's wake counts only once the receiver accepts it. No foreign key on the
+-- E31: a non-owner person's wake counts only once the receiver accepts it. No foreign key on the
 -- message or the room: deleting chat must not refund the 3-minute spacing.
 CREATE TABLE IF NOT EXISTS wake_accepts (
     message_id   INTEGER NOT NULL,
@@ -839,7 +839,7 @@ CREATE TABLE IF NOT EXISTS wake_accepts (
 );
 CREATE INDEX IF NOT EXISTS wake_accepts_by_room
     ON wake_accepts (agent_id, hangout_id, accepted_at);
--- E30: sent, skipped or failed. The reason is a short token, never the message or the URL.
+-- E31: sent, skipped or failed. The reason is a short token, never the message or the URL.
 CREATE TABLE IF NOT EXISTS wake_decisions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -855,6 +855,13 @@ CREATE TABLE IF NOT EXISTS house_editors (
     player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
     person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     PRIMARY KEY (player_id, person_id)
+);
+-- I67: where a floor's table stands and what it's like, once someone has moved or restyled it.
+CREATE TABLE IF NOT EXISTS floor_tables (
+    hangout_id  TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    style       TEXT NOT NULL
 );
 
 "#;
@@ -1178,7 +1185,7 @@ pub struct Mention {
     pub at: i64,
 }
 
-/// E30: one wake decision, without the words that caused it.
+/// E31: one wake decision, without the words that caused it.
 pub struct WakeDecision {
     pub decision: String,
     pub reason: String,
@@ -2994,13 +3001,18 @@ impl Db {
     }
 
     pub fn is_sign_in_session(&self, token_hash: &str) -> rusqlite::Result<bool> {
-        Ok(self
-            .conn()
-            .query_row("SELECT 1 FROM sign_in_sessions WHERE token_hash = ?", [token_hash], |_| {
-                Ok(())
-            })
-            .optional()?
-            .is_some())
+        Ok(self.sign_in_session_site(token_hash)?.is_some())
+    }
+
+    /// The site that started this session, if one did.
+    pub fn sign_in_session_site(&self, token_hash: &str) -> rusqlite::Result<Option<String>> {
+        self.conn()
+            .query_row(
+                "SELECT site FROM sign_in_sessions WHERE token_hash = ?",
+                [token_hash],
+                |row| row.get(0),
+            )
+            .optional()
     }
 
     /// A person's links, as site and account name.
@@ -3071,6 +3083,36 @@ impl Db {
             Some(id) => self.person(&id),
             None => Ok(None),
         }
+    }
+
+    /// Makes a new account and its link together (A59). `None` means someone else has that account
+    /// linked by now, which leaves nothing behind (A61).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_account_with_sign_in(
+        &self,
+        id: &str,
+        name: &str,
+        key_hash: &str,
+        feed_token: &str,
+        site: &str,
+        account_id: &str,
+        account_name: &str,
+        now: i64,
+    ) -> rusqlite::Result<Option<Person>> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        let person = insert_person(&tx, id, name, key_hash, feed_token, now)?;
+        let linked = tx.execute(
+            "INSERT OR IGNORE INTO sign_in_links
+                 (person_id, site, account_id, account_name, linked_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![id, site, account_id, account_name, now],
+        )?;
+        if linked == 0 {
+            return Ok(None);
+        }
+        tx.commit()?;
+        Ok(Some(person))
     }
 
     /// A36: the link and every session it started.
@@ -5469,7 +5511,7 @@ impl Db {
         Ok(rung > 0)
     }
 
-    /// E30: whether this room accepted a non-owner person's wake after `since`.
+    /// E31: whether this room accepted a non-owner person's wake after `since`.
     pub fn person_wake_recent(
         &self,
         agent_id: &str,
@@ -5485,7 +5527,7 @@ impl Db {
         )
     }
 
-    /// E30: the receiver accepted this person's wake. That starts the 3-minute spacing, and an
+    /// E31: the receiver accepted this person's wake. That starts the 3-minute spacing, and an
     /// unread copy of it can still hold the owner's bell. A failed delivery never calls this.
     pub fn note_person_wake(
         &self,
@@ -5527,7 +5569,7 @@ impl Db {
         Ok(())
     }
 
-    /// E30: keeps the latest decisions for this bot. `hangout_id` empty is stored as none.
+    /// E31: keeps the latest decisions for this bot. `hangout_id` empty is stored as none.
     pub fn note_wake_decision(
         &self,
         agent_id: &str,
@@ -5602,6 +5644,28 @@ impl Db {
             params![agent_id, slot, hangout_id, now, today, cap],
         )?;
         Ok(rung > 0)
+    }
+
+    /// L44: the room and time of the last thing a bot said, if it ever has.
+    pub fn last_line_of(&self, agent_id: &str) -> rusqlite::Result<Option<(String, i64)>> {
+        self.conn()
+            .query_row(
+                "SELECT hangout_id, created_at FROM messages WHERE agent_id = ? AND kind = 'chat'
+                 ORDER BY id DESC LIMIT 1",
+                [agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// L44: social wake-ups a bot has had since `since`, as the cap counts them (L10, L38).
+    pub fn social_runs_since(&self, agent_id: &str, since: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT (SELECT COUNT(*) FROM wake_rings WHERE agent_id = ?1 AND capped = 1 AND rung_at >= ?2)
+                  + (SELECT COUNT(*) FROM meet_calls WHERE agent_id = ?1 AND rung_at >= ?2)",
+            params![agent_id, since],
+            |row| row.get(0),
+        )
     }
 
     /// L31: whether a bot is working on a reply in any room right now (I58).
@@ -9255,6 +9319,32 @@ impl Db {
     // Items on a floor (docs/rooms.md)
 
     /// What stands on a floor, oldest first. A room that isn't a floor has none.
+    /// I67: a floor's table, if it has been moved or restyled.
+    pub fn floor_table(&self, hangout_id: &str) -> rusqlite::Result<Option<(i64, i64, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT x, y, style FROM floor_tables WHERE hangout_id = ?",
+                [hangout_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+    }
+
+    pub fn set_floor_table(
+        &self,
+        hangout_id: &str,
+        x: i64,
+        y: i64,
+        style: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO floor_tables (hangout_id, x, y, style) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (hangout_id) DO UPDATE SET x = ?2, y = ?3, style = ?4",
+            params![hangout_id, x, y, style],
+        )?;
+        Ok(())
+    }
+
     pub fn floor_items(&self, hangout_id: &str) -> rusqlite::Result<Vec<FloorItem>> {
         items_on(&self.conn(), hangout_id)
     }
@@ -12090,6 +12180,28 @@ mod tests {
         assert_eq!(db.person_by_key("key1").unwrap().unwrap().id, "p1");
         assert_eq!(db.passkey_by_credential("cred").unwrap().unwrap().user_handle, "h1");
         assert_eq!(db.passkeys_of("p1").unwrap()[0].created_at, 3);
+    }
+
+    #[test]
+    fn an_account_and_its_link_go_in_together_or_not_at_all() {
+        let db = Db::open(":memory:").unwrap();
+        let make = |id: &str, name: &str, key: &str, feed: &str, site: &str| {
+            db.create_account_with_sign_in(id, name, key, feed, site, "1001", "ann-codes", 3)
+                .unwrap()
+        };
+        assert_eq!(make("p1", "Ann", "key1", "feed1", "github").unwrap().name, "Ann");
+        assert_eq!(db.person_by_key("key1").unwrap().unwrap().id, "p1");
+        assert_eq!(
+            db.sign_in_links("p1").unwrap(),
+            [("github".to_string(), "ann-codes".to_string())]
+        );
+
+        assert!(make("p2", "Bo", "key2", "feed2", "github").is_none(), "that account is taken");
+        assert!(db.person("p2").unwrap().is_none());
+        assert_eq!(db.person_count().unwrap(), 1);
+
+        // The same id on the other site is a different account.
+        assert!(make("p2", "Bo", "key2", "feed2", "discord").is_some());
     }
 
     #[test]

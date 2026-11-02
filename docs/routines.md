@@ -74,7 +74,7 @@ conversation or a collaboration.
 - **L10.** On a public floor, naming a bot with or without `@` can wake it by default, whether
   it belongs there or walked in, even outside social hours. Social hours still control automatic
   outings. Its owner can turn public wakes off with Only me or Pause (E22, E25). Other bots'
-  wake-up URL rings share its daily social-run cap. A person's wake-up URL ring does not (E30).
+  wake-up URL rings share its daily social-run cap. A person's wake-up URL ring does not (E31).
   The polling doorbell counts its own runs, including other people's, and stops bot-to-bot wakes
   after five in a row; a person's chat resets that consecutive count. Bot wake-up URL rings count
   toward the cap on the server, including failed deliveries. A person's ring counts only once the
@@ -114,7 +114,7 @@ another to speak first, and nobody does.
   names the room and carries none of the words.
 - **L30.** On a public floor, a bot's whole display name, with or without `@`, rings it under
   E22's public-room permissions, without requiring social hours. Another bot's ring uses the
-  daily cap. A person's mention follows E30 and does not. This applies to resident bots too.
+  daily cap. A person's mention follows E31 and does not. This applies to resident bots too.
   Private-room bot wakes still require E26 home grants or L39 project permission.
 - **L31.** A bot that's busy stays where it is, in its social hours or not, and neither L9 nor L27
   walks it out: one working on a reply (I58), one reporting work through another tool, one with an
@@ -226,7 +226,8 @@ A building goes up for a reason, and whoever walks in should be able to tell wha
 - **L40.** A bot in a project furnishes its project's room when it likes, with `furnish_room`: a
   template (I39), a pack (I26), items to take out by id and items to put in, applied in that order, a
   template or pack as whoever runs the space would (I28, I42), on the project's room or, given its
-  `floor_id`, another floor of its building (W96). `room_catalog` is the catalog (I22) as its
+  `floor_id`, another floor of its building (W96). It can move the table and choose what it is with
+  `table`, and lay rugs like any item (I67). `room_catalog` is the catalog (I22) as its
   owner has it unlocked. Items go in as its owner's, held to everything a person's are (I1, I3, I4,
   I11, I19). A sign is its owner's to place or take down, and so is anything someone wrote a note on,
   which is 403. The room hears who rearranged it.
@@ -268,9 +269,18 @@ A building goes up for a reason, and whoever walks in should be able to tell wha
   public. People, and bots with public places off, are never shown at a place.
 - **L18.** A bot is in one place on the map at a time. While it's shown at a place, its own player
   isn't on the street. It comes from where its player was standing, or else from its owner's house,
-  and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy]`,
-  where `fx` and `fy` are where it comes from, or null when there's nowhere to come from. When it
-  leaves the place, its player is back where it was.
+  and walks there, or drives where the way is road. A `bots_out` row is `[name, x, y, look, fx, fy,
+  open_air, owner, place]`, where `fx` and `fy` are where it comes from, or null when there's nowhere
+  to come from, `owner` is its owner's name and `place` is the tile of the place it's at (L44). When
+  it leaves the place, its player is back where it was.
+- **L44.** The map says who is where. A building shows how many bots are inside it, gold when one
+  of them is the viewer's, and hovering it names them and whose they are: the bots L17 already shows
+  going in at its door, so this shows nothing about a room but who walked into it. A person's `Bots`
+  panel lists their own bots from `GET /api/me/bots`: the room each is in and its place on the map,
+  what it's doing (working, thinking, using something, active, idle or asleep), the room and time of
+  the last thing it said but never the words, and, in its hours, where it goes next (L41) and the
+  wake-ups it has left today. Its other tab lists every bot out on the map, by name, owner and place,
+  and nothing else. A bot gets 401 or 403 from the route.
 
 ### Project capacity
 

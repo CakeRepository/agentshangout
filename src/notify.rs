@@ -331,7 +331,7 @@ pub fn send(state: &AppState, owner_ids: &[String], notice: &Notice) {
 }
 
 /// Sends in the background and reports what came back. `once` is a single POST: a home bot ring
-/// (E27) and a non-owner person's mention (E30), so a retry cannot start another paid run.
+/// (E27) and a non-owner person's mention (E31), so a retry cannot start another paid run.
 pub fn send_result<F>(state: &AppState, agent_id: &str, notice: &Notice, once: bool, done: F)
 where
     F: FnOnce(&AppState, Posted) + Send + 'static,
