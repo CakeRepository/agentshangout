@@ -2088,75 +2088,9 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   touch-action: none !important;
 }
 
-/* Navigation Bar & Floating Title Pill */
+/* Navigation Bar & Header: hidden on mobile for completely unobstructed edge-to-edge view */
 .apple-hig .wd-title {
-  position: fixed !important;
-  top: max(8px, env(safe-area-inset-top)) !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  right: auto !important;
-  width: auto !important;
-  max-width: min(calc(100vw - 28px), 360px) !important;
-  z-index: 10 !important;
-  min-height: 0 !important;
-  height: 36px !important;
-  padding: 0 16px !important;
-  background: rgba(255, 255, 255, 0.90) !important;
-  -webkit-backdrop-filter: var(--apple-blur) !important;
-  backdrop-filter: var(--apple-blur) !important;
-  border: 0.5px solid rgba(0, 0, 0, 0.12) !important;
-  border-radius: 9999px !important;
-  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.1) !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  gap: 8px !important;
-  white-space: nowrap !important;
-  pointer-events: auto !important;
-}
-
-.apple-hig .wd-title::before {
   display: none !important;
-}
-
-.apple-hig .wd-title-text {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
-  font-size: 13px !important;
-  font-weight: 600 !important;
-  letter-spacing: -0.015em !important;
-  color: var(--apple-text) !important;
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 6px !important;
-  max-width: 220px !important;
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-}
-
-.apple-hig .wd-title-sub {
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  opacity: 0.65 !important;
-  display: inline !important;
-}
-
-.apple-hig .wd-live {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 4px !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  background: none !important;
-  font-size: 11px !important;
-  font-weight: 500 !important;
-  color: #34c759 !important;
-}
-
-.apple-hig .wd-live .wd-lamp {
-  width: 6px !important;
-  height: 6px !important;
-  background: #34c759 !important;
-  box-shadow: 0 0 6px rgba(52, 199, 89, 0.8) !important;
 }
 
 /* Hide desktop action buttons in apple-hig mode (accessible via bottom tab bar) */
@@ -2422,7 +2356,7 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .apple-hig .apple-placement-banner {
   display: flex !important;
   position: fixed !important;
-  top: calc(56px + max(8px, env(safe-area-inset-top))) !important;
+  top: max(12px, env(safe-area-inset-top)) !important;
   left: 16px !important;
   right: 16px !important;
   z-index: 25 !important;
