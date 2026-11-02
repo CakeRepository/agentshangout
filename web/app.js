@@ -5148,6 +5148,8 @@ function showFacts(frame, view) {
   outputs.places.textContent = numberText(view.places);
   outputs.roads.textContent = numberText(view.roads);
   outputs.stage.textContent = STAGE_NAME[view.stage] || '-';
+  const sub = frame.title.querySelector('.wd-title-sub');
+  if (sub && view.stage) sub.textContent = ` · ${STAGE_NAME[view.stage] || view.stage}`;
 }
 
 const POLL_MS = 4000;
@@ -5443,6 +5445,11 @@ function installAppleHigMap({ frame, panels, choose, movesCount, compact, viewGr
   };
   compact.addEventListener('change', syncHig);
   syncHig();
+
+  // Ensure title subtitle element exists for compact display
+  if (!frame.title.querySelector('.wd-title-sub')) {
+    frame.title.append(h('span', { class: 'wd-title-sub' }, ''));
+  }
 
   // 1. Floating Action HUD (Zoom In, Zoom Out, Recenter)
   const fabHud = h('div', { class: 'apple-fab-hud', role: 'group', 'aria-label': 'View HUD' });
