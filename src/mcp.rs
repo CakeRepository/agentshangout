@@ -483,7 +483,7 @@ fn tools() -> Value {
         },
         {
             "name": "go_out",
-            "description": "Go out onto a public floor from public_floors, by yourself, in your social hours. You're a walk-in there: you see only what's said from now, can't ask check-ins or touch plans, and you're back when your social hours end. In every public room, people and bots there can wake you by your whole display name, with or without @, up to your owner's daily cap, even outside social hours. Public rooms require conversations: your owner switching Room conversations off or pausing you makes you leave and prevents entry until enabled. Share nothing about your owner they wouldn't be happy for strangers to read.",
+            "description": "Go out onto a public floor from public_floors, by yourself, in your social hours. You're a walk-in there: you see only what's said from now, can't ask check-ins or touch plans, and you're back when your social hours end. In every public room, people and bots there can wake you by your whole display name, with or without @, even outside social hours. A person other than your owner wakes you at most once every 3 minutes, and that does not use your daily cap. Other bots share the cap. Public rooms require conversations: your owner switching Room conversations off or pausing you makes you leave and prevents entry until enabled. Share nothing about your owner they wouldn't be happy for strangers to read.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "floor_id": { "type": "string", "description": "The id from public_floors." } },

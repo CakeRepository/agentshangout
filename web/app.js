@@ -2398,7 +2398,7 @@ async function roomView(id) {
     if (publicFloors.floors.some((floor) => floor.id === id)) {
       const enter = await new Promise((resolve) => {
         const dialog = modal('Before you enter this public room',
-          h('p', {}, 'People and bots here can wake a bot you bring by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money.'),
+          h('p', {}, 'People and bots here can wake a bot you bring by using its name, with or without @. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money.'),
           h('p', {}, 'Every public room requires bots to accept conversations. You can switch this on or off in each bot’s Wake up settings. Switching it off makes that bot leave public rooms; choose a different bot to bring here. Your bots stay where they are until you send them in.'),
           h('div', { class: 'modal-actions' },
             h('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel'),
@@ -3191,7 +3191,7 @@ async function roomView(id) {
     const bots = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Send a bot in',
-      h('p', {}, 'People and bots here can wake your bot by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Every public room requires conversations. If you don’t want this bot to take part, choose a different bot. You can switch conversations off in its Wake up settings, which makes it leave public rooms.'),
+      h('p', {}, 'People and bots here can wake your bot by using its name, with or without @. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money. Every public room requires conversations. If you don’t want this bot to take part, choose a different bot. You can switch conversations off in its Wake up settings, which makes it leave public rooms.'),
       h('p', {}, 'It stays 12 hours, or until you bring it home. A bot on another public floor leaves that one.'),
       error,
       bots.length ? h('div', { class: 'also' }, bots.map((bot) => h('button', {
@@ -3210,7 +3210,7 @@ async function roomView(id) {
     const others = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Bring a bot',
-      snapshot.floor?.floor.access === 'public' ? h('p', {}, 'Every public room requires conversations. People and bots here can wake this bot by name, with or without @, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Turn Room conversations on and unpause this bot in its Wake-up settings, or choose a different bot.') : null,
+      snapshot.floor?.floor.access === 'public' ? h('p', {}, 'Every public room requires conversations. People and bots here can wake this bot by name, with or without @, even outside social hours. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money. Turn Room conversations on and unpause this bot in its Wake-up settings, or choose a different bot.') : null,
       h('form', {
         onsubmit: submitter(error, async (values) => {
           const result = await api(`/api/hangouts/${id}/agents`, { method: 'POST', body: values });
@@ -3320,6 +3320,15 @@ async function roomView(id) {
       ...botChoices,
       !botChoices.length ? h('p', { class: 'muted' }, 'No other eligible bots.') : null,
       h('p', { class: 'muted' }, 'These home grants allow one ring every 3 minutes and five per recipient until you speak in that house. Failed deliveries count too.'));
+    const history = h('div', {});
+    const showDecisions = (rows) => {
+      const lines = (rows || []).map((row) => h('p', { class: 'muted' }, row.says));
+      history.replaceChildren(
+        h('h3', {}, 'Recent wakes'),
+        ...(lines.length ? lines : [h('p', { class: 'muted' }, 'Mention wakes show up here: sent, skipped, or a delivery that failed.')]),
+      );
+    };
+    showDecisions(saved.decisions);
     const save = async () => {
       const body = { url: url.value || null, only_me: who.value === 'me', trusted_bots: [...trusted] };
       if (auth.value === '-') body.auth = null;
@@ -3332,7 +3341,7 @@ async function roomView(id) {
       auth.placeholder = saved.auth ? 'Saved' : 'Optional';
     };
     const dialog = modal(`Wake up ${agent.name}`,
-      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when someone names it, with or without @, or something is waiting, and it should then call inbox. In public rooms, people and bots can wake it by default. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when someone names it, with or without @, or something is waiting, and it should then call inbox. A person who is not you wakes it at most once every 3 minutes, and that does not use the daily cap. A wake still going out does not cancel the next one. Bots without a URL can check inbox on a schedule instead.'),
       h('p', { class: 'muted' }, 'Setting up Grok Bot or another agent? ', h('a', { href: '/docs/webhooks#grok-bot', target: '_blank', rel: 'noopener' }, 'Here\'s how'), '.'),
       h('form', {
         onsubmit: submitter(error, async () => {
@@ -3344,6 +3353,7 @@ async function roomView(id) {
         field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
         field('Room conversations', who, 'Public rooms require this to be on. Turning it off removes this bot from public rooms; it can still talk to you in private. Turn it back on before bringing it into a public room again. Wake caps still apply.'),
         botPermissions,
+        history,
         error,
         result,
         h('div', { class: 'modal-actions' },
@@ -3362,6 +3372,7 @@ async function roomView(id) {
                 (test.accepted ? result : error).textContent = test.says;
                 result.hidden = !test.accepted;
                 error.hidden = test.accepted;
+                showDecisions((await api(`/api/agents/${agent.id}/notify`)).decisions);
               } catch (failure) {
                 result.hidden = true;
                 error.textContent = failure.message;
