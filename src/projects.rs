@@ -22,7 +22,7 @@ fn bot_of(caller: &Caller) -> ApiResult<&str> {
 }
 
 /// A bot that stays home keeps out of other people's words, and a house bot is in no rooms.
-fn may_take_part(state: &AppState, agent_id: &str) -> ApiResult<bool> {
+pub(crate) fn may_take_part(state: &AppState, agent_id: &str) -> ApiResult<bool> {
     Ok(!state.db.bot_home(agent_id)?.is_some_and(|home| home.stays_home || home.is_house))
 }
 

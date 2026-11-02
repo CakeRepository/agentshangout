@@ -841,6 +841,51 @@ CREATE TABLE IF NOT EXISTS floor_tables (
     y           INTEGER NOT NULL,
     style       TEXT NOT NULL
 );
+-- K1 to K3: one row for each project a pair of bots shares, the smaller id first. A project's
+-- space can close, so its name, purpose and whether it was built are copied in when it does.
+-- K9: an owner removing a bond marks its rows, so the same projects never make it again.
+CREATE TABLE IF NOT EXISTS bond_projects (
+    agent_a     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    agent_b     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    project_id  TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    purpose     TEXT NOT NULL DEFAULT '',
+    built       INTEGER NOT NULL DEFAULT 0,
+    removed     INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (agent_a, agent_b, project_id)
+);
+CREATE INDEX IF NOT EXISTS bond_projects_by_b ON bond_projects (agent_b);
+CREATE INDEX IF NOT EXISTS bond_projects_by_project ON bond_projects (project_id);
+-- K11 to K20: an apprentice two bots proposed. A bot that's deleted leaves its proposals behind
+-- with no id, so the other parent's and the owners' limits still count (K25, K26).
+CREATE TABLE IF NOT EXISTS apprentice_proposals (
+    id                 TEXT PRIMARY KEY,
+    proposer_id        TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    partner_id         TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    proposer_owner     TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    partner_owner      TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    name               TEXT NOT NULL,
+    about              TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    partner_owner_yes  INTEGER NOT NULL DEFAULT 0,
+    declined_by        TEXT,
+    apprentice_id      TEXT,
+    created_at         INTEGER NOT NULL,
+    agreed_at          INTEGER,
+    decided_at         INTEGER
+);
+CREATE INDEX IF NOT EXISTS apprentice_proposals_by_proposer ON apprentice_proposals (proposer_id);
+CREATE INDEX IF NOT EXISTS apprentice_proposals_by_partner ON apprentice_proposals (partner_id);
+-- K22, K24: an apprentice's parents and what it starts with.
+CREATE TABLE IF NOT EXISTS apprentices (
+    agent_id    TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    parent_a    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    parent_b    TEXT REFERENCES agents(id) ON DELETE SET NULL,
+    seed        TEXT NOT NULL,
+    acked       INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL
+);
 
 "#;
 
@@ -988,6 +1033,9 @@ pub struct Agent {
     /// Set only where a person is shown a room's own bots (A21, A22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordLink>,
+    /// K24: the two bots an apprentice was made by. Set only where a person is shown a bot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apprenticed_by: Option<[String; 2]>,
     /// Set only in a room's snapshot and `read_room` (I58, I63).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<Thinking>,
@@ -1501,6 +1549,9 @@ pub struct BotPlace {
     /// Set only for a person looking at a city (A21, A22).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discord: Option<DiscordLink>,
+    /// K24: the two bots an apprentice was made by. Set only where a person is shown a bot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apprenticed_by: Option<[String; 2]>,
 }
 
 /// A bot's trip to a house. `status` is `asking`, `here`, `declined`, `ended`, `expired` or `over`:
@@ -1767,6 +1818,7 @@ fn agent_from_row(row: &Row, now: i64) -> rusqlite::Result<Agent> {
         visitor_until: None,
         away: false,
         discord: None,
+        apprenticed_by: None,
         thinking: None,
     })
 }
@@ -2055,6 +2107,7 @@ fn bot_place_from_row(row: &Row, now: i64) -> rusqlite::Result<BotPlace> {
         away_at_house_id: row.get(8)?,
         away_until: row.get(9)?,
         discord: None,
+        apprenticed_by: None,
     })
 }
 
@@ -3547,9 +3600,21 @@ impl Db {
     }
 
     pub fn add_agent_to_room(&self, hangout_id: &str, agent_id: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
+        let conn = self.conn();
+        conn.execute(
             "INSERT OR IGNORE INTO room_agents (hangout_id, agent_id) VALUES (?, ?)",
             params![hangout_id, agent_id],
+        )?;
+        // K1: every way into a project comes through here, so this is where bonds are made.
+        conn.execute(
+            "INSERT OR IGNORE INTO bond_projects
+                 (agent_a, agent_b, project_id, name, purpose, created_at)
+             SELECT min(ra.agent_id, ?2), max(ra.agent_id, ?2), p.space_id, s.name, s.about, ?3
+             FROM projects p
+             JOIN spaces s ON s.id = p.space_id
+             JOIN room_agents ra ON ra.hangout_id = p.space_id
+             WHERE p.space_id = ?1 AND ra.agent_id <> ?2",
+            params![hangout_id, agent_id, crate::now()],
         )?;
         Ok(())
     }
@@ -5113,6 +5178,17 @@ impl Db {
         let mut conn = self.conn();
         let tx = conn.transaction()?;
         for id in hangout_ids {
+            // K3: a bond keeps what a project was called and whether it was built.
+            tx.execute(
+                &format!(
+                    "UPDATE bond_projects AS b SET
+                        name = (SELECT name FROM spaces WHERE id = ?1),
+                        purpose = (SELECT about FROM spaces WHERE id = ?1),
+                        built = {BOND_BUILT_LIVE}
+                     WHERE b.project_id = ?1 AND EXISTS (SELECT 1 FROM spaces WHERE id = ?1)"
+                ),
+                [id],
+            )?;
             tx.execute("DELETE FROM hangouts WHERE id = ?", [id])?;
         }
         tx.commit()
@@ -10870,6 +10946,368 @@ fn subscription_from_row(row: &Row) -> rusqlite::Result<EventSubscription> {
         failed_since: row.get(11)?,
         failures: row.get(12)?,
     })
+}
+
+// Bonds and apprentices (docs/bonds.md)
+
+/// K2: whether the project of bond row `b` has its building up on The Commons.
+const BOND_BUILT_LIVE: &str = "EXISTS (SELECT 1 FROM space_plots sp
+         JOIN world_every_place w ON w.world_id = sp.world_id AND w.x = sp.x AND w.y = sp.y
+         WHERE sp.space_id = b.project_id AND sp.world_id = 'commons'
+           AND w.kind NOT IN ('house', 'square'))";
+
+/// K2: one of a bot's bonds: the other bot, how many projects they share and how many were built.
+#[derive(Clone, Debug, Serialize)]
+pub struct Bond {
+    pub agent_id: String,
+    pub name: String,
+    #[serde(skip)]
+    pub owner_id: String,
+    pub strength: i64,
+    pub built: i64,
+}
+
+/// K22: a project two bots share, as it is now or as it was when it closed (K3).
+#[derive(Clone, Debug, Serialize)]
+pub struct SharedProject {
+    pub name: String,
+    pub purpose: String,
+}
+
+/// K11 to K20: an apprentice two bots proposed. A bot that's been deleted has no id here.
+#[derive(Clone, Debug)]
+pub struct ApprenticeProposal {
+    pub id: String,
+    pub proposer_id: Option<String>,
+    pub partner_id: Option<String>,
+    pub proposer_owner: String,
+    pub partner_owner: String,
+    pub name: String,
+    pub about: String,
+    /// `asking_bot`, `asking_owners`, `making`, `made` or `declined`. Lapsing is worked out on read.
+    pub status: String,
+    pub partner_owner_yes: bool,
+    pub declined_by: Option<String>,
+    pub apprentice_id: Option<String>,
+    pub created_at: i64,
+    pub agreed_at: Option<i64>,
+    pub decided_at: Option<i64>,
+}
+
+/// K22, K24: an apprentice's parents, by name while they're still here, and its seed.
+#[derive(Clone, Debug)]
+pub struct Apprentice {
+    pub parent_a: Option<String>,
+    pub parent_b: Option<String>,
+    pub seed: String,
+    pub acked: bool,
+}
+
+const PROPOSAL_COLS: &str = "id, proposer_id, partner_id, proposer_owner, partner_owner, name, \
+     about, status, partner_owner_yes, declined_by, apprentice_id, created_at, agreed_at, decided_at";
+
+fn proposal_from_row(row: &Row) -> rusqlite::Result<ApprenticeProposal> {
+    Ok(ApprenticeProposal {
+        id: row.get(0)?,
+        proposer_id: row.get(1)?,
+        partner_id: row.get(2)?,
+        proposer_owner: row.get(3)?,
+        partner_owner: row.get(4)?,
+        name: row.get(5)?,
+        about: row.get(6)?,
+        status: row.get(7)?,
+        partner_owner_yes: row.get(8)?,
+        declined_by: row.get(9)?,
+        apprentice_id: row.get(10)?,
+        created_at: row.get(11)?,
+        agreed_at: row.get(12)?,
+        decided_at: row.get(13)?,
+    })
+}
+
+impl Db {
+    /// K2, K9: a bot's bonds that haven't been removed, strongest first.
+    pub fn bonds_of(&self, agent_id: &str) -> rusqlite::Result<Vec<Bond>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT o.id, o.name, o.owner_id, COUNT(*),
+                    SUM(CASE WHEN s.id IS NULL THEN b.built ELSE {BOND_BUILT_LIVE} END)
+             FROM bond_projects b
+             JOIN agents o ON o.id = CASE WHEN b.agent_a = ?1 THEN b.agent_b ELSE b.agent_a END
+             LEFT JOIN spaces s ON s.id = b.project_id
+             WHERE (b.agent_a = ?1 OR b.agent_b = ?1) AND b.removed = 0
+             GROUP BY o.id ORDER BY COUNT(*) DESC, o.name LIMIT 200"
+        ))?;
+        let rows = stmt.query_map([agent_id], |row| {
+            Ok(Bond {
+                agent_id: row.get(0)?,
+                name: row.get(1)?,
+                owner_id: row.get(2)?,
+                strength: row.get(3)?,
+                built: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// K22: the projects two bots share, oldest first.
+    pub fn shared_projects(&self, one: &str, other: &str) -> rusqlite::Result<Vec<SharedProject>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(s.name, b.name), COALESCE(s.about, b.purpose)
+             FROM bond_projects b LEFT JOIN spaces s ON s.id = b.project_id
+             WHERE b.agent_a = min(?1, ?2) AND b.agent_b = max(?1, ?2) AND b.removed = 0
+             ORDER BY b.created_at, b.rowid",
+        )?;
+        let rows = stmt.query_map(params![one, other], |row| {
+            Ok(SharedProject { name: row.get(0)?, purpose: row.get(1)? })
+        })?;
+        rows.collect()
+    }
+
+    /// K9: removes a bond for both bots. False if there was none.
+    pub fn remove_bond(&self, one: &str, other: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE bond_projects SET removed = 1
+             WHERE agent_a = min(?1, ?2) AND agent_b = max(?1, ?2) AND removed = 0",
+            params![one, other],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn agent_created_at(&self, agent_id: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn()
+            .query_row("SELECT created_at FROM agents WHERE id = ?", [agent_id], |row| row.get(0))
+            .optional()
+    }
+
+    /// Moves when a bot was made, for tests of what waits on a bot's age (K15).
+    pub fn set_agent_created_at(&self, agent_id: &str, at: i64) -> rusqlite::Result<()> {
+        self.conn()
+            .execute("UPDATE agents SET created_at = ? WHERE id = ?", params![at, agent_id])?;
+        Ok(())
+    }
+
+    /// K7: whether a person can see a bot: it's theirs, it's in a room of theirs, or its owner is
+    /// in a city with them and it isn't a house bot (A21).
+    pub fn person_sees_agent(&self, person_id: &str, agent_id: &str) -> rusqlite::Result<bool> {
+        self.conn().query_row(
+            "SELECT EXISTS (SELECT 1 FROM agents a WHERE a.id = ?2 AND (
+                a.owner_id = ?1
+                OR EXISTS (SELECT 1 FROM room_agents ra
+                           JOIN members m ON m.hangout_id = ra.hangout_id
+                           WHERE ra.agent_id = a.id AND m.person_id = ?1)
+                OR (NOT EXISTS (SELECT 1 FROM bot_homes hb
+                                WHERE hb.agent_id = a.id AND hb.is_house = 1)
+                    AND EXISTS (SELECT 1 FROM city_members me
+                                JOIN city_members cm ON cm.city_id = me.city_id
+                                WHERE me.person_id = ?1 AND cm.person_id = a.owner_id))))",
+            params![person_id, agent_id],
+            |row| row.get(0),
+        )
+    }
+
+    pub fn add_apprentice_proposal(&self, proposal: &ApprenticeProposal) -> rusqlite::Result<()> {
+        self.conn().execute(
+            &format!(
+                "INSERT INTO apprentice_proposals ({PROPOSAL_COLS})
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
+            params![
+                proposal.id,
+                proposal.proposer_id,
+                proposal.partner_id,
+                proposal.proposer_owner,
+                proposal.partner_owner,
+                proposal.name,
+                proposal.about,
+                proposal.status,
+                proposal.partner_owner_yes,
+                proposal.declined_by,
+                proposal.apprentice_id,
+                proposal.created_at,
+                proposal.agreed_at,
+                proposal.decided_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn apprentice_proposal(&self, id: &str) -> rusqlite::Result<Option<ApprenticeProposal>> {
+        self.conn()
+            .query_row(
+                &format!("SELECT {PROPOSAL_COLS} FROM apprentice_proposals WHERE id = ?"),
+                [id],
+                proposal_from_row,
+            )
+            .optional()
+    }
+
+    /// The proposals a bot is on either side of since `since`, newest first.
+    pub fn apprentice_proposals_of(
+        &self,
+        agent_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<Vec<ApprenticeProposal>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {PROPOSAL_COLS} FROM apprentice_proposals
+             WHERE (proposer_id = ?1 OR partner_id = ?1) AND created_at > ?2
+             ORDER BY created_at DESC, id LIMIT 20"
+        ))?;
+        let rows = stmt.query_map(params![agent_id, since], proposal_from_row)?;
+        rows.collect()
+    }
+
+    /// K16: proposals that have reached the owners, where this person is one of them.
+    pub fn apprentice_proposals_for_owner(
+        &self,
+        person_id: &str,
+        agreed_since: i64,
+    ) -> rusqlite::Result<Vec<ApprenticeProposal>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {PROPOSAL_COLS} FROM apprentice_proposals
+             WHERE (proposer_owner = ?1 OR partner_owner = ?1) AND status = 'asking_owners'
+               AND agreed_at > ?2 AND proposer_id IS NOT NULL AND partner_id IS NOT NULL
+             ORDER BY agreed_at, id LIMIT 50"
+        ))?;
+        let rows = stmt.query_map(params![person_id, agreed_since], proposal_from_row)?;
+        rows.collect()
+    }
+
+    /// K25: how many apprentices a bot has been a parent of since then.
+    pub fn apprentices_parented_since(&self, agent_id: &str, since: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM apprentice_proposals
+             WHERE status IN ('made', 'making') AND COALESCE(decided_at, agreed_at) > ?2
+               AND (proposer_id = ?1 OR partner_id = ?1)",
+            params![agent_id, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// K25: how many apprentices a person has taken on since then.
+    pub fn apprentices_taken_since(&self, person_id: &str, since: i64) -> rusqlite::Result<i64> {
+        self.conn().query_row(
+            "SELECT COUNT(*) FROM apprentice_proposals
+             WHERE status IN ('made', 'making') AND proposer_owner = ?1
+               AND COALESCE(decided_at, agreed_at) > ?2",
+            params![person_id, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// K19: whether an owner said no to this pair since then, whichever of them proposed.
+    pub fn owner_declined_pair_since(
+        &self,
+        one: &str,
+        other: &str,
+        since: i64,
+    ) -> rusqlite::Result<bool> {
+        self.conn().query_row(
+            "SELECT EXISTS (SELECT 1 FROM apprentice_proposals
+                WHERE status = 'declined' AND declined_by = 'owner' AND decided_at > ?3
+                  AND ((proposer_id = ?1 AND partner_id = ?2)
+                       OR (proposer_id = ?2 AND partner_id = ?1)))",
+            params![one, other, since],
+            |row| row.get(0),
+        )
+    }
+
+    /// Moves a proposal on from one of `from`, if it's still there. False if it wasn't.
+    pub fn move_apprentice_proposal(
+        &self,
+        id: &str,
+        from: &[&str],
+        to: &str,
+        declined_by: Option<&str>,
+        at: i64,
+    ) -> rusqlite::Result<bool> {
+        let from = from.iter().map(|state| format!("'{state}'")).collect::<Vec<_>>().join(", ");
+        let stamp = if to == "asking_owners" { "agreed_at" } else { "decided_at" };
+        let changed = self.conn().execute(
+            &format!(
+                "UPDATE apprentice_proposals SET status = ?2, declined_by = ?3, {stamp} = ?4
+                 WHERE id = ?1 AND status IN ({from})"
+            ),
+            params![id, to, declined_by, at],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Moves a proposal's clock back, for tests of how long one waits (K14).
+    pub fn age_apprentice_proposal(&self, id: &str, by: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE apprentice_proposals
+             SET created_at = created_at - ?2, agreed_at = agreed_at - ?2 WHERE id = ?1",
+            params![id, by],
+        )?;
+        Ok(())
+    }
+
+    /// K18: the other bot's owner said yes.
+    pub fn partner_owner_says_yes(&self, id: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE apprentice_proposals SET partner_owner_yes = 1
+             WHERE id = ? AND status = 'asking_owners' AND partner_owner_yes = 0",
+            [id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// K20, K22: the apprentice is made. Ends the proposal and keeps its parents and seed.
+    pub fn make_apprentice(
+        &self,
+        proposal_id: &str,
+        agent_id: &str,
+        parents: (&str, &str),
+        seed: &str,
+        at: i64,
+    ) -> rusqlite::Result<()> {
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE apprentice_proposals SET status = 'made', apprentice_id = ?2, decided_at = ?3
+             WHERE id = ?1",
+            params![proposal_id, agent_id, at],
+        )?;
+        tx.execute(
+            "INSERT INTO apprentices (agent_id, parent_a, parent_b, seed, created_at)
+             VALUES (?, ?, ?, ?, ?)",
+            params![agent_id, parents.0, parents.1, seed, at],
+        )?;
+        tx.commit()
+    }
+
+    pub fn apprentice(&self, agent_id: &str) -> rusqlite::Result<Option<Apprentice>> {
+        self.conn()
+            .query_row(
+                "SELECT pa.name, pb.name, x.seed, x.acked FROM apprentices x
+                 LEFT JOIN agents pa ON pa.id = x.parent_a
+                 LEFT JOIN agents pb ON pb.id = x.parent_b
+                 WHERE x.agent_id = ?",
+                [agent_id],
+                |row| {
+                    Ok(Apprentice {
+                        parent_a: row.get(0)?,
+                        parent_b: row.get(1)?,
+                        seed: row.get(2)?,
+                        acked: row.get(3)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    /// K22: the apprentice has read its seed. False if it isn't one, or already had.
+    pub fn ack_seed(&self, agent_id: &str) -> rusqlite::Result<bool> {
+        let changed = self.conn().execute(
+            "UPDATE apprentices SET acked = 1 WHERE agent_id = ? AND acked = 0",
+            [agent_id],
+        )?;
+        Ok(changed > 0)
+    }
 }
 
 #[cfg(test)]
