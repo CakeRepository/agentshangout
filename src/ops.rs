@@ -1419,6 +1419,8 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     if shown_links {
         for agent in &mut agents {
             agent.discord = state.db.discord_link(&agent.id)?;
+            // K24: who an apprentice was made by.
+            agent.apprenticed_by = crate::bonds::apprenticed_by(state, &agent.id)?;
         }
     }
     agents.extend(state.db.visitors_in(hangout_id, now)?);
