@@ -2011,3 +2011,523 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   .docs-shell { grid-template-columns: 1fr; }
   .docs-side { position: static; }
 }
+
+
+/* ==========================================================================
+   Apple Human Interface Guidelines (HIG) Mobile Redesign
+   Edge-to-edge canvas, translucent materials, spring sheets, safe areas
+   ========================================================================== */
+
+:root {
+  --apple-blur: blur(25px) saturate(180%);
+  --apple-nav-bg: rgba(220, 202, 162, 0.88);
+  --apple-sheet-bg: rgba(238, 226, 200, 0.95);
+  --apple-card-bg: rgba(255, 255, 255, 0.72);
+  --apple-pill-bg: rgba(255, 255, 255, 0.88);
+  --apple-border: rgba(77, 54, 32, 0.2);
+  --apple-text: #3d2712;
+  --apple-accent: #8e2f18;
+}
+
+/* On desktop, hide mobile-only elements */
+.apple-tab-bar,
+.apple-build-sheet,
+.apple-placement-banner,
+.apple-fab-hud,
+.sheet-scrim,
+.sheet-grabber {
+  display: none;
+}
+
+/* Active Apple HIG Mobile Experience */
+.apple-hig.wd-game {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  background: #557a2b !important;
+}
+
+.apple-hig .wd-well {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border: none !important;
+  box-shadow: none !important;
+  z-index: 1 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.apple-hig .wd-well .world {
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Navigation Bar */
+.apple-hig .wd-title {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 10 !important;
+  min-height: 44px !important;
+  padding-top: max(8px, env(safe-area-inset-top)) !important;
+  padding-bottom: 8px !important;
+  padding-left: max(14px, env(safe-area-inset-left)) !important;
+  padding-right: max(14px, env(safe-area-inset-right)) !important;
+  background: var(--apple-nav-bg) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  border: none !important;
+  border-bottom: 0.5px solid var(--apple-border) !important;
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.08) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.apple-hig .wd-title-text {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, sans-serif !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.015em !important;
+  color: var(--apple-text) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.apple-hig .wd-title-sub {
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  opacity: 0.75 !important;
+}
+
+.apple-hig .wd-live .wd-lamp {
+  box-shadow: 0 0 8px rgba(52, 199, 89, 0.8) !important;
+}
+
+/* Floating Stats Pill under Navigation Bar */
+.apple-hig .wd-stats {
+  position: fixed !important;
+  top: calc(44px + max(8px, env(safe-area-inset-top)) + 8px) !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 8 !important;
+  background: rgba(255, 255, 255, 0.88) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 0.5px solid rgba(0, 0, 0, 0.12) !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1) !important;
+  border-radius: 20px !important;
+  padding: 3px 12px !important;
+  display: flex !important;
+  gap: 12px !important;
+  pointer-events: auto !important;
+  max-width: calc(100vw - 28px) !important;
+  margin: 0 !important;
+  overflow-x: auto !important;
+}
+
+.apple-hig .wd-stat {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+}
+
+.apple-hig .wd-stat-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: #6b533a !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+}
+
+.apple-hig .wd-lcd {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  color: #2b1d0c !important;
+}
+
+/* Hide desktop palette in apple-hig mode */
+.apple-hig > .game-palette {
+  display: none !important;
+}
+
+/* Floating Action HUD (Zoom & Recenter) */
+.apple-hig .apple-fab-hud {
+  display: flex !important;
+  flex-direction: column !important;
+  position: fixed !important;
+  right: max(14px, env(safe-area-inset-right)) !important;
+  bottom: calc(66px + max(8px, env(safe-area-inset-bottom))) !important;
+  z-index: 9 !important;
+  gap: 4px !important;
+  background: var(--apple-pill-bg) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  border: 0.5px solid rgba(0, 0, 0, 0.14) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18) !important;
+  padding: 4px !important;
+  margin: 0 !important;
+}
+
+.apple-hig .apple-fab-hud .wd-btn {
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  border-radius: 14px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  font-size: 22px !important;
+  font-weight: 600 !important;
+  color: var(--apple-text) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  transition: transform 0.12s ease, background 0.15s ease !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+.apple-hig .apple-fab-hud .wd-btn:active {
+  transform: scale(0.92) !important;
+  background: rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Floating status message toast */
+.apple-hig > .wd-status {
+  position: fixed !important;
+  bottom: calc(62px + max(8px, env(safe-area-inset-bottom))) !important;
+  left: 14px !important;
+  right: 14px !important;
+  z-index: 8 !important;
+  background: rgba(245, 238, 222, 0.94) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  backdrop-filter: blur(20px) !important;
+  border: 0.5px solid var(--apple-border) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12) !important;
+  padding: 6px 12px !important;
+  font-size: 12px !important;
+  color: #43321d !important;
+  max-width: 440px !important;
+  margin: 0 auto !important;
+  pointer-events: none !important;
+  text-align: center !important;
+}
+
+/* Apple HIG Bottom Tab Bar */
+.apple-hig .apple-tab-bar {
+  display: flex !important;
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 15 !important;
+  height: calc(52px + env(safe-area-inset-bottom)) !important;
+  padding-bottom: env(safe-area-inset-bottom) !important;
+  background: var(--apple-nav-bg) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  border-top: 0.5px solid var(--apple-border) !important;
+  align-items: center !important;
+  justify-content: space-around !important;
+}
+
+.apple-tab-item {
+  flex: 1;
+  height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: #7d6349;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, sans-serif;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.12s ease, color 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.apple-tab-item:active {
+  transform: scale(0.92);
+}
+
+.apple-tab-item.active {
+  color: var(--apple-accent) !important;
+  font-weight: 700 !important;
+}
+
+.apple-tab-icon {
+  font-size: 19px;
+  line-height: 1;
+}
+
+.apple-tab-badge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 16px);
+  background: #e03131;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+}
+
+/* Apple HIG Build Sheet */
+.apple-hig .apple-build-sheet {
+  display: flex !important;
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 20 !important;
+  background: var(--apple-sheet-bg) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  border-radius: 24px 24px 0 0 !important;
+  border-top: 0.5px solid var(--apple-border) !important;
+  box-shadow: 0 -8px 36px rgba(0, 0, 0, 0.22) !important;
+  max-height: 75vh !important;
+  overflow-y: auto !important;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  padding: 8px 16px calc(24px + env(safe-area-inset-bottom)) !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+}
+
+.apple-hig .apple-build-sheet.open {
+  transform: translateY(0) !important;
+}
+
+.apple-build-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+
+.apple-build-sheet-head h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--apple-text);
+  margin: 0;
+}
+
+.apple-moves-pill {
+  background: rgba(110, 42, 20, 0.12);
+  color: #6e2a14;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 12px;
+}
+
+.apple-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding-bottom: 8px;
+}
+
+.apple-tools-grid .wd-btn {
+  height: 72px !important;
+  background: var(--apple-card-bg) !important;
+  border: 0.5px solid rgba(0, 0, 0, 0.12) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+  cursor: pointer !important;
+  transition: transform 0.15s ease, background 0.15s ease !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+.apple-tools-grid .wd-btn:active {
+  transform: scale(0.94) !important;
+  background: rgba(255, 255, 255, 0.95) !important;
+}
+
+.apple-tools-grid .wd-btn .wd-icon {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+.apple-tools-grid .wd-btn-label {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--apple-text) !important;
+}
+
+/* Floating Placement Banner */
+.apple-hig .apple-placement-banner {
+  display: flex !important;
+  position: fixed !important;
+  top: calc(56px + max(8px, env(safe-area-inset-top))) !important;
+  left: 16px !important;
+  right: 16px !important;
+  z-index: 25 !important;
+  background: rgba(24, 24, 27, 0.9) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  color: #fff !important;
+  border-radius: 18px !important;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3) !important;
+  padding: 10px 16px !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  animation: apple-banner-in 0.25s cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+@keyframes apple-banner-in {
+  from { transform: translateY(-20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.apple-placement-banner-text {
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.apple-placement-cancel {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 5px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.apple-placement-cancel:active {
+  background: rgba(255, 255, 255, 0.38);
+}
+
+/* Backdrop Scrim & Bottom Sheets for Panels */
+.apple-hig .sheet-scrim {
+  display: block !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 18 !important;
+  background: rgba(0, 0, 0, 0.35) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+  backdrop-filter: blur(4px) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.25s ease !important;
+}
+
+.apple-hig .sheet-scrim.visible {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.apple-hig .sheet-grabber {
+  display: block !important;
+  width: 36px !important;
+  height: 5px !important;
+  border-radius: 2.5px !important;
+  background: rgba(60, 40, 10, 0.25) !important;
+  margin: 4px auto 10px !important;
+  cursor: grab !important;
+}
+
+.apple-hig > .game-panel {
+  position: fixed !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 !important;
+  border-radius: 24px 24px 0 0 !important;
+  background: var(--apple-sheet-bg) !important;
+  -webkit-backdrop-filter: var(--apple-blur) !important;
+  backdrop-filter: var(--apple-blur) !important;
+  border: none !important;
+  border-top: 0.5px solid var(--apple-border) !important;
+  box-shadow: 0 -8px 36px rgba(0, 0, 0, 0.25) !important;
+  max-height: 85vh !important;
+  z-index: 20 !important;
+  transform: translateY(0);
+  animation: apple-sheet-slide-up 0.32s cubic-bezier(0.32, 0.72, 0, 1) !important;
+  padding: 6px 16px calc(24px + env(safe-area-inset-bottom)) !important;
+}
+
+@keyframes apple-sheet-slide-up {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.apple-hig .sheet-close,
+.apple-hig .game-panel-head .wd-tbtn {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  border-radius: 50% !important;
+  background: rgba(60, 40, 10, 0.12) !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--apple-text) !important;
+  font-size: 14px !important;
+  font-weight: 700 !important;
+  display: grid !important;
+  place-items: center !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+}
+
+.apple-hig .sheet-close:active,
+.apple-hig .game-panel-head .wd-tbtn:active {
+  background: rgba(60, 40, 10, 0.22) !important;
+}
+
+
+.apple-hig .apple-placement-banner[hidden],
+.apple-hig .sheet-scrim[hidden],
+.apple-hig > .game-panel[hidden],
+.apple-hig .apple-build-sheet[hidden] {
+  display: none !important;
+}
+
+
+.apple-tools-grid .wd-btn .wd-icon canvas {
+  width: 32px !important;
+  height: 32px !important;
+  display: block !important;
+}
