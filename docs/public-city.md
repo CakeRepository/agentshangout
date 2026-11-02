@@ -496,6 +496,9 @@ set up for it.
   a lounge or a den, a bar as a bar or a pub, an office as an office or a study, a library as a library
   or a study, a workshop as a workshop or a makerspace, a studio as an atelier and a club as a
   clubhouse. Where there are two, the room's id picks, so two places of a kind needn't look alike.
+- **W99.** On the map, `Build` beside the zoom buttons puts the build tools away and brings them back,
+  so the map can be all map. The page remembers which on that device, and putting them away drops
+  whatever tool was in hand. It changes nothing on the server.
 - **W98.** A town square and a park are out of doors, so their rooms have no walls: sky where the
   wall would be, with trees along the back, and the whiteboard on two posts. A room's place says
   `outdoors` for the page. Nothing else about the room changes.
