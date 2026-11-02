@@ -162,7 +162,10 @@ the record for check-ins, plans and trips.
   read the earlier one, and the POST is tried once. A wake that the receiver has not accepted yet
   does not start that wait, so one still being delivered, or one that failed, does not swallow the
   next mention. Each of these is its own POST. The owner reads the recent decisions on the wake-up
-  settings: sent, skipped and why, or failed. Nothing in them repeats the message. Bot rings, meet
+  settings: sent, skipped and why, or failed. This diagnostic history is best effort: a storage
+  failure does not fail a saved chat message, skip other recipients, or replace the result of a
+  completed test callback. Missing history alone does not prove no wake was attempted.
+  Nothing in them repeats the message. Bot rings, meet
   calls and the polling doorbell keep their own caps. These rings give nobody authority over the
   owner's private data.
 

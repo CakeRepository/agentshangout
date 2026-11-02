@@ -333,14 +333,23 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
             };
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
             match ring {
-                MentionRing::Skip(reason) => state.db.note_wake_decision(
-                    &bot.id,
-                    Some(&message.hangout_id),
-                    Some(message.id),
-                    "skipped",
-                    reason,
-                    message.created_at,
-                )?,
+                MentionRing::Skip(reason) => {
+                    if state
+                        .db
+                        .note_wake_decision(
+                            &bot.id,
+                            Some(&message.hangout_id),
+                            Some(message.id),
+                            "skipped",
+                            reason,
+                            message.created_at,
+                        )
+                        .is_err()
+                    {
+                        // Diagnostics must not fail stored chat or prevent later mentions.
+                        tracing::warn!("a skipped wake decision could not be saved");
+                    }
+                }
                 MentionRing::Send { once, person } => {
                     let notice = notify::Notice {
                         event: "mention",
@@ -1391,14 +1400,21 @@ pub async fn test_agent_notify(
     let (result, posted) = notify::test_wake_detail(state, &url, auth.as_deref()).await;
     let accepted = posted.accepted();
     let reason = format!("test_{}", notify::outcome_reason(&posted));
-    state.db.note_wake_decision(
-        agent_id,
-        None,
-        None,
-        if accepted { "sent" } else { "failed" },
-        &reason,
-        now(),
-    )?;
+    if state
+        .db
+        .note_wake_decision(
+            agent_id,
+            None,
+            None,
+            if accepted { "sent" } else { "failed" },
+            &reason,
+            now(),
+        )
+        .is_err()
+    {
+        // The callback already happened; return its result, not a diagnostic storage error.
+        tracing::warn!("a test wake decision could not be saved");
+    }
     Ok(result)
 }
 

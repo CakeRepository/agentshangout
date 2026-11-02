@@ -38,10 +38,14 @@ impl Server {
     }
 
     async fn start_with(allow_private: bool) -> Self {
+        Self::start_db(Db::open(":memory:").unwrap(), allow_private).await
+    }
+
+    async fn start_db(db: Db, allow_private: bool) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let state = AppState::new(
-            Db::open(":memory:").unwrap(),
+            db,
             Config {
                 public_url: base.clone(),
                 create_code: None,
@@ -1924,4 +1928,88 @@ async fn a_bot_or_person_mentioning_a_person_notifies_their_notification_url() {
     server.say(&kevin, &room, "@Kevin talking to myself").await;
     settle().await;
     assert_eq!(rings(&hook), 0, "no self notification");
+}
+
+// E31: an unavailable diagnostic log must not fail stored chat or skip later recipients.
+#[tokio::test]
+async fn wake_audit_failure_does_not_fail_chat_or_later_mentions() {
+    let path = std::env::temp_dir().join(format!("wake-audit-{}.db", agenthangout::auth::new_id()));
+    let server = Server::start_db(Db::open(path.to_str().unwrap()).unwrap(), true).await;
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (room, owner, other) = server.room().await;
+    let (alpha, _) = server.bot(&owner, &room, "Alpha").await;
+    let (beta, _) = server.bot(&owner, &room, "Beta").await;
+    let bots = server.state.db.agents_in(&room, now()).unwrap();
+    let (url, hook) = start_hook("echo").await;
+    for (index, bot) in bots.iter().enumerate() {
+        let saved = server
+            .put(
+                &owner,
+                &format!("/api/agents/{}/notify", bot.id),
+                json!({"url":url, "only_me":index == 0}),
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::OK);
+    }
+    let cursor = server.tool(&alpha, "events_since", json!({})).await;
+    conn.execute_batch("CREATE TRIGGER fail_audit_insert BEFORE INSERT ON wake_decisions BEGIN SELECT RAISE(FAIL,'fixture'); END;").unwrap();
+    let posted = server
+        .post(
+            &other,
+            &format!("/api/hangouts/{room}/messages"),
+            json!({"text":"@Alpha @Beta audit fault"}),
+        )
+        .await;
+    assert_eq!(posted.status, StatusCode::OK, "{}", posted.body);
+    wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    settle().await;
+    assert_eq!(rings(&hook), 1, "the eligible recipient still gets exactly one wake");
+    for token in [&alpha, &beta] {
+        let inbox = server.tool(token, "inbox", json!({})).await;
+        assert_eq!(inbox["structuredContent"]["mentions"].as_array().unwrap().len(), 1);
+    }
+    let events = server
+        .tool(&alpha, "events_since", json!({"since":cursor["structuredContent"]["cursor"]}))
+        .await;
+    assert!(
+        events["structuredContent"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["name"] == "mention"
+                && event["data"]["body"] == "@Alpha @Beta audit fault"),
+        "{events}"
+    );
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages WHERE body = ?",
+            ["@Alpha @Beta audit fault"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+// E23, E31: logging failure must not replace the actual result of a completed test callback.
+#[tokio::test]
+async fn wake_audit_failure_preserves_test_callback_result() {
+    let path =
+        std::env::temp_dir().join(format!("wake-test-audit-{}.db", agenthangout::auth::new_id()));
+    let server = Server::start_db(Db::open(path.to_str().unwrap()).unwrap(), true).await;
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let (room, owner, _) = server.room().await;
+    let (_, bot) = server.bot(&owner, &room, "Scout").await;
+    let (url, hook) = start_hook("echo").await;
+    let settings = format!("/api/agents/{bot}/notify");
+    server.put(&owner, &settings, json!({"url":url})).await;
+    conn.execute_batch("CREATE TRIGGER fail_audit_insert BEFORE INSERT ON wake_decisions BEGIN SELECT RAISE(FAIL,'fixture'); END;").unwrap();
+    for (mode, accepted, status) in [("echo", true, 204), ("refused", false, 401)] {
+        *hook.mode.lock().unwrap() = mode;
+        let before = hook.hits().len();
+        let result = server.post(&owner, &format!("{settings}/test"), json!({})).await;
+        assert_eq!(result.status, StatusCode::OK, "{}", result.body);
+        assert_eq!(result.body["accepted"], accepted);
+        assert_eq!(result.body["status"], status);
+        assert_eq!(hook.hits().len(), before + 1);
+    }
 }
