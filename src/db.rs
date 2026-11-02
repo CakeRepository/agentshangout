@@ -9621,6 +9621,7 @@ impl Db {
     }
 
     /// None when it was saved. `"full"` at the cap, `"name"` when the floor already uses that name.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_board(
         &self,
         id: &str,
@@ -9702,6 +9703,7 @@ impl Db {
     }
 
     /// None when it was saved. `"full"` at the cap, `"duplicate"` when that issue is already on the board.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_board_card(
         &self,
         id: &str,

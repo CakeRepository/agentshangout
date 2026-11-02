@@ -257,7 +257,7 @@ fn github_repo(repo: &str) -> bool {
         && repo.chars().all(|ch| ch.is_ascii_alphanumeric() || "._-".contains(ch))
 }
 
-fn object<'a>(body: &'a Value) -> ApiResult<&'a serde_json::Map<String, Value>> {
+fn object(body: &Value) -> ApiResult<&serde_json::Map<String, Value>> {
     body.as_object().ok_or_else(|| ApiError::bad_request("expected an object"))
 }
 
@@ -492,12 +492,10 @@ pub fn set_card(
             Some(ops::clean_optional(Some(text), "text", MAX_TEXT)?)
         }
     };
-    if title.is_some() || text.is_some() {
-        if !may_rewrite(state, caller, &card)? {
-            return Err(ApiError::forbidden(
-                "only whoever wrote a card, or whoever runs the space, can change its words",
-            ));
-        }
+    if (title.is_some() || text.is_some()) && !may_rewrite(state, caller, &card)? {
+        return Err(ApiError::forbidden(
+            "only whoever wrote a card, or whoever runs the space, can change its words",
+        ));
     }
     let status = match body.get("status") {
         None => None,
