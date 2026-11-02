@@ -418,6 +418,8 @@ pub fn city_view(state: &AppState, caller: &Caller, city_id: &str) -> ApiResult<
     if !caller.is_agent() {
         for bot in &mut bots {
             bot.discord = state.db.discord_link(&bot.id)?;
+            // K24: who an apprentice was made by.
+            bot.apprenticed_by = crate::bonds::apprenticed_by(state, &bot.id)?;
         }
     }
     let bot_ids: Vec<String> = bots.iter().map(|bot| bot.id.clone()).collect();

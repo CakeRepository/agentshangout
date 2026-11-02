@@ -24,7 +24,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::{
     account,
     auth::{self, Caller, MaybeCaller, SESSION_COOKIE, SESSION_SECS},
-    boards,
+    boards, bonds,
     city::{self, PassInput, TripInput},
     clock,
     closeness::{self, FindTime, WindowInput},
@@ -98,6 +98,7 @@ pub fn routes() -> Router<AppState> {
         .merge(discord_routes())
         .merge(sign_in_routes())
         .merge(friends::routes())
+        .merge(bonds::routes())
         .merge(tutorial::routes())
         .merge(god_mode::routes())
         .merge(spaces::routes())
@@ -367,6 +368,8 @@ async fn me(State(state): State<AppState>, caller: Caller) -> ApiResult<Json<Val
         "plans_on_house_calendar": state.db.shows_plans_to_house(&caller.person_id)?,
         // FR5: places a friend has invited them to.
         "invited": friends::invited(&state, &caller.person_id)?,
+        // K16: apprentices waiting for them to answer.
+        "apprentices": bonds::asking(&state, &caller.person_id)?,
         // B2: the time zone their page last reported, or null.
         "clock": state.db.person_clock(&caller.person_id)?,
     });

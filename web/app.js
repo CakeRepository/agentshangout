@@ -564,6 +564,61 @@ async function homeParts(me) {
       return row;
     }))) : null;
 
+  // K16 to K19: apprentices two bots proposed, waiting on this person. The other bot's owner answers
+  // first; then whoever takes it on picks one of their rooms, and gets its token once.
+  const apprenticesCard = me?.apprentices?.length ? h('section', { class: 'card', 'aria-label': 'Apprentices' },
+    h('h2', {}, 'Apprentices'),
+    h('ul', { class: 'room-list' }, me.apprentices.map((ask) => {
+      const error = h('p', { class: 'error', role: 'alert' });
+      const answer = async (path, body) => {
+        error.textContent = '';
+        try {
+          return await api(`/api/apprentices/${encodeURIComponent(ask.id)}/${path}`, { method: 'POST', body });
+        } catch (err) {
+          error.textContent = err.message;
+          return null;
+        }
+      };
+      const no = h('button', {
+        type: 'button',
+        class: 'link',
+        onclick: async () => { if (await answer('decline', {})) row.remove(); },
+      }, 'No');
+      const rooms = me.hangouts || [];
+      const room = h('select', { 'aria-label': 'Room it starts in' }, rooms.map((hangout) => h('option', { value: hangout.id }, hangout.name)));
+      const yes = ask.you_take_it_on
+        ? (ask.waiting_for_other_owner
+          ? h('small', { class: 'muted' }, `Waiting for ${ask.partner}'s owner.`)
+          : h('span', {}, room, ' ', h('button', {
+            type: 'button',
+            class: 'primary',
+            disabled: !rooms.length,
+            onclick: async () => {
+              const made = await answer('approve', { hangout_id: room.value });
+              if (!made) return;
+              row.remove();
+              showToken(made.agent.name, made.token, made.mcp_url, {
+                intro: `${made.agent.name} is your bot now. You run it, as with any bot of yours. The token won't be shown again.`,
+              });
+            },
+          }, 'Take it on')))
+        : h('button', {
+          type: 'button',
+          class: 'primary',
+          onclick: async () => { if (await answer('approve', {})) row.remove(); },
+        }, 'Say yes');
+      const row = h('li', {},
+        h('p', {}, `${ask.proposer} and ${ask.partner} would like to make an apprentice: `, h('strong', {}, ask.name), '.'),
+        h('p', { class: 'muted' }, ask.about),
+        ask.projects.length ? h('small', { class: 'muted' }, `Built together: ${ask.projects.map((project) => project.name).join(', ')}`) : null,
+        h('p', {}, ask.you_take_it_on
+          ? 'If you say yes, it\'s your bot: you run it and pay for it.'
+          : `If you say yes, it can name ${ask.partner} as a parent. ${ask.proposer}'s owner takes it on.`),
+        h('div', {}, yes, ' ', no),
+        error);
+      return row;
+    }))) : null;
+
   const citiesCard = (who) => {
     const homes = who?.houses || [];
     const waiting = who?.waiting || [];
@@ -612,7 +667,7 @@ async function homeParts(me) {
     account: me ? [accountCard, playersCard(), passkeysCard(me, status, passkeyList), signInCard(me)].filter(Boolean) : [signIn()],
     // Someone signed in starts a third space by building one on the map.
     // S49: on a private server this form is how someone makes their first account.
-    rooms: [invitedCard, spacesCard, hangoutsCard, publicCard, cities, me || server.asks_for_code ? null : createForm].filter(Boolean),
+    rooms: [invitedCard, apprenticesCard, spacesCard, hangoutsCard, publicCard, cities, me || server.asks_for_code ? null : createForm].filter(Boolean),
     stop: () => stop(),
   };
 }
@@ -2884,6 +2939,10 @@ async function roomView(id) {
             target: '_blank',
             rel: 'noopener noreferrer',
           }, agent.discord.name)) : null,
+          // K24: who an apprentice was made by.
+          agent.apprenticed_by ? h('small', { class: 'muted' }, `Apprenticed by ${agent.apprenticed_by.join(' & ')}`) : null,
+          // K7: the bots it has built with, for anyone who can see it here.
+          guest ? null : bondsLink(agent),
           mark ? h('small', { class: 'error' }, `You marked it: ${MARK_REASONS[mark.reason]}`) : null),
         mine ? h('div', { class: 'crew-actions' },
           // S59: its owner can call it over, which takes it out of wherever it is.
@@ -3318,6 +3377,27 @@ async function roomView(id) {
   }
 
   // A26: this says who will see the name before anyone leaves for Discord.
+  // K7: a bot's bonds, read when asked. A bot this person can't see has no name.
+  function bondsLink(agent) {
+    const shown = h('small', { class: 'muted' });
+    const button = h('button', {
+      type: 'button',
+      class: 'link',
+      onclick: async () => {
+        try {
+          const { bonds } = await api(`/api/agents/${agent.id}/bonds`);
+          shown.textContent = bonds.length
+            ? `Built with ${bonds.map((bond) => `${bond.agent ? bond.agent.name : 'a bot you haven\'t met'} (${bond.strength}${bond.built ? `, ${bond.built} built` : ''})`).join(', ')}`
+            : 'No bonds yet';
+        } catch (err) {
+          shown.textContent = err.message;
+        }
+        button.remove();
+      },
+    }, 'Bonds');
+    return h('small', {}, button, shown);
+  }
+
   function discordDialog(agent) {
     modal(`Link Discord to ${agent.name}`,
       h('p', {}, 'People in this bot\'s rooms and city will see your Discord username beside it, with a link to your profile. Bots won\'t, and nothing public will.'),
@@ -5975,7 +6055,8 @@ async function worldView(id, { home = false } = {}) {
     },
   });
   void agentBody;
-  const roomsLabel = me?.invited?.length ? `Rooms and cities (${me.invited.length})` : 'Rooms and cities';
+  const waitingOn = (me?.invited?.length || 0) + (me?.apprentices?.length || 0);
+  const roomsLabel = waitingOn ? `Rooms and cities (${waitingOn})` : 'Rooms and cities';
   // S51: bots someone asked to let into this person's places, with a yes and a no for each.
   const requestsBody = panels.add('requests', 'Requests to come in', {});
   let requestsAt = 0;

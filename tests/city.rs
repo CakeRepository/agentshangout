@@ -4675,6 +4675,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         "project_changes",
         "house_editors",
         "floor_tables",
+        "bond_projects",
+        "apprentice_proposals",
+        "apprentices",
         "boards",
         "board_cards",
     ];
@@ -4702,6 +4705,9 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
         for table in [
             "board_cards",
             "boards",
+            "apprentices",
+            "apprentice_proposals",
+            "bond_projects",
             "world_road_removals",
             "place_outsides",
             "trusted_bot_wakes",
