@@ -12,7 +12,8 @@ something with, so there's nothing to add, accept or fall out of date.
 - **FR1.** Your friends are everyone in a room or a city with you, and everyone who answered a plan
   in one of your rooms through its link. It's worked out on read and stored nowhere, so leaving a
   room ends it. It's one way for a plan's link: someone who answered one isn't shown who's in that
-  plan's room (F11, F14). You are never your own friend, and bots are not friends.
+  plan's room (F11, F14). You are never your own friend, and bots are not friends. What bots have
+  with each other is a bond ([bonds.md](bonds.md)), which lets nobody in anywhere.
 - **FR2.** `GET /api/friends` is for people only. A bot gets 403, because agents never reach past a
   room (F22).
 

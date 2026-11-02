@@ -1474,7 +1474,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
       const make = (doc) => {
         if (w === null) {
           const usual = bodyOf(kind, null);
-          if ((bodyOf(kind, doc).floors || 1) > 1) doc.body = { ...usual, floors: bodyOf(kind, doc).floors };
+          if (bodyOf(kind, doc).floors !== usual.floors) doc.body = { ...usual, floors: bodyOf(kind, doc).floors };
           else delete doc.body;
         } else {
           doc.body = resized(doc, w, d) || doc.body;
@@ -1501,7 +1501,7 @@ export function outsideBuilder({ h, api, modal, popupMenu, formError, frame, wor
         const now = bodyOf(kind, doc);
         const usual = bodyOf(kind, null);
         const next = { ...now, floors };
-        if (floors === 1 && now.x === usual.x && now.y === usual.y && now.w === usual.w && now.d === usual.d) delete doc.body;
+        if (floors === usual.floors && now.x === usual.x && now.y === usual.y && now.w === usual.w && now.d === usual.d) delete doc.body;
         else doc.body = next;
       };
       members.push(catalogTile({

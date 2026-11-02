@@ -834,6 +834,13 @@ CREATE TABLE IF NOT EXISTS house_editors (
     person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
     PRIMARY KEY (player_id, person_id)
 );
+-- I67: where a floor's table stands and what it's like, once someone has moved or restyled it.
+CREATE TABLE IF NOT EXISTS floor_tables (
+    hangout_id  TEXT PRIMARY KEY REFERENCES hangouts(id) ON DELETE CASCADE,
+    x           INTEGER NOT NULL,
+    y           INTEGER NOT NULL,
+    style       TEXT NOT NULL
+);
 
 "#;
 
@@ -9171,6 +9178,32 @@ impl Db {
     // Items on a floor (docs/rooms.md)
 
     /// What stands on a floor, oldest first. A room that isn't a floor has none.
+    /// I67: a floor's table, if it has been moved or restyled.
+    pub fn floor_table(&self, hangout_id: &str) -> rusqlite::Result<Option<(i64, i64, String)>> {
+        self.conn()
+            .query_row(
+                "SELECT x, y, style FROM floor_tables WHERE hangout_id = ?",
+                [hangout_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+    }
+
+    pub fn set_floor_table(
+        &self,
+        hangout_id: &str,
+        x: i64,
+        y: i64,
+        style: &str,
+    ) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO floor_tables (hangout_id, x, y, style) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (hangout_id) DO UPDATE SET x = ?2, y = ?3, style = ?4",
+            params![hangout_id, x, y, style],
+        )?;
+        Ok(())
+    }
+
     pub fn floor_items(&self, hangout_id: &str) -> rusqlite::Result<Vec<FloorItem>> {
         items_on(&self.conn(), hangout_id)
     }

@@ -2316,10 +2316,14 @@ fn clamp_window(asked: Option<i64>, map: usize) -> usize {
 pub fn step_world(state: &AppState, world_id: &str, now: i64) -> ApiResult<usize> {
     let changed = state.db.in_transaction(|tx| -> ApiResult<usize> {
         let world = tx.world(world_id)?.ok_or_else(not_found)?;
+        // Capture the phase before the final strike can mark the disaster finished.
+        let striking = tx
+            .world_end(&world.id)?
+            .is_some_and(|end| matches!(phase_of(&end, &world), Phase::Striking(..)));
         let mut changes = disaster_step(state, tx, &world)?;
         let mut reason = "disaster";
         // W94: on The Commons, roads laid side by side are thinned out, but not while a disaster strikes.
-        if changes.is_empty() && world.id == COMMONS_ID {
+        if !striking && changes.is_empty() && world.id == COMMONS_ID {
             let hoods = world::neighborhoods(world.seed, world.size);
             let slab = world::slab_tiles(&hoods, &tx.all_tiles(&world.id)?);
             changes.extend(slab.into_iter().map(Change::Remove));

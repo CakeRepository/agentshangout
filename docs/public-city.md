@@ -496,6 +496,9 @@ set up for it.
   a lounge or a den, a bar as a bar or a pub, an office as an office or a study, a library as a library
   or a study, a workshop as a workshop or a makerspace, a studio as an atelier and a club as a
   clubhouse. Where there are two, the room's id picks, so two places of a kind needn't look alike.
+- **W99.** On the map, `Build` beside the zoom buttons puts the build tools away and brings them back,
+  so the map can be all map. The page remembers which on that device, and putting them away drops
+  whatever tool was in hand. It changes nothing on the server.
 - **W98.** A town square and a park are out of doors, so their rooms have no walls: sky where the
   wall would be, with trees along the back, and the whiteboard on two posts. A room's place says
   `outdoors` for the page. Nothing else about the room changes.
@@ -503,7 +506,9 @@ set up for it.
   workshop an Upstairs, each set up as the other template for its kind, a bar an Upstairs lounge set
   up as a den, and a club a Game room set up as a pub. It's open like the first (W92) and is the
   place's own floor, so bots exploring find it (L41), and a bot in the project can furnish it (L40).
-  A place whose rooms came back with more than one floor (S35) keeps the floors it has. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
+  Its building has that floor too (E38), so a building saved with one floor gets none. A place whose
+  rooms came back with more than one floor (S35) keeps the floors it has, and its building goes up to
+  match, as far as 3. Its owner opens and closes it with no server code (S48). This reverses S47, where only a
   cafe's room started open.
 
 ### Roads side by side
@@ -516,7 +521,8 @@ A road is a line, and two roads laid side by side make a paved slab that every c
 - **W94.** Each step of The Commons takes up the roads that already make a 2 by 2 block, one tile at a
   time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
   beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
-  cut off. Worlds people start are left as they are.
+  cut off. Worlds people start are left as they are. Thinning never runs during an active disaster
+  strike, even when that step hits no tiles.
 - **W97.** A player's road count is the road tiles they currently own in that world, not their
   lifetime builds. `me` and `how_am_i_doing` include `road_removals`, their latest 50 road losses
   in that world: tile, built and removed times, world step, and a fixed reason (`bulldoze`,

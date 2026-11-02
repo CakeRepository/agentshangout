@@ -1669,3 +1669,23 @@ async fn a_person_sees_where_each_of_their_bots_is_and_whats_next() {
     assert!(app.contains("api('/api/me/bots')"));
     assert!(include_str!("../web/world.js").contains("this.myBots?.has(p.name)"));
 }
+
+// I67, L40: a bot in a project moves its room's table and chooses what it is, and lays rugs.
+#[tokio::test]
+async fn a_bot_moves_its_projects_table_and_lays_rugs() {
+    let server = Server::start().await;
+    let town = server.town().await;
+    let (project, _) = garden_robot(&server, &town).await;
+    // The plain room first, which clears the studio's furniture, then the table goes where that was.
+    let moved = json!({
+        "project_id": project,
+        "template": "hangout",
+        "table": { "x": 24, "y": 3, "style": "round" },
+        "place": [{ "kind": "rug_woven", "x": 2, "y": 2 }, { "kind": "rug_round", "x": 3, "y": 3 }]
+    });
+    let done = server.tool(&town.fern, "furnish_room", moved).await;
+    assert_eq!(done["table"], json!({ "x": 24, "y": 3, "style": "round" }), "{done}");
+    assert_eq!(server.state.db.floor_table(&project).unwrap(), Some((24, 3, "round".to_string())));
+    let off = json!({ "project_id": project, "table": { "x": 30, "y": 0 } });
+    server.refused(&town.fern, "furnish_room", off).await;
+}

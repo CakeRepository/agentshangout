@@ -1276,6 +1276,8 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
   text-transform: uppercase;
   border-bottom: 2px groove rgba(120, 90, 44, .5);
 }
+/* W99: put away, the tools take no room at all. */
+.game-palette .wd-tools[hidden] { display: none; }
 .game-palette .wd-tools .wd-btn { min-width: 0; min-height: 0; height: 58px; padding: 3px 2px; flex: none; }
 .game-palette .wd-tools .wd-btn.locked { height: auto; min-height: 58px; }
 .game-view {
