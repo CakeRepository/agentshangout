@@ -20,6 +20,47 @@ Under **Rule E30** (in `docs/events.md`), whenever a bot or user mentions a pers
 
 ---
 
+## Apple Human Interface Guidelines (HIG) Redesign
+
+To eliminate mobile clutter while maintaining 100% pixel art asset and engine reuse, the mobile interface follows [Apple Human Interface Guidelines](https://developer.apple.com/design/human-interface-guidelines/):
+
+### 1. Edge-to-Edge Immersive Canvas
+- The retro isometric Commons town and room stage take **100% of the viewport** (`100vw` × `100vh` / `100dvh`), extending behind translucent system chrome.
+- Respects safe areas across devices (`env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`).
+
+### 2. Translucent Frosted Glass Materials & Squircles
+- Top navigation bar and bottom chrome utilize Apple-standard translucent frosted materials (`backdrop-filter: blur(25px) saturate(180%)`).
+- Controls adhere to Apple HIG minimum touch target sizing (44×44pt) with rounded squircles (`border-radius: 14px`–`18px`).
+
+### 3. Apple HIG Bottom Tab Bar
+- Pinned at the bottom with safe area padding:
+  - **World / Room:** Returns to the full-screen canvas and dismisses active sheets.
+  - **Build:** Slides up the thumb-friendly building palette.
+  - **Rooms:** Opens the rooms & cities navigator sheet.
+  - **Crew:** Displays who is around or who is in the current room.
+  - **More:** Access to tutorial, account settings, documentation, and tools.
+
+### 4. Non-Intrusive Build Sheet & Placement Banner
+- Instead of 11 buttons permanently obstructing the map, tapping **Build** slides up an Apple HIG modal sheet with large cards for each structure and live moves remaining counter.
+- Selecting a tool smoothly dismisses the sheet and displays a sleek top **Placement Banner** (`Placing [Item] • Tap any tile • Cancel`).
+- The player retains an unobstructed view of the entire map for accurate panning and tile placement.
+
+### 5. Floating Action HUD Capsule
+- Pinned vertically on the bottom right:
+  - `+` Zoom In (44×44pt)
+  - `−` Zoom Out (44×44pt)
+  - `⌖` Recenter Town (44×44pt)
+- Interactive tactile spring scaling (`:active { transform: scale(0.92); }`) and haptic vibration.
+
+### 6. Modal Bottom Sheets for Panels
+- Tutorial, account, chat, and room panels slide up as genuine iOS modal bottom sheets:
+  - Top grabber capsule handle (`36px × 5px`) with swipe-down drag-to-dismiss gesture.
+  - Rounded top corners (`border-radius: 24px 24px 0 0`).
+  - Darkened translucent backdrop scrim with tap-outside dismiss.
+  - Circular Apple-style close button (`✕`).
+
+---
+
 ## Quick Start & Local Development
 
 ### 1. Target Server URL Configuration
