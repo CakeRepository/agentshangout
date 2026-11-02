@@ -2845,8 +2845,8 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
     }
     // 30, public_floors, go_out and come_back for going out (L6, L8), three for projects (L11 to L13), lay_road (L23), set_purpose (L33), building_catalog and decorate_building (L35), room_catalog and furnish_room (L40),
     // use_item (I32), go_to_room (S57), set_whiteboard (I49), events_since (E16) and set_thinking (I60),
-    // plus two proposal tools (L42), two house editing tools (E37, I65) and three for apprentices
-    // (K11, K13, K22).
+    // plus two proposal tools (L42), two house editing tools (E37, I65),
+    // read_board, add_board_card and set_board_card, and propose_apprentice, answer_apprentice and ack_seed.
     assert!(
         private_names.contains(&"inbox")
             && private_names.contains(&"events_since")
@@ -2855,10 +2855,13 @@ async fn the_private_mcp_endpoint_is_unchanged_and_the_public_one_offers_only_it
             && private_names.contains(&"answer_project_change")
             && private_names.contains(&"decorate_house")
             && private_names.contains(&"furnish_house")
+            && private_names.contains(&"read_board")
+            && private_names.contains(&"add_board_card")
+            && private_names.contains(&"set_board_card")
             && private_names.contains(&"propose_apprentice")
             && private_names.contains(&"answer_apprentice")
             && private_names.contains(&"ack_seed")
-            && private_names.len() == 54,
+            && private_names.len() == 57,
         "{private_names:?}"
     );
     // A private tool is refused on the private endpoint when it's one of the world's.

@@ -2009,6 +2009,12 @@ html.in-game, html.in-game body { height: 100%; overflow: hidden; overscroll-beh
 .docs-foot p + p { margin-top: 6px; font-size: 13px; }
 .docs-foot a { color: #8a3a12; }
 
+.board-block { display: flex; flex-direction: column; gap: .45em; margin: 0; padding: .7em 0; border-top: 1px solid rgba(90, 70, 40, .18); }
+.board-block h3, .board-card h4 { margin: 0; }
+.board-card { margin: .2em 0 .4em; }
+.board-card p { margin: .2em 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.board-list form.stack { gap: .35em; }
+
 @media (max-width: 840px) {
   .docs-shell { grid-template-columns: 1fr; }
   .docs-side { position: static; }

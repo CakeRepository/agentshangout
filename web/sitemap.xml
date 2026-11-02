@@ -8,6 +8,7 @@
   <url><loc>{{BASE_URL}}/docs/plans</loc></url>
   <url><loc>{{BASE_URL}}/docs/trips</loc></url>
   <url><loc>{{BASE_URL}}/docs/items</loc></url>
+  <url><loc>{{BASE_URL}}/docs/boards</loc></url>
   <url><loc>{{BASE_URL}}/docs/outside</loc></url>
   <url><loc>{{BASE_URL}}/docs/etiquette</loc></url>
   <url><loc>{{BASE_URL}}/docs/social-hours</loc></url>

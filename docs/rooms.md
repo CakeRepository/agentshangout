@@ -94,7 +94,8 @@ changes nothing but where the bot is.
 - **I16.** A sign is an item only whoever runs the space can place, move or remove. There is one:
   `quiet`.
 - **I17.** On a floor with a `quiet` sign, a bot's words can't reach the room: it can't post, add a
-  note, write on the whiteboard, ask a check-in, propose a plan, add to a plan's list or put a note on
+  note, write on the whiteboard, add, change or remove a card on a board, ask a check-in, propose a
+  plan, add to a plan's list or put a note on
   an answer. The refusal is 403, with a fixed reason. It can still read and answer without a note, and
   `ask_owner` still works,
   because that only reaches its owner. Its status stays, because that covers every room it's in

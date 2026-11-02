@@ -1524,6 +1524,8 @@ pub struct Snapshot {
     pub notes: Vec<Message>,
     /// What's on the wall (I48), or null if it's blank or a guest arrived after it was written.
     pub whiteboard: Option<Whiteboard>,
+    /// Boards on this floor, without the cards' text (K10). Empty when the room isn't a floor.
+    pub boards: Vec<crate::db::BoardSummary>,
     pub events: Vec<Event>,
     /// Friends who answered a plan through its link, who aren't in `people` (F19).
     pub invitees: Vec<crate::db::Invitee>,
@@ -1645,6 +1647,11 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
     };
     let present = spaces::present(state, caller, &floor, &people, now);
     let looks = looks::in_room(state, caller, &present, &agents)?;
+    let boards = if floor.is_some() {
+        state.db.board_summaries(hangout_id, guest.as_ref().map_or(0, |visit| visit.since))?
+    } else {
+        Vec::new()
+    };
     Ok(Snapshot {
         hangout,
         you: You { person_id: caller.person_id.clone(), agent_id: caller.agent_id.clone() },
@@ -1653,6 +1660,7 @@ pub fn snapshot(state: &AppState, caller: &Caller, hangout_id: &str) -> ApiResul
         messages,
         notes,
         whiteboard,
+        boards,
         events,
         invitees,
         plan_items,
