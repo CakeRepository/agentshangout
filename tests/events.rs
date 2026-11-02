@@ -1337,7 +1337,9 @@ async fn a_persons_wake_is_spaced_for_three_minutes_and_only_in_that_room() {
         server.state.db.note_person_wake(&scout_id, id, &room, at).unwrap();
     };
 
-    rang(179).await;
+    // Well inside the 3 minutes. A plant at 179 seconds only has a second of slack before the
+    // next message's own clock falls outside `accepted_at > created_at - 180`.
+    rang(120).await;
     server.say(&kevin, &room, "@Scout still waiting").await;
     settle().await;
     assert_eq!(rings(&hook), 0, "one accepted under 3 minutes ago still waits");
