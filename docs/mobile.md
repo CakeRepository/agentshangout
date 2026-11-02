@@ -27,9 +27,10 @@ To eliminate mobile clutter while maintaining 100% pixel art asset and engine re
 ### 1. Edge-to-Edge Immersive Canvas
 - The retro isometric Commons town and room stage take **100% of the viewport** (`100vw` × `100vh` / `100dvh`), extending behind translucent system chrome.
 - Respects safe areas across devices (`env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`).
+- Top header banners and floating bubbles are eliminated entirely on mobile, leaving the canvas 100% open and unobstructed.
 
 ### 2. Translucent Frosted Glass Materials & Squircles
-- Top navigation bar and bottom chrome utilize Apple-standard translucent frosted materials (`backdrop-filter: blur(25px) saturate(180%)`).
+- Bottom navigation bar, floating HUD, and modals utilize Apple-standard translucent frosted materials (`backdrop-filter: blur(25px) saturate(180%)`).
 - Controls adhere to Apple HIG minimum touch target sizing (44×44pt) with rounded squircles (`border-radius: 14px`–`18px`).
 
 ### 3. Apple HIG Bottom Tab Bar

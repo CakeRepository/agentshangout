@@ -5475,6 +5475,16 @@ fn the_status_bar_under_the_map_stays_one_line_tall() {
     assert!(app.contains("townEl.title = "), "a goal that doesn't fit can still be read");
 }
 
+#[test]
+fn mobile_apple_hig_leaves_map_unobstructed_without_header_pill() {
+    let css = include_str!("../web/style.css");
+    assert!(
+        css.contains(".apple-hig .wd-title {\r\n  display: none !important;\r\n")
+            || css.contains(".apple-hig .wd-title {\n  display: none !important;\n"),
+        "mobile hides the top header title bubble"
+    );
+}
+
 // W83, W84, W85, W87
 #[tokio::test]
 async fn roads_follow_the_streets_of_their_neighborhood_and_a_short_lane_goes_anywhere() {
