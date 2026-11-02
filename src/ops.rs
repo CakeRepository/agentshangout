@@ -24,7 +24,8 @@ const MAX_LOCATION_CHARS: usize = 200;
 const MAX_NOTE_CHARS: usize = 500;
 const MAX_STATUS_CHARS: usize = 120;
 const MAX_WHITEBOARD_CHARS: usize = 2000;
-/// E22: how long an unread @mention holds a bot's wake-up URL quiet: 20 rings an hour at most.
+/// E22, E30: three minutes. An unread accepted ring holds the owner's next one. A non-owner
+/// person's accepted ring holds the next person in that room even after a read. 20 an hour at most.
 const MENTION_RING_SECS: i64 = 3 * 60;
 const ACTIVITY_KINDS: [&str; 1] = ["computer"];
 const MAX_ACTIVITY_VIA_CHARS: usize = 40;
@@ -297,8 +298,14 @@ pub fn post_message(
     Ok(message)
 }
 
-/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22: a
-/// person's can also ring it.
+/// What a mention does to a wake-up URL. `person` is a human who is not the bot's owner.
+enum MentionRing {
+    Send { once: bool, person: bool },
+    Skip(&'static str),
+}
+
+/// B8: an @mention of a bot that's in this room, kept until that bot reads the room. E22 and E30:
+/// a person's can also ring it, and the owner can see why one did not.
 fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     if message.kind != "chat" {
         return Ok(());
@@ -319,19 +326,41 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
                 && message.agent_id.is_some()
                 && state.db.note_bot_wake_ring(&bot.id, message.id, message.created_at)?;
             // Keep the separately authorized L30 public-social path and its own limits intact.
-            let rings = home_bot_ring || rings_for_mention(state, message, bot, belongs)?;
+            let ring = if home_bot_ring {
+                MentionRing::Send { once: true, person: false }
+            } else {
+                rings_for_mention(state, message, bot, belongs)?
+            };
             state.db.add_mention(&bot.id, &message.hangout_id, message.id, message.created_at)?;
-            if rings {
-                let notice = notify::Notice {
-                    event: "mention",
-                    hangout_id: message.hangout_id.clone(),
-                    text: "Someone mentioned you. Call inbox. To reply in a room, call say."
-                        .to_string(),
-                };
-                if home_bot_ring {
-                    notify::send_once(state, &bot.id, &notice);
-                } else {
-                    notify::send(state, std::slice::from_ref(&bot.id), &notice);
+            match ring {
+                MentionRing::Skip(reason) => state.db.note_wake_decision(
+                    &bot.id,
+                    Some(&message.hangout_id),
+                    Some(message.id),
+                    "skipped",
+                    reason,
+                    message.created_at,
+                )?,
+                MentionRing::Send { once, person } => {
+                    let notice = notify::Notice {
+                        event: "mention",
+                        hangout_id: message.hangout_id.clone(),
+                        text: "Someone mentioned you. Call inbox. To reply in a room, call say."
+                            .to_string(),
+                    };
+                    let agent_id = bot.id.clone();
+                    let hangout_id = message.hangout_id.clone();
+                    let message_id = message.id;
+                    notify::send_result(state, &bot.id, &notice, once, move |state, posted| {
+                        record_mention_delivery(
+                            state,
+                            &agent_id,
+                            message_id,
+                            &hangout_id,
+                            person,
+                            &posted,
+                        );
+                    });
                 }
             }
         }
@@ -339,14 +368,46 @@ fn note_mentions(state: &AppState, message: &Message) -> ApiResult<()> {
     Ok(())
 }
 
-/// E22, E24, E25: whether this person's @mention rings this bot. `belongs` is whether the bot
-/// belongs in this room. A ring is recorded here, because the cap is decided as it's counted.
+fn record_mention_delivery(
+    state: &AppState,
+    agent_id: &str,
+    message_id: i64,
+    hangout_id: &str,
+    person: bool,
+    posted: &notify::Posted,
+) {
+    let at = now();
+    let (decision, reason) = if posted.accepted() {
+        if person {
+            if let Err(error) = state.db.note_person_wake(agent_id, message_id, hangout_id, at) {
+                tracing::warn!(%error, "a person wake could not be recorded");
+            }
+        }
+        ("sent", "accepted".to_string())
+    } else {
+        ("failed", notify::outcome_reason(posted))
+    };
+    if let Err(error) = state.db.note_wake_decision(
+        agent_id,
+        Some(hangout_id),
+        Some(message_id),
+        decision,
+        &reason,
+        at,
+    ) {
+        tracing::warn!(%error, "a wake decision could not be saved");
+    }
+}
+
+/// E22, E24, E25, E30: who this mention rings, and why it doesn't. `belongs` is whether the bot
+/// belongs in this room. A capped ring is recorded here, because the cap is decided as it's counted.
+/// A non-owner person's ring is not: it counts only once the receiver accepts it.
 fn rings_for_mention(
     state: &AppState,
     message: &Message,
     bot: &Agent,
     belongs: bool,
-) -> ApiResult<bool> {
+) -> ApiResult<MentionRing> {
     let room = &message.hangout_id;
     let at = message.created_at;
     let public = state.db.floor(room)?.is_some_and(|floor| floor.access == "public");
@@ -358,16 +419,28 @@ fn rings_for_mention(
         && (belongs || !state.db.walked_onto(&bot.id, at)?.contains(room))
         && !(belongs && in_same_project(state, message, at)?)
     {
-        return Ok(false);
+        return Ok(MentionRing::Skip("bot"));
     }
     let speaker = message.person_id.as_deref().unwrap_or_default();
     let owner = !from_bot && speaker == bot.owner_id;
-    if state.db.notify_url(&bot.id)?.is_none()
-        || state.db.doorbell_paused(&bot.id)?
-        || state.db.wake_ring_unread(&bot.id, room, at - MENTION_RING_SECS)?
-        || (!owner && state.db.wakes_only_for_owner(&bot.id)?)
-    {
-        return Ok(false);
+    if state.db.notify_url(&bot.id)?.is_none() {
+        return Ok(MentionRing::Skip("no_url"));
+    }
+    if state.db.doorbell_paused(&bot.id)? {
+        return Ok(MentionRing::Skip("paused"));
+    }
+    if !owner && state.db.wakes_only_for_owner(&bot.id)? {
+        return Ok(MentionRing::Skip("only_me"));
+    }
+    // E30: anyone who could post here. Not the daily cap, and not social hours. One try.
+    if !from_bot && !owner {
+        if state.db.person_wake_recent(&bot.id, room, at - MENTION_RING_SECS)? {
+            return Ok(MentionRing::Skip("cooldown"));
+        }
+        return Ok(MentionRing::Send { once: true, person: true });
+    }
+    if state.db.wake_ring_unread(&bot.id, room, at - MENTION_RING_SECS)? {
+        return Ok(MentionRing::Skip("unread"));
     }
     // A bot on a trip isn't out, so its hosts can wake it the way the doorbell does (L10).
     let out = !belongs && state.db.bot_visits(&bot.id, at)?.contains(room);
@@ -376,11 +449,15 @@ fn rings_for_mention(
     } else {
         let routine = crate::routines::routine_view(state, &bot.id, &bot.owner_id)?;
         if !public && !routine.social_now {
-            return Ok(false);
+            return Ok(MentionRing::Skip("social_hours"));
         }
         Some(routine.max_social_runs)
     };
-    Ok(state.db.note_wake_ring(&bot.id, message.id, at, cap)?)
+    if state.db.note_wake_ring(&bot.id, message.id, at, cap)? {
+        Ok(MentionRing::Send { once: false, person: false })
+    } else {
+        Ok(MentionRing::Skip("cap"))
+    }
 }
 
 /// L39: whether this room is a project's and the bot that wrote this line is in it too.
@@ -1276,7 +1353,7 @@ pub fn leave_public_rooms(state: &AppState, agent_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// E23: one try with what's saved, so an owner can see a refused key.
+/// E23: one try with what's saved, so an owner can see a refused key. The result is kept (E30).
 pub async fn test_agent_notify(
     state: &AppState,
     caller: &Caller,
@@ -1286,7 +1363,18 @@ pub async fn test_agent_notify(
     let url = state.db.notify_url(agent_id)?;
     let url = url.ok_or_else(|| ApiError::bad_request("save a URL first"))?;
     let auth = state.db.notify_auth(agent_id)?;
-    Ok(notify::test_wake_up(state, &url, auth.as_deref()).await)
+    let (result, posted) = notify::test_wake_detail(state, &url, auth.as_deref()).await;
+    let accepted = posted.accepted();
+    let reason = format!("test_{}", notify::outcome_reason(&posted));
+    state.db.note_wake_decision(
+        agent_id,
+        None,
+        None,
+        if accepted { "sent" } else { "failed" },
+        &reason,
+        now(),
+    )?;
+    Ok(result)
 }
 
 /// The URL, and whether a key is saved. The key itself stays on the server.
@@ -1309,8 +1397,73 @@ pub fn agent_notify(
             }
         }
     }
+    let decisions = state
+        .db
+        .wake_decisions(agent_id)?
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "decision": row.decision,
+                "reason": row.reason,
+                "hangout_id": row.hangout_id,
+                "room": row.room,
+                "at": iso(row.at),
+                "says": decision_says(&row.decision, &row.reason, row.room.as_deref()),
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(serde_json::json!({ "url": url, "auth": auth, "only_me": only_me,
-        "trusted_bots": trusted_bots, "available_bots": available_bots }))
+        "trusted_bots": trusted_bots, "available_bots": available_bots, "decisions": decisions }))
+}
+
+/// E30: what the owner reads. The message itself is never in here.
+fn decision_says(decision: &str, reason: &str, room: Option<&str>) -> String {
+    let room = room.filter(|name| !name.is_empty()).unwrap_or("a room");
+    if let Some(detail) = reason.strip_prefix("test_") {
+        return match detail {
+            "accepted" => "The test was accepted.".to_string(),
+            "timeout" => "The test didn't answer in time.".to_string(),
+            "tls_error" => "The test stopped: its certificate failed.".to_string(),
+            _ if detail.starts_with("http_") => {
+                format!("The test was refused ({}).", detail.trim_start_matches("http_"))
+            }
+            _ => "The test didn't arrive.".to_string(),
+        };
+    }
+    match (decision, reason) {
+        ("sent", _) => format!("Sent a wake for a mention in {room}."),
+        ("failed", "timeout") => {
+            format!("A wake for {room} didn't arrive: it didn't answer in time.")
+        }
+        ("failed", "tls_error") => {
+            format!("A wake for {room} didn't arrive: its certificate failed.")
+        }
+        ("failed", "connection_refused") | ("failed", "no_url") => {
+            format!("A wake for {room} didn't arrive: nothing answered.")
+        }
+        ("failed", reason) if reason.starts_with("http_") => {
+            format!("A wake for {room} was refused ({}).", reason.trim_start_matches("http_"))
+        }
+        ("skipped", "paused") => "Skipped a mention: the bot is paused.".to_string(),
+        ("skipped", "only_me") => "Skipped a mention: only you can wake it.".to_string(),
+        ("skipped", "no_url") => "Skipped a mention: there is no wake-up URL.".to_string(),
+        ("skipped", "unread") => {
+            format!("Skipped a mention in {room}: an earlier wake there is still unread.")
+        }
+        ("skipped", "cooldown") => {
+            format!("Skipped a mention in {room}: a wake there was accepted in the last 3 minutes.")
+        }
+        ("skipped", "cap") => {
+            format!("Skipped a mention in {room}: today's social wake-up cap is used up.")
+        }
+        ("skipped", "social_hours") => {
+            format!("Skipped a mention in {room}: it is outside social hours.")
+        }
+        ("skipped", "bot") => {
+            format!("Skipped a mention in {room}: a bot needs permission to wake this one.")
+        }
+        _ => format!("Wake {decision} ({reason}) in {room}."),
+    }
 }
 
 pub fn calendar_feed(state: &AppState, feed_token: &str) -> ApiResult<String> {

@@ -131,9 +131,20 @@ impl Posted {
         Self { status: None, body: String::new(), error: Some(error) }
     }
 
-    fn accepted(&self) -> bool {
+    pub fn accepted(&self) -> bool {
         self.status.is_some_and(|status| (200..300).contains(&status))
     }
+}
+
+/// A short token for a wake decision. Nothing here is the message or the URL.
+pub fn outcome_reason(posted: &Posted) -> String {
+    if posted.accepted() {
+        return "accepted".to_string();
+    }
+    if let Some(status) = posted.status {
+        return format!("http_{status}");
+    }
+    posted.error.unwrap_or("connection_refused").to_string()
 }
 
 /// POSTs a body the caller built, with the headers they named. Redirects are not followed.
@@ -274,23 +285,34 @@ async fn post_once(
     }
 }
 
-async fn deliver(state: &AppState, url: &str, notice: &Notice, auth: Option<&str>) -> bool {
+async fn deliver_result(
+    state: &AppState,
+    url: &str,
+    notice: &Notice,
+    auth: Option<&str>,
+) -> Posted {
     let Ok(url) = Url::parse(url) else {
-        return false;
+        return Posted::nothing("connection_refused");
     };
+    let mut last = Posted::nothing("connection_refused");
     for delay in RETRY_DELAYS {
         tokio::time::sleep(Duration::from_secs(delay)).await;
         let (posted, retry) = post_once(state, &url, notice, auth).await;
         if posted.accepted() {
-            return true;
+            return posted;
         }
+        last = posted;
         if !retry {
             break;
         }
     }
     // Notification URLs often contain secrets, so the log names only the event.
     tracing::warn!(event = notice.event, "notification was not delivered");
-    false
+    last
+}
+
+async fn deliver(state: &AppState, url: &str, notice: &Notice, auth: Option<&str>) -> bool {
+    deliver_result(state, url, notice, auth).await.accepted()
 }
 
 /// Sends in the background, so a slow receiver never holds up whoever triggered this.
@@ -308,18 +330,34 @@ pub fn send(state: &AppState, owner_ids: &[String], notice: &Notice) {
     }
 }
 
-/// E27: a bot-triggered wake gets one attempt, so retrying cannot start another paid run.
-pub fn send_once(state: &AppState, agent_id: &str, notice: &Notice) {
-    let Ok(Some(url)) = state.db.notify_url(agent_id) else { return };
-    let Ok(url) = Url::parse(&url) else { return };
+/// Sends in the background and reports what came back. `once` is a single POST: a home bot ring
+/// (E27) and a non-owner person's mention (E30), so a retry cannot start another paid run.
+pub fn send_result<F>(state: &AppState, agent_id: &str, notice: &Notice, once: bool, done: F)
+where
+    F: FnOnce(&AppState, Posted) + Send + 'static,
+{
+    let Some(url) = state.db.notify_url(agent_id).ok().flatten() else {
+        done(state, Posted::nothing("no_url"));
+        return;
+    };
+    let Ok(parsed) = Url::parse(&url) else {
+        done(state, Posted::nothing("connection_refused"));
+        return;
+    };
     let auth = state.db.notify_auth(agent_id).ok().flatten();
     let state = state.clone();
     let notice = notice.clone();
     tokio::spawn(async move {
-        let (posted, _) = post_once(&state, &url, &notice, auth.as_deref()).await;
-        if !posted.accepted() {
-            tracing::warn!(event = notice.event, "bot wake notification was not delivered");
-        }
+        let posted = if once {
+            let (posted, _) = post_once(&state, &parsed, &notice, auth.as_deref()).await;
+            if !posted.accepted() {
+                tracing::warn!(event = notice.event, "wake notification was not delivered");
+            }
+            posted
+        } else {
+            deliver_result(&state, &url, &notice, auth.as_deref()).await
+        };
+        done(&state, posted);
     });
 }
 
@@ -338,11 +376,21 @@ fn test_notice(hangout_id: &str) -> Notice {
 
 /// E23: one try at a bot's wake-up URL with its key, and what came back in its owner's words.
 pub async fn test_wake_up(state: &AppState, url: &str, auth: Option<&str>) -> serde_json::Value {
+    test_wake_detail(state, url, auth).await.0
+}
+
+/// The same try, plus the posted result so the decision log can name a failure without the body.
+pub async fn test_wake_detail(
+    state: &AppState,
+    url: &str,
+    auth: Option<&str>,
+) -> (serde_json::Value, Posted) {
     let posted = match Url::parse(url) {
         Ok(url) => post_once(state, &url, &test_notice(""), auth).await.0,
         Err(_) => Posted::nothing("connection_refused"),
     };
-    json!({ "accepted": posted.accepted(), "status": posted.status, "says": in_words(&posted) })
+    let value = json!({ "accepted": posted.accepted(), "status": posted.status, "says": in_words(&posted) });
+    (value, posted)
 }
 
 fn in_words(posted: &Posted) -> String {
