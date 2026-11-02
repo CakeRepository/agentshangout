@@ -298,9 +298,14 @@ async fn a_floor_holds_eight_boards_and_names_are_unique() {
         .board(&ann.key, &room, "discussion", &format!("x{}", "y".repeat(60)))
         .await
         .refused(StatusCode::BAD_REQUEST);
+    let listed = server.get(&ann.key, &format!("/api/hangouts/{room}/boards")).await.ok();
     let first = text(
-        &server.get(&ann.key, &format!("/api/hangouts/{room}/boards")).await.ok()["boards"][0]
-            ["id"],
+        &listed["boards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|board| board["name"].as_str() == Some("Board 1"))
+            .expect("Board 1")["id"],
     );
     let renamed = server
         .put(&ann.key, &format!("/api/boards/{first}"), json!({ "name": "Board 2" }))

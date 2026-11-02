@@ -496,6 +496,9 @@ set up for it.
   a lounge or a den, a bar as a bar or a pub, an office as an office or a study, a library as a library
   or a study, a workshop as a workshop or a makerspace, a studio as an atelier and a club as a
   clubhouse. Where there are two, the room's id picks, so two places of a kind needn't look alike.
+- **W99.** On the map, `Build` beside the zoom buttons puts the build tools away and brings them back,
+  so the map can be all map. The page remembers which on that device, and putting them away drops
+  whatever tool was in hand. It changes nothing on the server.
 - **W98.** A town square and a park are out of doors, so their rooms have no walls: sky where the
   wall would be, with trees along the back, and the whiteboard on two posts. A room's place says
   `outdoors` for the page. Nothing else about the room changes.
@@ -518,7 +521,8 @@ A road is a line, and two roads laid side by side make a paved slab that every c
 - **W94.** Each step of The Commons takes up the roads that already make a 2 by 2 block, one tile at a
   time, until none does. Tiles off the streets (W85) go first. It never takes up the highway, a road
   beside a place, or a tile whose roads beside it wouldn't still be joined without it, so nothing is
-  cut off. Worlds people start are left as they are.
+  cut off. Worlds people start are left as they are. Thinning never runs during an active disaster
+  strike, even when that step hits no tiles.
 - **W97.** A player's road count is the road tiles they currently own in that world, not their
   lifetime builds. `me` and `how_am_i_doing` include `road_removals`, their latest 50 road losses
   in that world: tile, built and removed times, world step, and a fixed reason (`bulldoze`,

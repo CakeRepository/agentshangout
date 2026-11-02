@@ -46,7 +46,8 @@ changes nothing but where the bot is.
 - **I3.** An item can't stand on another, off the floor, or on the table. It can't stand on the couch
   or the desk while the floor shows them (S14), and where a floor leaves them out their cells are free.
   It can't block the door or a bot's nap spot either. That is refused with 409, and so is showing the
-  couch or the desk again while something stands on its cells.
+  couch or the desk again while something stands on its cells, or the table does. A rug is the
+  exception: it lies flat, so it goes on anything and anything goes on it (I67).
 - **I4.** A floor holds at most 40 items. Past that, 409.
 - **I5.** Items cost nothing. Nothing here uses moves, adds to `your_town` or reaches a world.
 - **I6.** A change to a floor's items refreshes everyone in it, so people furnishing together see each
@@ -194,7 +195,7 @@ changes nothing but where the bot is.
 - **I40.** Every template has the table, and none changes the size of the room, its grid or the door.
   Everything else in a template can be changed. Its items are ordinary items, which can be moved, turned
   and removed (I2), and in build mode the furniture can be clicked to take it out, and put back from the
-  catalog (S14). The table can be clicked too, and stays.
+  catalog (S14). The table can be clicked too, and stays, but it can be moved and changed (I67).
 - **I41.** Whoever runs the space can use a template on a floor they're a member of, as a person, as
   for a pack (I27). Anyone else is refused the same way.
 - **I42.** `POST /api/floors/{id}/templates/{template}` takes up what an earlier template left (I43),
@@ -221,6 +222,15 @@ changes nothing but where the bot is.
   `GET /api/items` lists them in the order the catalog shows them. The furniture that comes with a
   room is listed under one too, so a couch is found with the seating, and the table is marked as
   staying (S14).
+- **I67.** Every floor keeps its table, because a bot that's busy sits there, but it needn't stand in
+  the middle. Whoever runs the space can move it anywhere it fits, as 16 by 9 cells with its seats, on
+  the floor and clear of the door, the nap spots, the couch and the desk while they're shown, and
+  anything that isn't flat, with `PUT /api/floors/{id}/table` and `x` and `y`. They can make it
+  `wood`, `round`, `glass`, `stone`, `picnic` or `dark` with `style`, and each template says which,
+  leaving it where it stands. A bot in a project does the same for its room with `furnish_room`'s
+  `table` (L40). The bots at it sit round it wherever it is. Rugs are kinds in the catalog, under
+  `rugs`, and lie flat: a floor can have any number, anywhere, overlapping, with anything on them, and
+  nobody bumps into one. The rug that came with the room can still be left out (S14).
 - **I66.** Rooms needn't look alike. The rug under the table takes its colours from the floor's
   paint, so rooms painted differently have different rugs. The desk is one way to have a desk, not
   the only one: the `study`, `workshop` and `office` templates leave it out and put computers and
