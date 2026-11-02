@@ -1,4 +1,4 @@
-//! E1 to E30 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
+//! E1 to E31 in docs/events.md. A bot hears mentions, answers and moves in one call, and can
 //! subscribe the way the events extension describes.
 
 use std::{
@@ -176,7 +176,7 @@ async fn on_hook(
     State(hook): State<Arc<Hook>>,
     headers: HeaderMap,
     body: Bytes,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let value: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let mut recorded = Vec::new();
     for (name, value) in headers.iter() {
@@ -185,10 +185,24 @@ async fn on_hook(
         }
     }
     hook.hits.lock().unwrap().push(Hit { headers: recorded, body: value.clone() });
-    match *hook.mode.lock().unwrap() {
+    let mode = *hook.mode.lock().unwrap();
+    match mode {
         "wrong" => (StatusCode::OK, Json(json!({ "challenge": "nope" }))).into_response(),
         "gone" => StatusCode::GONE.into_response(),
         "refused" => StatusCode::UNAUTHORIZED.into_response(),
+        // Stays open until the test releases it, so a second wake can arrive while the first is
+        // still being delivered. Gives up before the client's timeout so a stuck test can't retry.
+        "hold" => {
+            let started = std::time::Instant::now();
+            loop {
+                let holding = *hook.mode.lock().unwrap() == "hold";
+                if !holding || started.elapsed() >= Duration::from_secs(3) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         _ => {
             if let Some(challenge) = value.get("challenge") {
                 (StatusCode::OK, Json(json!({ "challenge": challenge }))).into_response()
@@ -234,6 +248,25 @@ async fn wait_for(hook: &Hook, pred: impl Fn(&Hit) -> bool) -> Hit {
 
 fn rings(hook: &Hook) -> usize {
     hook.hits().iter().filter(|hit| hit.body["event"] == "mention").count()
+}
+
+async fn decisions(server: &Server, owner: &str, bot_id: &str) -> Vec<Value> {
+    let body = server.get(owner, &format!("/api/agents/{bot_id}/notify")).await.body;
+    body["decisions"].as_array().cloned().unwrap_or_default()
+}
+
+async fn wait_decision(server: &Server, owner: &str, bot_id: &str, decision: &str) -> Value {
+    for _ in 0..50 {
+        if let Some(row) = decisions(server, owner, bot_id)
+            .await
+            .into_iter()
+            .find(|row| row["decision"] == decision)
+        {
+            return row;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{decision} was not listed: {:?}", decisions(server, owner, bot_id).await);
 }
 
 // E5, B8: a plain multiword name reaches inbox, polling and subscribed webhooks alike.
@@ -1071,9 +1104,9 @@ async fn a_wake_up_url_can_carry_a_key_and_the_key_is_never_shown() {
     assert!(header(&ping, "x-api-key").is_none());
 }
 
-// E24: a public floor has no invite, so someone who walked in is held to L10's limits.
+// E31: a public floor has no invite. A person who walked in rings without social hours, then waits.
 #[tokio::test]
-async fn someone_who_walked_in_rings_by_default_and_up_to_its_cap() {
+async fn someone_who_walked_in_rings_without_social_hours_and_then_waits() {
     let server = Server::start().await;
     let (room, justin, _) = server.room().await;
     let (scout, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -1089,23 +1122,16 @@ async fn someone_who_walked_in_rings_by_default_and_up_to_its_cap() {
 
     server.say(&pat, &room, "@Scout hello").await;
     settle().await;
-    assert_eq!(rings(&hook), 1, "public wakes need no social hours");
+    assert_eq!(rings(&hook), 1, "a person who walked in rings with no social hours");
     server.tool(&scout, "read_room", json!({ "hangout_id": room })).await;
 
-    server.open_all_day(&justin, &scout_id, 3).await;
-    for ring in 2..=3 {
-        server.say(&pat, &room, "@Scout hello again").await;
-        settle().await;
-        assert_eq!(rings(&hook), ring, "the one that rang nothing doesn't hold the bell");
-        server.tool(&scout, "read_room", json!({ "hangout_id": room })).await;
-    }
-    server.say(&pat, &room, "@Scout one more").await;
+    server.say(&pat, &room, "@Scout hello again").await;
     settle().await;
-    assert_eq!(rings(&hook), 3, "that's its cap for the day");
+    assert_eq!(rings(&hook), 1, "the next one waits 3 minutes, even after a read");
 
     server.say(&justin, &room, "@Scout it's me").await;
     settle().await;
-    assert_eq!(rings(&hook), 4, "its owner isn't held to the cap");
+    assert_eq!(rings(&hook), 2, "its owner isn't held to that spacing once the mention is read");
 }
 
 // E24, L10: a bot that's out is held to its hours and cap, whoever speaks, except its owner.
@@ -1136,23 +1162,36 @@ async fn a_bot_that_walked_in_rings_by_default_and_always_hears_its_owner() {
     read().await;
 
     server.say(&justin, &room, "@Pixel hello").await;
-    settle().await;
+    for _ in 0..40 {
+        if rings(&hook) >= 2
+            && server.state.db.person_wake_recent(&pixel_id, &room, now() - 180).unwrap()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert_eq!(rings(&hook), 2, "public wakes need no social hours");
     read().await;
 
     server.open_all_day(&pat, &pixel_id, 1).await;
     server.say(&justin, &room, "@Pixel hello again").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "the earlier public wake already used the cap");
-    read().await;
-    server.say(&justin, &room, "@Pixel and again").await;
+    assert_eq!(rings(&hook), 2, "that person's next mention waits 3 minutes, even after a read");
+
+    let filler = server
+        .post(&justin, &format!("/api/hangouts/{room}/messages"), json!({ "text": "a line" }))
+        .await;
+    let filler_id = filler.body["id"].as_i64().unwrap();
+    assert!(server.state.db.note_wake_ring(&pixel_id, filler_id, now(), Some(1)).unwrap());
+    server.state.db.set_wake_accepts_at(&pixel_id, now() - 181).unwrap();
+    server.say(&justin, &room, "@Pixel after the wait").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "that's its cap");
+    assert_eq!(rings(&hook), 3, "the daily cap does not stop a person");
 
     read().await;
     server.say(&pat, &room, "@Pixel me again").await;
     settle().await;
-    assert_eq!(rings(&hook), 3, "its owner's rings don't use up the cap, and aren't stopped by it");
+    assert_eq!(rings(&hook), 4, "its owner isn't held by that cap");
 }
 
 // E25
@@ -1174,6 +1213,9 @@ async fn only_me_keeps_everyone_else_quiet_but_only_for_mentions() {
     server.say(&kevin, &room, "@Scout hello").await;
     settle().await;
     assert_eq!(rings(&hook), 0);
+    let skipped = server.get(&justin, &path).await;
+    assert_eq!(skipped.body["decisions"][0]["reason"], "only_me");
+    assert!(!skipped.body.to_string().contains("hello"), "{}", skipped.body);
     server.say(&justin, &room, "@Scout it's me").await;
     settle().await;
     assert_eq!(rings(&hook), 1, "a mention that rang nothing doesn't hold the bell");
@@ -1244,9 +1286,9 @@ async fn a_persons_mention_rings_the_bot_and_the_ping_keeps_the_words_out() {
     assert!(ping.body["text"].as_str().unwrap().contains("call say"), "{}", ping.body);
 }
 
-// E22
+// E31
 #[tokio::test]
-async fn a_bot_that_has_not_read_is_rung_once_until_it_reads() {
+async fn a_person_who_is_not_the_owner_sends_exactly_one_wake() {
     let server = Server::start().await;
     let (room, justin, kevin) = server.room().await;
     let (scout, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -1255,21 +1297,32 @@ async fn a_bot_that_has_not_read_is_rung_once_until_it_reads() {
 
     server.say(&kevin, &room, "@Scout first").await;
     wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    let sent = wait_decision(&server, &justin, &scout_id, "sent").await;
+    assert_eq!(sent["reason"], "accepted");
+    assert!(!sent.to_string().contains("first"), "{sent}");
     server.say(&kevin, &room, "@Scout second").await;
     settle().await;
     assert_eq!(rings(&hook), 1, "the second one waits");
     let inbox = server.tool(&scout, "inbox", json!({})).await;
     assert_eq!(inbox["structuredContent"]["mentions"].as_array().unwrap().len(), 2, "{inbox}");
+    assert_eq!(decisions(&server, &justin, &scout_id).await[0]["reason"], "cooldown");
 
     server.tool(&scout, "read_room", json!({ "hangout_id": room })).await;
     server.say(&kevin, &room, "@Scout third").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "reading it opens the bell again");
+    assert_eq!(
+        rings(&hook),
+        1,
+        "reading it does not open another person's mention inside 3 minutes"
+    );
+    server.say(&justin, &room, "@Scout it's me").await;
+    settle().await;
+    assert_eq!(rings(&hook), 2, "its owner can ring once the earlier wake has been read");
 }
 
-// E22
+// E31
 #[tokio::test]
-async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_room() {
+async fn a_persons_wake_is_spaced_for_three_minutes_and_only_in_that_room() {
     let server = Server::start().await;
     let (room, justin, kevin) = server.room().await;
     let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
@@ -1281,15 +1334,22 @@ async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_roo
         let line = server.post(&kevin, &path, json!({ "text": "an earlier line" })).await;
         let id = line.body["id"].as_i64().unwrap();
         server.state.db.add_mention(&scout_id, &room, id, at).unwrap();
-        server.state.db.note_wake_ring(&scout_id, id, at, None).unwrap();
+        server.state.db.note_person_wake(&scout_id, id, &room, at).unwrap();
     };
 
-    rang(179).await;
+    // Well inside the 3 minutes. A plant at 179 seconds only has a second of slack before the
+    // next message's own clock falls outside `accepted_at > created_at - 180`.
+    rang(120).await;
     server.say(&kevin, &room, "@Scout still waiting").await;
     settle().await;
-    assert_eq!(rings(&hook), 0, "one from under 3 minutes ago is still unread");
+    assert_eq!(rings(&hook), 0, "one accepted under 3 minutes ago still waits");
 
     server.state.db.mark_mentions_read(&scout_id, &room, now()).unwrap();
+    server.say(&kevin, &room, "@Scout after reading").await;
+    settle().await;
+    assert_eq!(rings(&hook), 0, "reading does not open a non-owner's bell inside 3 minutes");
+
+    server.state.db.delete_wake_accepts(&scout_id).unwrap();
     rang(181).await;
     server.say(&kevin, &room, "@Scout again").await;
     settle().await;
@@ -1298,13 +1358,64 @@ async fn an_unread_ring_only_holds_the_bell_for_three_minutes_and_in_its_own_roo
     let other = server.post(&justin, "/api/hangouts", json!({ "name": "Other" })).await;
     assert_eq!(other.status, StatusCode::OK, "{}", other.body);
     let elsewhere = other.body["hangout"]["id"].as_str().unwrap();
+    let code = other.body["hangout"]["invite_code"].as_str().unwrap();
+    let joined = server.post(&kevin, &format!("/api/invites/{code}/join"), json!({})).await;
+    assert_eq!(joined.status, StatusCode::OK, "{}", joined.body);
     let brought = server
         .put(&justin, &format!("/api/hangouts/{elsewhere}/agents/{scout_id}"), json!({}))
         .await;
     assert_eq!(brought.status, StatusCode::OK, "{}", brought.body);
-    server.say(&justin, elsewhere, "@Scout over here").await;
+    server.say(&kevin, elsewhere, "@Scout over here").await;
     settle().await;
-    assert_eq!(rings(&hook), 2, "unread in one room doesn't hold another room's bell");
+    assert_eq!(rings(&hook), 2, "an accepted wake in one room doesn't hold another room");
+}
+
+// E31: a refused wake leaves a record and does not swallow the next person's mention.
+#[tokio::test]
+async fn a_failed_person_wake_does_not_hold_the_next_mention() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("refused").await;
+    server.put(&justin, &format!("/api/agents/{scout_id}/notify"), json!({ "url": url })).await;
+
+    server.say(&kevin, &room, "@Scout the words stay out").await;
+    let failed = wait_decision(&server, &justin, &scout_id, "failed").await;
+    assert_eq!(failed["reason"], "http_401");
+    assert!(!failed.to_string().contains("words stay out"), "{failed}");
+    assert_eq!(rings(&hook), 1, "one try, even when it is refused");
+
+    *hook.mode.lock().unwrap() = "echo";
+    server.say(&kevin, &room, "@Scout once more").await;
+    for _ in 0..50 {
+        if rings(&hook) >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(rings(&hook), 2, "the refused one did not hold the bell");
+}
+
+// E31: a delivery that has not finished does not drop a mention that arrives during it.
+#[tokio::test]
+async fn a_wake_still_in_flight_does_not_drop_the_next_person_mention() {
+    let server = Server::start().await;
+    let (room, justin, kevin) = server.room().await;
+    let (_, scout_id) = server.bot(&justin, &room, "Scout").await;
+    let (url, hook) = start_hook("hold").await;
+    server.put(&justin, &format!("/api/agents/{scout_id}/notify"), json!({ "url": url })).await;
+
+    server.say(&kevin, &room, "@Scout first").await;
+    wait_for(&hook, |hit| hit.body["event"] == "mention").await;
+    server.say(&kevin, &room, "@Scout while that one is still going").await;
+    for _ in 0..50 {
+        if rings(&hook) >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(rings(&hook), 2, "the one still being delivered did not swallow this one");
+    *hook.mode.lock().unwrap() = "echo";
 }
 
 // L29: out with another bot, a bot with a wake-up URL is rung to meet, once a half hour.
@@ -1518,6 +1629,9 @@ async fn a_test_tries_the_saved_url_once_and_says_what_came_back() {
     assert_eq!(passed.body["status"], 204, "{}", passed.body);
     let ping = wait_for(&hook, |hit| hit.body["event"] == "test").await;
     assert_eq!(header(&ping, "authorization"), Some("Bearer crsr_made_up"));
+    let listed = server.get(&justin, &path).await;
+    assert_eq!(listed.body["decisions"][0]["reason"], "test_accepted", "{}", listed.body);
+    assert!(!listed.body.to_string().contains("crsr_made_up"), "{}", listed.body);
 
     hook.hits.lock().unwrap().clear();
     *hook.mode.lock().unwrap() = "refused";
@@ -1528,6 +1642,8 @@ async fn a_test_tries_the_saved_url_once_and_says_what_came_back() {
     assert!(refused.body["says"].as_str().unwrap().contains("key"), "{}", refused.body);
     assert!(!refused.body.to_string().contains("crsr_made_up"), "{}", refused.body);
     assert_eq!(hook.hits().len(), 1, "a test is one try");
+    let listed = server.get(&justin, &path).await;
+    assert_eq!(listed.body["decisions"][0]["reason"], "test_http_401", "{}", listed.body);
 
     assert_eq!(server.post(&kevin, &test, json!({})).await.status, StatusCode::NOT_FOUND);
     assert_eq!(server.post(&scout, &test, json!({})).await.status, StatusCode::FORBIDDEN);

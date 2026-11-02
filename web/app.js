@@ -2398,7 +2398,7 @@ async function roomView(id) {
     if (publicFloors.floors.some((floor) => floor.id === id)) {
       const enter = await new Promise((resolve) => {
         const dialog = modal('Before you enter this public room',
-          h('p', {}, 'People and bots here can wake a bot you bring by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money.'),
+          h('p', {}, 'People and bots here can wake a bot you bring by using its name, with or without @. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money.'),
           h('p', {}, 'Every public room requires bots to accept conversations. You can switch this on or off in each bot’s Wake up settings. Switching it off makes that bot leave public rooms; choose a different bot to bring here. Your bots stay where they are until you send them in.'),
           h('div', { class: 'modal-actions' },
             h('button', { type: 'button', onclick: () => dialog.close() }, 'Cancel'),
@@ -2429,6 +2429,7 @@ async function roomView(id) {
   const root = h('main', { class: 'game' }, frame.root);
   const lampEl = frame.root.querySelector('.wd-live');
   const panels = createPanels(frame.root);
+  installAppleHigRoom({ frame, panels, compact: matchMedia(COMPACT) });
   const parts = homePartsOnDemand(me);
   const account = accountPanel(panels, me, parts);
   const beside = matchMedia(BESIDE);
@@ -3193,7 +3194,7 @@ async function roomView(id) {
     const bots = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Send a bot in',
-      h('p', {}, 'People and bots here can wake your bot by using its name, with or without @. Public-room wakes are on by default, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Every public room requires conversations. If you don’t want this bot to take part, choose a different bot. You can switch conversations off in its Wake up settings, which makes it leave public rooms.'),
+      h('p', {}, 'People and bots here can wake your bot by using its name, with or without @. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money. Every public room requires conversations. If you don’t want this bot to take part, choose a different bot. You can switch conversations off in its Wake up settings, which makes it leave public rooms.'),
       h('p', {}, 'It stays 12 hours, or until you bring it home. A bot on another public floor leaves that one.'),
       error,
       bots.length ? h('div', { class: 'also' }, bots.map((bot) => h('button', {
@@ -3212,7 +3213,7 @@ async function roomView(id) {
     const others = (mine.bots || []).filter((bot) => !here.has(bot.id));
     const error = formError();
     const dialog = modal('Bring a bot',
-      snapshot.floor?.floor.access === 'public' ? h('p', {}, 'Every public room requires conversations. People and bots here can wake this bot by name, with or without @, even outside social hours, up to its daily cap. A wake starts your agent with its tools and can cost money. Turn Room conversations on and unpause this bot in its Wake-up settings, or choose a different bot.') : null,
+      snapshot.floor?.floor.access === 'public' ? h('p', {}, 'Every public room requires conversations. People and bots here can wake this bot by name, with or without @, even outside social hours. A person other than you wakes it at most once every 3 minutes, and that does not use its daily cap. Other bots share the cap. A wake starts your agent with its tools and can cost money. Turn Room conversations on and unpause this bot in its Wake-up settings, or choose a different bot.') : null,
       h('form', {
         onsubmit: submitter(error, async (values) => {
           const result = await api(`/api/hangouts/${id}/agents`, { method: 'POST', body: values });
@@ -3322,6 +3323,15 @@ async function roomView(id) {
       ...botChoices,
       !botChoices.length ? h('p', { class: 'muted' }, 'No other eligible bots.') : null,
       h('p', { class: 'muted' }, 'These home grants allow one ring every 3 minutes and five per recipient until you speak in that house. Failed deliveries count too.'));
+    const history = h('div', {});
+    const showDecisions = (rows) => {
+      const lines = (rows || []).map((row) => h('p', { class: 'muted' }, row.says));
+      history.replaceChildren(
+        h('h3', {}, 'Recent wakes'),
+        ...(lines.length ? lines : [h('p', { class: 'muted' }, 'Mention wakes show up here: sent, skipped, or a delivery that failed.')]),
+      );
+    };
+    showDecisions(saved.decisions);
     const save = async () => {
       const body = { url: url.value || null, only_me: who.value === 'me', trusted_bots: [...trusted] };
       if (auth.value === '-') body.auth = null;
@@ -3334,7 +3344,7 @@ async function roomView(id) {
       auth.placeholder = saved.auth ? 'Saved' : 'Optional';
     };
     const dialog = modal(`Wake up ${agent.name}`,
-      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when someone names it, with or without @, or something is waiting, and it should then call inbox. In public rooms, people and bots can wake it by default. Bots without a URL can check inbox on a schedule instead.'),
+      h('p', {}, 'If this bot can receive webhooks, paste its URL. The server pings it when someone names it, with or without @, or something is waiting, and it should then call inbox. A person who is not you wakes it at most once every 3 minutes, and that does not use the daily cap. A wake still going out does not cancel the next one. Bots without a URL can check inbox on a schedule instead.'),
       h('p', { class: 'muted' }, 'Setting up Grok Bot or another agent? ', h('a', { href: '/docs/webhooks#grok-bot', target: '_blank', rel: 'noopener' }, 'Here\'s how'), '.'),
       h('form', {
         onsubmit: submitter(error, async () => {
@@ -3346,6 +3356,7 @@ async function roomView(id) {
         field('Auth header or key', auth, 'Optional. A key is sent as Authorization: Bearer. Or paste a header, like X-Api-Key: secret. Leave blank to keep a saved key. Type - to remove it.'),
         field('Room conversations', who, 'Public rooms require this to be on. Turning it off removes this bot from public rooms; it can still talk to you in private. Turn it back on before bringing it into a public room again. Wake caps still apply.'),
         botPermissions,
+        history,
         error,
         result,
         h('div', { class: 'modal-actions' },
@@ -3364,6 +3375,7 @@ async function roomView(id) {
                 (test.accepted ? result : error).textContent = test.says;
                 result.hidden = !test.accepted;
                 error.hidden = test.accepted;
+                showDecisions((await api(`/api/agents/${agent.id}/notify`)).decisions);
               } catch (failure) {
                 result.hidden = true;
                 error.textContent = failure.message;
@@ -5410,6 +5422,8 @@ function showFacts(frame, view) {
   outputs.places.textContent = numberText(view.places);
   outputs.roads.textContent = numberText(view.roads);
   outputs.stage.textContent = STAGE_NAME[view.stage] || '-';
+  const sub = frame.title.querySelector('.wd-title-sub');
+  if (sub && view.stage) sub.textContent = ` · ${STAGE_NAME[view.stage] || view.stage}`;
 }
 
 const POLL_MS = 4000;
@@ -5697,14 +5711,231 @@ const COMPACT = '(max-width: 759px)';
 // The panels that open over a game window from buttons in its title bar, one at a time. Each has a
 // close button of its own, and Escape closes it. `toggle` makes a button for a panel, and a panel
 // can have more than one, because the narrow layout moves some into a "More" panel.
+// Apple HIG Mobile Infrastructure
+function installAppleHigMap({ frame, panels, choose, movesCount, compact, viewGroup }) {
+  const syncHig = () => {
+    const isMobile = compact.matches || ('ontouchstart' in window && window.innerWidth <= 840);
+    frame.root.classList.toggle('apple-hig', isMobile);
+  };
+  compact.addEventListener('change', syncHig);
+  syncHig();
+
+  // Ensure title subtitle element exists for compact display
+  if (!frame.title.querySelector('.wd-title-sub')) {
+    frame.title.append(h('span', { class: 'wd-title-sub' }, ''));
+  }
+
+  // 1. Floating Action HUD (Zoom In, Zoom Out, Recenter)
+  const fabHud = h('div', { class: 'apple-fab-hud', role: 'group', 'aria-label': 'View HUD' });
+  for (const [glyph, text, idx] of [
+    ['+', 'Zoom in', 0],
+    ['−', 'Zoom out', 1],
+    ['⌖', 'Recenter town', 2],
+  ]) {
+    fabHud.append(h('button', {
+      type: 'button',
+      class: 'wd-btn',
+      title: text,
+      'aria-label': text,
+      onclick: () => {
+        try { navigator.vibrate?.(10); } catch (_) {}
+        viewGroup?.children[idx]?.click();
+      },
+    }, glyph));
+  }
+  frame.root.append(fabHud);
+
+  // 2. Build Sheet
+  const buildSheet = h('div', { class: 'apple-build-sheet', 'aria-label': 'Build Sheet' });
+  const grabber = h('div', { class: 'sheet-grabber', 'aria-hidden': 'true' });
+  const sheetHead = h('div', { class: 'apple-build-sheet-head' },
+    h('h3', {}, 'Build on The Commons'),
+    h('span', { class: 'apple-moves-pill' }, `Moves: ${movesCount() ?? '-'}`)
+  );
+  const toolsGrid = h('div', { class: 'apple-tools-grid' });
+  buildSheet.append(grabber, sheetHead, toolsGrid);
+  frame.root.append(buildSheet);
+
+  let startY = 0;
+  grabber.addEventListener('touchstart', (e) => { startY = e.touches[0].clientY; }, { passive: true });
+  grabber.addEventListener('touchmove', (e) => {
+    const diff = Math.max(0, e.touches[0].clientY - startY);
+    if (diff > 0) buildSheet.style.transform = `translateY(${diff}px)`;
+  }, { passive: true });
+  grabber.addEventListener('touchend', (e) => {
+    if (e.changedTouches[0].clientY - startY > 50) {
+      closeBuildSheet();
+    } else {
+      buildSheet.style.transform = '';
+    }
+  });
+
+  const openBuildSheet = () => {
+    panels.close(false);
+    sheetHead.querySelector('.apple-moves-pill').textContent = `Moves: ${movesCount() ?? '-'}`;
+    if (!toolsGrid.hasChildNodes() && frame.tools.children.length) {
+      const btns = Array.from(frame.tools.children);
+      for (const btn of btns) {
+        const origClick = btn.onclick;
+        btn.onclick = (e) => {
+          try { navigator.vibrate?.(10); } catch (_) {}
+          origClick?.(e);
+          closeBuildSheet();
+        };
+        toolsGrid.append(btn);
+      }
+    }
+    buildSheet.classList.add('open');
+    tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+    tabBar.querySelector('[data-tab="build"]')?.classList.add('active');
+  };
+
+  const closeBuildSheet = () => {
+    buildSheet.classList.remove('open');
+    buildSheet.style.transform = '';
+    if (!panels.current) {
+      tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+      tabBar.querySelector('[data-tab="map"]')?.classList.add('active');
+    }
+  };
+
+  // 3. Floating Placement Banner
+  const placementBanner = h('div', { class: 'apple-placement-banner', hidden: true },
+    h('span', { class: 'apple-placement-banner-text' },
+      h('span', {}, '🔨'),
+      h('span', { class: 'apple-tool-msg' }, 'Placing item...')
+    ),
+    h('button', {
+      type: 'button',
+      class: 'apple-placement-cancel',
+      onclick: () => {
+        try { navigator.vibrate?.(10); } catch (_) {}
+        choose(null);
+      },
+    }, 'Cancel')
+  );
+  frame.root.append(placementBanner);
+
+  const updatePlacement = (currentTool) => {
+    if (currentTool && frame.root.classList.contains('apple-hig')) {
+      const toolName = currentTool.charAt(0).toUpperCase() + currentTool.slice(1);
+      placementBanner.querySelector('.apple-tool-msg').textContent = `Tap tile to place ${toolName}`;
+      placementBanner.hidden = false;
+    } else {
+      placementBanner.hidden = true;
+    }
+  };
+
+  // 4. Apple HIG Bottom Tab Bar
+  const tabBar = h('nav', { class: 'apple-tab-bar', 'aria-label': 'Mobile Navigation' });
+  const tabs = [
+    { id: 'map', label: 'World', icon: '🗺️', action: () => { closeBuildSheet(); panels.close(false); } },
+    { id: 'build', label: 'Build', icon: '🔨', action: () => {
+      if (buildSheet.classList.contains('open')) closeBuildSheet();
+      else openBuildSheet();
+    } },
+    { id: 'rooms', label: 'Rooms', icon: '🚪', action: () => { closeBuildSheet(); panels.open('rooms'); } },
+    { id: 'crew', label: 'Crew', icon: '👥', action: () => { closeBuildSheet(); panels.open('around'); } },
+    { id: 'more', label: 'More', icon: '⋯', action: () => { closeBuildSheet(); panels.open('more'); } },
+  ];
+
+  for (const tab of tabs) {
+    const btn = h('button', {
+      type: 'button',
+      class: `apple-tab-item ${tab.id === 'map' ? 'active' : ''}`,
+      'data-tab': tab.id,
+      onclick: () => {
+        try { navigator.vibrate?.(10); } catch (_) {}
+        tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        tab.action();
+      },
+    },
+      h('span', { class: 'apple-tab-icon' }, tab.icon),
+      h('span', {}, tab.label));
+    tabBar.append(btn);
+  }
+  frame.root.append(tabBar);
+
+  const origOnChange = panels.onChange;
+  panels.onChange = () => {
+    origOnChange?.();
+    if (!panels.current && !buildSheet.classList.contains('open')) {
+      tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+      tabBar.querySelector('[data-tab="map"]')?.classList.add('active');
+    }
+  };
+
+  return { updatePlacement, openBuildSheet, closeBuildSheet };
+}
+
+function installAppleHigRoom({ frame, panels, compact }) {
+  const syncHig = () => {
+    const isMobile = compact.matches || ('ontouchstart' in window && window.innerWidth <= 840);
+    frame.root.classList.toggle('apple-hig', isMobile);
+  };
+  compact.addEventListener('change', syncHig);
+  syncHig();
+
+  const tabBar = h('nav', { class: 'apple-tab-bar', 'aria-label': 'Room Navigation' });
+  const tabs = [
+    { id: 'room', label: 'Room', icon: '🏠', action: () => panels.close(false) },
+    { id: 'chat', label: 'Chat', icon: '💬', action: () => panels.open('room') },
+    { id: 'guests', label: 'Guests', icon: '👥', action: () => panels.open('crew') },
+    { id: 'more', label: 'More', icon: '⋯', action: () => panels.open('more') },
+  ];
+
+  for (const tab of tabs) {
+    const btn = h('button', {
+      type: 'button',
+      class: `apple-tab-item ${tab.id === 'room' ? 'active' : ''}`,
+      'data-tab': tab.id,
+      onclick: () => {
+        try { navigator.vibrate?.(10); } catch (_) {}
+        tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        tab.action();
+      },
+    },
+      h('span', { class: 'apple-tab-icon' }, tab.icon),
+      h('span', {}, tab.label));
+    tabBar.append(btn);
+  }
+  frame.root.append(tabBar);
+
+  const origOnChange = panels.onChange;
+  panels.onChange = () => {
+    origOnChange?.();
+    tabBar.querySelectorAll('.apple-tab-item').forEach((b) => b.classList.remove('active'));
+    if (panels.current === 'room') {
+      tabBar.querySelector('[data-tab="chat"]')?.classList.add('active');
+    } else if (panels.current === 'crew') {
+      tabBar.querySelector('[data-tab="guests"]')?.classList.add('active');
+    } else if (panels.current === 'more') {
+      tabBar.querySelector('[data-tab="more"]')?.classList.add('active');
+    } else {
+      tabBar.querySelector('[data-tab="room"]')?.classList.add('active');
+    }
+  };
+}
+
 function createPanels(root) {
   const panels = new Map();
   const toggles = new Map();
   let current = null;
+  const scrim = h('div', { class: 'sheet-scrim', hidden: true, onclick: () => set.close() });
+  root.append(scrim);
 
   const sync = () => {
     for (const [name, panel] of panels) panel.el.hidden = name !== current;
     for (const [name, list] of toggles) for (const button of list) button.setAttribute('aria-expanded', String(name === current));
+    scrim.hidden = !current;
+    if (current) {
+      scrim.classList.add('visible');
+      try { navigator.vibrate?.(10); } catch (_) {}
+    } else {
+      scrim.classList.remove('visible');
+    }
   };
   const shown = (button) => button.offsetParent !== null;
 
@@ -5716,12 +5947,32 @@ function createPanels(root) {
     // `options.onOpen` runs each time the panel opens, and `options.onClose` each time it's closed,
     // but not when another panel takes its place.
     add(name, title, options, ...content) {
+      const grabber = h('div', { class: 'sheet-grabber', 'aria-hidden': 'true' });
       const body = h('div', { class: 'game-panel-body' }, ...content);
       const el = h('aside', { class: `game-panel game-panel-${name}`, id: `panel-${name}`, 'aria-label': title, tabindex: -1, hidden: true },
+        grabber,
         h('header', { class: 'game-panel-head' },
           h('h2', {}, title),
-          h('button', { type: 'button', class: 'wd-tbtn', 'aria-label': `Close ${title}`, onclick: () => set.close() }, '✕')),
+          h('button', { type: 'button', class: 'wd-tbtn sheet-close', 'aria-label': `Close ${title}`, onclick: () => set.close() }, '✕')),
         body);
+      let startY = 0;
+      let dragY = 0;
+      grabber.addEventListener('touchstart', (e) => {
+        startY = e.touches[0].clientY;
+        dragY = 0;
+      }, { passive: true });
+      grabber.addEventListener('touchmove', (e) => {
+        dragY = Math.max(0, e.touches[0].clientY - startY);
+        if (dragY > 0) el.style.transform = `translateY(${dragY}px)`;
+      }, { passive: true });
+      grabber.addEventListener('touchend', () => {
+        if (dragY > 55) {
+          el.style.transform = '';
+          set.close();
+        } else {
+          el.style.transform = '';
+        }
+      });
       root.append(el);
       panels.set(name, { el, body, onOpen: options?.onOpen, onClose: options?.onClose });
       return body;
@@ -6274,6 +6525,7 @@ async function worldView(id, { home = false } = {}) {
     tool = name;
     for (const [key, button] of buttons) button.setAttribute('aria-pressed', String(key === name));
     world.setTool(name);
+    hig?.updatePlacement(name);
   }
 
   function pick(name) {
@@ -6366,6 +6618,14 @@ async function worldView(id, { home = false } = {}) {
   }
   // The tools float over the map on a wide screen, and sit in a dock along the bottom on a narrow one.
   frame.root.insertBefore(h('div', { class: 'game-palette' }, frame.tools, viewGroup), well);
+  const hig = installAppleHigMap({
+    frame,
+    panels,
+    choose: (t) => pick(t),
+    movesCount: () => moves,
+    compact,
+    viewGroup,
+  });
 
   // --- Moves -----------------------------------------------------------------------------------
 

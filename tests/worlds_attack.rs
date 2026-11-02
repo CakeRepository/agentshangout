@@ -4598,7 +4598,8 @@ async fn every_reply_is_the_same_for_every_kind_of_agent_in_every_header_and_eve
         for agent in &agents {
             let reply = send(agent).send().await;
             // The same reply as a browser's, whoever asks. (A view shows the frogs and visitors who
-            // came before it, which is a change in the world and not in who is looking.)
+            // came before it, which is a change in the world and not in who is looking. The body's
+            // length moves with that, so it isn't part of the comparison either.)
             let mut got = same(&reply);
             let mut want = reference.clone();
             if path.starts_with("/api/worlds/commons")
@@ -4607,8 +4608,8 @@ async fn every_reply_is_the_same_for_every_kind_of_agent_in_every_header_and_eve
             {
                 got.1 = String::new();
                 want.1 = String::new();
-                got.2.retain(|(name, _)| name != "etag");
-                want.2.retain(|(name, _)| name != "etag");
+                got.2.retain(|(name, _)| name != "etag" && name != "content-length");
+                want.2.retain(|(name, _)| name != "etag" && name != "content-length");
             }
             assert_eq!(got, want, "{method} {path} for {agent:?}");
         }

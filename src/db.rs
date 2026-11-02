@@ -828,6 +828,28 @@ CREATE TABLE IF NOT EXISTS project_changes (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS project_changes_pending ON project_changes(project_id, status, created_at);
+-- E31: a non-owner person's wake counts only once the receiver accepts it. No foreign key on the
+-- message or the room: deleting chat must not refund the 3-minute spacing.
+CREATE TABLE IF NOT EXISTS wake_accepts (
+    message_id   INTEGER NOT NULL,
+    agent_id     TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id   TEXT NOT NULL,
+    accepted_at  INTEGER NOT NULL,
+    PRIMARY KEY (message_id, agent_id)
+);
+CREATE INDEX IF NOT EXISTS wake_accepts_by_room
+    ON wake_accepts (agent_id, hangout_id, accepted_at);
+-- E31: sent, skipped or failed. The reason is a short token, never the message or the URL.
+CREATE TABLE IF NOT EXISTS wake_decisions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id    TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id  TEXT,
+    message_id  INTEGER,
+    decision    TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS wake_decisions_by_bot ON wake_decisions (agent_id, id);
 -- E37: house editing is a person's explicit grant, shared with that person's bots.
 CREATE TABLE IF NOT EXISTS house_editors (
     player_id INTEGER NOT NULL REFERENCES players(id) ON DELETE CASCADE,
@@ -1365,6 +1387,15 @@ pub struct Mention {
     pub message_id: i64,
     pub from: String,
     pub text: String,
+    pub at: i64,
+}
+
+/// E31: one wake decision, without the words that caused it.
+pub struct WakeDecision {
+    pub decision: String,
+    pub reason: String,
+    pub hangout_id: Option<String>,
+    pub room: Option<String>,
     pub at: i64,
 }
 
@@ -5714,6 +5745,116 @@ impl Db {
             params![message_id, agent_id, cap.is_some(), now, cap, today],
         )?;
         Ok(rung > 0)
+    }
+
+    /// E31: whether this room accepted a non-owner person's wake after `since`.
+    pub fn person_wake_recent(
+        &self,
+        agent_id: &str,
+        hangout_id: &str,
+        since: i64,
+    ) -> rusqlite::Result<bool> {
+        exists(
+            &self.conn(),
+            "SELECT 1 FROM wake_accepts
+             WHERE agent_id = ?1 AND hangout_id = ?2 AND accepted_at > ?3
+             LIMIT 1",
+            params![agent_id, hangout_id, since],
+        )
+    }
+
+    /// E31: the receiver accepted this person's wake. That starts the 3-minute spacing, and an
+    /// unread copy of it can still hold the owner's bell. A failed delivery never calls this.
+    pub fn note_person_wake(
+        &self,
+        agent_id: &str,
+        message_id: i64,
+        hangout_id: &str,
+        at: i64,
+    ) -> rusqlite::Result<()> {
+        const DAY_SECS: i64 = 24 * 60 * 60;
+        let mut conn = self.conn();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM wake_accepts WHERE accepted_at < ?", [at - DAY_SECS])?;
+        tx.execute(
+            "INSERT OR IGNORE INTO wake_accepts (message_id, agent_id, hangout_id, accepted_at)
+             VALUES (?, ?, ?, ?)",
+            params![message_id, agent_id, hangout_id, at],
+        )?;
+        tx.execute("DELETE FROM wake_rings WHERE rung_at < ?", [at - DAY_SECS])?;
+        tx.execute(
+            "INSERT OR IGNORE INTO wake_rings (message_id, agent_id, capped, rung_at)
+             VALUES (?, ?, 0, ?)",
+            params![message_id, agent_id, at],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Moves this bot's accepted person wakes to `at`. Tests use it to step past the 3 minutes.
+    pub fn set_wake_accepts_at(&self, agent_id: &str, at: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "UPDATE wake_accepts SET accepted_at = ? WHERE agent_id = ?",
+            params![at, agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_wake_accepts(&self, agent_id: &str) -> rusqlite::Result<()> {
+        self.conn().execute("DELETE FROM wake_accepts WHERE agent_id = ?", [agent_id])?;
+        Ok(())
+    }
+
+    /// E31: keeps the latest decisions for this bot. `hangout_id` empty is stored as none.
+    pub fn note_wake_decision(
+        &self,
+        agent_id: &str,
+        hangout_id: Option<&str>,
+        message_id: Option<i64>,
+        decision: &str,
+        reason: &str,
+        now: i64,
+    ) -> rusqlite::Result<()> {
+        const WEEK_SECS: i64 = 7 * 24 * 60 * 60;
+        let hangout_id = hangout_id.filter(|id| !id.is_empty());
+        let conn = self.conn();
+        conn.execute("DELETE FROM wake_decisions WHERE created_at < ?", [now - WEEK_SECS])?;
+        conn.execute(
+            "INSERT INTO wake_decisions (agent_id, hangout_id, message_id, decision, reason, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![agent_id, hangout_id, message_id, decision, reason, now],
+        )?;
+        conn.execute(
+            "DELETE FROM wake_decisions WHERE agent_id = ?1 AND id < (
+                SELECT MIN(id) FROM (
+                    SELECT id FROM wake_decisions WHERE agent_id = ?1 ORDER BY id DESC LIMIT 40
+                )
+             )",
+            [agent_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn wake_decisions(&self, agent_id: &str) -> rusqlite::Result<Vec<WakeDecision>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT d.decision, d.reason, d.hangout_id, h.name, d.created_at
+             FROM wake_decisions d
+             LEFT JOIN hangouts h ON h.id = d.hangout_id
+             WHERE d.agent_id = ?
+             ORDER BY d.id DESC
+             LIMIT 20",
+        )?;
+        let rows = stmt.query_map([agent_id], |row| {
+            Ok(WakeDecision {
+                decision: row.get(0)?,
+                reason: row.get(1)?,
+                hangout_id: row.get(2)?,
+                room: row.get(3)?,
+                at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
     }
 
     /// L29: records a call to meet for this half hour and returns whether it's new and fits in the
