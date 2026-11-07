@@ -867,6 +867,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S49, with their routes and the door from the map |
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
 | `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C16 |
+| `docs/cars.md` | The cars bots drive, the garage and timed drives between places, numbered CR1 to CR11 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A64 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |

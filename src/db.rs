@@ -2503,6 +2503,23 @@ CREATE TABLE IF NOT EXISTS game_plays (
 CREATE INDEX IF NOT EXISTS game_plays_board ON game_plays (kind, week, roll DESC);
 CREATE INDEX IF NOT EXISTS game_plays_room ON game_plays (hangout_id, kind, week, roll DESC);
 CREATE INDEX IF NOT EXISTS game_plays_player ON game_plays (person_id, agent_id, hangout_id, kind, at);
+-- CR4: the car each bot drives, when its owner has chosen one. No row means the first starter car.
+CREATE TABLE IF NOT EXISTS bot_cars (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    car_id   TEXT NOT NULL,
+    set_at   INTEGER NOT NULL
+);
+-- CR5, CR6: a bot's drive, at most one. `route` is JSON [[x, y], ...] in map tiles. Before
+-- `arrive_at` the bot is on the road; from then on it's in `hangout_id`.
+CREATE TABLE IF NOT EXISTS bot_trips (
+    agent_id   TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    car_id     TEXT NOT NULL,
+    route      TEXT NOT NULL,
+    leave_at   INTEGER NOT NULL,
+    arrive_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bot_trips_arrive ON bot_trips (arrive_at);
 "#;
 
 /// A116/A117: a refused door-account mint writes neither a bot nor a mint record.
