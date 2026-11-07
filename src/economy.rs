@@ -296,6 +296,13 @@ pub fn spend(
         }
         return buy(db, caller, word, cost, asked, now, "piece");
     }
+    // CR3: a car is bought as `car:<id>`, at its catalog price. A starter has none.
+    if let Some(id) = word.strip_prefix("car:") {
+        let car = crate::cars::find(id)
+            .filter(|car| car.price > 0)
+            .ok_or_else(|| ApiError::bad_request("that isn't a car you can buy: see /api/cars"))?;
+        return buy(db, caller, word, car.price, asked, now, "car");
+    }
     let pack = pack_of(word)
         .filter(|pack| pack.cost > 0)
         .ok_or_else(|| ApiError::bad_request("that isn't a pack you can buy: see credits"))?;

@@ -2503,6 +2503,23 @@ CREATE TABLE IF NOT EXISTS game_plays (
 CREATE INDEX IF NOT EXISTS game_plays_board ON game_plays (kind, week, roll DESC);
 CREATE INDEX IF NOT EXISTS game_plays_room ON game_plays (hangout_id, kind, week, roll DESC);
 CREATE INDEX IF NOT EXISTS game_plays_player ON game_plays (person_id, agent_id, hangout_id, kind, at);
+-- CR4: the car each bot drives, when its owner has chosen one. No row means the first starter car.
+CREATE TABLE IF NOT EXISTS bot_cars (
+    agent_id TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    car_id   TEXT NOT NULL,
+    set_at   INTEGER NOT NULL
+);
+-- CR5, CR6: a bot's drive, at most one. `route` is JSON [[x, y], ...] in map tiles. Before
+-- `arrive_at` the bot is on the road; from then on it's in `hangout_id`.
+CREATE TABLE IF NOT EXISTS bot_trips (
+    agent_id   TEXT PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+    hangout_id TEXT NOT NULL REFERENCES hangouts(id) ON DELETE CASCADE,
+    car_id     TEXT NOT NULL,
+    route      TEXT NOT NULL,
+    leave_at   INTEGER NOT NULL,
+    arrive_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bot_trips_arrive ON bot_trips (arrive_at);
 "#;
 
 /// A116/A117: a refused door-account mint writes neither a bot nor a mint record.
@@ -9144,6 +9161,36 @@ pub const ANSWERED_THREAD_MENTIONS: &str = "UPDATE mentions SET read_at = ?1
                      AND m.agent_id = ?2)";
 
 impl Db {
+    /// CR4: the car a bot drives: its owner's choice while the owner still owns it, else the first
+    /// starter.
+    pub fn bot_car(&self, agent_id: &str) -> rusqlite::Result<String> {
+        let chosen: Option<(String, String)> = self
+            .conn()
+            .query_row(
+                "SELECT c.car_id, a.owner_id FROM bot_cars c JOIN agents a ON a.id = c.agent_id
+                  WHERE c.agent_id = ?",
+                [agent_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((car_id, owner)) = chosen {
+            if crate::cars::owned_ids(self, &owner)?.contains(&car_id.as_str()) {
+                return Ok(car_id);
+            }
+        }
+        Ok(crate::cars::DEFAULT_CAR.to_string())
+    }
+
+    /// CR4: the owner's choice of car for a bot.
+    pub fn set_bot_car(&self, agent_id: &str, car_id: &str, now: i64) -> rusqlite::Result<()> {
+        self.conn().execute(
+            "INSERT INTO bot_cars (agent_id, car_id, set_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (agent_id) DO UPDATE SET car_id = excluded.car_id, set_at = excluded.set_at",
+            params![agent_id, car_id, now],
+        )?;
+        Ok(())
+    }
+
     /// S56: the room a bot went to, in place of the last one.
     pub fn set_bot_place(
         &self,

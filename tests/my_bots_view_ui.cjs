@@ -20,7 +20,7 @@ assert.ok(app.includes("const roomBotsList = roomTrustHost ? h('div', { class: '
 assert.ok(app.includes('...yourBotsSummary(bots, changed)'));
 // A change (a Delete) reads each bot's tabs again too, on the map and in a room.
 assert.ok(app.includes('const changed = async () => { await loadRoomBots(); roomTrust?.load(); };'));
-assert.ok(app.includes('return yourBotRow(bot, { focusOn, offMap, settingsPath: spaceId ? `/s/${encodeURIComponent(spaceId)}` : null, reload: async () => { await loadBots(true); trust?.load(); } });'), 'the map draws its rows with the same function');
+assert.ok(app.includes('return yourBotRow(bot, { focusOn, offMap, settingsPath: spaceId ? `/s/${encodeURIComponent(spaceId)}` : null, garage: carPicker, reload: async () => { await loadBots(true); trust?.load(); } });'), 'the map draws its rows with the same function');
 // A list that couldn't be read says so, rather than looking like you have no bots.
 assert.ok(app.includes("h('p', { class: 'error' }, `Couldn't load your bots: ${error.message}`)"));
 assert.ok(app.includes("zoomed(figurePicture({ kind: 'bot', color: bot.color || '#8866cc', worn: bot.look || {} }), LOOK_ZOOM_SMALL)"), "each row has the bot's picture");

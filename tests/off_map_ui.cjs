@@ -83,6 +83,7 @@ async function run({ bots, spaces, latest = { bots_out: [] } }) {
     api: async (path) => {
       calls.push(path);
       if (path === '/api/me/bots') return { bots };
+      if (path === '/api/cars') return { cars: [], owned: [] };
       if (path === '/api/spaces') return spaces();
       throw new Error(`unexpected ${path}`);
     },
@@ -99,20 +100,20 @@ const spaceList = () => ({
 (async () => {
   // No bot is in a room off the map (one has a tile, one has no room): no /api/spaces request.
   const quiet = await run({ bots: [{ name: 'a', room: { id: 'r2' }, place: { x: 1, y: 2 } }, { name: 'b', room: null }], spaces: () => { throw new Error('asked'); } });
-  assert.deepEqual(quiet.calls, ['/api/me/bots']);
+  assert.deepEqual(quiet.calls, ['/api/me/bots', '/api/cars']);
   assert.equal(quiet.seen.myBots.length, 2);
   assert.deepEqual(quiet.seen.floors, []);
   // A bot out on the map by the live feed counts as on the map too.
   const live = await run({ bots: [{ name: 'a', room: { id: 'r2' } }], latest: { bots_out: [['a', 3, 4]] }, spaces: () => { throw new Error('asked'); } });
-  assert.deepEqual(live.calls, ['/api/me/bots']);
+  assert.deepEqual(live.calls, ['/api/me/bots', '/api/cars']);
   // An off-map bot gets its space from /api/spaces, so the row can link to the settings.
   const off = await run({ bots: [{ name: 'a', room: { id: 'r1' } }], spaces: spaceList });
-  assert.deepEqual(off.calls, ['/api/me/bots', '/api/spaces']);
+  assert.deepEqual(off.calls, ['/api/me/bots', '/api/cars', '/api/spaces']);
   assert.deepEqual(off.seen.floors, [['r1', 'sp1']]);
   assert.ok(off.world.myBots.has('a'));
   // /api/spaces failing still draws the rows, without the link.
   const failed = await run({ bots: [{ name: 'a', room: { id: 'r1' } }], spaces: () => { throw new Error('down'); } });
-  assert.deepEqual(failed.calls, ['/api/me/bots', '/api/spaces']);
+  assert.deepEqual(failed.calls, ['/api/me/bots', '/api/cars', '/api/spaces']);
   assert.equal(failed.seen.myBots.length, 1);
   assert.deepEqual(failed.seen.floors, []);
   console.log('My bots: a bot in a room off the map says so; one on the map keeps Center.');

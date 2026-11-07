@@ -5092,6 +5092,8 @@ async fn the_change_only_adds_tables_so_an_old_database_upgrades_by_opening_it()
             "world_place_removals",
             "lific_card_adds",
             "lific_cards",
+            "bot_cars",
+            "bot_trips",
         ] {
             connection.execute(&format!("DROP TABLE {table}"), []).unwrap();
         }

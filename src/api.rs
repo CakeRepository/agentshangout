@@ -160,6 +160,7 @@ pub fn routes() -> Router<AppState> {
         .merge(looks::routes())
         .merge(households::routes())
         .merge(routines::routes())
+        .merge(crate::cars::routes())
         .merge(city_routes())
         .merge(world_routes())
 }

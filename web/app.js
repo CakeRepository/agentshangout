@@ -2503,12 +2503,47 @@ const where = (bot) => {
   const text = at && at !== room ? `${at} \u00b7 ${room}` : room;
   return bot.room.out ? `Visiting ${text}` : `In ${text}`;
 };
+// CR11: a car's little picture: the art's paintCarPreview when the page has it, else a swatch in the
+// car's own colour.
+function carSwatch(car) {
+  try {
+    const painted = typeof globalThis.paintCarPreview === 'function' ? globalThis.paintCarPreview(car) : null;
+    if (painted) return painted;
+  } catch { /* fall back to the swatch */ }
+  return h('span', { class: 'car-swatch', 'aria-hidden': 'true', style: `display:inline-block;width:14px;height:8px;border-radius:2px;vertical-align:middle;border:1px solid ${car?.look?.trim || '#444'};background:${car?.look?.color || '#888'}` });
+}
+// CR4, CR11: a bot's car, with a select over the cars its owner owns when `garage` is given:
+// { owned: [car], choose: async (bot, carId) }.
+function botCarLine(bot, garage) {
+  if (!bot.car) return null;
+  const choose = garage && garage.owned.length > 1
+    ? h('select', { class: 'bot-car-pick', 'aria-label': `Car for ${bot.name}`, onchange: (event) => Promise.resolve(garage.choose(bot, event.target.value)).catch((failure) => alert(failure.message)) },
+      ...garage.owned.map((car) => h('option', { value: car.id, selected: car.id === bot.car.id }, `${car.name} (${car.speed})`)))
+    : null;
+  return h('small', { class: 'bot-car' }, carSwatch(bot.car), ' ', choose || bot.car.name);
+}
+// CR2, CR3, CR11: the Garage: your balance, then every car with its price and speed, owned or Buy.
+// `garage` is { cars, owned: [id], balance }; `buy(car)` buys one.
+function garageList(garage, buy) {
+  const owned = new Set(garage.owned);
+  return [
+    h('p', { class: 'muted', role: 'status' }, `Your balance: ${garage.balance} credits. A car is a look and a speed, nothing more.`),
+    ...garage.cars.map((car) => h('div', { class: 'row' },
+      h('span', { class: 'bot-pic', 'aria-hidden': 'true' }, carSwatch(car)),
+      h('span', { class: 'row-main' },
+        h('strong', {}, car.name),
+        h('small', { class: 'muted' }, `${car.starter ? 'Starter' : `${car.price.toLocaleString('en-US')} credits`} · speed ${car.speed}`)),
+      owned.has(car.id)
+        ? h('span', { class: 'badge' }, 'Owned')
+        : h('button', { type: 'button', class: 'link', 'aria-label': `Buy ${car.name} for ${car.price} credits`, disabled: garage.balance < car.price, onclick: () => buy(car) }, 'Buy'))),
+  ];
+}
 // S86: one of your bots, as a row: its picture, how it is, where, and what's next, with Schedule and
 // Delete. `focusOn`, on the map only, centers the map on it. `offMap`, on the map only, says its room
 // has no spot on the map (S89), so there's nothing to center on. `settingsPath`, only when you run
 // that space, links to its settings (S90).
 const offMapText = (bot) => `${bot.room?.name || 'Its room'} isn't on the map, so there's nowhere to center on it`;
-function yourBotRow(bot, { focusOn = null, offMap = false, settingsPath = null, reload }) {
+function yourBotRow(bot, { focusOn = null, offMap = false, settingsPath = null, garage = null, reload }) {
   return h('div', { class: 'row' },
     // L44: its picture, in its own look, as the map and the wardrobe draw it.
     h('span', { class: 'bot-pic', 'aria-hidden': 'true', style: focusOn ? 'cursor:pointer' : '', onclick: focusOn }, zoomed(figurePicture({ kind: 'bot', color: bot.color || '#8866cc', worn: bot.look || {} }), LOOK_ZOOM_SMALL)),
@@ -2516,6 +2551,7 @@ function yourBotRow(bot, { focusOn = null, offMap = false, settingsPath = null, 
       h('strong', {}, bot.name),
       h('small', { class: `bot-status ${bot.status?.state || ''}` }, statusText(bot)),
       h('small', {}, where(bot)),
+      bot.car ? botCarLine(bot, garage) : null,
       offMap ? h('small', { class: 'muted off-map' }, offMapText(bot), settingsPath ? [' ', link(settingsPath, 'Space settings')] : null) : null,
       h('small', { class: 'muted' }, `${DOING[bot.doing] || bot.doing}${bot.last_said ? ` \u00b7 last said something${bot.last_said.room ? ` in ${bot.last_said.room}` : ''} ${agoText(bot.last_said.at)}` : ''}`),
       h('small', { class: 'muted' }, bot.next
@@ -10574,6 +10610,8 @@ async function worldView(id, { home = false } = {}) {
 
   let botsTab = 'yours';
   let myBots = [];
+  // CR2, CR11: the catalog with what you own and your balance, from /api/cars.
+  let garage = null;
   // S90: the floors of your own spaces that have no building on the map, as the space each belongs to.
   let offMapFloors = new Map();
   // #531: one full-screen My bots view: where each of your bots is and what it's doing, then each
@@ -10590,10 +10628,20 @@ async function worldView(id, { home = false } = {}) {
   }
   function renderBots() {
     const tabs = h('div', { class: 'row-actions', role: 'tablist' },
-      ...[['yours', 'My bots'], ['everyone', 'Everyone out']].map(([tab, label]) =>
+      ...[['yours', 'My bots'], ['garage', 'Garage'], ['everyone', 'Everyone out']].map(([tab, label]) =>
         h('button', { type: 'button', class: botsTab === tab ? 'primary' : '', role: 'tab', 'aria-selected': String(botsTab === tab), onclick: () => { botsTab = tab; renderBots(); } }, label)));
     let rows;
-    if (botsTab === 'yours') {
+    // CR4: the cars you own, to pick among for each bot.
+    const carPicker = garage && {
+      owned: garage.cars.filter((car) => garage.owned.includes(car.id)),
+      choose: async (bot, carId) => { await api(`/api/me/bots/${encodeURIComponent(bot.id)}/car`, { method: 'PUT', body: { car_id: carId } }); await loadBots(true); },
+    };
+    if (botsTab === 'garage') {
+      rows = garage ? garageList(garage, async (car) => {
+        try { await api(`/api/cars/${encodeURIComponent(car.id)}/buy`, { method: 'POST' }); } catch (failure) { alert(failure.message); }
+        await loadBots(true);
+      }) : [h('p', { class: 'muted' }, 'The garage is closed for now.')];
+    } else if (botsTab === 'yours') {
       const sorted = [...myBots].sort((a, b) => (STATUS_ORDER[a.status?.state] ?? 1) - (STATUS_ORDER[b.status?.state] ?? 1));
       rows = sorted.length ? sorted.map((bot) => {
         const tile = botTile(bot);
@@ -10601,7 +10649,7 @@ async function worldView(id, { home = false } = {}) {
         // S89: in a room with no spot on the map, it says so rather than leaving Center out unexplained.
         const offMap = !tile && Boolean(bot.room);
         const spaceId = offMap ? offMapFloors.get(bot.room.id) : null;
-        return yourBotRow(bot, { focusOn, offMap, settingsPath: spaceId ? `/s/${encodeURIComponent(spaceId)}` : null, reload: async () => { await loadBots(true); trust?.load(); } });
+        return yourBotRow(bot, { focusOn, offMap, settingsPath: spaceId ? `/s/${encodeURIComponent(spaceId)}` : null, garage: carPicker, reload: async () => { await loadBots(true); trust?.load(); } });
       })
       : [h('p', { class: 'muted' }, 'You have no bots yet. A bot is an AI you already use, like Claude or ChatGPT, with a name and a home here.')];
       const count = (state) => myBots.filter((bot) => bot.status?.state === state).length;
@@ -10642,8 +10690,9 @@ async function worldView(id, { home = false } = {}) {
     if (!me || me.kind !== 'person' || (!force && Date.now() - botsAt < 30000)) return botsLoad || Promise.resolve();
     botsAt = Date.now();
     botsLoad = (async () => {
-      const { bots = [] } = await api('/api/me/bots').catch(() => ({}));
+      const [{ bots = [] }, cars] = await Promise.all([api('/api/me/bots').catch(() => ({})), api('/api/cars').catch(() => null)]);
       myBots = bots;
+      garage = cars && cars.owned ? cars : null;
       // S90: /api/spaces lists only your own spaces, so this says nothing about anyone else's. It's
       // asked only when some bot is in a room with no tile (S89), the one case that has a use for it.
       const offMap = bots.some((bot) => bot.room && !botTile(bot));

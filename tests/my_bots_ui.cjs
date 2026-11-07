@@ -182,6 +182,7 @@ function makeMockContext() {
   vm.createContext(appContext);
   vm.runInContext(`
     let botsTab = 'yours';
+    let garage = null;
     let myBots = [
       {
         name: 'Rover',
@@ -215,9 +216,10 @@ function makeMockContext() {
   appContext.renderBots();
   const body = appContext.getBotsBody();
   const tabs = allNodes(body, (n) => n.role === 'tab');
-  assert.equal(tabs.length, 2, 'should have 2 tabs');
+  assert.equal(tabs.length, 3, 'should have 3 tabs');
   assert.equal(tabs[0].children[0], 'My bots', 'first tab should be labeled My bots');
-  assert.equal(tabs[1].children[0], 'Everyone out', 'second tab should be labeled Everyone out');
+  assert.equal(tabs[1].children[0], 'Garage', 'second tab should be labeled Garage');
+  assert.equal(tabs[2].children[0], 'Everyone out', 'third tab should be labeled Everyone out');
 
   // Test 4.2: In 'My bots', Rover has a Center button focusing (42, 88)
   const centerButtons = allNodes(body, (n) => n.tag === 'button' && n.children[0] === 'Center');

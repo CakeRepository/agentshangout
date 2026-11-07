@@ -2136,3 +2136,86 @@ fn every_kind_of_credit_history_line_has_its_own_words() {
     }
     assert!(card.contains("line.kind === 'spend'"), "the history has no words for a spend");
 }
+
+// CR2 to CR4, CR11 over the wire: a car is bought once from the caller's credits, a bot buys only on
+// its owner's yes, and only the owner picks a car they own for their bot.
+#[tokio::test]
+async fn cars_are_bought_from_credits_and_picked_by_their_owner() {
+    use agenthangout::db::{CreditKind, CreditSource};
+    let server = Server::start().await;
+    let room = server.room().await;
+    let (scout, scout_id) = server.bot(&room.justin, &room.id, "Scout").await;
+    let owner = server.state.db.agent(&scout_id, now()).unwrap().unwrap().owner_id;
+    server
+        .state
+        .db
+        .settle_credits(
+            &owner,
+            &[(
+                "seed".into(),
+                CreditSource { kind: CreditKind::Gathering, source: "seed".into(), at: now() },
+            )],
+            |_| 200,
+            1000,
+            now(),
+        )
+        .unwrap();
+
+    // Anyone reads the catalog; signed in, you also see what you own, your balance and your bots.
+    let open = server.get("", "/api/cars").await;
+    assert_eq!((open.status, open.body["cars"].as_array().unwrap().len()), (StatusCode::OK, 23));
+    assert!(open.body.get("owned").is_none(), "{}", open.body);
+    let mine = server.get(&room.justin, "/api/cars").await.body;
+    assert_eq!(mine["owned"], json!(["pip", "runabout", "puddle"]));
+    assert_eq!(mine["balance"], 200);
+    assert_eq!(mine["bots"][0]["car_id"], "pip", "a bot with no choice drives the first starter");
+
+    // A starter can't be bought, a car that isn't there can't, and the balance has to cover it.
+    for (car, status) in [
+        ("pip", StatusCode::BAD_REQUEST),
+        ("nothing", StatusCode::BAD_REQUEST),
+        ("goose", StatusCode::CONFLICT),
+    ] {
+        let reply = server.post(&room.justin, &format!("/api/cars/{car}/buy"), json!({})).await;
+        assert_eq!(reply.status, status, "{car}: {}", reply.body);
+    }
+    // Once, and then it's owned.
+    let bought = server.post(&room.justin, "/api/cars/dinky/buy", json!({})).await;
+    assert_eq!((bought.status, &bought.body["balance"]), (StatusCode::OK, &json!(150)));
+    let twice = server.post(&room.justin, "/api/cars/dinky/buy", json!({})).await;
+    assert_eq!(twice.status, StatusCode::CONFLICT, "{}", twice.body);
+    let bots_buy = server.post(&scout, "/api/cars/toaster/buy", json!({})).await;
+    assert_eq!(bots_buy.status, StatusCode::FORBIDDEN, "{}", bots_buy.body);
+
+    // A bot buys with spend_credits, only on its owner's yes (HC17) and within its limit.
+    let no_yes =
+        server.tool(&scout, "spend_credits", json!({ "pack": "car:toaster", "asked": "x" })).await;
+    assert_eq!(no_yes["isError"], true, "{no_yes}");
+    let asked = server.ask_owner(&scout, &room.id, "May I buy car:toaster for 90 credits?").await;
+    let question = asked.body["id"].as_str().unwrap().to_string();
+    server.answer_question(&room.justin, &question, "yes").await;
+    let args = json!({ "pack": "car:toaster", "asked": question });
+    let capped = server.tool(&scout, "spend_credits", args.clone()).await;
+    assert_eq!(capped["isError"], true, "its limit starts at 0: {capped}");
+    server
+        .put(&room.justin, &format!("/api/credits/bots/{scout_id}"), json!({ "daily": 100 }))
+        .await;
+    let done = server.tool(&scout, "spend_credits", args).await;
+    assert_ne!(done["isError"], true, "{done}");
+    assert_eq!(server.get(&room.justin, "/api/cars").await.body["balance"], 60);
+
+    // Only the owner picks, and only among the cars they own.
+    let path = format!("/api/me/bots/{scout_id}/car");
+    let unowned = server.put(&room.justin, &path, json!({ "car_id": "goose" })).await;
+    assert_eq!(unowned.status, StatusCode::CONFLICT, "{}", unowned.body);
+    let stranger = server.put(&room.kevin, &path, json!({ "car_id": "dinky" })).await;
+    assert_eq!(stranger.status, StatusCode::NOT_FOUND, "{}", stranger.body);
+    let by_bot = server.put(&scout, &path, json!({ "car_id": "dinky" })).await;
+    assert_eq!(by_bot.status, StatusCode::FORBIDDEN, "{}", by_bot.body);
+    assert_eq!(server.state.db.bot_car(&scout_id).unwrap(), "pip");
+    let chosen = server.put(&room.justin, &path, json!({ "car_id": "toaster" })).await;
+    assert_eq!(chosen.status, StatusCode::OK, "{}", chosen.body);
+    assert_eq!(server.state.db.bot_car(&scout_id).unwrap(), "toaster");
+    let rows = server.get(&room.justin, "/api/me/bots").await.body;
+    assert_eq!(rows["bots"][0]["car"]["id"], "toaster", "{rows}");
+}
