@@ -15,6 +15,7 @@ import { paintOutsideGround, paintOutsideStanding } from './outside-art.js';
 import { doorPoint } from './outside-building.js';
 import { doorSideOf, keyOf } from './outside-spec.js';
 import { drawPet, makePet, stepPet } from './pets.js';
+import { carKey, hasLook, paintCar, paintCarGlow, paintCarSparkle } from './cars.js';
 
 // ---------------------------------------------------------------------------------------------
 // Numbers
@@ -4082,10 +4083,19 @@ function carSprite(heading, colorIdx) {
 // Which way a car points for each way a figure can face: 0 along +x, 1 along +y, 2 along -x, 3 along -y.
 const FACE_HEADING = { fr: 0, fl: 1, bl: 2, br: 3 };
 
-function drawCar(bg, car, night, mine) {
+// CR10: a car with a look from the catalog, painted by cars.js and cached per look and heading.
+function lookSprite(heading, look) {
+  const h = ((heading % 4) + 4) % 4;
+  return sprite(`car2:${carKey(look)}:${h}`, 48, 40, 24, 28, (g) => paintCar(g, look, h));
+}
+
+function drawCar(bg, car, night, mine, t = 0) {
   const X = car.dx;
   const Y = car.dy;
-  const s = carSprite(car.heading, car.color);
+  const look = hasLook(car.look) ? car.look : null;
+  // Without a look, the old hashed-colour car. With one, the glow of its underglow lies under it.
+  if (look) paintCarGlow(bg, X, Y, look, night, t);
+  const s = look ? lookSprite(car.heading, look) : carSprite(car.heading, car.color);
   if (mine) {
     bg.save();
     bg.strokeStyle = '#f2b632';
@@ -4100,7 +4110,7 @@ function drawCar(bg, car, night, mine) {
   } else {
     bg.drawImage(s.c, X - s.ax, Y - s.ay, s.w, s.h);
   }
-  void night;
+  if (look) paintCarSparkle(bg, X, Y, look, t);
   return [X - 20, Y - 28, X + 20, Y + 6];
 }
 
@@ -5527,7 +5537,8 @@ export class World {
       const first = startsOnRoad ? 0 : onRoad.indexOf(true) + 1;
       const last = onRoad.lastIndexOf(true);
       p.path = route.map(([tx, ty], i) => [tx + 0.5 + p.ox, ty + 0.5 + p.oy, drives && i >= first && i <= last]);
-      p.ride = drives ? { color: ih(p.h, 4, 9) % 8 } : null;
+      // CR10: `p.carLook` is the look the server sent with the trip; without one, a hashed colour.
+      p.ride = drives ? { color: ih(p.h, 4, 9) % 8, look: p.carLook || null } : null;
     } else if (Math.abs(sx - x) + Math.abs(sy - y) < 14) {
       p.path = [[x + 0.5 + p.ox, y + 0.5 + p.oy, false]];
       p.ride = null;
@@ -6872,7 +6883,7 @@ export class World {
           const isMine = Boolean(this.ownerName && e.owner === this.ownerName && this.myBots?.has(e.name));
           // Someone on a ride is drawn as their car, facing the way they're going.
           r4 = e.driving
-            ? drawCar(bg, { dx: e.dx, dy: e.dy, heading: FACE_HEADING[e.face] ?? 0, color: e.ride.color }, night, isMine)
+            ? drawCar(bg, { dx: e.dx, dy: e.dy, heading: FACE_HEADING[e.face] ?? 0, color: e.ride.color, look: e.ride.look }, night, isMine, t)
             : drawPlayer(bg, e, t, this.time, this.hoverEnt === e, this.calm, isMine);
           break;
         }

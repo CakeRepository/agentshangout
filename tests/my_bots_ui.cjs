@@ -54,6 +54,7 @@ function makeMockContext() {
     visitorSprite: () => dummySprite,
     botSprite: () => dummySprite,
     carSprite: () => dummySprite,
+    hasLook: () => false,
     drawEmote: () => {},
     ell: () => {},
     clamp: (x, a, b) => Math.max(a, Math.min(b, x)),
@@ -62,7 +63,7 @@ function makeMockContext() {
 
   // Extract drawPlayer and drawCar
   const drawPlayerCode = extractFrom(worldSource, 'function drawPlayer(bg, p, t, clock, hovered, calm, mine) {', '\n}\n');
-  const drawCarCode = extractFrom(worldSource, 'function drawCar(bg, car, night, mine) {', '\n}\n');
+  const drawCarCode = extractFrom(worldSource, 'function drawCar(bg, car, night, mine, t = 0) {', '\n}\n');
   vm.runInContext(`${drawPlayerCode}\n${drawCarCode}`, worldContext);
 
   // When mine is true for drawPlayer:

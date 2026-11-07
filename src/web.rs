@@ -49,6 +49,7 @@ const OUTSIDE_LAB_JS: &str = include_str!("../web/outside-lab.js");
 const OUTSIDE_PLANT_JS: &str = include_str!("../web/outside-plant.js");
 const OUTSIDE_SQUARE_JS: &str = include_str!("../web/outside-square.js");
 const PETS_JS: &str = include_str!("../web/pets.js");
+const CARS_JS: &str = include_str!("../web/cars.js");
 const PASSKEY_JS: &str = include_str!("../web/passkey.js");
 const PLAN_INVITE_JS: &str = include_str!("../web/plan-invite.js");
 const BOT_SETUP_JS: &str = include_str!("../web/bot-setup.js");
@@ -323,6 +324,7 @@ pub fn routes() -> Router<AppState> {
             get(|| async { asset("text/javascript; charset=utf-8", OUTSIDE_SQUARE_JS) }),
         )
         .route("/pets.js", get(|| async { asset("text/javascript; charset=utf-8", PETS_JS) }))
+        .route("/cars.js", get(|| async { asset("text/javascript; charset=utf-8", CARS_JS) }))
         .route("/passkey.js", get(|| async { asset("text/javascript; charset=utf-8", PASSKEY_JS) }))
         .route(
             "/plan-invite.js",

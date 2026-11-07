@@ -27,6 +27,7 @@ static FILES: &[Asset] = &[
     ("outside-plant.js", "text/javascript", OUTSIDE_PLANT_JS.as_bytes()),
     ("outside-square.js", "text/javascript", OUTSIDE_SQUARE_JS.as_bytes()),
     ("pets.js", "text/javascript", PETS_JS.as_bytes()),
+    ("cars.js", "text/javascript", CARS_JS.as_bytes()),
     ("passkey.js", "text/javascript", PASSKEY_JS.as_bytes()),
     ("plan-invite.js", "text/javascript", PLAN_INVITE_JS.as_bytes()),
     ("bot-setup.js", "text/javascript", BOT_SETUP_JS.as_bytes()),

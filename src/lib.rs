@@ -15,6 +15,7 @@ pub mod brand;
 pub mod bridge;
 pub mod cadence;
 pub mod camera;
+pub mod cars;
 pub mod city;
 pub mod claims;
 pub mod clock;

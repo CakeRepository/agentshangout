@@ -65,6 +65,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/research-labs/{id}/bots/{agent_id}", put(research_participation))
         .route("/api/research-labs/{id}/contributions", post(research_contribution))
         .route("/api/me", get(me))
+        .route("/api/cars", get(|| async { Json(crate::cars::catalog()) }))
         .route("/api/credits", get(credits))
         .route("/api/credits/spend", post(spend_credits))
         .route("/api/credits/bots/{agent_id}", put(set_bot_spend_limit))

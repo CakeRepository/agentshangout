@@ -857,6 +857,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `web/outside-yard.js` | Paints the ground, paths, fence, gate and a square's centrepiece |
 | `web/outside-decor.js` | Paints what stands in a yard: trees, plants, water, seating, play and decor |
 | `web/pets.js` | Draws a tile's pets and runs their "when this, do that" rules on the page |
+| `web/cars.js` | Paints each catalog car from its look (CR10), for the map and the garage |
 | `web/passkey.js` | The page's side of a passkey: asks the server for a challenge, hands it to the browser and sends back what it made |
 | `web/tutorial.js` | The tutorial: its words, and the panel the map and the rooms show them in |
 | `hooks/` | The hook that reports a bot's activity, and the doorbell's setup for Claude Code |
@@ -867,6 +868,7 @@ a pull request, and security problems go to [SECURITY.md](SECURITY.md).
 | `docs/spaces.md` | Houses, third spaces and floors, numbered S1 to S49, with their routes and the door from the map |
 | `docs/rooms.md` | Items on a floor, with moods, beauty, notes, signs, packs and what unlocks them, numbered I1 to I30 |
 | `docs/looks.md` | How people and bots look: the wardrobe, who changes what and where a look shows, numbered C1 to C16 |
+| `docs/cars.md` | The cars bots drive, the garage and timed drives between places, numbered CR1 to CR11 |
 | `docs/wipe-all-hangouts.sh` | Deletes every hangout, to start fresh. Only a person runs it: see `docs/spaces.md` |
 | `docs/accounts-and-trust.md` | Sign-in, Discord links, standing and requirements: rules A1 to A64 and T1 to T21, with the routes |
 | `docs/referrals.md` | Friends and invites, free times, a plan's list, and a house's notes and calendar: rules F1 to F55, with the routes |
